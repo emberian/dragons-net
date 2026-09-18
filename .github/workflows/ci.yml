@@ -31,6 +31,7 @@ jobs:
         run: |
           cake=$(python3 scripts/bootstrap_tool.py cake)
           python3 scripts/native_check.py --cake "$cake" | tee build/evidence/native.log
+          python3 scripts/native_baseline.py --cake "$cake" | tee build/evidence/baseline.log
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -41,6 +42,10 @@ jobs:
             build/native/report.json
             build/native/region.pnk
             build/native/region.S
+            build/baseline/report.json
+            build/baseline/baseline.json
+            build/baseline/*.pnk
+            build/baseline/*.S
 
   concurrency-models:
     runs-on: ubuntu-24.04

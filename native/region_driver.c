@@ -1,16 +1,18 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  * Trusted test adapter for the emitted kernel. No networking or fallback.
  * This executable tests the ABI and bytes; it is not a verified runtime. */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 extern void *cml_heap, *cml_stack, *cml_stackend;
 extern void cml_main(void);
-extern uint64_t dn_region(uint64_t, uint64_t, uint64_t, uint64_t);
+extern uint32_t dn_region(uint64_t, uint64_t, uint64_t, uint64_t);
 
 void cml_clear(void) {}
 void cml_err(int code) { fprintf(stderr, "Cake runtime error %d\n", code); abort(); }
@@ -69,6 +71,25 @@ int main(void) {
         if (invoke(bytes, sizeof(bytes), off, len) != reference(bytes, off, len)) return 1;
         ++vectors;
     }
+    /* Sign-bit and wrapping-sum regressions. Rejected inputs get an unreadable
+     * buffer: an accidental scan faults instead of reading benign test memory. */
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (guard == MAP_FAILED) return 1;
+    uint64_t sizes[] = {0, sizeof(bytes), 1ULL<<63, UINT64_MAX};
+    uint64_t edges[] = {0, 1, 4096, 4097, (1ULL<<63)-1, 1ULL<<63, UINT64_MAX};
+    for (size_t a = 0; a < sizeof(sizes)/sizeof(sizes[0]); ++a)
+        for (size_t b = 0; b < sizeof(edges)/sizeof(edges[0]); ++b)
+            for (size_t c = 0; c < sizeof(edges)/sizeof(edges[0]); ++c) {
+                uint64_t size = sizes[a], off = edges[b], len = edges[c];
+                int valid = size < (1ULL<<63) && off <= size && len <= size - off;
+                uint64_t expected = valid ? reference(bytes, off, len) : 0xffffffff;
+                if (invoke(valid ? bytes : guard, size, off, len) != expected) {
+                    fputs("64-bit bounds mismatch\n", stderr); return 1;
+                }
+                ++vectors;
+            }
+    munmap(guard, page);
     const size_t iterations = 25000;
     uint64_t start = now_ns(), checksum = 0;
     for (size_t i = 0; i < iterations; ++i)

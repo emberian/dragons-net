@@ -1,10 +1,10 @@
 # Contributor handoff
 
-Read the root README, [architecture](architecture.md), and [assurance](assurance.md) first. Run `bash scripts/check.sh` and `python3 scripts/check_models.py --loom`. On Linux x86-64, run the native check from the README. All active Lean/Rust dependencies are defined within this repository and its lock files; the old monorepo is not needed for these checks.
+Start with [Wisper’s baseline](baseline.md) and [the runnable echo example](echo.md). Read the root README, [architecture](architecture.md), and [assurance](assurance.md) first. Run `bash scripts/check.sh` and `python3 scripts/check_models.py --loom`. On Linux x86-64, run the native check from the README. All active Lean/Rust dependencies are defined within this repository and its lock files; the old monorepo is not needed for these checks.
 
 ## Where to start reading
 
-1. `lean/DN/Compiler/Main.lean`, `Syntax.lean`, and `Lower.lean`: the actual emitted example and the supported lowering boundary.
+1. `lean/DN/Compiler/Main.lean`, `Syntax.lean`, `Lower.lean`, `Checked.lean`, and `Abi.lean`: the actual emitted example and the supported lowering boundary.
 2. `Semantics.lean`, `Region.lean`, `Clock.lean`, and `Certificate.lean`: model execution and composition, including a certificate requiring an inhabited precondition.
 3. `ByteCopy.lean`, `StructModel.lean`, `StructEmit.lean`, `SerializeCompile.lean`, and `StageCompile.lean`: reusable compiler mechanisms. The larger `Serve*` modules are inherited HTTP workloads, not NNTP implementations.
 4. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
@@ -22,7 +22,7 @@ Close the printed-source/parser and model/HOL bridges before claiming verified c
 
 ### 2. Extract a protocol-neutral native reactor
 
-Port the buffer ownership and completion machinery from the preserved native source into an active crate. Start with one OS path and one socket workload. Linux io_uring is the performance target; kqueue source is also available. Keep protocol decisions outside the OS adapter.
+Port the buffer ownership and completion machinery from the preserved native source into an active crate. Use the existing generated-code echo service as the socket workload and reference behavior. Linux io_uring is the performance target; kqueue source is also available. Keep protocol decisions outside the OS adapter.
 
 Acceptance: a real loopback connection; input split at arbitrary byte boundaries; partial output completion; bounded queues; EOF/error/cancellation cleanup; stale-generation rejection; no double recycle. Demonstrate which tests execute the native path, and retain a deliberately broken variant in the concurrency model where useful. A successful model test does not establish correspondence to the adapter.
 
@@ -44,4 +44,4 @@ Add peering, authenticated access, offline bundles, and a human UI after the sto
 
 `migration/` preserves original source bytes. Port into active modules rather than editing that snapshot. Retain provenance and update the documentation when a reference component becomes active. Old deployment scripts are historical evidence, not instructions to run against a machine.
 
-Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, OS reactor in the active build, or end-to-end compiler theorem. The backend HOL proof lane is scaffolded but not yet rebuilt here. These are concrete next tasks, not hidden dependencies of the green baseline.
+Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. A bounded reference `poll` host now drives the generated echo kernel. The backend HOL proof lane is scaffolded but not yet rebuilt here. These are concrete next tasks, not hidden dependencies of the green baseline.

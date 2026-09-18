@@ -52,7 +52,7 @@ structure PFun where
   params : List (Nat × String) := []
   body   : List PStmt
   /-- when `true`, `ppFun` prints the `export fun` header (DN.Compiler's C-callable
-  SysV-ABI entry: named word/pointer params, a returned word, no `@base`/FFI/
+  SysV-ABI entry: named word/pointer params, a 32-bit C return, no `@base`/FFI/
   `main`). Defaults `false`, so every existing whole-program emitter is unchanged. -/
   exported : Bool := false
   deriving Repr
@@ -231,22 +231,29 @@ C-callable leaf (DN.Compiler's SysV-ABI form) whose inputs arrive as word/pointe
 PARAMETERS and whose result is both returned and written through an `out` pointer.
 No `@base`, no FFI, no `main`: the host links and calls the stage directly.
 `cake --pancake --main_return=true` compiles this to a global `T <name>` symbol
-taking its arguments in `rdi/rsi/rdx/rcx`. -/
+taking its arguments in `rdi/rsi/rdx/rcx`. Its C return is 32 bits; the full
+word is available through `out`. See `Abi.wordResult` for a general output-slot
+adapter. -/
 
 /-- Emit the region decision as a C-callable exported function, driven by `rs`.
 Params (all one word — SysV `rdi/rsi/rdx/rcx`): `ctrl` = control-block pointer the
 bounds words `alen`/`off` are read from; `buf` = arena-bytes pointer; `len` = the
 view length (passed directly, not loaded); `out` = result-word pointer written
-before return. The body is C0's bounds branch + rolling digest fold — the same
-decision `emitRegion` emits; only the plumbing (params/return instead of FFI)
-differs. -/
+before return. The digest fold is shared with `emitRegion`. This exported boundary also
+rejects sign-bit-set lengths and checks `off <= alen` and `len <= alen - off`
+instead of the overflow-prone sum. The legacy FFI example retains its original
+caller preconditions. The host must still supply valid pointers and an honest
+allocation length; this guard is not a pointer-validity check. -/
 def emitExportFun (rs : RegionSpec) : PFun :=
   { name := rs.name, exported := true,
     params := [(1, "ctrl"), (1, "buf"), (1, "len"), (1, "out")], body :=
     [ .dec "alen" (.loadw 1 (atOff (v "ctrl") rs.lenOff))
     , .dec "off"  (.loadw 1 (atOff (v "ctrl") rs.offViewOff))
     , .dec "result" (n 0)
-    , .ite (eLt (v "alen") (eAdd (v "off") (v "len")))
+    , .ite (eAdd (eAdd (eLt (v "alen") (n 0)) (eLt (v "off") (n 0)))
+          (eAdd (eLt (v "len") (n 0))
+            (eAdd (eLt (v "alen") (v "off"))
+              (eLt (eSub (v "alen") (v "off")) (v "len")))))
         -- out of bounds
         [ .assign "result" (n rs.sentinel) ]
         -- in bounds: rolling digest over the viewed bytes

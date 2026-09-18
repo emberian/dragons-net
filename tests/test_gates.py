@@ -22,14 +22,16 @@ class Gates(unittest.TestCase):
             self.assertTrue(any("missing" in e for e in structure.check(copy)))
 
     def test_transitive_axiom_dependency_fails(self):
-        with tempfile.TemporaryDirectory() as temp:
-            source = Path(temp) / "Bad.lean"
-            source.write_text("import DN.Audit\nnamespace Foreign\naxiom bad : False\nend Foreign\n"
-                              "namespace DN.Bad\ntheorem unsound : False := Foreign.bad\nend DN.Bad\n#audit_dn\n")
-            result = subprocess.run(["lake", "env", "lean", str(source)], cwd=ROOT,
-                                    text=True, capture_output=True, timeout=60)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("unapproved axioms", result.stdout + result.stderr)
+        for declaration in ["theorem unsound : False := Foreign.bad",
+                            "noncomputable def unchecked : Nat := False.elim Foreign.bad"]:
+            with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as temp:
+                source = Path(temp) / "Bad.lean"
+                source.write_text("import DN.Audit\nnamespace Foreign\naxiom bad : False\nend Foreign\n"
+                                  f"namespace DN.Bad\n{declaration}\nend DN.Bad\n#audit_dn\n")
+                result = subprocess.run(["lake", "env", "lean", str(source)], cwd=ROOT,
+                                        text=True, capture_output=True, timeout=60)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unapproved axioms", result.stdout + result.stderr)
 
     def test_emitter_has_no_build_side_effects(self):
         binary = ROOT / ".lake/build/bin/dn-compiler"

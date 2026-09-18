@@ -8,12 +8,14 @@ only its core libraries. Set LEAN_NUM_THREADS (default 4); never start overlappi
 Lake builds in the same build directory. No Mathlib or sibling checkout is needed.
 
 Every lean/DN module belongs in DN/Audit.lean. The structure gate checks coverage;
-the Lean command checks transitive theorem axioms. Add named proofs for general
+the Lean command checks transitive axioms in every DN declaration. Add named proofs for general
 facts and executable regression cases for examples. Do not introduce sorry,
 custom axioms, native_decide, build-time IO, or weaken a theorem to make it green.
 An inhabited precondition still needs review for semantic adequacy.
 
-The native lane is Linux x86-64. It executes real generated code with no fallback.
+Read docs/baseline.md before modifying the maintained compiler subset.
+The native lane is Linux x86-64. Run bash scripts/check_all.sh for the complete
+baseline, including differential compilation and actual TCP echo. It executes real generated code with no fallback.
 The backend proof lane is separate and pinned in backend/lock.json. Never infer a
 whole-program theorem from a successful compiler run, source digest, test, or
 theorem about a hand-transcribed model.

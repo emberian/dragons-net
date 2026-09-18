@@ -1,4 +1,9 @@
 -- Import inventory checked by scripts/check_structure.py.
+import DN.Compiler.Abi
+import DN.Compiler.Baseline
+import DN.Compiler.BoundaryTests
+import DN.Compiler.Checked
+import DN.Compiler.Kernels
 import DN.Compiler.ByteCopy
 import DN.Compiler.Bytes
 import DN.Compiler.Certificate

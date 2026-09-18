@@ -5,22 +5,23 @@ We want strong claims about native behavior. The current evidence is deliberatel
 | Evidence | Establishes | Does not establish |
 | --- | --- | --- |
 | Lean kernel checking | Imported theorem statements follow from their definitions and allowed axioms | That definitions match NNTP, HOL, the host, or hardware |
-| `DN.ProofAudit` and module inventory | All imported `DN` theorem declarations have only allowed transitive axioms: `propext`, `Classical.choice`, `Quot.sound` | Nonvacuity, useful specifications, exhaustive theorem coverage outside `DN`, or runtime behavior |
+| `DN.ProofAudit` and module inventory | All imported `DN` declarations have only allowed transitive axioms: `propext`, `Classical.choice`, `Quot.sound` | Nonvacuity, useful specifications, exhaustive theorem coverage outside `DN`, or runtime behavior |
 | `Certificate.witness` | A packaged precondition has at least one satisfying model state | Adequacy for every real caller or correctness of the native adapter |
-| 430 executable examples | Those closed computations return their expected values | Universal proofs |
+| 434 executable examples | Those closed computations return their expected values | Universal proofs |
 | Rust unit tests | Selected host primitive behaviors, including stale-token and partial-write handling | Model refinement or OS integration |
 | 25 Loom tests | Selected algorithms and counterexamples under bounded scheduling exploration | Every unbounded execution or the full native reactor |
-| Native region check | Real generated machine code agrees with a C reference on 99,044 cases | A compiler theorem, full memory safety, or NNTP performance |
+| Native region check | Real generated machine code agrees with a C reference on 99,240 cases | A compiler theorem, full memory safety, or NNTP performance |
+| Native differential and TCP checks | Recorded arithmetic/control cases agree across independent references; real connections exercise the generated copy kernel | General compiler preservation, a verified host, or optimized dataplane performance |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The current audit counts 2,966 theorem declarations, including generated ones. It is a tripwire against unsound dependencies, not a measure of project completeness. The negative gate test deliberately introduces a foreign axiom and checks rejection. The inventory gate detects a newly added module omitted from the audit.
+The current audit covers 7,016 declarations, including 2,978 theorem declarations and generated ones. It is a tripwire against unsound dependencies, not a measure of project completeness. The negative gate test deliberately introduces a foreign axiom into both a theorem and an isolated executable definition and checks rejection. The inventory gate detects a newly added module omitted from the audit.
 
 ## Open proof connections
 
 1. **Semantics correspondence.** `DN.Compiler.Semantics` is a Lean transcription, not an automatically certified translation of the upstream HOL4 semantics. Agreement with the pinned backend remains an obligation.
-2. **Source representation.** Model lowering, printed Pancake, and the backend parser need a general connection. Running a sample through the actual compiler tests one path through this boundary.
+2. **Source representation.** Model lowering, printed Pancake, and the backend parser need a general connection. The differential suite exercises 20,928 arithmetic/control cases across Python, the Lean model, and native execution. General preservation remains open.
 3. **Backend identity.** The native lane uses the release pinned in `tools.lock.json`. The curated datacake patch applies to the older source pinned in `backend/lock.json`. Neither lane proves that the other artifact contains its changes. The patched HOL proof rebuild and compiler bootstrap have not yet been completed here.
-4. **Native ABI and memory.** The C adapter, heap/stack sizing, generated machine code, and memory model need an explicit contract. The current adapter provisions 1 MiB each for heap and stack; these are tested allocations, not proven minima.
+4. **Native ABI and memory.** The pinned export trampoline returns 32 bits to C; full-word results now use output slots via `Abi.wordResult`. See [the baseline findings](baseline.md). The C adapter, heap/stack sizing, generated machine code, and memory model need an explicit contract. The current adapter provisions 1 MiB each for heap and stack; these are tested allocations, not proven minima.
 5. **Host refinement.** The Rust primitives and preserved OS reactors are not connected by a refinement theorem to the Lean dataplane models. FFI and kernel behavior are assumptions to articulate, not erase.
 6. **Protocol and persistence.** NNTP semantics, article parsing, durable acceptance, and crash recovery are not implemented. The CRLF theorem concerns a delimiter counter, not a bounded parser.
 

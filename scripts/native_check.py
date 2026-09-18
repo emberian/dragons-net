@@ -50,7 +50,8 @@ def main():
                     str(driver), str(assembly), "-o", str(executable)], check=True, timeout=60)
     result = subprocess.run([str(executable)], text=True, capture_output=True, check=True, timeout=60)
     measured = json.loads(result.stdout)
-    assert measured["vectors"] > 1000 and measured["checksum"] != 0
+    if measured["vectors"] != 99240 or measured["checksum"] == 0 or measured["elapsed_ns"] <= 0:
+        raise RuntimeError("native region coverage or execution evidence is incomplete")
     measured["MiB_per_second"] = measured["bytes"] * 1e9 / measured["elapsed_ns"] / 1048576
     report = {"status": "native-tested", "assurance": "not an end-to-end compiler proof",
               "platform": platform.platform(), "cpu": platform.processor(),
