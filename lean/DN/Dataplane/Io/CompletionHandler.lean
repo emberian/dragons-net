@@ -4,14 +4,16 @@ import DN.Dataplane.Io.Reactor
 /-!
 # DN.Dataplane.Io.CompletionHandler — the inline completion-handler drain, verified
 
-There are two ways to hand a batch of kernel completions to a consumer. The
+There are two ways to hand a batch of modeled terminal one-shot completions to a consumer. The
 **buffered** way materializes every completion into an array first — a
 `List (Completion α ρ)` — and only then walks that array applying the consumer.
 The **inline** way never builds the array at all: it *folds* the consumer over
 the completions as they are drained, one at a time, applying the consumer to
 each completion at the moment it is produced and letting the intermediate
 storage evaporate. This file models the inline drain and proves it is
-observationally the buffered drain — same observations, zero intermediate list.
+observationally the buffered drain for that one-shot transition system — same
+observations, zero intermediate list. It does not model non-final multishot
+events, cancellation races, or kernel queue ownership.
 
 The inline consumer is richer than a passive observer: during the callback for a
 completion it may **re-submit** new I/O — issue a fresh operation straight back
@@ -31,8 +33,9 @@ with no lost work item.
 * `submits : List α` — the operations re-submitted during callbacks, oldest
   first (FIFO): the work re-issued into the slab mid-drain.
 
-A completion event is a `(Key × ρ)`: the correlator the kernel echoes and the
-result it carries. The consumer is two pure callbacks:
+A completion event is a `(Key × ρ)`: the correlator supplied by the modeled
+environment and its result. Each accepted event is terminal because `HState.step`
+removes its slab entry. The consumer is two pure callbacks:
 
 * `obs : α → ρ → β` — what to record for a completed operation;
 * `resub : α → ρ → Option α` — the op (if any) to re-submit during the callback.
@@ -57,22 +60,19 @@ into the slab and append it to `submits`. `HState.drain` is exactly
   (`pendingSubmits`). None dropped, none reordered. The single-step
   `step_resubmit_live` shows the re-submitted op is retrievable from the slab
   the instant it is enqueued — no lost work item.
-* `handler_refines_reactor` — the inline drain observably equals the ground-truth
-  reactor's complete-then-consume: for an observer consumer, the inline log is
+* `handler_refines_reactor` — the inline drain observably equals this model's
+  one-shot reactor complete-then-consume path: for an observer consumer, the inline log is
   exactly the map of `obs` over the completions the reactor's `RState.complete`
   emits into `done`. The fast inline path delivers the same observation sequence
   as registering each completion in the reactor and consuming its `done` log.
 
-## Model-refines-Rust
+## Native correspondence boundary
 
-This is the SPEC; the running Rust `poll_dispatch` is its realization. The
-buffered path writes `CompletionEvent`s into a raw `events_out` array (the
-`List (Completion α ρ)` here); the inline path drains the completion queue
-straight through the handler trait, each callback holding a submitter it uses to
-re-issue I/O — the executable form of `HState.step`'s `Slab.remove` /
-`Slab.insert` / `log` fold, exactly as the buffer ring realizes
-`DN.Dataplane.Ring.RecycleOnce`. The inline drain realizes the running `uring.rs` / `kqueue.rs`
-consumer; the Rust remains the running form, this model the spec it refines.
+The fold equivalence and re-submit ordering are candidate specifications for a
+native terminal-completion drain. No refinement theorem currently connects the
+model to `poll_dispatch`, io_uring, or kqueue. Native integration must separately
+account for multishot continuation, cancellation/close races, token validation,
+and ownership of any buffers referenced by a completion.
 -/
 
 namespace DN.Dataplane.Io

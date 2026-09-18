@@ -61,9 +61,10 @@ theorem nearest?_le {l : List (κ × Nat)} {k : κ} {d : Nat}
       exact ⟨min e.2 t, by rw [nearest?_cons, ht], by omega⟩
 
 /-- The keyed deadline queue. `live` is the authoritative key → deadline
-map (unique keys by construction); `armed` is the deadline the single
-kernel timer is currently set for. `armed` may be *earlier* than every
-live deadline (a lazy-deletion tombstone's timer) — never later. -/
+map (unique keys by construction); `armed` records the deadline that the model
+requests for its single timer. This file does not model the syscall, an arm
+failure, or eventual timer delivery. `armed` may be *earlier* than every live
+deadline (a lazy-deletion tombstone's timer) — never later. -/
 structure DeadlineQueue (κ : Type u) where
   live : List (κ × Nat)
   armed : Option Nat
@@ -73,11 +74,12 @@ def DeadlineQueue.init : DeadlineQueue κ := ⟨[], none⟩
 
 /-- Events driving the queue. Time enters only as the `fire` input. -/
 inductive DeadlineEv (κ : Type u) where
-  /-- Set (insert or slide) key `k`'s deadline to `d`, re-arming the timer
-  if `d` is now the nearest. -/
+  /-- Set (insert or slide) key `k`'s deadline to `d`, updating the modeled
+  requested arm if `d` is now the nearest. -/
   | set (k : κ) (d : Nat)
-  /-- Remove key `k`. Lazy: the armed timer is *not* touched — if it was
-  armed for `k`'s deadline it will fire, find a tombstone, and re-arm. -/
+  /-- Remove key `k`. Lazy: the modeled arm is *not* touched. If the host later
+  supplies that fire event, it finds a tombstone and the model chooses a new
+  requested arm. -/
   | remove (k : κ)
   /-- The armed timer fires at instant `now` (the explicit time input). -/
   | fire (now : Nat)
@@ -98,16 +100,17 @@ def DeadlineQueue.step [DecidableEq κ] (s : DeadlineQueue κ) :
     ({ live := rest, armed := nearest? rest },
      (s.live.filter (fun e => e.2 ≤ now)).map Prod.fst)
 
-/-- **The no-oversleep invariant**: every live deadline has the timer
-armed at or before it. (In particular: live nonempty → a timer is armed.) -/
+/-- **The requested-arm ordering invariant**: every live deadline has an
+`armed` value at or before it. (In particular: live nonempty → the model records
+a requested arm.) This is not a syscall-success or timer-progress property. -/
 def DeadlineQueue.Inv (s : DeadlineQueue κ) : Prop :=
   ∀ k d, (k, d) ∈ s.live → ∃ t, s.armed = some t ∧ t ≤ d
 
 theorem DeadlineQueue.init_inv : (DeadlineQueue.init : DeadlineQueue κ).Inv :=
   fun _ _ h => absurd h (List.not_mem_nil)
 
-/-- **Preservation**: set, lazy remove, and fire all preserve
-no-oversleep. -/
+/-- **Preservation**: set, lazy remove, and fire all preserve requested-arm
+ordering. -/
 theorem DeadlineQueue.step_inv [DecidableEq κ] (s : DeadlineQueue κ)
     (e : DeadlineEv κ) (h : s.Inv) : (s.step e).1.Inv := by
   cases e with
@@ -183,9 +186,10 @@ theorem DeadlineQueue.fire_partitions [DecidableEq κ]
     simp only [step, List.mem_filter]
     exact ⟨hmem, by simp; omega⟩
 
-/-- **The wakeup is scheduled**: from the invariant — whenever any deadline
-is live, a kernel timer is armed at or before it. The reactor cannot sleep
-through a deadline. (Stated for the record; it *is* the invariant.) -/
+/-- **A sufficiently early arm is requested**: from the invariant, whenever a
+deadline is live the model's `armed` field is at or before it. This theorem does
+not establish that a kernel timer was successfully installed or that the host
+will eventually supply its `fire` event. -/
 theorem DeadlineQueue.wake_scheduled (s : DeadlineQueue κ) (h : s.Inv)
     (k : κ) (d : Nat) (hmem : (k, d) ∈ s.live) :
     ∃ t, s.armed = some t ∧ t ≤ d :=

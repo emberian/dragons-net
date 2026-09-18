@@ -10,19 +10,20 @@ docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
 
 namespace DN.Dataplane.Flow
 
-/-- Per-socket receive arming. -/
+/-- Per-socket receive arming in an unbounded sequential stream model. -/
 inductive RecvArming where
   /-- Delivery active: accumulated bytes flow to the handler. -/
   | armed
-  /-- Delivery suppressed: bytes park in the kernel buffer, the TCP window
-  closes, the peer slows. -/
+  /-- Delivery suppressed: bytes accumulate in the model's unbounded buffer. -/
   | parked
   deriving Repr, DecidableEq, Inhabited
 
 /-- Per-socket receive state, over an abstract byte type `α`.
 
 `arming` and `kernelBuf` are the operational state; `delivered` and
-`arrived` are ghost ledgers for the conservation theorem. -/
+`arrived` are ghost ledgers for the conservation theorem. This abstraction has
+no finite receive capacity, EOF/error, already-published completion, or
+cancel-versus-completion race. -/
 structure RecvConn (α : Type u) where
   /-- Is delivery armed or parked? -/
   arming : RecvArming
@@ -38,14 +39,14 @@ def RecvConn.init : RecvConn α := ⟨.armed, [], [], []⟩
 
 /-- Events driving one socket's receive path. -/
 inductive RecvEv (α : Type u) where
-  /-- The network deposits `data` into the kernel buffer. Never gated:
-  the kernel accepts regardless of arming (the window, not the arming
-  bit, is what eventually stops the peer). -/
+  /-- The environment deposits `data` into the model buffer. Never gated: this
+  sequential abstraction permits unbounded accumulation regardless of arming. -/
   | arrive (data : List α)
   /-- The kernel delivers up to `n` buffered bytes to the handler —
   only when armed. On a parked socket this is a no-op: the enforcement. -/
   | deliver (n : Nat)
-  /-- Park the socket (cancel receive): suppress delivery. -/
+  /-- Park the modeled stream: suppress later `deliver` transitions. This is a
+  mode change, not an OS cancellation protocol. -/
   | park
   /-- Resume the socket: re-arm delivery. -/
   | resume
@@ -109,9 +110,10 @@ theorem RecvConn.parked_deliver_noop (s : RecvConn α)
     s.step (.deliver n) = s := by
   simp [step, hp]
 
-/-- **Parking loses zero bytes.** Bytes arriving on a parked socket land in
-the kernel buffer verbatim — appended in order, nothing delivered, nothing
-dropped. (The buffer growth is what closes the TCP window.) -/
+/-- **Parking loses zero bytes in this unbounded model.** Bytes arriving on a
+parked stream land in the model buffer verbatim — appended in order, nothing
+delivered, nothing dropped. This theorem does not establish bounded native
+buffering or TCP-window behavior. -/
 theorem RecvConn.parked_arrive_accumulates (s : RecvConn α)
     (data : List α) :
     (s.step (.arrive data)).kernelBuf = s.kernelBuf ++ data ∧

@@ -5,6 +5,12 @@
 Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
 docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+
+The generated exports in this file are unchecked, caller-preconditioned research
+fixtures. They are printed directly with `ppFun`, outside `Checked.emit`, and are
+not general HTTP request parsers or safe public native interfaces. In particular,
+callers must satisfy the readable-input and writable-output spans documented on
+each emitter below.
 -/
 
 import DN.Compiler.ServeSlice
@@ -23,9 +29,12 @@ def bytesOf (bs : List (BitVec 8)) : List Nat := List.map (fun w => BitVec.toNat
 def storesInto (dst : String) (bs : List Nat) : List PStmt :=
   ((List.range bs.length).zip bs).map (fun p => PStmt.storeb (atOff (v dst) p.1) (n p.2))
 
-/-- Decode the request method token into the routing tag `method` the slice
-routes on. Only the allowed set {GET, POST, HEAD, OPTIONS} maps into {0,1,2,3};
-everything else stays `9` (routed to 405). -/
+/-- Research-fixture prefix routing into the tag `method`. This is not a method-token
+parser: it classifies any readable first byte `G`, `H`, or `O` as GET, HEAD, or
+OPTIONS, and any readable two-byte prefix `PO` as POST; it does not check the rest
+of the token or a following delimiter. The caller must provide at least one readable
+byte at `req`, and at least two when the first byte is `P`. Other readable prefixes
+remain `9` (routed to 405). -/
 def parseMethod : List PStmt :=
   [ .dec "method" (n 9)
   , .ite (eEq (.loadb (v "req")) (n 71))            -- 'G' → GET
@@ -40,9 +49,13 @@ def parseMethod : List PStmt :=
                       [ .assign "method" (n 9) ] ]
                   [ .assign "method" (n 9) ] ] ] ] ]
 
-/-- The routed serve as a C-callable `export fun serve(ctrl, req, len, out)`:
-decode the method, route on `method < 4`, store the selected serialized response
-into `out`, return its length. -/
+/-- The routed research fixture as a C-callable `export fun serve(ctrl, req, len,
+out)`: apply `parseMethod`'s prefix routing, store the selected serialized response
+into `out`, and return its length. `len` is presently ignored; it does not enforce
+the readable-span precondition. The caller must provide the readable request span
+required by `parseMethod` and a writable `out` span of at least `bs200.length` for
+a recognized prefix or `bs405.length` otherwise. `ctrl` is unused. This unchecked
+example is not a general HTTP implementation or a safe public ABI. -/
 def serveExport (bs200 bs405 : List Nat) : PFun :=
   { name := "serve", exported := true,
     params := [(1, "ctrl"), (1, "req"), (1, "len"), (1, "out")],
@@ -71,21 +84,27 @@ def be4 (cfgPtr : PExpr) : PExpr :=
                         (.loadb (atOff cfgPtr 2))) (n 256))
        (.loadb (atOff cfgPtr 3))
 
-/-- Read the config frame at `cfgPtr` and (only when a config is present, i.e. the
-4-BE `cfgLen ≠ 0`) set the toggle local `tog := config[0] = cfgPtr[4]`. When
-`cfgLen = 0` the toggle keeps the default the caller declared (0 = today's baked
-behaviour), so this fragment is a no-op on the empty frame. -/
+/-- Read the caller-preconditioned config fixture at `cfgPtr` and (only when a
+config is present, i.e. the 4-BE `cfgLen ≠ 0`) set the toggle local
+`tog := config[0] = cfgPtr[4]`. The caller must provide four readable bytes for the
+length prefix and a fifth readable byte whenever the decoded prefix is nonzero.
+This fragment has no actual-buffer-length input and does not validate that the
+embedded length fits the allocation. When `cfgLen = 0` the toggle keeps the default
+the caller declared (0 = today's baked behaviour). -/
 def readCfg (cfgPtr tog : String) : List PStmt :=
   [ .dec "clen" (be4 (v cfgPtr))
   , .ite (eEq (v "clen") (n 0))
       [ ]
       [ .assign tog (.loadb (atOff (v cfgPtr) 4)) ] ]
 
-/-- The config-reading serve as a C-callable `export fun serve_cfg(ctrl, req, len,
-out)`: decode the method (as `serveExport`), read the HSTS toggle from the config
-frame at `ctrl`, route on `method < 4`, and — in the 200 branch — pick `bs200`
-(toggle 0 / config absent = today) or `bs200Alt` (toggle nonzero). The 405 branch
-is config-independent. The response head is now a FUNCTION of the config frame. -/
+/-- The config-reading research fixture as a C-callable `export fun
+serve_cfg(ctrl, req, len, out)`: apply `parseMethod`'s prefix routing, read the HSTS
+toggle from the caller-preconditioned config frame at `ctrl`, and select a response.
+`len` is ignored. Besides `readCfg`'s config requirements, the caller must provide
+the request span required by `parseMethod` and a writable `out` span of at least the
+selected template length (`bs200.length`, `bs200Alt.length`, or `bs405.length`).
+No output capacity or config allocation length is passed or checked. This unchecked
+example is not a general HTTP implementation or a safe public ABI. -/
 def serveExportCfg (bs200 bs200Alt bs405 : List Nat) : PFun :=
   { name := "serve_cfg", exported := true,
     params := [(1, "ctrl"), (1, "req"), (1, "len"), (1, "out")],

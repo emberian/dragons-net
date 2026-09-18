@@ -224,7 +224,15 @@ region disjoint from the source, running `copySeg dst src len` lays those `len`
 bytes at consecutive BYTE addresses `[dst, dst+len)` (read back by `memLoadByte`),
 preserving every byte OUTSIDE `[dst, dst+len)` (the frame — so a previously-written
 region survives) and `memaddrs`/`be`. This is the packed-byte body copy, the last
-word-slot residual of the serialize chain, reproved in the faithful model. -/
+word-slot residual of the serialize chain, reproved in the faithful model.
+
+`copySeg` uses ordinary assignments, so it leaves scratch locals `"dst"`,
+`"src"`, `"i"`, and `"len"` overwritten; they are not lexically restored. The
+stated postcondition does not expose preservation of unrelated locals, `ffi`, or
+`baseAddr`, does not state exact clock consumption, and gives a byte-observation
+frame rather than word-level memory equality. Those properties may follow from
+the implementation but are deliberately not part of this theorem's contract.
+See `docs/reviews/compiler-assurance.md`. -/
 theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8) (len : Nat)
     (hlen63 : len < 2 ^ 63)
     (hdisj : ∀ i j, i < len → j < len →

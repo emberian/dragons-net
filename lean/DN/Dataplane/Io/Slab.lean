@@ -4,21 +4,22 @@ import DN.Dataplane.Ring.RecycleOnce
 /-!
 # DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, verified
 
-A completion reactor keys every in-flight operation by a small integer it hands
-to the kernel as the completion correlator (`user_data`). On completion the
-kernel echoes that integer back, and the reactor must map it to the operation
-that was submitted. The danger is **ABA**: a slot freed and reused between
-submit and completion would let a *stale* completion (referencing the previous
-occupant) be mistaken for the new one. The running reactors avoid this with a
-generation-tagged slab; here we make the safety a theorem.
+This file models the generation-tagged lookup used by a completion reactor. The
+danger is **ABA**: a slot freed and reused between submit and completion would
+let a stale key for the previous occupant select the new operation. The model
+proves rejection after an unbounded-`Nat` generation increment. Encoding such a
+key into a native completion word requires additional index, generation, and
+token-namespace bounds; `DN.Dataplane.Io.TokenBridge` supplies that checked
+seam.
 
 ## The model
 
 A `Slab` is a list of `Slot`s; each slot carries a `gen` (generation counter)
 and an optional `payload`. A `Key` is the reactor's correlator — an `(idx, gen)`
-pair. The kernel-facing scalar (a `u64` in the running reactor) packs the
-generation in the high half and the index in the low half; `Key.pack` /
-`Key.unpack` model that packing and `Key.unpack_pack` proves it round-trips.
+pair. `Key.pack` and `Key.unpack` define an arithmetic high-half/low-half
+encoding over `Nat`. `Key.unpack_pack` proves its arithmetic round trip when the
+index fits below `2^32`; by itself it does not prove that the packed value fits
+in 64 bits or is disjoint from the other completion-token namespaces.
 
 Operations:
 
@@ -45,14 +46,14 @@ correlator 0, so a real operation must never receive key index 0.
 * `slab_insert_idx_ne_zero` / `slab_index0_reserved` — the wakeup-sentinel index
   0 is never allocated and never names a live operation.
 
-## Model-refines-Rust
+## Native correspondence boundary
 
-This is the SPEC; the running Rust reactor's slot table is its realization. The
-`(gen, index)` key packing, the match-on-completion generation check, and the
-generation bump on free are the executable form of `Key.pack`, `Slab.get`, and
-`Slab.remove` here — exactly as the buffer ring realizes `DN.Dataplane.Ring.RecycleOnce`.
-The slab lifecycle *is* a lease: `insert` acquires, `remove` recycles, and
-`slab_no_double_remove` is `DN.Dataplane.Ring.recycle_at_most_once` read at the slot level.
+The stale-key and single-remove theorems are candidate specifications for a
+native slot table, but no refinement theorem currently connects this model to
+the Rust implementation. The active runtime also has finite machine fields and
+an exhaustion policy absent from this unbounded model. A native caller must use
+the checked token bridge rather than treating every `Key.pack` value as a valid
+`u64` correlator.
 -/
 
 namespace DN.Dataplane.Io
@@ -80,16 +81,16 @@ deriving DecidableEq, Repr
 /-- The generation shift: `2^32`, the boundary between the packed key's halves. -/
 def genShift : Nat := 4294967296
 
-/-- Pack a key into the kernel-facing scalar: generation in the high half,
-index in the low half (`(gen << 32) | idx`). -/
+/-- Arithmetic packing: generation in the high half and index in the low half.
+This returns `Nat`; native 64-bit and namespace validity are separate checks. -/
 def Key.pack (k : Key) : Nat := k.gen * genShift + k.idx
 
-/-- Unpack the scalar back into `(idx, gen)`. -/
+/-- Unpack the arithmetic scalar back into `(idx, gen)`. -/
 def Key.unpack (w : Nat) : Key := ⟨w % genShift, w / genShift⟩
 
-/-- The packing round-trips whenever the index fits the low half (as it does:
-indices are `u32`). This is why the reactor may carry the whole key in one
-kernel correlator word. -/
+/-- The arithmetic packing round-trips whenever the index fits the low half.
+This theorem places no bound on `gen` and therefore makes no standalone claim
+that the value fits a native word or avoids tagged token namespaces. -/
 theorem Key.unpack_pack (k : Key) (h : k.idx < genShift) : Key.unpack k.pack = k := by
   unfold Key.unpack Key.pack
   have hgt : 0 < genShift := by unfold genShift; omega

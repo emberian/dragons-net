@@ -14,7 +14,9 @@ We want strong claims about native behavior. The current evidence is deliberatel
 | Native differential and TCP checks | Recorded arithmetic/control cases agree across independent references; real connections exercise the generated copy kernel | General compiler preservation, a verified host, or optimized dataplane performance |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The current audit covers 7,016 declarations, including 2,978 theorem declarations and generated ones. It is a tripwire against unsound dependencies, not a measure of project completeness. The negative gate test deliberately introduces a foreign axiom into both a theorem and an isolated executable definition and checks rejection. The inventory gate detects a newly added module omitted from the audit.
+The current audit covers 7,022 declarations, including 2,982 theorem declarations and generated ones. It is a tripwire against unsound dependencies, not a measure of project completeness. The negative gate test deliberately introduces a foreign axiom into both a theorem and an isolated executable definition and checks rejection. The inventory gate detects a newly added module omitted from the audit.
+
+The [inherited-code review](reviews/README.md) distinguishes fixed maintained-path defects from documented integration blockers. Corrected source comments now match these assurance boundaries.
 
 ## Open proof connections
 
@@ -25,7 +27,7 @@ The current audit covers 7,016 declarations, including 2,978 theorem declaration
 5. **Host refinement.** The Rust primitives and preserved OS reactors are not connected by a refinement theorem to the Lean dataplane models. FFI and kernel behavior are assumptions to articulate, not erase.
 6. **Protocol and persistence.** NNTP semantics, article parsing, durable acceptance, and crash recovery are not implemented. The CRLF theorem concerns a delimiter counter, not a bounded parser.
 
-Inherited interfaces also deserve specification review. In particular, universal well-formedness conditions in `ProofProducing` can be too strong for programs requiring bound locals or valid memory. The new `Certificate` requires an inhabited precondition but does not retrofit every inherited proof. Fuel/clock bounds describe model execution, not elapsed CPU time.
+Inherited interfaces also deserve specification review. In particular, universal well-formedness conditions in `ProofProducing` are contradictory for the reviewed bound-local and memory-domain demonstrations on inhabited state types. `AssuranceChecks.lean` records that fact; these are not usable certificates. The new `Certificate` requires an inhabited precondition but does not retrofit every inherited proof. Fuel/clock bounds describe model execution, not elapsed CPU time.
 
 ## Reproducibility boundaries
 

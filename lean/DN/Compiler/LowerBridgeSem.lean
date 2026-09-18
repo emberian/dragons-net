@@ -393,10 +393,11 @@ theorem storesModel_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : Li
   have hh := hland (i, bs[i]!) hmem
   simpa using hh
 
-/-- **END-TO-END HEAD CORRECTNESS.** The EMITTED per-byte `st8` head `storesInto dst bs`
-lowers (parse-faithful `lower`, the SYNTACTIC half from `LowerBridge`) to a named model
-program `P`, and running `P` LANDS the bytes `bs` byte-addressed (the SEMANTIC half). So
-the printed `.pnk` response head is correct from emitted-syntax to landed-bytes. -/
+/-- **INTERNAL AST-TO-MODEL HEAD CORRECTNESS.** The per-byte `st8` AST
+`storesInto dst bs` lowers through the internal `lowerStmtsFold` function to a
+named model program `P`, and running `P` lands `bs` byte-addressed. This theorem
+does not mention pretty-printed bytes or the CakeML parser and therefore does not
+close the printed-source/parser bridge. See `docs/reviews/compiler-assurance.md`. -/
 theorem serve_head_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : List Nat)
     (s : PancakeState σ)
     (hbase : s.locals dst = some base)

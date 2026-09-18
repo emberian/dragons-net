@@ -326,10 +326,10 @@ theorem resolve_some {r : Reactor σ} {fd g : Nat} {st : σ}
     · rw [if_neg hg] at hres'
       simp at hres'
 
-/-- The sentinel never resolves: no live connection carries generation 0, so
-a 0-token cannot match.  (In the implementation, 0-tagged events are the
-reactor-internal ones that never cross the gap; the counter's skip-0 rule
-keeps this disjointness through wraparound.) -/
+/-- The sentinel never resolves in the unbounded-`Nat` model: no live connection
+carries generation 0, so a 0-token cannot match. The active Rust slab uses a
+`u64` generation and permanently retires a slot when increment would overflow;
+it does not rely on wraparound or a skip-0 rule. -/
 theorem resolve_zero {r : Reactor σ} (h : r.GWF) (fd : Nat) :
     r.resolve fd 0 = none := by
   unfold resolve
@@ -395,19 +395,21 @@ theorem resolve_same_incarnation {r : Reactor σ} (h : r.GWF) {fd g : Nat}
 /-! ### The wraparound assumption — this rank's one named axiom
 
 The counter above is `Nat`: it genuinely never repeats, and every theorem in
-this file is unconditional.  The implementation's counter is a 64-bit machine
-word advanced by wrapping increment (with the skip-0 rule).  The bridge is a
-**named assumption**, stated here as the explicit hypothesis `NoWrap` rather
-than a Lean `axiom`, so every use site is visible in a theorem's binders:
+this file is unconditional. The active Rust slab uses a 64-bit machine word and
+retires a slot permanently when `checked_add(1)` would overflow. The theorems
+below describe the narrower arithmetic bridge while the modeled counter remains
+below `2^64`; they do not yet model or refine that retirement transition. The
+bridge condition is an explicit hypothesis `NoWrap`, rather than a Lean
+`axiom`, so every use site is visible in a theorem's binders:
 
 > the process assigns fewer than `2^64 - 1` generations over its lifetime.
 
 Under `NoWrap` all assigned generations are below `2^64`, the mod-`2^64`
 projection (what the hardware compares) is injective on them, and the machine
 equality guard decides the model's equality (`guard_exact_of_noWrap`).
-`noWrap_of_run_length` discharges the assumption for any concrete run bound:
-a reactor would have to perform ~1.8 × 10^19 operations for the counters to
-collide. -/
+`noWrap_of_run_length` discharges the assumption for any concrete run bound.
+Native retirement avoids collision at exhaustion, but correspondence between
+that policy and this model remains to be proved. -/
 
 /-- The machine counter's modulus. -/
 def genBound : Nat := 2 ^ 64

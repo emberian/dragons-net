@@ -4,12 +4,12 @@ import DN.Dataplane.Io.Slab
 /-!
 # DN.Dataplane.Io.Reactor — the completion-queue reactor as a verified transition system
 
-A completion reactor is the beating heart of a multiplatform I/O engine: the
-client *submits* operations, the kernel later *completes* them (echoing back the
-correlator the client chose), and the reactor maps each completion to the
-operation it finishes and hands the result on. The running engines realize this
-over io_uring, kqueue, epoll, and IOCP; every safety property there lives in a
-`// SAFETY` comment, a fuzz target, or a loom test. Here it is a **theorem**.
+This file models the one-shot core of a completion reactor: the client *submits*
+an operation, the environment later supplies a completion carrying the chosen
+correlator, and the reactor maps a live correlator back to that operation. It
+does not model cancellation, close/EOF cleanup, multishot continuation, kernel
+queue behavior, or their races. Correspondence to a running OS adapter remains
+a separate obligation.
 
 ## The model
 
@@ -17,8 +17,8 @@ over io_uring, kqueue, epoll, and IOCP; every safety property there lives in a
 generation-tagged correlator of `DN.Dataplane.Io.Slab`) and a `done` list — the emitted
 completions, newest first. The transitions are ordinary functions (the reactor
 is deterministic given the kernel's completion events; the *demonic* freedom —
-which completions arrive, in which order, with stale correlators — is exactly the
-`Action` sequence the environment supplies):
+which one-shot completions arrive, in which order, with stale correlators — is
+represented by the sequence of calls to these transitions):
 
 * `submit op` — register `op` in the slab, returning a fresh correlator key;
 * `complete k res` — look the key up; on a **live** slot remove it and emit one
@@ -44,22 +44,24 @@ which completions arrive, in which order, with stale correlators — is exactly 
   same `(op, result)` completion as register-then-complete (the fast path is
   observationally the slow path).
 
-## Composition with the buffer lease
+## Relation to the buffer-lease model
 
-The slab lifecycle *is* a lease: `submit` = acquire, `complete` = recycle.
+Within this one-shot abstraction, the slab lifecycle has a lease-like shape:
+`submit` = acquire, `complete` = recycle.
 `no_double_completion` is `Slab.slab_no_double_remove` lifted to the reactor,
 which is itself the slab-level reading of `DN.Dataplane.Ring.recycle_at_most_once` — the
-proven recycle-exactly-once discipline under demonic interleaving. The reactor
-inherits that discipline: no in-flight op is ever completed twice.
+at-most-once half of the ring discipline. There is currently no product model
+coupling operation termination to buffer ownership, and no cancellation or
+multishot transition here.
 
-## Model-refines-Rust
+## Native correspondence boundary
 
-This is the SPEC; the running Rust reactors are its realization. The
-match-on-completion correlator lookup, the reject-stale branch, the single
-completion push, and the inline fast path are the executable form of `complete`,
-`Slab.get`, and `inline` here — exactly as `bufring.rs` realizes
-`DN.Dataplane.Ring.RecycleOnce`. The Rust remains the running form; this model is the
-specification it refines.
+The correlator lookup, stale-key rejection, and single completion push are
+candidate specifications for corresponding Rust paths. No refinement theorem
+currently connects this model to a running reactor. In particular, native
+cancellation, multishot completion, operation ownership, and the inline
+sentinel representation require a larger model before this file can support
+whole-reactor safety claims.
 -/
 
 namespace DN.Dataplane.Io

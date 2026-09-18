@@ -89,6 +89,7 @@ def wrapOperand (parentOp : POp) (child : PExpr) (s : String) : String :=
 def wrapAtom (child : PExpr) (s : String) : String :=
   match child with
   | .binop _ _ _ => "(" ++ s ++ ")"
+  | .loadw _ _ | .loadb _ => "(" ++ s ++ ")"
   | _ => s
 
 /-- The expression pretty-printer. All recursive calls are on strict subterms
@@ -537,4 +538,3 @@ def regression_549 : Bool := decide ((ppFun boundscanExport).take 12 == "export 
   )
 
 end DN.Compiler.Syntax
-

@@ -197,13 +197,16 @@ theorem emit_correct_generic (o : Oracle σ) :
       show Refines o (.cond e (emit s1) (emit s2)) (fun s => if g s then denote s1 s else denote s2 s)
       exact refines_cond o g hg (emit_correct_generic o s1 w1) (emit_correct_generic o s2 w2)
 
-/-! ### Non-vacuity witness: a two-stage serve compiled generically
+/-! ### Inherited two-stage demonstration (quarantined contract)
 
 A concrete serve of two stage-kinds — a memory-write STORE followed by an
 ASSIGN publishing a result word — assembled as a `Stage`, shown well-formed from
-the §1 primitive lemmas, and thus emit-correct by `emit_correct_generic`. The
-denotation is a genuine non-identity state-transformer (writes memory AND a
-local), so this is a real refinement, not `P → P`. -/
+the §1 primitive lemmas, and thus emit-correct by `emit_correct_generic` under
+its stated hypotheses. Those hypotheses quantify a bound local and memory-domain
+membership over *every* `PancakeState` and are contradictory (instantiate states
+with an empty locals map or empty memory domain). Therefore this theorem is an
+inherited API-shape demonstration, not an applicable or non-vacuous certificate.
+See `DN.Compiler.AssuranceChecks` and `docs/reviews/compiler-assurance.md`. -/
 
 /-- Stage 1: store the constant `w` at the address held in local `"slot"`. -/
 def demoStore (w : Word) : Prim σ :=
@@ -221,9 +224,9 @@ def demoPublish : Prim σ :=
 def demoServe (w : Word) : Stage σ :=
   .seq (.prim (demoStore w)) (.prim demoPublish)
 
-/-- The demo serve is emit-correct: the emitted `Store; Assign` computes exactly
-the composed transformer (write memory, then publish `result = 1`). Discharges
-`WF` from the §1 primitive refinements. -/
+/-- Conditional theorem for the inherited demo shape. Its `hslot` and `hin`
+premises are universally quantified over all states and cannot be inhabited;
+do not cite it as evidence for a usable compiled component. -/
 theorem demoServe_emit_correct (o : Oracle σ) (w : Word) (slotAddr : Word)
     (hslot : ∀ s : PancakeState σ, s.locals "slot" = some slotAddr)
     (hin : ∀ s : PancakeState σ, s.memaddrs slotAddr = true) :

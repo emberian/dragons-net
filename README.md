@@ -10,6 +10,8 @@ The proposed path is **Lean specifications and proofs → Pancake → CakeML →
 
 **Today this is working compiler infrastructure, models, and a generated-code TCP echo server. It is not yet an NNTP server or an end-to-end verified executable.**
 
+The [inherited-code review](docs/reviews/README.md) records confirmed defects, fixes, and the ownership/proof work required before porting the old reactors.
+
 Start with [Wisper’s compiler baseline](docs/baseline.md): what is exercised, the two native boundary bugs it exposed, and what remains to establish.
 
 ## What’s here
@@ -26,7 +28,7 @@ Start with [Wisper’s compiler baseline](docs/baseline.md): what is exercised, 
 | [Migration sources](migration/dataplane/README.md) | The original native host, FFI, and performance tooling preserved for extraction. These are reference sources, outside the active build. |
 | [News](lean/DN/News/Framing.lean) | A CRLF framing specification seed with a chunk-boundary theorem. Command parsing, article storage, peering, and a human UI remain to be built. |
 
-The current Lean audit checks all 7,016 imported `DN` declarations, including 2,978 theorem declarations, for unapproved transitive axioms. Separately, 434 executable examples exercise the inherited compiler and dataplane models. These counts describe coverage, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md).
+The current Lean audit checks all 7,022 imported `DN` declarations, including 2,982 theorem declarations, for unapproved transitive axioms. Separately, 434 executable examples exercise the inherited compiler and dataplane models. These counts describe coverage, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md).
 
 ## Build and check
 

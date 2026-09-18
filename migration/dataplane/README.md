@@ -19,6 +19,10 @@ The full host source is retained because its internals are coupled; a thin selec
 
 The entire old orb product was not moved into the active project. All 45 compiler source modules were carried forward, plus reusable dataplane proofs and eight concurrency models. The remaining protocol-specific Lean application and its old deployment environment are not prerequisites for the current build. Source repositories remain untouched.
 
+## Review gate before porting
+
+The [native integration review](../../docs/reviews/native-integration.md) records blocking static migration risks around proxy timeout lifetimes, reusable-slot worker replies, and buffer-ring shutdown, plus lease and capacity gaps. The [triage](../../docs/reviews/README.md) specifies the required identity and lifecycle work. The current echo host does not use these implementations. Preserve this snapshot; repair and test an extracted adapter in active code.
+
 ## First port
 
 Build one real TCP receive/respond loop with bounded buffers and explicit ownership transitions. Add partial-write, cancellation, stale-completion, and disconnect tests before reusing the fast path for NNTP. Identify the exact native call path exercised by each integration test. Compare it with the relevant model instead of assuming source similarity supplies a proof.

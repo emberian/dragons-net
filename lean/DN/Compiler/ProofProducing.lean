@@ -16,6 +16,19 @@ open DN.Compiler DN.Compiler.Region DN.Compiler.Compose
 
 variable {σ : Type}
 
+/-! ## Assurance quarantine
+
+The loop-free `WF`/`Refines` interface below quantifies over every model state.
+Several inherited demonstrations later in this file discharge bound-local and
+memory-domain reads using premises of the form `∀ s, ...`. Such premises are
+contradictory because `PancakeState` also contains states with empty locals or an
+empty memory domain. Consequently the affected `redirectStatusStage`,
+`httpStamp`, and `crlfStamp` results are API/automation demonstrations only, not
+usable certificates. `DN.Compiler.AssuranceChecks` records the contradictions;
+the repair is a precondition-indexed interface such as `Certificate`/`RefinesClk`.
+See `docs/reviews/compiler-assurance.md`. Definitions and proofs are retained
+here only as inherited research material. -/
+
 /-! ## 1. Smart constructors for verified primitive leaves
 
 Each smart constructor builds a `Prim` whose `prog` and `den` are in the exact
@@ -79,10 +92,11 @@ theorem wf_store (o : Oracle σ) (dst src : PancakeExp) (addr val : PancakeState
 /-- WF for a BYTE-STORE leaf: given the address and source evaluate and the
 ALIGNED destination is in the model's address domain, the emitted `StoreByte`
 refines the single aligned byte-update `putByteMem`. This is `refines_store`'s
-byte analog; the `hin` premise is the per-slot memory-domain precondition that
-`wf_auto` must discharge for every byte of a write region. NON-VACUOUS: the
-post-state's memory is pinned to the `mem_store_byte` image (`evaluate_storeByte`
-threads `w2w = setWidth 8`), not a tautology. -/
+byte analog; the `hin` premise is the per-slot memory-domain condition that
+`wf_auto` attempts to discharge for every byte of a write region. For the
+unrestricted `WF` interface that universal premise is contradictory. The
+conditional conclusion does pin memory to the `mem_store_byte` image, but this
+does not supply an inhabited caller contract. -/
 theorem wf_storeByte (o : Oracle σ) (dst src : PancakeExp) (adr val : PancakeState σ → Word)
     (haddr : ∀ s, eval s dst = some (adr s)) (hval : ∀ s, eval s src = some (val s))
     (hin : ∀ s : PancakeState σ, s.memaddrs (byteAlign (adr s)) = true) :
@@ -124,7 +138,9 @@ contract). `simp_all` also discharges word-`memaddrs` in-range side-conditions
 from a context hypothesis when present.
 
 STORE-BYTE leaves (`apply wf_storeByte`) additionally emit an ALIGNED per-slot
-memory-domain goal `∀ s, s.memaddrs (byteAlign (base s + i)) = true`. Phase 2
+memory-domain goal `∀ s, s.memaddrs (byteAlign (base s + i)) = true`. This
+universal premise is contradictory for the unrestricted state type; the lemma
+is retained only as a conditional constructor rule. Phase 2
 closes it from a SINGLE base-region-in-domain hypothesis on the stage, of shape
 `∀ s k, k < N → s.memaddrs (byteAlign (base s + BitVec.ofNat 64 k)) = true`, via
 `memaddrs_of_region` chained on each concrete literal slot `i` (the `i < N`
@@ -219,7 +235,8 @@ both agree at `308`; the domain is `{0,1,2,3}` since `Code` has 4 constructors.
 guard `code < k` is data-dependent, so its obligation needs the input-scoping
 fact `hcode : ∀ s, s.locals "code" = some (codeVal s)` — the A0 input contract,
 the same hypothesis C17's `redirectRel` carries. Given it, `wf_auto` produces the
-whole certificate. -/
+whole conditional `WF` derivation. The universal premise is uninhabited, as
+recorded in the assurance quarantine above. -/
 
 /-- The redirect status stage, in the loop-free grammar: nested `cond` over
 `code < 1 / < 2 / < 3` with the four status-constant `assign` leaves. The guard
@@ -234,22 +251,24 @@ def redirectStatusStage (codeVal : PancakeState σ → Word) : Stage σ :=
         (.prim (assignPrim "result" (.const 307) (fun _ => 307)))
         (.prim (assignPrim "result" (.const 308) (fun _ => 308)))))
 
-/-- `wf_auto` discharges the real stage's `WF` given ONLY the input-scoping
-precondition (the `code` local is bound — the A0 contract). No hand proof. -/
+/-- `wf_auto` discharges the inherited stage's conditional `WF` from the stated
+universal input-scoping premise. That premise is contradictory for unrestricted
+`PancakeState`; this is an automation demonstration, not a caller contract. -/
 theorem redirectStatusStage_wf (o : Oracle σ) (codeVal : PancakeState σ → Word)
     (hcode : ∀ s : PancakeState σ, s.locals "code" = some (codeVal s)) :
     WF o (redirectStatusStage codeVal) := by
   wf_auto
 
-/-- CERTIFICATE, AUTO-PRODUCED for the real redirect stage: `emit` refines
-`denote`, WF discharged by `wf_auto` modulo the single named input contract. -/
+/-- Conditional refinement for the inherited redirect-stage shape. The stated
+universal `hcode` premise is contradictory, so this is not an applicable
+certificate for a caller state. -/
 theorem redirectStatusStage_cert (o : Oracle σ) (codeVal : PancakeState σ → Word)
     (hcode : ∀ s : PancakeState σ, s.locals "code" = some (codeVal s)) :
     Refines o (emit (redirectStatusStage codeVal)) (denote (redirectStatusStage codeVal)) :=
   emit_correct_generic o _ (redirectStatusStage_wf o codeVal hcode)
 
-/-- The proof-producing form on the real stage: translating returns code +
-certificate, WF auto-produced. -/
+/-- Subtype packaging of the same conditional inherited result. Its universal
+`hcode` premise is contradictory; this is not a usable proof-producing API. -/
 def redirectStatusStage_translated (o : Oracle σ) (codeVal : PancakeState σ → Word)
     (hcode : ∀ s : PancakeState σ, s.locals "code" = some (codeVal s)) :
     { p : PancakeProg // Refines o p (denote (redirectStatusStage codeVal)) } :=
@@ -469,11 +488,12 @@ theorem byteRegion_wf (o : Oracle σ) (base : PancakeState σ → Word) (baseE :
       · exact byteRegion_wf o base baseE hbase (off + 1) bs
           (fun s k hk => hregion s k (by simp only [List.length_cons]; omega))
 
-/-! ### NON-VACUITY: the region's denotation genuinely writes the bytes
+/-! ### Denotation computation (not a non-vacuity witness)
 
-`byteLeaf`'s denotation writes the low byte of `b` at the ALIGNED slot address
-via `setByte` — the `mem_store_byte` image, NOT the identity. With the certificate
-(`… _cert`), the COMPILED machine run at that slot equals this Lean byte-write. -/
+`byteLeaf`'s denotation writes the low byte of `b` at the aligned slot address
+via `setByte`. This establishes that the declared denotation is non-identity; it
+does not make later universally-premised `WF` results inhabitable and says
+nothing about compiled machine execution. -/
 theorem byteLeaf_writes (base : PancakeState σ → Word) (baseE : PancakeExp)
     (off : Nat) (b : Word) (s : PancakeState σ) :
     (denote (byteLeaf base baseE off b) s).memory (byteAlign (base s + BitVec.ofNat 64 off))
@@ -483,12 +503,12 @@ theorem byteLeaf_writes (base : PancakeState σ → Word) (baseE : PancakeExp)
 
 /-! ### DEMO D — `httpStamp`, a 4-byte-write stage AUTO-COMPILED via the region
 
-`httpStamp` stamps the ASCII bytes of `"HTTP"` into `buf[0..3]`. `httpStamp_wf`
-produces its WF with the region discharger — no hand steps, one region hypothesis
-— and `httpStamp_cert` is the AUTO-PRODUCED certificate that the emitted 4×
-`StoreByte` program refines the 4-fold byte-write denotation. NON-VACUOUS:
-`denote` is the concrete `putByteMem` chain (`byteLeaf_writes`), and the cert pins
-the compiled run to it. -/
+`httpStamp` describes stamping the ASCII bytes of `"HTTP"` into `buf[0..3]`.
+`httpStamp_wf` demonstrates region-discharge automation, but its universal local
+and memory-domain premises are contradictory. Accordingly `httpStamp_cert` is a
+conditional inherited theorem, not evidence for an executable caller or compiled
+machine run. The denotation itself is the concrete `putByteMem` chain
+(`byteLeaf_writes`). -/
 
 /-- "HTTP": the 4-byte constant marker (ASCII `H T T P`). -/
 def httpBytes : List Word := [0x48, 0x54, 0x54, 0x50]
@@ -509,8 +529,9 @@ theorem httpStamp_wf (o : Oracle σ) (bufVal : PancakeState σ → Word)
     (fun s => by simp only [eval, hbuf s]) 0 httpBytes
     (fun s k hk => hregion s k hk)
 
-/-- CERTIFICATE, AUTO-PRODUCED for the byte-write stage: the emitted 4× `StoreByte`
-program refines the 4-fold byte-write denotation, WF via the region discharger. -/
+/-- Conditional refinement for the inherited byte-write stage. Its universal
+`hbuf` and `hregion` premises are contradictory, so it is not a usable
+certificate. -/
 theorem httpStamp_cert (o : Oracle σ) (bufVal : PancakeState σ → Word)
     (hbuf : ∀ s : PancakeState σ, s.locals "buf" = some (bufVal s))
     (hregion : ∀ (s : PancakeState σ) (k : Nat), k < 4 →
@@ -518,8 +539,8 @@ theorem httpStamp_cert (o : Oracle σ) (bufVal : PancakeState σ → Word)
     Refines o (emit (httpStamp bufVal)) (denote (httpStamp bufVal)) :=
   emit_correct_generic o _ (httpStamp_wf o bufVal hbuf hregion)
 
-/-- The proof-producing form: translating the byte-write stage returns code +
-certificate, WF auto-produced from the two data hypotheses. -/
+/-- Subtype packaging of the same conditional inherited result. The universal
+premises are contradictory; callers cannot construct this as a certificate. -/
 def httpStamp_translated (o : Oracle σ) (bufVal : PancakeState σ → Word)
     (hbuf : ∀ s : PancakeState σ, s.locals "buf" = some (bufVal s))
     (hregion : ∀ (s : PancakeState σ) (k : Nat), k < 4 →
@@ -529,10 +550,11 @@ def httpStamp_translated (o : Oracle σ) (bufVal : PancakeState σ → Word)
 
 /-! ### DEMO E — the `wf_auto` TACTIC on a concrete byte-write stage
 
-To exercise the EXTENDED `wf_auto` (§3) end-to-end, `crlfStamp` is a 2-byte-write
-stage written as an explicit `seq` tree. `wf_auto` decomposes it, fires
+To exercise the extended `wf_auto` tactic internally, `crlfStamp` is a
+2-byte-write stage written as an explicit `seq` tree. `wf_auto` decomposes it, fires
 `wf_storeByte` at each leaf, and discharges each slot's domain goal via the new
-`memaddrs_of_region` branch — a bare `wf_auto`, no hand steps. -/
+`memaddrs_of_region` branch — a bare `wf_auto`, no hand steps. Its universal
+premises remain contradictory, so this is not an end-to-end certificate. -/
 
 /-- A concrete 2-byte-write stage: stamp CRLF (`0x0D 0x0A`) into `buf[0..1]`. -/
 def crlfStamp (bufVal : PancakeState σ → Word) : Stage σ :=
@@ -548,7 +570,8 @@ theorem crlfStamp_wf (o : Oracle σ) (bufVal : PancakeState σ → Word)
     WF o (crlfStamp bufVal) := by
   wf_auto
 
-/-- Certificate for the tactic-compiled byte-write stage. -/
+/-- Conditional inherited refinement; contradictory universal premises make it
+inapplicable as a certificate. -/
 theorem crlfStamp_cert (o : Oracle σ) (bufVal : PancakeState σ → Word)
     (hbuf : ∀ s : PancakeState σ, s.locals "buf" = some (bufVal s))
     (hregion : ∀ (s : PancakeState σ) (k : Nat), k < 2 →

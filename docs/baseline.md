@@ -2,6 +2,8 @@
 
 The compiler has a useful, executable core. It also has a large inherited body of model proofs and examples whose names can suggest more integration than exists. Treat those as two different levels of evidence. The maintained baseline now exercises real code generation, a documented C ABI, and a small TCP service; it is not a certification of every inherited compiler feature.
 
+The follow-up [four-reviewer audit and triage](reviews/README.md) fixes a nested-load printer bug and CI failure-propagation hole, and identifies concrete inherited contracts and lifecycle gaps. Read it before extending or porting the preserved modules.
+
 ## Reproduce the baseline
 
 On Linux x86-64, install the prerequisites from the root README, then run:
@@ -18,9 +20,10 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build and axiom audit | Every imported `DN` declaration, including executable definitions; 7,016 declarations, including 2,978 theorems at this baseline | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build and axiom audit | Every imported `DN` declaration, including executable definitions; 7,022 declarations, including 2,982 theorems at this baseline | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Inherited examples | 434 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
+| Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 192 cases: locals, branches, assignments, loops, and early return | One structured control workload |
 | Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 20,928 cases | Shared assumptions about the intended word semantics still need review |
 | ABI adapter | Full-word output slots checked in the model and native execution, with native guard words | Output pointer alignment, writability, and disjointness are caller obligations |
@@ -60,7 +63,7 @@ An unapproved axiom inside a `DN` definition could previously escape if no audit
 
 **Reusable model results:** `Semantics`, `Region`, `Clock`, `Bytes`, `ByteCopy`, `Certificate`, and the dataplane models. The emitted echo loop lowers definitionally to `ByteCopy.copyByteWhile`, the loop used by the existing copy proof. The wrapper/host/native path still needs a complete refinement argument. Clocks represent model fuel, not CPU time.
 
-**Inherited research/compiler workloads:** `Stage*`, `Serve*`, serializers, structure emitters, and `ProofProducing`. They compile, participate in the axiom audit, and retain their examples. They do not all have native integration tests or useful inhabited caller contracts. The universal-state well-formedness assumptions in `ProofProducing` especially need redesign before serving as a public compiler interface. We have not reviewed every line of those modules.
+**Inherited research/compiler workloads:** `Stage*`, `Serve*`, serializers, structure emitters, and `ProofProducing`. They compile, participate in the axiom audit, and retain their examples. They do not all have native integration tests or useful inhabited caller contracts. The data-dependent universal-state well-formedness assumptions in `ProofProducing` have now been proved contradictory for states with an inhabited FFI type; the affected demonstrations are quarantined until the interface is indexed by useful preconditions. We have not reviewed every line of those modules.
 
 **Preserved source:** `migration/dataplane` is still a reference snapshot. The echo host is new, small, and uses `poll`; it does not activate the old io_uring/kqueue product or prove correspondence to the abstract concurrency models.
 

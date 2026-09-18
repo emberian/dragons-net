@@ -1,5 +1,6 @@
 -- Import inventory checked by scripts/check_structure.py.
 import DN.Compiler.Abi
+import DN.Compiler.AssuranceChecks
 import DN.Compiler.Baseline
 import DN.Compiler.BoundaryTests
 import DN.Compiler.Checked
@@ -65,6 +66,7 @@ import DN.Dataplane.Io.CompletionHandler
 import DN.Dataplane.Io.Deadline
 import DN.Dataplane.Io.Reactor
 import DN.Dataplane.Io.Slab
+import DN.Dataplane.Io.TokenBridge
 import DN.Dataplane.Io.Wake
 import DN.Dataplane.Ring.Basic
 import DN.Dataplane.Ring.Conservation

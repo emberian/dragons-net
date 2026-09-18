@@ -82,8 +82,14 @@ inductive FFIResult (σ : Type)
   | final (outcome : FinalEvent)
   | ret   (newState : σ) (newBytes : List (BitVec 8))
 
-/-- The FFI oracle = A0 (the pre-existing FFI contract, an EXPLICIT trusted
-assumption, NOT a `sorry`). `call ffi name conf array` models
+/-- The FFI oracle = A0 (the pre-existing FFI boundary, an EXPLICIT trusted
+assumption, NOT a `sorry`). This raw type imposes no relationship between the
+input `array` length and `FFIResult.ret.newBytes`; in particular, an arbitrary
+`Oracle` may return more bytes than the declared `ExtCall` array length. Any
+memory-frame theorem for an external call must add the backend FFI length
+invariant explicitly. See `docs/reviews/compiler-assurance.md`.
+
+`call ffi name conf array` models
 `call_FFI s.ffi (ExtCall name) conf array`. For the region primitive this is the
 `load_vec` / `report_vec` driver: the arena-encoding oracle. -/
 structure Oracle (σ : Type) where
@@ -350,7 +356,9 @@ def PancakeSem (oracle : Oracle σ) : PancakeProg → PancakeState σ →
     | _, _ => (some .error, s)
   | .extCall name cptr clen aptr alen, s =>
     -- `ExtCall`: read conf=[clen bytes @cptr], arr=[alen bytes @aptr], call the
-    -- oracle (A0), write new bytes back @aptr. (panSem names the four evals
+    -- oracle (A0), write ALL returned bytes back @aptr. The raw Oracle type does
+    -- not guarantee returned length = alen; confinement requires an additional
+    -- FFI contract. (panSem names the four evals
     -- sz1/ad1/sz2/ad2; read_bytearray sz1 (w2n ad1) = addr cptr, count clen.)
     match eval s cptr, eval s clen, eval s aptr, eval s alen with
     | some cp, some cl, some ap, some al =>

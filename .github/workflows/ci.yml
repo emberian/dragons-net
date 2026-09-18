@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
@@ -19,6 +23,12 @@ jobs:
       LEAN_NUM_THREADS: 4
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify pipeline failures cannot be hidden by logging
+        run: |
+          if (exit 23) | tee /dev/null; then
+            echo 'CI shell failed to propagate a failing pipeline' >&2
+            exit 1
+          fi
       - name: Install pinned Lean manager
         run: |
           python3 scripts/bootstrap_tool.py elan
@@ -52,6 +62,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify pipeline failures cannot be hidden by logging
+        run: |
+          if (exit 23) | tee /dev/null; then
+            echo 'CI shell failed to propagate a failing pipeline' >&2
+            exit 1
+          fi
       - name: Bounded interleaving exploration
         run: |
           mkdir -p build/evidence

@@ -14,6 +14,8 @@ custom axioms, native_decide, build-time IO, or weaken a theorem to make it gree
 An inhabited precondition still needs review for semantic adequacy.
 
 Read docs/baseline.md before modifying the maintained compiler subset.
+Read docs/reviews/README.md before reusing inherited compiler or reactor code;
+its unresolved identity/lifetime/contract obligations are not covered by green CI.
 The native lane is Linux x86-64. Run bash scripts/check_all.sh for the complete
 baseline, including differential compilation and actual TCP echo. It executes real generated code with no fallback.
 The backend proof lane is separate and pinned in backend/lock.json. Never infer a

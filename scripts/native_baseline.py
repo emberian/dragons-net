@@ -78,9 +78,13 @@ def main():
         raise RuntimeError("Lean/Python control-flow disagreement")
     (out / "probes.pnk").write_text(fixture["source"])
     names = [f"dn_probe_{i}" for i in range(len(cases))] + ["dn_control"]
+    nested = fixture["nested_load_expected"]
+    if nested != [0xef, 0xef, 0x0123456789abcdef, 0x0123456789abcdef]:
+        raise RuntimeError("nested-load model disagrees with independent memory fixture")
     driver = '#include "cake_runtime.h"\n#include <inttypes.h>\n'
     driver += "\n".join(f"extern uint32_t {name}(uint64_t,uint64_t,uint64_t);" for name in names)
     driver += "\nstatic uint32_t (*functions[])(uint64_t,uint64_t,uint64_t) = {" + ",".join(names) + "};\n"
+    driver += "extern uint32_t dn_nested_1(uint64_t,uint64_t), dn_nested_3(uint64_t,uint64_t);\n"
     driver += r'''
 int main(void) {
     dn_runtime_init();
@@ -100,7 +104,18 @@ int main(void) {
         ++cases;
     }
     if (read != EOF) return 2;
-    printf("{\"differential_cases\":%zu}\n",cases);
+    uint64_t cell = 0x0123456789abcdefULL, pointer = (uintptr_t)&cell;
+    uint64_t output[3] = {0xcafebabefeedfaceULL, 0, 0x0123456789abcdefULL};
+    uint32_t (*nested[])(uint64_t,uint64_t) = {dn_nested_1, dn_nested_3};
+    for (size_t i = 0; i < 2; ++i) {
+        uint32_t status = nested[i]((uintptr_t)&pointer, (uintptr_t)&output[1]);
+        uint64_t expected = i == 0 ? cell & 255 : cell;
+        if (status || output[1] != expected || output[0] != 0xcafebabefeedfaceULL ||
+            output[2] != 0x0123456789abcdefULL) {
+            fputs("native nested-load mismatch\n", stderr); return 1;
+        }
+    }
+    printf("{\"differential_cases\":%zu,\"nested_load_native_cases\":2}\n",cases);
     return 0;
 }
 '''
@@ -125,8 +140,9 @@ int main(void) {
     if result.returncode:
         raise RuntimeError(result.stderr)
     measured = json.loads(result.stdout)
-    if measured["differential_cases"] != len(expected) * len(values):
+    if measured["differential_cases"] != len(expected) * len(values) or measured["nested_load_native_cases"] != 2:
         raise RuntimeError("incomplete native probe execution")
+    measured["nested_load_parser_cases"] = len(nested)
     compile_source("echo")
     link("echo-check", ROOT / "native/echo_check.c", out / "echo.S")
     measured.update(json.loads(subprocess.check_output([str(out / "echo-check")], timeout=30)))
@@ -144,7 +160,9 @@ int main(void) {
         raise RuntimeError("copy test did not detect the deliberately removed store")
     link("dn-echo", ROOT / "native/echo_server.c", out / "echo.S")
     network = subprocess.run([sys.executable, str(ROOT / "tests/echo_integration.py"),
-                              str(out / "dn-echo")], check=True, capture_output=True, text=True, timeout=90)
+                              str(out / "dn-echo")], capture_output=True, text=True, timeout=90)
+    if network.returncode:
+        raise RuntimeError(f"TCP integration failed:\n{network.stdout}\n{network.stderr}")
     measured["network"] = json.loads(network.stdout)
     report = {"status": "native-tested", "assurance": "bounded differential and integration tests, not a whole compiler proof",
               "platform": platform.platform(), "compiler_sha256": digest(cake),

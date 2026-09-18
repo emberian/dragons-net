@@ -52,9 +52,31 @@ def control : PFun :=
           [.dec "temp" (eMul (v "acc") (n 3)), .assign "acc" (eAdd (v "temp") (n 1))],
         .assign "i" (eAdd (v "i") (n 1))], .ret (v "acc")] }
 
+/-- All load-address nesting pairs must parse. The two inner-byte cases are
+parser/model tests only: their absolute 8-bit result is not a usable native
+userspace pointer. Inner-word cases also execute against real pointer cells. -/
+def nestedLoads : List PExpr :=
+  [.loadb (.loadb (v "p")), .loadb (.loadw 1 (v "p")),
+   .loadw 1 (.loadb (v "p")), .loadw 1 (.loadw 1 (v "p"))]
+
+def nestedFunctions : List PFun := nestedLoads.zipIdx |>.map (fun (e, i) =>
+  { name := "dn_nested_" ++ toString i, exported := true,
+    params := [(1,"p")], body := [.ret e] })
+
+def nestedState : PancakeState Unit :=
+  { locals := fun x => if x == "p" then some 0 else none,
+    memory := fun p => if p == 0 then 8 else if p == 8 then 0x0123456789ABCDEF else 0,
+    memaddrs := fun p => p == 0 || p == 8 || p == 16,
+    be := false, clock := 0, ffi := (), baseAddr := 0 }
+
 def fixture : Except String Json := do
   let wrapped := (functions ++ [control]).map Abi.wordResult
   let sources ← (functions ++ [control]).mapM Abi.emitWord
+  let memorySources ← nestedFunctions.mapM Abi.emitWord
+  let memoryExpected ← nestedLoads.mapM fun e => do
+    let some lowered := lowerExp e | throw "nested load does not lower"
+    let some value := eval nestedState lowered | throw "nested model load failed"
+    pure value.toNat
   let cases ← expressions.mapM fun e => do
     let some lowered := lowerExp e | throw "fixture does not lower"
     let expected ← values.mapM fun (a,b) => do
@@ -82,8 +104,9 @@ def fixture : Except String Json := do
         | throw "original did not return"
       unless result == some (.return_ 0) && final.memory 16 == expected do
         throw "ABI model output-slot mismatch"
-  return Json.mkObj [("source", toJson (String.join sources)),
+  return Json.mkObj [("source", toJson (String.join (sources ++ memorySources))),
     ("values", toJson (values.map (fun (a,b) => [a,b]))),
-    ("cases", toJson cases), ("control", toJson controls)]
+    ("cases", toJson cases), ("control", toJson controls),
+    ("nested_load_expected", toJson memoryExpected)]
 
 end DN.Compiler.Baseline
