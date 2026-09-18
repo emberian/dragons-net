@@ -1,0 +1,43 @@
+name: Reproducible defect
+description: Report a failing compiler, model, host, protocol or build behavior.
+labels: [bug]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Expected and observed behavior
+      description: Include the affected assurance claim if this is a specification or theorem-contract defect.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction or counterexample
+      description: Provide minimal input, commands and output, or a precise static call path. Remove credentials and private data.
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Evidence type
+      options:
+        - Reproduced in active native code
+        - Reproduced in a model or proof contract
+        - Reproduced build or CI failure
+        - Static finding in inactive migration code
+        - Static finding in active code
+        - Other or not yet reproduced
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Revision and environment
+      description: Include commit, toolchain/backend pins, OS/kernel and relevant limits. A link to a CI run is useful.
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues and suggested regression
+      description: Link existing work and describe a check that would catch this defect again.

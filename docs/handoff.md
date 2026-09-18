@@ -1,5 +1,8 @@
 # Contributor handoff
 
+Use the [project backlog](project.md) and [live roadmap](https://github.com/emberian/dragons-net/issues/28)
+to choose scoped work; issues record acceptance criteria and hard dependencies.
+
 Start with the [inherited-code review and prioritized repairs](reviews/README.md), [Wisper’s baseline](baseline.md) and [the runnable echo example](echo.md). Read the root README, [architecture](architecture.md), and [assurance](assurance.md) first. Run `bash scripts/check.sh` and `python3 scripts/check_models.py --loom`. On Linux x86-64, run the native check from the README. All active Lean/Rust dependencies are defined within this repository and its lock files; the old monorepo is not needed for these checks.
 
 ## Where to start reading

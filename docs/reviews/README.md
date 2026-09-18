@@ -1,5 +1,8 @@
 # Inherited-code review and triage
 
+Unfinished work is tracked in the [project backlog](../project.md) and
+[GitHub roadmap](https://github.com/emberian/dragons-net/issues/28).
+
 Four Sol reviewers independently examined the compiler assurance, emission, dataplane models, and native integration around baseline `94785d2` on 2026-09-18. The lead reviewer reproduced the maintained printer failure with the pinned CakeML executable, inspected the critical native paths, and reviewed CI failure propagation. These were bounded reviews, not exhaustive audits. Report line references generally identify the reviewed revision; subsequent comment corrections can shift them.
 
 **Assessment:** keep building on the maintained native subset, but do not port the preserved reactors wholesale or count inherited conditional theorems as a completed assurance chain. The active echo path was not found to have the blocking lifetime defects described below. The preserved source remains outside the active build.

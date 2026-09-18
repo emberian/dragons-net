@@ -70,6 +70,11 @@ Results are recorded in `build/native/report.json` and `build/baseline/report.js
 
 ## Pick up the work
 
+The [live project roadmap](https://github.com/emberian/dragons-net/issues/28)
+organizes the work into four milestones with acceptance criteria and dependencies.
+See the [backlog guide](docs/project.md) for starting points and
+[CONTRIBUTING](CONTRIBUTING.md) for the development workflow.
+
 Start with the [baseline and review findings](docs/baseline.md), then the [contributor handoff](docs/handoff.md), then [architecture](docs/architecture.md) and [assurance](docs/assurance.md). The [NNTP plan](docs/nntp.md) identifies the RFC scope and the first useful vertical slice.
 
 The echo service supplies a reference workload for the next milestone: an optimized reactor driving a bounded, persistent NNTP session: receive bytes, frame commands, produce responses, survive partial writes and disconnects, and retain accepted articles across restart. Compiler improvements should be exercised by that real workload. Native ownership checks, parser refinement, crash recovery, and backpressure belong in the acceptance criteria from the start.

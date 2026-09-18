@@ -1,0 +1,42 @@
+name: Scoped work item
+description: Propose a bounded compiler, proof, dataplane, protocol, or interface task.
+body:
+  - type: markdown
+    attributes:
+      value: Check the roadmap and existing issues first. Maintainers select priority, area, status and milestone after reviewing the scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and current state
+      description: What is missing or incorrect? Link the relevant code, review finding or user need.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and boundaries
+      description: Describe the concrete deliverable and what belongs in follow-up work.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Give observable checks or explicit proof obligations. Include a useful witness for conditional contracts.
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and sequencing
+      description: Link hard prerequisites separately from related work, or state that there are none.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Validation and assurance boundary
+      description: Which proofs, model checks, native tests or measurements establish completion? What remains outside the claim?
+    validations:
+      required: true
