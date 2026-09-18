@@ -1,0 +1,238 @@
+diff --git a/pancake/loop_liveScript.sml b/pancake/loop_liveScript.sml
+index aca746563..2b466b5f5 100644
+--- a/pancake/loop_liveScript.sml
++++ b/pancake/loop_liveScript.sml
+@@ -90,10 +90,12 @@ Definition shrink_def:
+   (shrink lt (Arith arith) l =
+    (Arith arith, arith_vars arith l)
+   ) ∧
+-  (* TODO: should we also do DCE for Primitive here, like the Assign case
+-     below does? *)
+   (shrink b (Primitive lhss pop rhss) l =
+-   (Primitive lhss pop rhss, list_insert rhss (list_delete lhss l))) ∧
++   (* DCE: loop_primop (currently only AddCarry) is a pure function — its
++      only effect is writing lhss — so when every lhs is dead the whole
++      primitive is dead code and may be dropped (mirrors the Assign case). *)
++   if EVERY (λn. lookup n l = NONE) lhss then (Skip, l)
++   else (Primitive lhss pop rhss, list_insert rhss (list_delete lhss l))) ∧
+   (shrink lt (LocValue n m) l =
+      case lookup n l of
+      | NONE => (Skip,l)
+@@ -102,13 +104,23 @@ Definition shrink_def:
+      case lookup n l of
+      | NONE => (Skip,l)
+      | SOME _ => (Assign n x, vars_of_exp x (delete n l))) ∧
++  (* No DCE here, and no slack in the live-in set either. Unlike Assign /
++     LocValue / Primitive, a ShMem is an *external interaction*: both
++     sh_mem_load and sh_mem_store go through call_FFI with the ffiname
++     SharedMem MappedRead / SharedMem MappedWrite, which appends an IO_event
++     to s.ffi.io_events and may answer Oracle_final (evaluating to
++     SOME (FinalFFI _)). The `s ≠ ExtCall «»` no-op escape in call_FFI does
++     not cover SharedMem, so the event is unconditional. Dropping the
++     statement therefore changes s1.ffi, which compile_correct forbids.
++     The live-in set is also already exact: a load existence-checks r in
++     locals before overwriting it, so r is live-in whether or not it is
++     live-out, and liveness tracks exactly presence. All three claims are
++     settled by counterexamples in loop_liveProof:
++       shmem_dce_unsound          — ShMem cannot be replaced by Skip
++       shmem_lhs_must_stay_live   — the `insert r ()` cannot be dropped
++       shmem_addr_must_stay_live  — the `vars_of_exp ad` cannot be dropped *)
+   (shrink lt (ShMem op r ad) l =
+-   (ShMem op r ad, (*case lookup r l of
+-                     NONE => l
+-                   | _ => if is_load op
+-                          then vars_of_exp ad (insert r () l)
+-                          else l)*)
+-  vars_of_exp ad (insert r () l))) ∧
++   (ShMem op r ad, vars_of_exp ad (insert r () l))) ∧
+   (shrink lt (Store e n) l =
+     (Store e n, vars_of_exp e (insert n () l))) ∧
+   (shrink lt (SetGlobal name e) l =
+diff --git a/pancake/proofs/loop_liveProofScript.sml b/pancake/proofs/loop_liveProofScript.sml
+index b562ca6fd..67ff54af7 100644
+--- a/pancake/proofs/loop_liveProofScript.sml
++++ b/pancake/proofs/loop_liveProofScript.sml
+@@ -828,16 +828,40 @@ QED
+ 
+ Resume compile_correct[Primitive]:
+   rpt strip_tac
+-  \\ gvs [shrink_def,evaluate_def,CaseEq"option",CaseEq"bool"]
+-  \\ drule_then drule get_vars_subspt \\ strip_tac \\ fs []
+-  \\ fs [state_component_equality,set_vars_def]
+-  \\ fs [subspt_lookup,lookup_alist_insert_any,lookup_inter_alt]
+-  \\ qx_genl_tac [‘k’,‘v’] \\ strip_tac
+-  \\ Cases_on ‘ALOOKUP (ZIP (lhss,res_ws)) k’ \\ fs []
+-  \\ ‘MAP FST (ZIP (lhss,res_ws)) = lhss’ by fs [MAP_ZIP]
+-  \\ ‘¬MEM k lhss’ by gvs [ALOOKUP_NONE]
+-  \\ first_x_assum (qspec_then ‘k’ mp_tac)
+-  \\ fs [domain_list_insert,domain_list_delete]
++  \\ gvs [shrink_def]
++  \\ reverse (Cases_on ‘EVERY (λn. lookup n l0 = NONE) lhss’) \\ gvs []
++  >- (* not all lhss dead: primitive kept (original argument) *)
++   (gvs [evaluate_def,CaseEq"option",CaseEq"bool"]
++    \\ drule_then drule get_vars_subspt \\ strip_tac \\ fs []
++    \\ fs [state_component_equality,set_vars_def]
++    \\ fs [subspt_lookup,lookup_alist_insert_any,lookup_inter_alt]
++    \\ qx_genl_tac [‘k’,‘v’] \\ strip_tac
++    \\ Cases_on ‘ALOOKUP (ZIP (lhss,res_ws)) k’ \\ fs []
++    \\ ‘MAP FST (ZIP (lhss,res_ws)) = lhss’ by fs [MAP_ZIP]
++    \\ ‘¬MEM k lhss’ by gvs [ALOOKUP_NONE]
++    \\ first_x_assum (qspec_then ‘k’ mp_tac)
++    \\ fs [domain_list_insert,domain_list_delete])
++  (* every lhs dead: the primitive is dead code and is dropped to Skip.
++     loop_primop is pure, so its result (written only to the dead lhss) is
++     unobservable; the live vars are unchanged, so the states still agree. *)
++  \\ gvs [evaluate_def,CaseEq"option",CaseEq"bool"]
++  \\ qexists_tac ‘locals’
++  \\ gvs [state_component_equality,set_vars_def]
++  (* remaining: subspt (inter (set_vars lhss res_ws) l0) locals.  Factor
++     through inter s.locals l0 (the precondition): writing the dead lhss
++     cannot change any live var, so the two intersections agree.          *)
++  \\ irule subspt_trans
++  \\ qexists_tac ‘inter s.locals l0’ \\ conj_tac
++  >- (simp [subspt_lookup,lookup_inter_alt,lookup_alist_insert_any]
++      \\ qx_genl_tac [‘k’,‘v’] \\ strip_tac
++      \\ ‘¬MEM k lhss’ by
++           (gvs [EVERY_MEM] \\ strip_tac \\ res_tac \\ gvs [domain_lookup])
++      \\ ‘ALOOKUP (ZIP (lhss,res_ws)) k = NONE’ by
++           (simp [ALOOKUP_NONE]
++            \\ ‘MAP FST (ZIP (lhss,res_ws)) = lhss’ by fs [MAP_ZIP]
++            \\ gvs [])
++      \\ gvs [])
++  \\ first_x_assum ACCEPT_TAC
+ QED
+ 
+ Finalise compile_correct;
+@@ -957,3 +981,132 @@ Proof
+   drule comp_correct >>
+   fs []
+ QED
++
++
++(* -------------------------------------------------------------------------
++   Why shrink does not eliminate ShMem, and why its live-in set is exact.
++
++   loop_live performs dead-code elimination for Assign, LocValue and
++   Primitive: those write their lhs and do nothing else, so a dead lhs makes
++   the whole statement dead. ShMem looks superficially similar -- a load also
++   just writes its lhs -- but it is an external interaction: sh_mem_load and
++   sh_mem_store both go through
++
++     call_FFI s.ffi (SharedMem MappedRead) / (SharedMem MappedWrite) ...
++
++   and call_FFI appends an IO_event to st.io_events on every successful call,
++   advances st.ffi_state, and may instead answer Oracle_final, in which case
++   ShMem evaluates to SOME (FinalFFI outcome). The only no-op branch of
++   call_FFI is guarded by s = ExtCall <<>>, which no SharedMem ffiname
++   satisfies, so the event is unconditional. The oracle is a parameter of the
++   semantics, so it cannot be assumed pure either.
++
++   Each theorem below exhibits a counterexample to exactly the obligation
++   that a proposed strengthening of the ShMem case of shrink would have to
++   discharge inside compile_correct -- each is the (∃¬) form of the negation
++   of that obligation, so it rules the strengthening out. They share one
++   witness state whose oracle is the identity: it returns the bytes it was
++   handed, so call_FFI takes the FFI_return branch and the source run
++   succeeds with res = NONE. The counterexamples therefore do not lean on a
++   failing or diverging oracle, nor on the res ≠ SOME Error side condition.
++   ------------------------------------------------------------------------- *)
++
++Definition shmem_witness_def:
++  shmem_witness (s:('a,'ffi) loopSem$state) =
++    s with
++      <| locals     := insert 0 (Word 0w) (insert 1 (Word 0w) LN)
++       ; sh_mdomain := UNIV
++       ; ffi        := <| oracle    := (λn st conf bytes. Oracle_return st bytes)
++                        ; ffi_state := s.ffi.ffi_state
++                        ; io_events := [] |>
++       |>
++End
++
++(* The witness load runs without error, yet its observable trace grows: this
++   is the whole reason ShMem cannot be treated as dead code. *)
++Theorem shmem_witness_evaluates:
++  ∀s0:('a,'ffi) loopSem$state.
++    ∃s1.
++      evaluate (ShMem Load8 0 (Var 1), shmem_witness s0) = (NONE,s1) ∧
++      s1.ffi.io_events ≠ (shmem_witness s0).ffi.io_events
++Proof
++  rw [] >>
++  simp [evaluate_def, eval_def, shmem_witness_def,
++        loop_callTheory.is_load_def, sh_mem_op_def, sh_mem_load_def,
++        ffiTheory.call_FFI_def, set_var_def, lookup_insert, lookup_def]
++QED
++
++val shmem_ev_simps =
++  [evaluate_def, eval_def, shmem_witness_def, loop_callTheory.is_load_def,
++   sh_mem_op_def, sh_mem_load_def, ffiTheory.call_FFI_def, set_var_def,
++   subspt_lookup, lookup_insert, lookup_inter, lookup_def];
++
++(* 1. ShMem is not dead code: shrink may not return Skip for it. Stated for
++      *every* live-in set l1, so it rules out every DCE variant at once, no
++      matter which live-in set that variant would return: the witness hands
++      the compiled program the same locals as the source (locals := s.locals,
++      which satisfies subspt (inter s.locals l1) locals for all l1). So
++      nothing here can be blamed on liveness being too aggressive -- the
++      states differ in a component that is not locals, namely ffi.io_events. *)
++Theorem shmem_dce_unsound:
++  ∀l1. ∃(op:memop) v ad (s:('a,'ffi) loopSem$state) res s1 locals.
++    evaluate (ShMem op v ad,s) = (res,s1) ∧ res ≠ SOME Error ∧
++    subspt (inter s.locals l1) locals ∧
++    ∀new_locals.
++      evaluate (Skip, s with locals := locals) ≠
++        (res, s1 with locals := new_locals)
++Proof
++  gen_tac >>
++  qexistsl [‘Load8’,‘0’,‘Var 1’,‘shmem_witness ARB’,
++            ‘FST (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘SND (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘(shmem_witness ARB).locals’] >>
++  simp shmem_ev_simps >>
++  simp [state_component_equality] >>
++  simp [AllCaseEqs()] >>
++  metis_tac []
++QED
++
++(* 2. The `insert r ()` may not be dropped from the live-in set when the lhs
++      is dead in the live-out set -- the shape the old commented-out sketch
++      (`case lookup r l of NONE => l | ...`) would have produced. A shared
++      memory load existence-checks its lhs in locals *before* overwriting it,
++      so a live-in set that omits the lhs turns a successful run into an
++      Error. (Consequently there is no precision to recover here: r is
++      live-in whether or not it is live-out, and liveness tracks exactly
++      presence in locals, so `insert r ()` is already exact.) *)
++Theorem shmem_lhs_must_stay_live:
++  ∃(op:memop) v ad (s:('a,'ffi) loopSem$state) res s1 l locals.
++    evaluate (ShMem op v ad,s) = (res,s1) ∧ res ≠ SOME Error ∧
++    lookup v l = NONE ∧
++    subspt (inter s.locals (vars_of_exp ad l)) locals ∧
++    ∀new_locals.
++      evaluate (ShMem op v ad, s with locals := locals) ≠
++        (res, s1 with locals := new_locals)
++Proof
++  qexistsl [‘Load8’,‘0’,‘Var 1’,‘shmem_witness ARB’,
++            ‘FST (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘SND (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘LN’,
++            ‘inter (shmem_witness ARB).locals (vars_of_exp (Var 1) LN)’] >>
++  simp (vars_of_exp_def :: shmem_ev_simps)
++QED
++
++(* 3. The `vars_of_exp ad` may not be dropped from the live-in set either --
++      the other half of what the old sketch discarded. The address
++      expression is evaluated, so its variables are genuinely read. *)
++Theorem shmem_addr_must_stay_live:
++  ∃(op:memop) v ad (s:('a,'ffi) loopSem$state) res s1 l locals.
++    evaluate (ShMem op v ad,s) = (res,s1) ∧ res ≠ SOME Error ∧
++    subspt (inter s.locals (insert v () l)) locals ∧
++    ∀new_locals.
++      evaluate (ShMem op v ad, s with locals := locals) ≠
++        (res, s1 with locals := new_locals)
++Proof
++  qexistsl [‘Load8’,‘0’,‘Var 1’,‘shmem_witness ARB’,
++            ‘FST (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘SND (evaluate (ShMem Load8 0 (Var 1), shmem_witness ARB))’,
++            ‘LN’,
++            ‘inter (shmem_witness ARB).locals (insert 0 () LN)’] >>
++  simp shmem_ev_simps
++QED

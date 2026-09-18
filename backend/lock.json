@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "cakeml": {
+    "url": "https://github.com/CakeML/cakeml.git",
+    "revision": "ed31510b3b0d0523283b68ef7066882526d77df9"
+  },
+  "hol": {
+    "url": "https://github.com/HOL-Theorem-Prover/HOL.git",
+    "revision": "a9846ebe221d7c6617188a6bf66f30d5d8136b84"
+  },
+  "patches": [
+    {
+      "path": "patches/0001-primitive-dce.patch",
+      "sha256": "13d58ddd80aff16ae33f0901d9a391efd0b80d6abb85ef3b95813aa68171bf75",
+      "source_commits": [
+        "a438038eedbdb2e8c902fa8b02f105de2c61c611",
+        "ddd79234b",
+        "c3f5254a3"
+      ],
+      "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP."
+    }
+  ]
+}

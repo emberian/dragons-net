@@ -1,0 +1,11 @@
+[package]
+name = "dn-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bounded host-side primitives for dragon's news"
+publish = false
+
+[lints]
+workspace = true
