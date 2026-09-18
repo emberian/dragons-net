@@ -7,7 +7,7 @@
       "source_path": "orb-compiler/Pancake/Sem.lean",
       "source_sha256": "06c8764980ddf594f8cedf1c3ecfede08c6e14be7981a7aaa852ea2d8c0e7ae2",
       "destination": "lean/DN/Compiler/Semantics.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "breadstuffs",
@@ -15,7 +15,7 @@
       "source_path": "orb-compiler/Pancake/Lower.lean",
       "source_sha256": "cfa3a90c0b01a71251404f4ae3dd719992178265686b16d59da0d5aedde2019b",
       "destination": "lean/DN/Compiler/Lower.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit. Reject nonscalar loadw shapes and FFI argument lists whose length is not four."
     },
     {
       "source_repository": "breadstuffs",
@@ -23,7 +23,7 @@
       "source_path": "orb-compiler/Pancake/EmitCorrectRegion.lean",
       "source_sha256": "0d1e81235eaee9c0916ef8e92d4ad2dea915e4a81ee80970bef7f2ae3c92a242",
       "destination": "lean/DN/Compiler/Region.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "breadstuffs",
@@ -31,7 +31,7 @@
       "source_path": "orb-compiler/Pancake/EmitCorrectCompose.lean",
       "source_sha256": "a96fee779f765435db8990ec57be4ec9de6ef48d7273db36c9497b12971462ca",
       "destination": "lean/DN/Compiler/Compose.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "breadstuffs",
@@ -39,7 +39,7 @@
       "source_path": "orb-compiler/Pancake/EmitCorrectLoop.lean",
       "source_sha256": "256b4cf6f94bcb0609104b1ff8b1d97c290a5400f92f88746b4a2812109467b9",
       "destination": "lean/DN/Compiler/Loop.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "breadstuffs",
@@ -47,7 +47,7 @@
       "source_path": "orb-compiler/Pancake/EmitCorrectClock.lean",
       "source_sha256": "e7a97ef77d483ebf1623bf7430cc7efb1a29425597d32d631b68d7670b8d6e65",
       "destination": "lean/DN/Compiler/Clock.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "breadstuffs",
@@ -55,7 +55,7 @@
       "source_path": "orb-compiler/Pancake/BytesModel.lean",
       "source_sha256": "83c31aaf56946a93285a8e94c5ec2d20ad4a61a4db13eeef09ba179b69444269",
       "destination": "lean/DN/Compiler/Bytes.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
       "source_repository": "drorb",

@@ -14,8 +14,8 @@
       "sha256": "13d58ddd80aff16ae33f0901d9a391efd0b80d6abb85ef3b95813aa68171bf75",
       "source_commits": [
         "a438038eedbdb2e8c902fa8b02f105de2c61c611",
-        "ddd79234b",
-        "c3f5254a3"
+        "ddd79234be573d9499977733577f9804fc213fa3",
+        "c3f5254a32592ac892600674993302970c8afae2"
       ],
       "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP."
     }

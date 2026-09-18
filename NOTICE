@@ -1,0 +1,17 @@
+dn project code is licensed under GNU AGPL version 3 or later, unless an
+individual file or component states otherwise. See LICENSE.
+
+This repository incorporates compiler and dataplane work extracted from the
+orb-compiler and orb directories of breadstuffs, and from drorb. Source
+revisions, source-byte hashes, destinations, and extraction changes are recorded
+in docs/provenance.json. Historical attribution inside source files is retained.
+
+The CakeML-derived patch in backend/patches is governed by the upstream BSD
+license reproduced in backend/LICENSE.CakeML. Its source commits and base
+revision are recorded in backend/lock.json.
+
+RFC documents in rfcs retain their individual copyright and redistribution
+notices. Their inclusion does not relicense those documents under AGPL.
+
+Third-party dependencies and downloaded tool artifacts retain their own
+licenses. They are not vendored as project-owned code here.

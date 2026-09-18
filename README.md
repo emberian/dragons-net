@@ -1,0 +1,72 @@
+# dn
+
+[![checks](https://github.com/emberian/dragons-net/actions/workflows/ci.yml/badge.svg)](https://github.com/emberian/dragons-net/actions/workflows/ci.yml)
+
+**A compiler and dataplane foundation for Dragon’s News: an ambitious little NNTP server, and eventually a component of the dregg dragon’s egg operating system.**
+
+The aim is a small, understandable news server with an exceptionally good dataplane: bounded storage, explicit ownership, efficient native code, and correctness arguments that reach as far toward the running program as we can make them. NNTP brings asynchronous conversation and federation; durable article storage and offline exchange will be first-class design concerns.
+
+The proposed path is **Lean specifications and proofs → Pancake → CakeML → native code**, with a narrow host interface for sockets, buffers, and durable storage. We inherit substantial compiler and reactor work from `orb-compiler`, `orb`, `drorb`, and the datacake experiments. This repository gives that work a focused home and fresh history. The adjacent `fn` experiment is separate.
+
+**Today this is working compiler infrastructure, models, and a contributor handoff. It is not yet an NNTP server or an end-to-end verified executable.**
+
+## What’s here
+
+| Area | Current state |
+| --- | --- |
+| [Compiler](lean/DN/Compiler) | All 45 original compiler source modules carried forward, under `DN.Compiler`, plus new certificates and regression tests. Includes byte operations, serializers, structured layouts, stage composition, lowering, and model correctness proofs. Inherited HTTP examples remain useful compiler exercises. |
+| [Dataplane models](lean/DN/Dataplane) | Ring ownership, conservation and recycling; slabs and generation counters; completion handling, wakeups, deadlines, flow control, and draining. |
+| [Host primitives](crates/dn-runtime) | A small Rust library with a generational slab, connection permits, and a partial-write cursor. Tested; correspondence to the Lean models remains work. |
+| [Concurrency exploration](models) | Eight independent Rust models and 25 Loom tests, including counterexamples for deliberately broken algorithms. |
+| [Native execution](native/region_driver.c) | An emitted region-digest kernel compiled through Pancake/CakeML and executed on Linux x86-64, with 99,044 comparisons against a C reference. |
+| [Backend work](backend/README.md) | Pinned CakeML/HOL source and a curated datacake optimization patch. Source retrieval and verification are automated; the separate HOL proof rebuild has not yet been validated here. |
+| [Migration sources](migration/dataplane/README.md) | The original native host, FFI, and performance tooling preserved for extraction. These are reference sources, outside the active build. |
+| [News](lean/DN/News/Framing.lean) | A CRLF framing specification seed with a chunk-boundary theorem. Command parsing, article storage, peering, and a human UI remain to be built. |
+
+The current Lean audit checks 2,966 theorem declarations, including generated declarations, for unapproved transitive axioms. Separately, 430 executable examples exercise the inherited compiler and dataplane models. These counts describe coverage, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md).
+
+## Build and check
+
+Install Git, Python 3.10+, [elan](https://github.com/leanprover/elan), and [rustup](https://rustup.rs/). A native C toolchain is needed to build the Lean executable. The repository pins Lean and Rust in their toolchain files; the first build downloads them. No sibling checkout or Mathlib is needed.
+
+```sh
+git clone https://github.com/emberian/dragons-net.git dn
+cd dn
+bash scripts/check.sh
+```
+
+This builds the Lean library and `dn-compiler`, audits theorem dependencies, runs executable examples and gate tests, checks Rust formatting and Clippy, and runs the host and ordinary concurrency tests. Do not run overlapping Lake builds in the same checkout.
+
+Emit the supported native example:
+
+```sh
+mkdir -p build
+.lake/build/bin/dn-compiler emit-region > build/region.pnk
+```
+
+Run bounded concurrency exploration:
+
+```sh
+python3 scripts/check_models.py --loom
+```
+
+On **Linux x86-64**, with Python 3.12+, `curl`, `make`, and a C compiler, compile and execute the generated kernel using the digest-pinned CakeML release:
+
+```sh
+cake=$(python3 scripts/bootstrap_tool.py cake)
+python3 scripts/native_check.py --cake "$cake"
+```
+
+The result is recorded in `build/native/report.json`, including artifact digests and measurements. The benchmark measures a region digest, **not NNTP throughput**. This release compiler is distinct from the patched source in `backend/lock.json`.
+
+[CI](.github/workflows/ci.yml) runs the baseline, Loom, and native lanes and uploads their evidence. [Backend proof instructions](backend/README.md) describe the separate HOL lane.
+
+## Pick up the work
+
+Start with the [contributor handoff](docs/handoff.md), then [architecture](docs/architecture.md) and [assurance](docs/assurance.md). The [NNTP plan](docs/nntp.md) identifies the RFC scope and the first useful vertical slice.
+
+The next milestone is a protocol-neutral reactor driving a bounded, persistent NNTP session: receive bytes, frame commands, produce responses, survive partial writes and disconnects, and retain accepted articles across restart. Compiler improvements should be exercised by that real workload. Native ownership checks, parser refinement, crash recovery, and backpressure belong in the acceptance criteria from the start.
+
+## Provenance and license
+
+Project code is AGPL-3.0-or-later; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The CakeML patch retains its upstream BSD license, and RFC texts retain their own notices. [The extraction manifest](docs/provenance.json) records source revisions, paths, hashes, and transformations. Original projects were copied, not moved or modified.
