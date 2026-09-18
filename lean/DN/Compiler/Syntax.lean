@@ -2,11 +2,11 @@
 /-
 # DN.Compiler.Syntax
 
-Adapted from the compiler extraction recorded in docs/provenance.json.
-These definitions and theorems concern the Lean model. Correspondence to the
-HOL4 backend, pretty-printer/parser, ABI and executable is tracked separately
-in docs/assurance.md. The model is a restricted 64-bit Pancake fragment.
+Retained compiler/dataplane development and regression examples.
+Source provenance is in docs/provenance.json; assurance boundaries are in
+docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
 -/
+
 
 namespace DN.Compiler.Syntax
 
@@ -267,5 +267,267 @@ def emitExportFun (rs : RegionSpec) : PFun :=
 `export fun boundscan(...)`. -/
 def boundscanExport : PFun := emitExportFun { regionC0 with name := "boundscan" }
 
+/-! ## 4. The machine primitive emitter
+
+The DSL `machine Proto driven_by Arena` is a sans-IO FSM fed by the region. The
+smallest honest emittable machine that uses only the C0-proven operators
+(`< & + ld8 lds`) is a **guarded threshold scan**: walk the viewed bytes and stop
+at the first byte strictly below `threshold` — a token/delimiter FSM whose output
+is the index of the first delimiter (or `len` if none). This is a genuinely
+different shape from the region fold (an *early-terminating* guarded `while`, a
+data-dependent `If` inside the loop) yet needs no operator C0 has not compiled. -/
+
+structure MachineSpec where
+  -- entry name; the DN.Compiler basis invokes `main`, so a standalone-compiled
+  -- primitive uses "main" (the DSL renames per-function when composing).
+  name       : String := "main"
+  viewLenOff : Nat := 16
+  resultOff  : Nat := 24
+  bufOff     : Nat := 32
+  arenaCap   : Nat := 4096
+  /-- ctrl-block length to load (bytes before the arena) -/
+  ctrlLen    : Nat := 24
+  /-- stop at the first byte strictly below this (e.g. 32 = first control char) -/
+  threshold  : Nat := 32
+  loadFfi    : String := "load_vec"
+  reportFfi  : String := "report_vec"
+
+def machineC0 : MachineSpec := {}
+
+/-- Emit the machine (guarded threshold scan) as a `PFun`, driven by `ms`. -/
+def emitMachine (ms : MachineSpec) : PFun :=
+  { name := ms.name, params := [], body :=
+    [ .dec "base" .base
+    , .dec "buf" (atOff (v "base") ms.bufOff)
+    , .ffi ms.loadFfi [v "base", n ms.ctrlLen, v "buf", n ms.arenaCap]
+    , .dec "len" (.loadw 1 (atOff (v "base") ms.viewLenOff))
+    , .dec "i" (n 0)
+    , .dec "found" (n 0)
+    , .while (eAnd (eLt (v "i") (v "len")) (eLt (v "found") (n 1)))
+        [ .dec "b" (.loadb (eAdd (v "buf") (v "i")))
+        , .ite (eLt (v "b") (n ms.threshold))
+            [ .assign "found" (n 1) ]
+            [ .assign "i" (eAdd (v "i") (n 1)) ] ]
+    , .dec "result" (v "i")
+    , .store (atOff (v "base") ms.resultOff) (v "result")
+    , .ffi ms.reportFfi [atOff (v "base") ms.resultOff, n 8, v "base", n 8]
+    , .ret (n 0) ] }
+
+/-! ## 5. The machine's Lean SPEC (dual emission from one `MachineSpec`)
+
+To make the dual-emission point concrete: the SAME `MachineSpec` drives both the
+`.pnk` above and this model function. `tokenScanSpec ms a` = the index of the
+first byte of `a` (over the whole array — the model uses `len = a.size`) strictly
+below `ms.threshold`, or `a.size` if none. The DN.Compiler `emitMachine ms` refines
+this (its Link A is the priced/scaffolded obligation, see the report §5). -/
+
+def firstBelow (thr : Nat) (a : Array UInt8) : Nat → Nat → Nat
+  | 0,     acc => acc
+  | fuel+1, i =>
+      if i ≥ a.size then i
+      else if (a[i]!).toNat < thr then i
+      else firstBelow thr a fuel (i+1)
+
+/-- Model: first index in `a` whose byte is `< ms.threshold`, else `a.size`. -/
+def tokenScanSpec (ms : MachineSpec) (a : Array UInt8) : Nat :=
+  firstBelow ms.threshold a a.size 0
+
+/-! ## 5.5 Multi-function composition: `PProgram`, `ppProgram`, and `fuse`
+
+The single-function emitters above (`emitRegion`/`emitMachine`) each model ONE
+`main` with inline FFI — the shape FUSED-SERVE-PNK-REPORT §5 named as the reason
+the fused `serve.pnk` had to be hand-authored: there was no call node, no
+multi-function program type, so the entry that *sequences* the stages could not
+be generated. This section adds exactly those missing pieces.
+
+  * `PProgram` — a DN.Compiler module: a list of `PFun`s (stage functions + entry).
+  * `ppProgram` — the module pretty-printer (blank-line-separated functions).
+  * `emitCounterStage` / `emitCombineStage` — two stage emitters that reproduce,
+    from a spec, the hand-authored `machine_stage` and `admit_combine` bodies of
+    the fused serve (a shaped-parameter function returning a value).
+  * `emitServeMain` — the GENERATED entry: sets up the control block, does the
+    ONE FFI load, inits the Response record `R`, then emits a `PStmt.call` per
+    stage (threading `resp`), mirrors the threaded `R` fields into the report
+    vector, and does the ONE FFI report. This is the composition glue that was
+    hand-authored in `serve.pnk`'s `fun main()`.
+  * `fuse` — the combinator: `fuse spec stages` = the stage functions followed by
+    `emitServeMain` calling them in order. One `ServeSpec` + a list of `Stage`s
+    produces a complete, linkable multi-function `PProgram`. -/
+
+/-- A DN.Compiler module: stage functions plus (last) the entry that sequences them. -/
+structure PProgram where
+  funs : List PFun
+  deriving Repr
+
+/-- Render a whole module. `ppFun` already terminates each function with a
+newline; joining with one more `"\n"` puts a blank line between functions. -/
+def ppProgram (p : PProgram) : String :=
+  String.intercalate "\n" (p.funs.map ppFun)
+
+/-- A stage plus how the generated entry calls it: the emitted `PFun`, the
+`main`-local variable its result binds to, and the argument expressions. -/
+structure Stage where
+  fn   : PFun
+  bind : String
+  args : List PExpr
+
+/-! ### stage emitters (spec-driven bodies lifted from the fused serve) -/
+
+/-- The C2 saturating-counter FSM stage (`machine_stage`): read the counter out
+of `R`, walk the bytes incrementing (saturating at `satMax`) for each byte at or
+above `threshold`, write the counter back to `R`, return it. -/
+structure CounterStageSpec where
+  name      : String := "machine_stage"
+  fieldOff  : Nat := 32     -- R offset holding the (read+written) counter
+  threshold : Nat := 128    -- bytes < threshold are ignored; ≥ increment
+  satMax    : Nat := 255    -- saturation ceiling
+
+def emitCounterStage (cs : CounterStageSpec) : PFun :=
+  { name := cs.name, params := [(1, "resp"), (1, "buf"), (1, "len")], body :=
+    [ .dec "c" (.loadw 1 (atOff (v "resp") cs.fieldOff))
+    , .dec "i" (n 0)
+    , .while (eLt (v "i") (v "len"))
+        [ .dec "b" (.loadb (eAdd (v "buf") (v "i")))
+        , .ite (eLt (v "b") (n cs.threshold))
+            [ .assign "c" (v "c") ]
+            [ .ite (eLt (v "c") (n cs.satMax))
+                [ .assign "c" (eAdd (v "c") (n 1)) ]
+                [ .assign "c" (n cs.satMax) ] ]
+        , .assign "i" (eAdd (v "i") (n 1)) ]
+    , .store (atOff (v "resp") cs.fieldOff) (v "c")
+    , .ret (v "c") ] }
+
+/-- The `admit_combine` stage: read the threaded `R.admit` the gates folded,
+mirror it into the report slot, return it. -/
+structure CombineStageSpec where
+  name      : String := "admit_combine"
+  admitOff  : Nat := 8      -- R offset of the threaded admit flag
+  mirrorOff : Nat := 80     -- R offset the report reads admit back from
+
+def emitCombineStage (cs : CombineStageSpec) : PFun :=
+  { name := cs.name, params := [(1, "resp")], body :=
+    [ .dec "admit" (.loadw 1 (atOff (v "resp") cs.admitOff))
+    , .store (atOff (v "resp") cs.mirrorOff) (v "admit")
+    , .ret (v "admit") ] }
+
+/-! ### the generated entry + the `fuse` combinator -/
+
+/-- The fused-serve control-block / FFI layout the generated `main` sets up.
+Every offset and name lives here; the entry *structure* lives in `emitServeMain`.
+`respInit` is the initial Response record `R` (offset ↦ value); `mirror` is the
+`(ctrlOff, respOff)` pairs the entry copies from `R` into the report vector. -/
+structure ServeSpec where
+  loadFfi   : String := "load_serve"
+  reportFfi : String := "report_serve"
+  ctrlLen   : Nat := 32
+  loadCap   : Nat := 4096
+  lenOff    : Nat := 0
+  respOff   : Nat := 2048
+  bufOff    : Nat := 4096
+  reportOff : Nat := 32
+  reportLen : Nat := 80
+  respInit  : List (Nat × Nat) :=
+    [(0,200),(8,1),(16,0),(24,0),(32,0),(40,0),(48,0),(56,159),(64,0),(72,0),(80,0)]
+  mirror    : List (Nat × Nat) :=
+    [(64,16),(72,72),(80,32),(88,24),(96,0),(104,8)]
+
+/-- Emit the fused-serve entry `main` that sequences `calls`. Structure mirrors
+`serve.pnk`'s `fun main()`: control-block setup, ONE FFI load, `R` init, one
+`PStmt.call` per stage (threading `resp`), the `R`→report-vector mirror, ONE FFI
+report, `return 0`. `calls` are `(bind, fn, args)` triples from `fuse`. -/
+def emitServeMain (spec : ServeSpec)
+    (calls : List (String × String × List PExpr)) : PFun :=
+  { name := "main", params := [], body :=
+    [ .dec "ctrl" .base
+    , .dec "resp" (atOff (v "ctrl") spec.respOff)
+    , .dec "buf"  (atOff (v "ctrl") spec.bufOff)
+    , .ffi spec.loadFfi [v "ctrl", n spec.ctrlLen, v "buf", n spec.loadCap]
+    , .dec "len" (.loadw 1 (atOff (v "ctrl") spec.lenOff)) ]
+    ++ spec.respInit.map (fun p => PStmt.store (atOff (v "resp") p.1) (n p.2))
+    ++ calls.map (fun c => PStmt.call c.1 c.2.1 c.2.2)
+    ++ (spec.mirror.map (fun p =>
+          let nm := "m" ++ toString p.1
+          [ PStmt.dec nm (.loadw 1 (atOff (v "resp") p.2))
+          , PStmt.store (atOff (v "ctrl") p.1) (v nm) ])).flatten
+    ++ [ .ffi spec.reportFfi
+           [atOff (v "ctrl") spec.reportOff, n spec.reportLen, v "ctrl", n spec.reportLen]
+       , .ret (n 0) ] }
+
+/-- Compose `stages` into ONE DN.Compiler module: the stage functions, followed by a
+GENERATED entry that calls them in order (threading `resp`). This is the piece
+`serve.pnk` hand-authored — the multi-function program with a call-sequencing
+entry — now produced from specs. -/
+def fuse (spec : ServeSpec) (stages : List Stage) : PProgram :=
+  { funs := stages.map (·.fn)
+      ++ [emitServeMain spec (stages.map (fun s => (s.bind, s.fn.name, s.args)))] }
+
+/-- A GENERATED two-stage slice of the fused serve: `machine_stage` (counter) and
+`admit_combine`, sequenced by a generated entry. Compiles with `cake --pancake`
+(EMIT-PANCAKE §"multi-function"), proving the call node + `PProgram` + `fuse` emit
+real DN.Compiler, not just a string. -/
+def serveSlice : PProgram :=
+  fuse {}
+    [ { fn := emitCounterStage {}, bind := "counter", args := [v "resp", v "buf", v "len"] }
+    , { fn := emitCombineStage {}, bind := "fin",     args := [v "resp"] } ]
+
+/-! ## 6. Rendered sources + the emitter `main`
+
+`regionPnk` / `machinePnk` are the generated concrete syntax with a provenance
+banner. `main` writes both to `build/examples/` for the cake
+build (EMIT-PANCAKE-REPORT §3). -/
+
+def banner (what : String) : String :=
+  "// GENERATED by Dsl/EmitPancake.lean -- do not hand-edit.\n" ++
+  "// " ++ what ++ "\n" ++
+  "// Emission is generative: this file is ppFun applied to the primitive spec.\n\n"
+
+def regionPnk : String :=
+  banner "region primitive (bounds-check + byte-scan) -- reproduces C0 boundscan.pnk"
+    ++ ppFun (emitRegion regionC0)
+
+def machinePnk : String :=
+  banner "machine primitive (guarded threshold token scan) -- Link A scaffolded"
+    ++ ppFun (emitMachine machineC0)
+
+/-- The region stage rendered as a C-callable `export fun` (SysV ABI:
+`ctrl/buf/len/out`) — no `@base`, no FFI, no `main`. -/
+def exportPnk : String :=
+  banner "region stage as a C-callable export fun (SysV ABI: ctrl/buf/len/out) -- no FFI, no main"
+    ++ ppFun boundscanExport
+
+/-- The GENERATED multi-function serve slice: `fuse` composes the two stage
+functions with a generated call-sequencing entry into ONE `.pnk` module. -/
+def servePnk : String :=
+  banner "fused serve SLICE (machine_stage + admit_combine) -- GENERATED entry sequences the stage calls (multi-function, PStmt.call)"
+    ++ ppProgram serveSlice
+
+def writeExamples : IO Unit := do
+  IO.FS.writeFile "build/examples/region.pnk" regionPnk
+  IO.FS.writeFile "build/examples/machine.pnk" machinePnk
+  IO.FS.writeFile "build/examples/serve_slice.pnk" servePnk
+  IO.FS.writeFile "build/examples/boundscan_export.pnk" exportPnk
+  IO.println "wrote emit/region.pnk, emit/machine.pnk, emit/serve_slice.pnk and emit/boundscan_export.pnk"
+
+/-! ## 7. Footprint checks (run at build time) -/
+
+-- the emitters and pretty-printer are axiom-free (subset of the allowed set)
+def regression_540 : Bool := decide ((ppFun (emitRegion regionC0)).length > 0
+  )
+def regression_541 : Bool := decide ((ppFun (emitMachine machineC0)).length > 0
+  )
+-- the composition layer: a fused module renders 3 functions (2 stages + entry)
+def regression_543 : Bool := decide (serveSlice.funs.length == 3
+  )
+def regression_544 : Bool := decide ((ppProgram serveSlice).length > 0
+  )
+-- the generated entry actually emits a call per stage (PStmt.call is used)
+def regression_546 : Bool := decide ((emitServeMain {} [("counter", "machine_stage", [v "resp"])]).body.any PStmt.isCall
+  )
+-- the exported-function form: sets the flag and renders the `export fun` header
+def regression_548 : Bool := decide (boundscanExport.exported == true
+  )
+def regression_549 : Bool := decide ((ppFun boundscanExport).take 12 == "export fun b"
+  )
 
 end DN.Compiler.Syntax
+

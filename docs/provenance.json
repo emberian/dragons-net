@@ -12,14 +12,6 @@
     {
       "source_repository": "breadstuffs",
       "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
-      "source_path": "orb-compiler/Dsl/EmitPancake.lean",
-      "source_sha256": "326debeddc76a7b4a6156890cfd771170c91355c5b81bffdbf9fa2b5725dddb2",
-      "destination": "lean/DN/Compiler/Syntax.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed; Syntax restricted to region emission."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
       "source_path": "orb-compiler/Pancake/Lower.lean",
       "source_sha256": "cfa3a90c0b01a71251404f4ae3dd719992178265686b16d59da0d5aedde2019b",
       "destination": "lean/DN/Compiler/Lower.lean",
@@ -112,6 +104,1446 @@
       "source_sha256": "33fdebbe635d78aba99c044d05e8f035b32b9f80c0d79ab93ae7a8d2bc13571d",
       "destination": "lean/DN/Dataplane/Span.lean",
       "changes": "Unused HTTP import removed; namespace renamed; historical overview replaced."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Slab/Generation.lean",
+      "source_sha256": "9a39be0133be8c505fa786a4ba2fe332e37bcaf29de6c22fa7564bf9909d2bd4",
+      "destination": "lean/DN/Dataplane/Slab/Generation.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Slab/Refinement.lean",
+      "source_sha256": "9ce0d4d5a0ac30b0b262d7634dff0f07ed47342dd89df7639585d9ab31c836e1",
+      "destination": "lean/DN/Dataplane/Slab/Refinement.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Slab/Basic.lean",
+      "source_sha256": "38e9973c991188c99ffb9162714487c57e7ea5062cbcb5d9ed69c563eaa7438f",
+      "destination": "lean/DN/Dataplane/Slab/Basic.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Iocore/Wake.lean",
+      "source_sha256": "ee0829dbacc460517c99fb085717ce9cbc4a0f54f8f5bf96a7a96cb64a73a788",
+      "destination": "lean/DN/Dataplane/Io/Wake.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Iocore/CompletionHandler.lean",
+      "source_sha256": "2f61bbca1497eec09e058bd4bc0e5d062d5f476a75a9587d642f24fbe6ba07fe",
+      "destination": "lean/DN/Dataplane/Io/CompletionHandler.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Iocore/Deadline.lean",
+      "source_sha256": "c50382b5b6feb6820122090d5c4ae86bc3acf6af7a8a4a55d91d0067e4a6384d",
+      "destination": "lean/DN/Dataplane/Io/Deadline.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Iocore/Slab.lean",
+      "source_sha256": "819d6c31bf944734a4649eefa29e4808caef26681c70049f215857fd4719a2b5",
+      "destination": "lean/DN/Dataplane/Io/Slab.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Iocore/Reactor.lean",
+      "source_sha256": "110e1c45c1332d68ba39f2e1cd8b8bd8efe443890189f162c770ac0654352e7b",
+      "destination": "lean/DN/Dataplane/Io/Reactor.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Recv.lean",
+      "source_sha256": "94e5f318d5a5ef9e548ce64f4d8e58103089df821bff2fa9d253aed773438ed9",
+      "destination": "lean/DN/Dataplane/Flow/Recv.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Basic.lean",
+      "source_sha256": "2e31f15f6b60a122f1fd6ec2e3d137495f863ddbccc25e78a9cdcfe813fdf7b0",
+      "destination": "lean/DN/Dataplane/Flow/Basic.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Deadline.lean",
+      "source_sha256": "4dcb5c2787cccb1968a46124dad2c869f3c2741dea082cb802a98b846efa2e3c",
+      "destination": "lean/DN/Dataplane/Flow/Deadline.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Token.lean",
+      "source_sha256": "f307c87da67d607353d2848a57d35b3ad0045e1e156c6210a790c1310a854cb0",
+      "destination": "lean/DN/Dataplane/Flow/Token.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Shed.lean",
+      "source_sha256": "c42a888b636b674e5baa4f18e4b7a15b5767d3e1d214ed2f24bf6043bcacb99b",
+      "destination": "lean/DN/Dataplane/Flow/Shed.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Send.lean",
+      "source_sha256": "f537e5b0973429a9ae2690691e883612d272148c4e851d58bcaf380174a11d4e",
+      "destination": "lean/DN/Dataplane/Flow/Send.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Migrate.lean",
+      "source_sha256": "b0dd36877dcb01d99cfbc08735801f145923ac75b46e4f1ca3f4932988358f6c",
+      "destination": "lean/DN/Dataplane/Flow/Migrate.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Drain/Basic.lean",
+      "source_sha256": "7250b82c7ee7ad4eb70c1b3c46716877d1dc2216ff658227995ad336d8d830ff",
+      "destination": "lean/DN/Dataplane/Drain/Basic.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Drain/Trace.lean",
+      "source_sha256": "40dece86d75cd2bac104e4a72c08222eb469e783a1bd2a83aada798f5a2f079e",
+      "destination": "lean/DN/Dataplane/Drain/Trace.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Dsl/EmitPancake.lean",
+      "source_sha256": "326debeddc76a7b4a6156890cfd771170c91355c5b81bffdbf9fa2b5725dddb2",
+      "destination": "lean/DN/Compiler/Syntax.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ByteCopy.lean",
+      "source_sha256": "9d35db4e1d627382ac7c7f897d0849f88940d898417d6659533c34a830e9cc92",
+      "destination": "lean/DN/Compiler/ByteCopy.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/CondRespProto.lean",
+      "source_sha256": "21cdb09ed08ebe3357b3492c2f028942e43dda5555caea9dc2159463db1cacfe",
+      "destination": "lean/DN/Compiler/CondRespProto.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/DslServe.lean",
+      "source_sha256": "c883bbbcf1f774d24f2974d984ea15127a2b83ddfe9baa24c3dc9b27344220df",
+      "destination": "lean/DN/Compiler/DslServe.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/FullResponseCompile.lean",
+      "source_sha256": "b0feb5f64f6e9132844fdeead46c60d97bccb5a02e6038e56c8b4eaa15b4acab",
+      "destination": "lean/DN/Compiler/FullResponseCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/LowerBridge.lean",
+      "source_sha256": "f2af16e637e753513bbf2cc69c9a983bed48ec38cb71a2e98c848af185eec2b9",
+      "destination": "lean/DN/Compiler/LowerBridge.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/LowerBridgeSem.lean",
+      "source_sha256": "df34fd6a62f4540e10f204e6c20e7f9aca2075eac6da3c960ab2fd8cb5baf539",
+      "destination": "lean/DN/Compiler/LowerBridgeSem.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ModelUnify.lean",
+      "source_sha256": "00bda69c4a4d489015e99f0adf8bdb54b6ad89c31e0f46ed59515dc9b84da1a1",
+      "destination": "lean/DN/Compiler/ModelUnify.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/NatToDecCompile.lean",
+      "source_sha256": "c1ae47bc71b991f3c6d625ba8415b13c1ae7ebb7c37263645f978e5213314ba1",
+      "destination": "lean/DN/Compiler/NatToDecCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/NatToDecFull.lean",
+      "source_sha256": "d35a0ddc8379842c7b6edb6ba5d0796eea1ad860e2af538a6df75cf5c1c5c57b",
+      "destination": "lean/DN/Compiler/NatToDecFull.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/PredEval.lean",
+      "source_sha256": "cffe82d2a16c2ee09ea86e9208bda63ba2e50b85ce8439969a680f6f25a4f10c",
+      "destination": "lean/DN/Compiler/PredEval.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ProofProducing.lean",
+      "source_sha256": "9e47abed32b452bc7c85709aa977bbd7d7ffec48d7b2d206b9834c057a22f13f",
+      "destination": "lean/DN/Compiler/ProofProducing.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/RealStageDemo.lean",
+      "source_sha256": "8b7e449d80e788671f9fc1167e5814e17800419e6314f18d72d4dac8d9ecbbe4",
+      "destination": "lean/DN/Compiler/RealStageDemo.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeCompile.lean",
+      "source_sha256": "bc6e7dcca78a3e2305e40e68930b4e3505380e69a9df57f79a5d58f0955220c3",
+      "destination": "lean/DN/Compiler/SerializeCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeFull.lean",
+      "source_sha256": "3b26417f6e55dd91e5600f281b6c83d3af60dc2eaecda7b7f2b62aebb91f0a48",
+      "destination": "lean/DN/Compiler/SerializeFull.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeHeaders.lean",
+      "source_sha256": "044322783908d6d1c4814684ce94c752c84702a17e19232bd4d4a91e9628f5cf",
+      "destination": "lean/DN/Compiler/SerializeHeaders.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeStruct.lean",
+      "source_sha256": "d7d6a2a1e555e67324d2d2aff3096ab8016f26043b51a7d2a86550c0025ee9e1",
+      "destination": "lean/DN/Compiler/SerializeStruct.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeCompose.lean",
+      "source_sha256": "22048abd1407320f30664455956f08ec90a2c342ef7c795633e779fb8a1f15bc",
+      "destination": "lean/DN/Compiler/ServeCompose.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeConfigServe.lean",
+      "source_sha256": "d11d6b429782bd8a92877644dcb3c7038f4a15a34ce0431a876af673eac40bfd",
+      "destination": "lean/DN/Compiler/ServeConfigServe.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeEmit.lean",
+      "source_sha256": "18365271cc96b6da48fc92e038a826dc565ec5c00c145674e2350b4846fca61c",
+      "destination": "lean/DN/Compiler/ServeEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeExportServes.lean",
+      "source_sha256": "c0f7fcf5eab3b51e2f2c855e37b19b35d24ccaf4ea1b8f2e94c69a4283df1060",
+      "destination": "lean/DN/Compiler/ServeExportServes.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeFragment.lean",
+      "source_sha256": "3ae6449eea6a550a1ef564d17108823d19d2bba586a626da56bfc9900d1ca834",
+      "destination": "lean/DN/Compiler/ServeFragment.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeFull.lean",
+      "source_sha256": "081738ccfbae1e2f8492fbe555e71aa0080ef6bfdfc27d4b791b47d6b668ffc2",
+      "destination": "lean/DN/Compiler/ServeFull.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeSlice.lean",
+      "source_sha256": "a2b9ed8b3a2e7b7cccaef87588b5730cf727bf229073d81a80559eef3c148733",
+      "destination": "lean/DN/Compiler/ServeSlice.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageCompile.lean",
+      "source_sha256": "f7e3fdc84b76bb5a6d70c6c34a89ee2cfbf8ad51a1442e9d9d4942f8fecc30f3",
+      "destination": "lean/DN/Compiler/StageCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageEvenMore.lean",
+      "source_sha256": "333d5d15e9d9d52c06598bf2e689bb16705c4d06cdb493bd21063aafd949dfc0",
+      "destination": "lean/DN/Compiler/StageEvenMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2.lean",
+      "source_sha256": "fc9b27dd254d28b938c8925e5ff61d74c1297763628b625488bfa2eb70324b7a",
+      "destination": "lean/DN/Compiler/StageLift2.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2Cond.lean",
+      "source_sha256": "e04eb0c3b95f002f03a107f86d9cc0f022bb614fc50a1c3892b8d404a4d84fa6",
+      "destination": "lean/DN/Compiler/StageLift2Cond.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2Inst.lean",
+      "source_sha256": "97feb5de67802dedba338d13c44e0005640eb006c2c1aa629d5846d75533e3d0",
+      "destination": "lean/DN/Compiler/StageLift2Inst.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLiftGate.lean",
+      "source_sha256": "00d8f5dfc29d87d47346252d25d6433789cc79269817f170f502e188b9d3c2ac",
+      "destination": "lean/DN/Compiler/StageLiftGate.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLiftHeader.lean",
+      "source_sha256": "d9efad76b38aec3f3a89cfd834d2f37b468463a2f79747146a65af6b49863bc5",
+      "destination": "lean/DN/Compiler/StageLiftHeader.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageMore.lean",
+      "source_sha256": "d1c716f6063aaed3eba995708c1eb1ab791ac3b9d26e5bc2f03155ac0f4c621b",
+      "destination": "lean/DN/Compiler/StageMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageProg.lean",
+      "source_sha256": "146f7f50a8cfd93519567795c58f78c50af0cdbd0c5a50a853b1bf35979e379a",
+      "destination": "lean/DN/Compiler/StageProg.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageProg2.lean",
+      "source_sha256": "58258b7e846777e1b91aa6f90b61d1580da49366011fdcd712e70b86ae8e19d7",
+      "destination": "lean/DN/Compiler/StageProg2.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageYetMore.lean",
+      "source_sha256": "bce92e4f3fe209f38b26366389440c33c69a82bf1d5877fecf61b8c5efddd847",
+      "destination": "lean/DN/Compiler/StageYetMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StatusLineEmit.lean",
+      "source_sha256": "fde6f8bb039d0b9e2fccae339526006000d52b880eb8e545bc5c56464c726f8c",
+      "destination": "lean/DN/Compiler/StatusLineEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StructEmit.lean",
+      "source_sha256": "3f25dcc0adc18644062af5c7a2bbe6a6c5048e45f6d4e156ac00c2218501f80e",
+      "destination": "lean/DN/Compiler/StructEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StructModel.lean",
+      "source_sha256": "89e428bfca976b35077c9dbcb2ee0d6c56ce8a87b3444763e55fec18f29a16ee",
+      "destination": "lean/DN/Compiler/StructModel.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/build.rs",
+      "source_sha256": "661c90e3196035585a2e4b8e035a316ccce986182ab5e5dcf723fcbe29af5b4a",
+      "destination": "migration/dataplane/host/build.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/tests/borrow_recycle_prop.rs",
+      "source_sha256": "1e6073c7750d25c3ca5e1ac2521a0d2c4c0f3eefaa7bb9d0012ad40f7a1cd684",
+      "destination": "migration/dataplane/host/tests/borrow_recycle_prop.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/examples/proxy_forward_demo.rs",
+      "source_sha256": "26516b0637eef21afe2f04ad00849b6561c11897be1f50fa371901e1aa858f83",
+      "destination": "migration/dataplane/host/examples/proxy_forward_demo.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/examples/proxy_backend.rs",
+      "source_sha256": "cbbf1dde3bf455f5d2334d55832d20df3ed28dec518bcd7a42debcf669568ff5",
+      "destination": "migration/dataplane/host/examples/proxy_backend.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/cache_disk.rs",
+      "source_sha256": "22871989376a4c8c08bcccf69210db77f3236570df2587f95152590b2b064b44",
+      "destination": "migration/dataplane/host/src/cache_disk.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/serve.rs",
+      "source_sha256": "608ce22ed0c21973a0ed8eefa881a5261e4998acd540bd8323968b644a8f2fad",
+      "destination": "migration/dataplane/host/src/serve.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/cache.rs",
+      "source_sha256": "f10f10c7f5e2e07021188a3e96af77737a23f26dda77a8a1eb04364f7ad892da",
+      "destination": "migration/dataplane/host/src/cache.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/renewal.rs",
+      "source_sha256": "732267ca0bf35d6ce154b6433b1db424b1da3c0508d69d191e7b70f0c6301333",
+      "destination": "migration/dataplane/host/src/renewal.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/pq.rs",
+      "source_sha256": "61fc6e44c7ec821248193b4117ae88ebbdce602fbe6056e8278181064ac104b8",
+      "destination": "migration/dataplane/host/src/pq.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/stream_serve.rs",
+      "source_sha256": "638478f6bd0a72bf55a2477c54306720428a440d6701f46355682d28d00b1280",
+      "destination": "migration/dataplane/host/src/stream_serve.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/captp.rs",
+      "source_sha256": "212688bc1864bda9e83fa5244ee3760547ac808fb32cbf0a5c6d37aa39c709c4",
+      "destination": "migration/dataplane/host/src/captp.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/access_log.rs",
+      "source_sha256": "ca2a009d0661055c266859ef583ccf2d989d8a364799e1882d2269a4215f2f10",
+      "destination": "migration/dataplane/host/src/access_log.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/control.rs",
+      "source_sha256": "84609dff76a25704b4ee485707e6e915913cd835bd02f4e35784b8fa64ba61d8",
+      "destination": "migration/dataplane/host/src/control.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/uring.rs",
+      "source_sha256": "d813d175b44afa7eca5e5f07fbe357bc01e5390744f6d7a9864737fca339edf1",
+      "destination": "migration/dataplane/host/src/uring.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/l4_uring.rs",
+      "source_sha256": "b5c50d1f81fea0dedbb30eb046a2b296caa2542b3f944d0cfb9192e1dd545374",
+      "destination": "migration/dataplane/host/src/l4_uring.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/config.rs",
+      "source_sha256": "33207e276a21f37b589b2e5fc54395af227cd204075fb928ee8c118b481de648",
+      "destination": "migration/dataplane/host/src/config.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/ws_assembly.rs",
+      "source_sha256": "3409d9bb355bfbc534ddaaed114b807b95e103ed906bbef7d1dede7d5eddb78d",
+      "destination": "migration/dataplane/host/src/ws_assembly.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/proxy_dial.rs",
+      "source_sha256": "11cf77cd037e74dfd3e5143c1c48eaff612db4b334ebeff8b5e364669acf3ec8",
+      "destination": "migration/dataplane/host/src/proxy_dial.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/cake_serve.rs",
+      "source_sha256": "82069167a062a88da199967677ed40c0fc4d2b1640601f941d979deb48992131",
+      "destination": "migration/dataplane/host/src/cake_serve.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/wg.rs",
+      "source_sha256": "2646d83f96d770402b9114f2d2279a4d1a1e9ea8cdd3dfcb976edbbc4cada7b6",
+      "destination": "migration/dataplane/host/src/wg.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/bufring.rs",
+      "source_sha256": "e6c6fd7b1bdfe930094bfafdca4d20f4b39993b006a98d3e7e67974f572791cf",
+      "destination": "migration/dataplane/host/src/bufring.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/static_serve.rs",
+      "source_sha256": "932ce47309e8b24dc5ac2302bb078e32aec996e628b2f33110cbee1d385238d2",
+      "destination": "migration/dataplane/host/src/static_serve.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/gateway.rs",
+      "source_sha256": "bc1fe63faed7a3ed97fee9a4945410880f4881e0a2339e7443aab5ec3be3a018",
+      "destination": "migration/dataplane/host/src/gateway.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/h2.rs",
+      "source_sha256": "f3d00ece765ca3a367d7271a518c77c93773ec23377105d6debfa1f38d8cafb6",
+      "destination": "migration/dataplane/host/src/h2.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/metrics.rs",
+      "source_sha256": "94befe7b88b2a3a14e1ac28d08c43223ea42b75d8541fa9a43cbb2cc0d2f587b",
+      "destination": "migration/dataplane/host/src/metrics.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/gzip.rs",
+      "source_sha256": "fc75f7a924e61d47c5c380086346c29268938cd9dc137afc7e01ee21e43d0522",
+      "destination": "migration/dataplane/host/src/gzip.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/otel.rs",
+      "source_sha256": "c4e103c40f6f3483c3c3bd61cff99aa0f5db5639353df5393d035a1daaf8cbd3",
+      "destination": "migration/dataplane/host/src/otel.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/l4.rs",
+      "source_sha256": "4b4b30e2773abaa1933eb194d35245276e05d75fc52ab8192dceb83f4619f656",
+      "destination": "migration/dataplane/host/src/l4.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/standing.rs",
+      "source_sha256": "6952dbcc4a52abbf9c8c5f685e5ae026dc3d871da44fdb97c50028f9ccaa529d",
+      "destination": "migration/dataplane/host/src/standing.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/proxy_grpc.rs",
+      "source_sha256": "ac8bd945c6004ec4892828d33e5a3a0e33fd63f50dc17f5569ae585b8d62a7ec",
+      "destination": "migration/dataplane/host/src/proxy_grpc.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/interp.rs",
+      "source_sha256": "310b74b9e60e79e29ee0f0ac281fbd6f4bfd9e06684383449750e0411736e0d7",
+      "destination": "migration/dataplane/host/src/interp.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/workers.rs",
+      "source_sha256": "525cd951916404ee54072c9616ef0acef8fa60f23c5ad0ef4d1aec96fcad6c2a",
+      "destination": "migration/dataplane/host/src/workers.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/pool.rs",
+      "source_sha256": "144a32000a4b7b41671b0681697496f6432aaac751a7c6abe53cccc5148c06da",
+      "destination": "migration/dataplane/host/src/pool.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/main.rs",
+      "source_sha256": "91b6d762ae7087615a02e3d4ceb57d671cfb97798e0d6d1814541139d2039f6d",
+      "destination": "migration/dataplane/host/src/main.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/reconfig.rs",
+      "source_sha256": "3c8e287c0667c2b6cc6c2d17307fe457838d10c1288b5f2a0abbc313a8053547",
+      "destination": "migration/dataplane/host/src/reconfig.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/socks.rs",
+      "source_sha256": "d8637bade31a7bcc67ae1aab1737a2aac8842b66a722d49d0803a31e912e669e",
+      "destination": "migration/dataplane/host/src/socks.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/http.rs",
+      "source_sha256": "6aab228c9740e4ed0aeb3e050e4c3f8150eb2cb333fab9078cae24668129770e",
+      "destination": "migration/dataplane/host/src/http.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/blocking.rs",
+      "source_sha256": "8fba7cf83abf9cb1fba636aa2bcd488011135c2899e1146095da93f1ae775a9d",
+      "destination": "migration/dataplane/host/src/blocking.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/kqueue.rs",
+      "source_sha256": "c7deb261b3af34c7becc73ed4dc37f92196cd06197eed6807aa65b8b32878a6f",
+      "destination": "migration/dataplane/host/src/kqueue.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/tls.rs",
+      "source_sha256": "60b3c561f926a21674ea5ac966a5a6daa6f1f900a7ba844b0a99033761c351b0",
+      "destination": "migration/dataplane/host/src/tls.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/ws.rs",
+      "source_sha256": "dc42e8211307c1babd12112ba7d16f910b7d0d41c5cbb05a2aede74d6b03daae",
+      "destination": "migration/dataplane/host/src/ws.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/proxy_connect.rs",
+      "source_sha256": "435b558118272fb89379980d61fab196986931a3d58d5c15e21fe432618d1787",
+      "destination": "migration/dataplane/host/src/proxy_connect.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/derp_front.rs",
+      "source_sha256": "a133b2c7c682ff6f0ca2b5622c309a9335808b5eb0cd6351434bff249edd97d8",
+      "destination": "migration/dataplane/host/src/derp_front.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/interim.rs",
+      "source_sha256": "4f3dfba648d9ed343b8b0c4f545ae91b8ac3163911201ef1adae15b52eefe2b0",
+      "destination": "migration/dataplane/host/src/interim.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/admin.rs",
+      "source_sha256": "ac19f923ac15ce4fb4e5a1cb428226e001965ba34ac2e7d588206d4034a466f7",
+      "destination": "migration/dataplane/host/src/admin.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/udp.rs",
+      "source_sha256": "e9ca7f033ba4b63f6df000e6ce505bc76de8eb6507470909582744bacbe50d8a",
+      "destination": "migration/dataplane/host/src/udp.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/proxy_hook.rs",
+      "source_sha256": "2cc7a0a38b264861fbde3aa3532add8317e6a811103a213a350539e8cb334ba4",
+      "destination": "migration/dataplane/host/src/proxy_hook.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/outbound.rs",
+      "source_sha256": "62830f4acf23c138afcf8f9a998eeb8a2a087de8724dfc0a166e87ca8f033ab5",
+      "destination": "migration/dataplane/host/src/outbound.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/src/tls/ondemand.rs",
+      "source_sha256": "c64df5eb3491292dce41e5fe9bade0514845075f4a0b28071ac13dccd6c2ebf8",
+      "destination": "migration/dataplane/host/src/tls/ondemand.rs",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/ffi/drorb_ffi.c",
+      "source_sha256": "b3fe2189bd1515009e68869d33dac59d901484a86ee7e695dd86c658201e5c05",
+      "destination": "migration/dataplane/host/ffi/drorb_ffi.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/ffi/cake/cake_serve_ffi.c",
+      "source_sha256": "b89e20786ad2be1f769732f0b8721d1348cbe567ad2f00466f263933c54b8c25",
+      "destination": "migration/dataplane/host/ffi/cake/cake_serve_ffi.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/ffi/cake/cake_images_gen.h",
+      "source_sha256": "599e83867e2eb3efc7b09c05e07f97375a95284dd84b6204a1470ba82a48e11f",
+      "destination": "migration/dataplane/host/ffi/cake/cake_images_gen.h",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/dataplane/Cargo.toml",
+      "source_sha256": "eeff478236491ec1f80a3ed60b9b57dbed974eedd5b8a0bc555a870fc3b23f3e",
+      "destination": "migration/dataplane/host/Cargo.toml",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/tls_p256_shim.c",
+      "source_sha256": "871f7af555be48ed4481e8752444f721ddac13e8ddf282f499e07dd3fb94876e",
+      "destination": "migration/dataplane/ffi/tls_p256_shim.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-glibc-compat.sh",
+      "source_sha256": "4a14d741cda241ecaa7180d719c4bd431775dcf300fdf2ba124321be44f82521",
+      "destination": "migration/dataplane/ffi/build-glibc-compat.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/derp_relay_net.c",
+      "source_sha256": "d4830d9e4fad3e51472316830957f3235b75f3133e711cfae486e3bd87c52dc8",
+      "destination": "migration/dataplane/ffi/derp_relay_net.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-control-net.sh",
+      "source_sha256": "b63222385c78104977f4f03e8635dff1c7a6fc2c1f05b2fe2a77ec010c7fc1cd",
+      "destination": "migration/dataplane/ffi/build-control-net.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-mac-io.sh",
+      "source_sha256": "df46e6d2647f98db85ef49efbc34ad22d8f2bbcd5885ae683b8430d092f3f556",
+      "destination": "migration/dataplane/ffi/build-mac-io.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/pq_stub.c",
+      "source_sha256": "226b32a655c714329ce2b07a7e341d40e8705ec2cfc026670e77ae02ce91620e",
+      "destination": "migration/dataplane/ffi/pq_stub.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/cgi_exec.c",
+      "source_sha256": "70fec60432eb2d6c05cd247e90b9f87d9f811b5aafea1acf285b32ecde6a3846",
+      "destination": "migration/dataplane/ffi/cgi_exec.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-win-io.sh",
+      "source_sha256": "8555cd2d2efdbefbe1b39a18fefb741c6cfd2cc32059f5ea3ba2f735346130f5",
+      "destination": "migration/dataplane/ffi/build-win-io.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-derp-net.sh",
+      "source_sha256": "8092ca1a2d0500b8bfc3d207bf9e25632ec288eea8597ce6ba24492ace05c8d5",
+      "destination": "migration/dataplane/ffi/build-derp-net.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/wg_udp.c",
+      "source_sha256": "f19ac859a7c1aa2e6d08e40e711e2881e7e771f7f7206bf13571bd410cf1a7f0",
+      "destination": "migration/dataplane/ffi/wg_udp.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/mac_io.c",
+      "source_sha256": "e018a99629172299cd906ad20ca2940dfb656cf2fec538061061c238bd4090c1",
+      "destination": "migration/dataplane/ffi/mac_io.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/mac_udp.c",
+      "source_sha256": "58d4db0c0584b72368314a0548db42c66df8f6bf6665ff26db1aea06d0a222e0",
+      "destination": "migration/dataplane/ffi/mac_udp.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-derp-relay-net.sh",
+      "source_sha256": "a94ff9b19e75701d940dca4f00d6f6eec34597fffd86282023227a9fb1d7b121",
+      "destination": "migration/dataplane/ffi/build-derp-relay-net.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-cgi-shim.sh",
+      "source_sha256": "3610ef3a772661e8ab67f8dc4402560c94dbc5d0ed87f4d6ad8b89f3fdc29d81",
+      "destination": "migration/dataplane/ffi/build-cgi-shim.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-aes-fallback.sh",
+      "source_sha256": "7a839bf0f2967e0e00c08f2c625b409434cdce8d8a3fe9f5d9110ca6011652f4",
+      "destination": "migration/dataplane/ffi/build-aes-fallback.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/glibc_isoc23_compat.c",
+      "source_sha256": "86c1da004034310170cda11d2f1a5a7d57b810401a41e31d1aba86d4ae4dcd50",
+      "destination": "migration/dataplane/ffi/glibc_isoc23_compat.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-dataplane-lib.sh",
+      "source_sha256": "98e268775c8f2696796374db6cec267ac11b744458b53b8308e506361d01ada7",
+      "destination": "migration/dataplane/ffi/build-dataplane-lib.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/webrtc_udp.c",
+      "source_sha256": "8c2b8a5c4cb12e3f8e0d6d63580fb540dcd7691e733ff836c762755e808bd641",
+      "destination": "migration/dataplane/ffi/webrtc_udp.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/linux_io.c",
+      "source_sha256": "ab7aff62e28b36ef6336b942626c5a0cf2ca2585d832805c8110e3e7fd3645fd",
+      "destination": "migration/dataplane/ffi/linux_io.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-tls-p256-shim.sh",
+      "source_sha256": "9b5a4d4c4417f804211c1c37267a80bbe1fd64b4258ab2d44196c14892243f10",
+      "destination": "migration/dataplane/ffi/build-tls-p256-shim.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/control_net.c",
+      "source_sha256": "b91cc5c069404651a6f4f4dd1270e81c3a59b4b65c734b03fb62bd486284d7a1",
+      "destination": "migration/dataplane/ffi/control_net.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-crypto-shim.sh",
+      "source_sha256": "de5b842995bc61c0282a8b0e1e04f572d573aa54af0de17f1c9e21f30a19c9e4",
+      "destination": "migration/dataplane/ffi/build-crypto-shim.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/win_io.c",
+      "source_sha256": "be7cee5ff552f43e512aebaa0bcd5470e33a3472780f60a5a85f321095bbeb7d",
+      "destination": "migration/dataplane/ffi/win_io.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/derp_net.c",
+      "source_sha256": "c476e276b1b0145c6d64a57ed0b0d713674fcc2aaafaf865ba8c5c5fbcdbb1ce",
+      "destination": "migration/dataplane/ffi/derp_net.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-durable.sh",
+      "source_sha256": "a98a40073eaf978e823c30ac9ad5f843dc762167051d6c9ea746cdc44a51e6fd",
+      "destination": "migration/dataplane/ffi/build-durable.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-pq-stub.sh",
+      "source_sha256": "567b19b56926ea6d66cd2361e87321f6abc154fdfe145dc788cf429c20c27e26",
+      "destination": "migration/dataplane/ffi/build-pq-stub.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/crypto_shim.c",
+      "source_sha256": "09da329f2e7175e87664740b536f9ea083d201e020e45a3843359aaeb912f4a4",
+      "destination": "migration/dataplane/ffi/crypto_shim.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-linux-io.sh",
+      "source_sha256": "a41057205b79ae6a347ba24b826e5c5afd0c9006c1c544e2c427c688a5e7586f",
+      "destination": "migration/dataplane/ffi/build-linux-io.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/durable.c",
+      "source_sha256": "1cbb86be6bb007bea8e865465d32920050d4c92b08059c359b344377988e6233",
+      "destination": "migration/dataplane/ffi/durable.c",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-wg-udp.sh",
+      "source_sha256": "137438fb78aef7866f56440335429792eecbeb0ed67c536ff4c9cbc798005455",
+      "destination": "migration/dataplane/ffi/build-wg-udp.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/ffi/build-mac-multi.sh",
+      "source_sha256": "d14e46c526f02fb184c8c36db1336c928594c380c9217deac36e20e795c34612",
+      "destination": "migration/dataplane/ffi/build-mac-multi.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/bench.sh",
+      "source_sha256": "5db69bdd8fed7050927e34f5606e832434018a5eab9ab736c51e5ac733f8f04d",
+      "destination": "migration/dataplane/benchmarks/bench.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/cake_ab.sh",
+      "source_sha256": "81e5168e7bc82763495c5ed4b0fcba7c2708c4265832486f4abe884883b0e1e5",
+      "destination": "migration/dataplane/benchmarks/cake_ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/PERF-AUDIT.md",
+      "source_sha256": "52aedd12388e30f885eee86df706cb994c805aac9e393fb76fc8ec9529de7ff1",
+      "destination": "migration/dataplane/benchmarks/PERF-AUDIT.md",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/gated-ab.sh",
+      "source_sha256": "ba0128075cc7ab2baac2a90d8b31afc81e23820bc72ed1f9b3bab39017caf1b2",
+      "destination": "migration/dataplane/benchmarks/gated-ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/body-scaling.sh",
+      "source_sha256": "8d520bf51820262b80070494d9fdb05814925c720f928f963fb566ff1ee2cbde",
+      "destination": "migration/dataplane/benchmarks/body-scaling.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/dense-ab.sh",
+      "source_sha256": "cd1d7ad62a7761bcae822ead3be46c0aece46abbdb294f1c2de2b1e80380f97a",
+      "destination": "migration/dataplane/benchmarks/dense-ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/span-ab.sh",
+      "source_sha256": "7c7c152bd3cce9f00a8be3b5b8cd42740c1c240ff5dfc75cb90e0b3607fe8ddb",
+      "destination": "migration/dataplane/benchmarks/span-ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/densefull2-ab.sh",
+      "source_sha256": "1a475a60b834b27440670801a5ce813bb30255a07f2a43360430e481e8b7897e",
+      "destination": "migration/dataplane/benchmarks/densefull2-ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "drorb",
+      "source_revision": "f253290b81496c086bff2e2c8faf1ab65778ac67",
+      "source_path": "conformance/perf/span7-ab.sh",
+      "source_sha256": "73cc3b4e8f934a7479d6fa26fccf488a6466c134b837c9b8399949435382b336",
+      "destination": "migration/dataplane/benchmarks/span7-ab.sh",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/scripts/reachability-audit.py",
+      "source_sha256": "346ae73a1f4cd144d3c689bb9facb9867682e134fd51b3e942eee14d915f85b0",
+      "destination": "migration/dataplane/scripts/reachability-audit.py",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/scripts/env-flag-audit.py",
+      "source_sha256": "3efbce5214e45afd1541fb43abe849b9b741f3e0048ac7be83572160623b243b",
+      "destination": "migration/dataplane/scripts/env-flag-audit.py",
+      "changes": "Unmodified migration reference; not an active dn build target."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/ring-twin/Cargo.toml",
+      "source_sha256": "78aa8cf4eaf0f172b14cb0e7bc8a325b6a281b346b16079b16bcf1b123f64d90",
+      "destination": "models/ring/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/ring-twin/tests/stress.rs",
+      "source_sha256": "364da02f02046eccd364992cf4072004358bb0890fb197ab494a09a098b8cc31",
+      "destination": "models/ring/tests/stress.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/ring-twin/tests/loom.rs",
+      "source_sha256": "a6079b11b3405a413cf6d7bd66ff789c0f88568bef3eea6e3b5ba1eea1f54382",
+      "destination": "models/ring/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/ring-twin/src/lib.rs",
+      "source_sha256": "c835f0a882f72200833d96b845d208d53fcba0daf55ad106d26cb1f1f0d126f0",
+      "destination": "models/ring/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/ring-twin/src/sync.rs",
+      "source_sha256": "a1f7bad42ff72552c9604bf704c1b630b439195d2ca421dc55f16fe6f2cfad4b",
+      "destination": "models/ring/src/sync.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/wake-twin/Cargo.toml",
+      "source_sha256": "3afe6590d5fed163c5d32799bb1f60b0320f866e839a8e25df10a3b4642608a4",
+      "destination": "models/wake/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/wake-twin/tests/stress.rs",
+      "source_sha256": "4e3ad92deade86ac94b42a0d983881b7812ab5e2284f4320b24321d08b75073c",
+      "destination": "models/wake/tests/stress.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/wake-twin/tests/loom.rs",
+      "source_sha256": "acd4f05d7cf68fc04cb84fb2855325f62a2a9c67c22969181330fa358c3c44e1",
+      "destination": "models/wake/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/wake-twin/src/lib.rs",
+      "source_sha256": "9eff4a1842c424be133fe21cf50e2f6a911dcf85317a4a68758afd6387e5f4d5",
+      "destination": "models/wake/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/wake-twin/src/sync.rs",
+      "source_sha256": "ebdeb8b894d37edf73d06ca0ee14d0ab403e932aade07977717e359d9e7c4acd",
+      "destination": "models/wake/src/sync.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/borrow-recycle-twin/Cargo.toml",
+      "source_sha256": "002f0904b1dd7b9a46ff356e63dd51d7f65ea215c02e324ff49d6561754ba4ea",
+      "destination": "models/borrow-recycle/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/borrow-recycle-twin/tests/loom.rs",
+      "source_sha256": "eee4446763df0600cc8643653b85aa96c8e9f1fb23462e4405ca0778dd40ecd3",
+      "destination": "models/borrow-recycle/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/borrow-recycle-twin/src/lib.rs",
+      "source_sha256": "824a37efa4a8408aa67356e9253f64a9bcb1a0b98f5cac954a4e3d9c4f084e60",
+      "destination": "models/borrow-recycle/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/splitsend-twin/Cargo.toml",
+      "source_sha256": "46716b221cd06d584e280d3cfb4463615b0f508aa73c5c6b8c5a7f419d47bead",
+      "destination": "models/splitsend/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/splitsend-twin/tests/loom.rs",
+      "source_sha256": "8fe9e203003961e73da6978f5fd8d969fc6062e045d53bcb8e510d9d3b45a74e",
+      "destination": "models/splitsend/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/splitsend-twin/src/lib.rs",
+      "source_sha256": "3322a1b55f29ec5d2dd109466fa353697f1992d50ae54b92a84dff8dccc8d465",
+      "destination": "models/splitsend/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/multishot-twin/Cargo.toml",
+      "source_sha256": "d3e3d9d38e88238208c5906f62857a3f7edeef50ddd4282ae5fadba9044ad296",
+      "destination": "models/multishot/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/multishot-twin/tests/loom.rs",
+      "source_sha256": "e356cb00095af6eef5732b6bae9b37feeecf7b254d8519f40e08c252d8e94b77",
+      "destination": "models/multishot/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/multishot-twin/src/lib.rs",
+      "source_sha256": "c88413110dbb546cb8334126bf62b3aedc743eece91dfab6274b20474487104c",
+      "destination": "models/multishot/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/conn-limit-twin/Cargo.toml",
+      "source_sha256": "b404715ea9b52fcbd79aa2480306e6c2e63f683f874c41182a259bb236cb141d",
+      "destination": "models/conn-limit/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/conn-limit-twin/tests/loom.rs",
+      "source_sha256": "9735bf075cd750f62c12ec716abdc70d49233d38a4edd50b28dac4236729c0ad",
+      "destination": "models/conn-limit/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/conn-limit-twin/src/lib.rs",
+      "source_sha256": "11a4c3ea910176b9bb1acee78d7267ff3d69060c03016e1dcece7c5cb81be4e7",
+      "destination": "models/conn-limit/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/config-publish-twin/Cargo.toml",
+      "source_sha256": "8067eceab2f74757817551172cb8eec727b96bd1d38771f19a5652a7e03acace",
+      "destination": "models/config-publish/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/config-publish-twin/tests/stress.rs",
+      "source_sha256": "25ea40ecc6811e7db1aadaad426f56a14669a26f622619aa3dd8de9a397c9119",
+      "destination": "models/config-publish/tests/stress.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/config-publish-twin/tests/loom.rs",
+      "source_sha256": "599ab02d0319f3e0fd8a0e4f6e334baafdcbfd478334cfe7b2da88d929add365",
+      "destination": "models/config-publish/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/config-publish-twin/src/lib.rs",
+      "source_sha256": "29640349a801071906cacbeffa37ec49532268cbac7be9b82e8e8481f7052d02",
+      "destination": "models/config-publish/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/config-publish-twin/src/sync.rs",
+      "source_sha256": "8200bc92817d01f06ed90652336503cdb356411c6f989935988e37e1e43e9e32",
+      "destination": "models/config-publish/src/sync.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/oneshot-recv-twin/Cargo.toml",
+      "source_sha256": "21b29f6c5658c319790d66afc937949b266427aaaaf9d19e9a55a059903b4cfc",
+      "destination": "models/oneshot-recv/Cargo.toml",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/oneshot-recv-twin/tests/loom.rs",
+      "source_sha256": "eb7162cd620c45bc553b5296fb36d27a1827df1d3377d44d6dad1154c7e2f0c9",
+      "destination": "models/oneshot-recv/tests/loom.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/crates/oneshot-recv-twin/src/lib.rs",
+      "source_sha256": "baf74754d71a18b810c4c0506ede4e58cec1e7b5aa840e1c6d5e0d59f2db8f60",
+      "destination": "models/oneshot-recv/src/lib.rs",
+      "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
     }
   ]
 }

@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["ring", "wake", "borrow-recycle", "splitsend", "multishot", "conn-limit", "config-publish", "oneshot-recv"]
