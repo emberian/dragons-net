@@ -12,7 +12,7 @@ On Linux x86-64, install the prerequisites from the root README, then run:
 bash scripts/check_all.sh
 ```
 
-This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the portable model/host baseline. CI runs the same constituent lanes and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
+This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the portable model/host baseline, and `bash scripts/lint.sh` the static checks. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
 
 The default native compiler is the digest-pinned release in `tools.lock.json`. Setting `CAKE` deliberately selects a different compiler, whose digest is recorded. Neither choice silently claims the separate patched HOL backend has been rebuilt.
 
@@ -20,7 +20,7 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build and axiom audit | Every imported `DN` declaration, including executable definitions; 7,022 declarations, including 2,982 theorems at this baseline | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build, kernel re-check and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 7,426 declarations, including 3,255 theorems | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Inherited examples | 434 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
@@ -49,9 +49,9 @@ The pinned x86-64 export trampoline uses `mov %edi, %eax` at `cake_return`. Our 
 
 The native interfaces now declare a 32-bit result. `Abi.wordResult` rewrites value returns, including returns nested in control flow, to write a caller-owned word and return status zero. The model and native baseline check that transformation on all 109 fixture functions. The echo kernel returns only a bounded length (0–4096) or `UINT32_MAX`. This is an explicit adaptation to the backend ABI, not an assembly patch or a claimed upstream compiler fix.
 
-### The theorem-only audit missed isolated executable definitions
+### The theorem-only audit missed isolated definitions
 
-An unapproved axiom inside a `DN` definition could previously escape if no audited theorem depended on it. The audit now traverses every imported `DN` declaration, and a negative gate test exercises this exact failure case as well as the original theorem case.
+An unapproved axiom inside a `DN` definition could previously escape if no audited theorem depended on it. The audit is now a standalone program that imports every module under `lean/DN` and checks every declaration they define; negative gate tests exercise this case among others.
 
 ### Raw printing and lowering were not an emission contract
 

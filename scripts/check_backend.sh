@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 scripts/backend.py verify cakeml
 python3 scripts/backend.py verify hol
-export HOLDIR="$(pwd)/.deps/hol"
-export CAKEMLDIR="$(pwd)/.deps/cakeml"
+HOLDIR="$(pwd)/.deps/hol"
+CAKEMLDIR="$(pwd)/.deps/cakeml"
+export HOLDIR CAKEMLDIR
 if [[ ! -x "$HOLDIR/bin/Holmake" ]]; then
   echo 'Build the pinned HOL tree first; see backend/README.md.' >&2
   exit 1

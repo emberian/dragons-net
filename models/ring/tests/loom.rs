@@ -14,9 +14,9 @@
 
 #![cfg(loom)]
 
+use dn_ring_model::{PushError, channel};
 use loom::future::block_on;
 use loom::thread;
-use dn_ring_model::{PushError, channel};
 
 /// Bounded model for the multi-item streams: the async send/recv paths run
 /// several waker registrations and `SeqCst` fences per item, and unbounded

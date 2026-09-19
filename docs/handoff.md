@@ -43,7 +43,7 @@ Add peering, authenticated access, offline bundles, and a human UI after the sto
 
 ## Working conventions
 
-`AGENTS.md` describes automated-agent expectations; the same assurance discipline applies to all contributors. Add every Lean module to `DN/Audit.lean`. Put kernel theorems and executable examples in their respective lanes. Use `scripts/check.sh` before committing and the native/Loom lanes when touching their boundaries. CI uploads logs and native artifact digests.
+`AGENTS.md` describes automated-agent expectations; the same assurance discipline applies to all contributors. Every module under `lean/DN` is picked up by the proof audit automatically. Put kernel theorems and executable examples in their respective lanes. Use `scripts/check.sh` before committing and the native/Loom lanes when touching their boundaries. CI uploads logs and native artifact digests.
 
 `migration/` preserves original source bytes. Port into active modules rather than editing that snapshot. Retain provenance and update the documentation when a reference component becomes active. Old deployment scripts are historical evidence, not instructions to run against a machine.
 

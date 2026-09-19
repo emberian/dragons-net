@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """Fetch exact upstream sources and apply the curated patch in an isolated directory."""
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "backend/lock.json").read_text())
 
 
-def run(*args, cwd=None, **kwargs):
-    return subprocess.run(args, cwd=cwd, check=True, **kwargs)
+def run(*args: str, cwd: Path | None = None, **kwargs: Any) -> None:
+    subprocess.run(args, cwd=cwd, check=True, **kwargs)
 
 
-def fetch(name):
+def fetch(name: str) -> None:
     spec = LOCK[name]
     destination = ROOT / ".deps" / name
     if destination.exists():
@@ -30,14 +32,15 @@ def fetch(name):
         if name == "cakeml":
             for patch in LOCK["patches"]:
                 path = ROOT / "backend" / patch["path"]
-                assert hashlib.sha256(path.read_bytes()).hexdigest() == patch["sha256"]
+                if hashlib.sha256(path.read_bytes()).hexdigest() != patch["sha256"]:
+                    raise SystemExit("patch checksum mismatch")
                 run("git", "-C", temp, "apply", "--check", str(path))
                 run("git", "-C", temp, "apply", str(path))
         os.rename(temp, destination)
     print(destination)
 
 
-def verify(name):
+def verify(name: str) -> None:
     path = ROOT / ".deps" / name
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
     if actual != LOCK[name]["revision"]:

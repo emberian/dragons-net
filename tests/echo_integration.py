@@ -1,4 +1,7 @@
 """Real TCP tests for an externally built native echo host; stdlib only."""
+from __future__ import annotations
+
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -9,14 +12,17 @@ import struct
 import subprocess
 import sys
 import time
+from typing import Any
 
 
 @contextmanager
-def server(binary, *options):
+def server(binary: Path, *options: str) -> Iterator[tuple[int, dict[str, Any]]]:
     process = subprocess.Popen([str(binary), *options], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True)
-    stats = {}
+    stats: dict[str, Any] = {}
     try:
+        if process.stdout is None:
+            raise RuntimeError("echo server has no output pipe")
         with selectors.DefaultSelector() as ready:
             ready.register(process.stdout, selectors.EVENT_READ)
             if not ready.select(10):
@@ -30,15 +36,15 @@ def server(binary, *options):
         except subprocess.TimeoutExpired:
             process.kill()
             process.communicate()
-            raise RuntimeError("echo server did not terminate")
+            raise RuntimeError("echo server did not terminate") from None
         if process.returncode:
             raise RuntimeError(f"echo server failed: {process.returncode}: {error}")
         stats.update(json.loads(error))
 
 
-def exchange(port, payload, chunk=4096, slow=False):
+def exchange(port: int, payload: bytes, chunk: int = 4096, slow: bool = False) -> int:
     with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
-        def send():
+        def send() -> None:
             for offset in range(0, len(payload), chunk):
                 sock.sendall(payload[offset:offset+chunk])
             sock.shutdown(socket.SHUT_WR)
@@ -61,7 +67,7 @@ def exchange(port, payload, chunk=4096, slow=False):
     return len(payload)
 
 
-def main():
+def main() -> None:
     binary = Path(sys.argv[1]).resolve()
     total, cases = 0, 0
     with server(binary, "--write-chunk", "7") as (port, stats):
@@ -98,7 +104,7 @@ def main():
                 waiting.settimeout(0.2)
                 try:
                     waiting.recv(1)
-                except socket.timeout:
+                except TimeoutError:
                     pass
                 else:
                     raise AssertionError("more than 32 connections serviced")
