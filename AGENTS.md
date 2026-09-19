@@ -7,10 +7,17 @@ Run `bash scripts/check.sh` for the portable baseline. Lean is pinned and uses
 only its core libraries. Set LEAN_NUM_THREADS (default 4); never start overlapping
 Lake builds in the same build directory. No Mathlib or sibling checkout is needed.
 
-Every lean/DN module belongs in DN/Audit.lean. The structure gate checks coverage;
-the Lean command checks transitive axioms in every DN declaration. Add named proofs for general
-facts and executable regression cases for examples. Do not introduce sorry,
-custom axioms, native_decide, build-time IO, or weaken a theorem to make it green.
+Every module under lean/DN is audited by scripts/Audit.lean and re-checked by
+leanchecker. Code from lean/ must not be able to act on the system while it is
+built: before the build, scripts/SourceGate.lean parses each module with Lean
+and checks every command before it is elaborated. It accepts only imports of DN
+modules and Lean.Data.Json, fixed sets of commands, attributes and options, and
+syntax definitions in files pinned by hash in scripts/check_structure.py; it
+rejects unsafe code and terms that run code from the module, including tactic
+configuration values. The gate is a tripwire, not a sandbox. Add named proofs
+for general facts and executable regression cases for examples. Do not introduce
+sorry, custom axioms, native_decide, build-time IO, or weaken a theorem to make
+it green.
 An inhabited precondition still needs review for semantic adequacy.
 
 Read docs/baseline.md before modifying the maintained compiler subset.

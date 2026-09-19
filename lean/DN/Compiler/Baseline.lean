@@ -1,4 +1,4 @@
-import Lean
+import Lean.Data.Json
 import DN.Compiler.Checked
 import DN.Compiler.Abi
 

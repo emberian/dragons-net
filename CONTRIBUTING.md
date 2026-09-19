@@ -44,7 +44,7 @@ changes use the separate [HOL lane](backend/README.md). State which checks ran,
 which did not, and why. For documentation-only changes, check links and diffs;
 do not invent test results.
 
-Add every Lean module to `DN/Audit.lean`. No `sorry`, custom axioms,
+Every module under `lean/DN` is audited automatically. No `sorry`, custom axioms,
 `native_decide`, or weakened claims to make a gate pass. A theorem with an
 impossible premise is not useful assurance: provide witnesses and review what
 the precondition actually means. Distinguish kernel proofs, bounded exploration,

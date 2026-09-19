@@ -42,7 +42,6 @@ inductive PStmt
   | ret (val : PExpr)                          -- `return val;`
   | ite (cond : PExpr) (thn els : List PStmt)  -- `if cond { .. } else { .. }`
   | while (cond : PExpr) (body : List PStmt)   -- `while cond { .. }`
-  deriving Repr
 
 /-- A DN.Compiler function. `params` are `(shape, name)` pairs: DN.Compiler requires a
 shape prefix on each parameter (`fun f(1 x, 1 y)`), where `1` = a one-word value.
@@ -55,7 +54,6 @@ structure PFun where
   SysV-ABI entry: named word/pointer params, a 32-bit C return, no `@base`/FFI/
   `main`). Defaults `false`, so every existing whole-program emitter is unchanged. -/
   exported : Bool := false
-  deriving Repr
 
 /-! ## 2. The pretty-printer (AST → DN.Compiler concrete syntax)
 
@@ -365,7 +363,6 @@ be generated. This section adds exactly those missing pieces.
 /-- A DN.Compiler module: stage functions plus (last) the entry that sequences them. -/
 structure PProgram where
   funs : List PFun
-  deriving Repr
 
 /-- Render a whole module. `ppFun` already terminates each function with a
 newline; joining with one more `"\n"` puts a blank line between functions. -/

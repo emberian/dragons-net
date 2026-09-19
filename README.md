@@ -28,7 +28,7 @@ Start with [Wisper’s compiler baseline](docs/baseline.md): what is exercised, 
 | [Migration sources](migration/dataplane/README.md) | The original native host, FFI, and performance tooling preserved for extraction. These are reference sources, outside the active build. |
 | [News](lean/DN/News/Framing.lean) | A CRLF framing specification seed with a chunk-boundary theorem. Command parsing, article storage, peering, and a human UI remain to be built. |
 
-The current Lean audit checks all 7,022 imported `DN` declarations, including 2,982 theorem declarations, for unapproved transitive axioms. Separately, 434 executable examples exercise the inherited compiler and dataplane models. These counts describe coverage, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md).
+The proof audit (`scripts/Audit.lean`) imports every module under `lean/DN` and rejects any declaration there that is an axiom, `unsafe`, `partial`, `extern`, `export`, `implemented_by`, an initializer or a `csimp` theorem, or that depends on an axiom other than `propext`, `Classical.choice` and `Quot.sound`. The only exception is the `_unsafe_rec` helper that Lean generates to compile a recursive definition of the same module; any other declaration with that name is rejected. `leanchecker` re-checks the same modules in the kernel. The audit also runs every `regression_*` example. Before the build, a source gate parses every module with Lean and, before Lean elaborates them, rejects the commands through which library code could act on the system, such as `#eval`, custom elaborators and `unsafe` code. The gate is a tripwire, not a sandbox: building Lean code runs code, so check untrusted changes in an isolated environment without secrets. These checks concern the soundness of the recorded proofs, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md).
 
 ## Build and check
 
@@ -40,7 +40,7 @@ cd dn
 bash scripts/check.sh
 ```
 
-This builds the Lean library and `dn-compiler`, audits declaration dependencies, runs executable examples and gate tests, checks Rust formatting and Clippy, and runs the host and ordinary concurrency tests. Do not run overlapping Lake builds in the same checkout.
+This runs the Lean source gate, builds the Lean library and `dn-compiler`, re-checks them with `leanchecker`, runs the proof audit and its executable examples, runs gate tests, checks Rust formatting and Clippy, and runs the host and ordinary concurrency tests. Do not run overlapping Lake builds in the same checkout.
 
 Emit the supported native example:
 
