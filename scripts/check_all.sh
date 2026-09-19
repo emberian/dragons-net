@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
-  echo 'The complete native baseline requires Linux x86-64. Use scripts/check.sh for portable checks.' >&2
+  echo 'The checks require Linux x86-64; elsewhere, scripts/check.sh build runs the source gate and the build.' >&2
   exit 1
 fi
 bash scripts/lint.sh

@@ -4,7 +4,7 @@ The echo server is a small reference host for bringing up the compiler on a real
 
 ## Build and run
 
-On Linux x86-64, after the portable build:
+On Linux x86-64, after `bash scripts/check.sh build`:
 
 ```sh
 cake=$(python3 scripts/bootstrap_tool.py cake)

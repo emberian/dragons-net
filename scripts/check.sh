@@ -59,15 +59,25 @@ build() {
   fi
 }
 
-# Kernel re-check and proof audit; no built code runs before the audit's static checks pass.
-# The checkers come from the toolchain, never from PATH, which Lake prefixes with .lake/build/bin.
+# Kernel re-checks and proof audit; no built code runs before the audit's static checks pass.
+# The checkers come from the toolchain and the lock, never from PATH, which Lake prefixes with
+# .lake/build/bin.
 proofs() {
-  local leanchecker lean path
+  local leanchecker lean prefix exporter nanoda args
   leanchecker=$(elan which leanchecker)
   lean=$(elan which lean)
-  path="$("$lean" --print-prefix)/lib/lean:.lake/build/lib/lean"
-  LEAN_PATH=$path "$leanchecker" DN
-  LEAN_PATH=$path "$lean" --run scripts/Audit.lean --regressions 434
+  prefix=$("$lean" --print-prefix)
+  exporter=$(python3 scripts/bootstrap_tool.py lean4export)
+  nanoda=$(python3 scripts/bootstrap_tool.py nanoda)
+  # Toolchain modules come first, and a panic stops a checker instead of returning a default.
+  local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
+  "$leanchecker" DN
+  # The independent kernel checks the library's declarations and everything they use.
+  mkdir -p build/proofs
+  "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
+  mapfile -d '' -t args <build/proofs/export-list
+  LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
+  "$lean" --run scripts/Audit.lean --regressions 434
 }
 
 # Tests that run the built code, and the Rust crates.

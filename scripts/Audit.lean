@@ -10,6 +10,9 @@ modules (including private and top-level names) is checked. Axiom dependencies a
 recomputed from declaration bodies; axiom summaries stored in `.olean` files are not
 trusted. Initializers of imported modules are not executed. Kernel re-checking of the
 same modules is done separately by `leanchecker`.
+
+With `--export-list` instead of `--regressions N`, nothing is checked; the arguments that make
+`lean4export` export the same declarations for an independent kernel are printed instead.
 -/
 
 open Lean
@@ -111,13 +114,53 @@ def isRegression (name : Name) : Bool :=
   | .str _ s => s.startsWith "regression_"
   | _ => false
 
+/-- `name` as `lean4export` reads it back with `Syntax.decodeNameLit`; `toString` does not
+escape names with macro scopes. NUL separates the arguments. -/
+def literal (name : Name) : Except String String :=
+  let text := name.toStringWithSep "." true
+  if !text.contains '\x00' && Syntax.decodeNameLit ("`" ++ text) == some name then .ok text
+  else .error s!"cannot write the name {repr name}"
+
+/-- `name` as nanoda matches it against its permitted axioms: components joined by dots, without
+escapes, and no dot after an empty prefix. -/
+def nanodaName : Name → String
+  | .anonymous => ""
+  | .str p s => join (nanodaName p) s
+  | .num p n => join (nanodaName p) (toString n)
+where
+  join (pre part : String) : String := if pre.isEmpty then part else pre ++ "." ++ part
+
+/-- Arguments for `lean4export`, each ended by NUL: the modules, `--`, and every declaration the
+kernel checks, which is all but unsafe and `partial` ones. Refused if any other axiom would pass
+for a permitted one in nanoda. -/
+def printExportList (env : Environment) (modules : Array Name) (decls : Array (Name × ConstantInfo)) :
+    IO UInt32 := do
+  let mut errors := env.constants.fold (init := #[]) fun acc name info =>
+    if info matches .axiomInfo _ && !allowedAxioms.contains name &&
+        allowedAxioms.any (nanodaName · == nanodaName name) then
+      acc.push s!"{name} reads to nanoda as the axiom {nanodaName name}"
+    else acc
+  let checked := decls.filterMap fun (name, info) =>
+    if info.isUnsafe || info matches .defnInfo { safety := .partial, .. } then none else some name
+  if checked.isEmpty then errors := errors.push "no declarations found"
+  match modules.mapM literal, checked.mapM literal with
+  | .ok modules, .ok names =>
+    if errors.isEmpty then
+      IO.print <| String.join <| (modules ++ #["--"] ++ names).toList.map (· ++ "\x00")
+      return 0
+  | .error e, _ | _, .error e => errors := errors.push e
+  for e in errors do IO.eprintln s!"proof audit: {e}"
+  return 1
+
 structure Args where
   roots : Array System.FilePath := #[]
   regressions : Option Nat := none
+  exportList : Bool := false
 
 def parseArgs : List String → Args → Except String Args
   | [], o => .ok o
   | "--root" :: dir :: rest, o => parseArgs rest { o with roots := o.roots.push dir }
+  | "--export-list" :: rest, o => parseArgs rest { o with exportList := true }
   | "--regressions" :: n :: rest, o =>
     match n.toNat? with
     | some k => parseArgs rest { o with regressions := some k }
@@ -129,8 +172,10 @@ unsafe def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
     | .ok o => pure o
     | .error e => IO.eprintln e; return 2
-  let some expected := opts.regressions
-    | IO.eprintln "usage: Audit --regressions N [--root DIR]..."; return 2
+  if opts.exportList == opts.regressions.isSome then
+    IO.eprintln "usage: Audit (--regressions N | --export-list) [--root DIR]..."
+    return 2
+  let expected := opts.regressions.getD 0
   let roots : Array System.FilePath := if opts.roots.isEmpty then #["lean"] else opts.roots
   let mut modules : Array Name := #[]
   for root in roots do
@@ -146,15 +191,24 @@ unsafe def main (args : List String) : IO UInt32 := do
     | none => false
   let decls := env.constants.fold
     (fun acc name info => if inOurs name then acc.push (name, info) else acc) #[]
+  if opts.exportList then
+    return ← printExportList env modules decls
   let graph := reachable env (decls.map (·.1))
   let bad := tainted env graph
   let mut errors : Array String := #[]
   for h : idx in [0:env.header.moduleNames.size] do
     let module := env.header.moduleNames[idx]
     if ours.contains module then
-      for imp in env.header.moduleData[idx]!.imports do
+      let data := env.header.moduleData[idx]!
+      for imp in data.imports do
         unless ours.contains imp.module || allowedImports.contains imp.module do
           errors := errors.push s!"{module} imports {imp.module}"
+      -- The import keeps one copy of a theorem stored by several modules; the others are unchecked.
+      for name in data.constNames, info in data.constants do
+        if let some kept := env.find? name then
+          unless info.isTheorem == kept.isTheorem && info.type == kept.type &&
+              info.value? (allowOpaque := true) == kept.value? (allowOpaque := true) do
+            errors := errors.push s!"{module} stores another version of {name}"
       -- Read from the module data: extension state is not loaded by this import.
       for entry in Compiler.CSimp.ext.ext.getModuleEntries env idx do
         let e := match entry with
@@ -171,7 +225,8 @@ unsafe def main (args : List String) : IO UInt32 := do
         errors := errors.push s!"hand-written recursion helper: {name}"
     else
       if info.isUnsafe then errors := errors.push s!"unsafe declaration: {name}"
-      if isPartialDef env name info then errors := errors.push s!"partial definition: {name}"
+      if isPartialDef env name info || info matches .defnInfo { safety := .partial, .. } then
+        errors := errors.push s!"partial definition: {name}"
     if let some impl := Compiler.getImplementedBy? env name then
       errors := errors.push s!"implemented_by {impl}: {name}"
     if isExtern env name then errors := errors.push s!"extern declaration: {name}"

@@ -106,7 +106,7 @@ jobs:
           path: build
       - name: Unpack the build
         run: python3 scripts/build_archive.py unpack build/lean-build.tar
-      - name: Kernel re-check and proof audit
+      - name: Kernel re-checks and proof audit
         run: |
           mkdir -p build/evidence
           bash scripts/check.sh proofs 2>&1 | tee build/evidence/proofs.log

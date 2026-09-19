@@ -1,6 +1,8 @@
-"""Gate tests on disposable copies and probe modules; the working tree is never modified."""
+"""Gate tests on disposable copies and probe modules; the working tree is never modified, and only
+pinned tools are added to .deps."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 import json
@@ -61,6 +63,12 @@ AUDIT_PROBES = {
         "def regression_9001 : Bool := false\nprivate def regression_9003 : Bool := count 3 == 3\n"
         "noncomputable def regression_9005 : Bool := Classical.choice ⟨true⟩\nend DN.Probe\n"),
     "DN.Probe.NoTheorems": "def DN.Probe.value : Nat := 1\n",
+    "DN.Probe.PartialDef": (
+        "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .defnDecl\n"
+        "    { name := `DN.Probe.loop, levelParams := [], type := mkConst ``Nat,\n"
+        "      value := mkNatLit 0, hints := .opaque, safety := .partial }\n"),
+    "DN.Probe.CopyA": "theorem DN.Probe.copied : 2 + 2 = 4 := rfl\n",
+    "DN.Probe.CopyB": "theorem DN.Probe.copied : 2 + 2 = 4 := sorry\n",
     "DN.Probe.SkipKernel": (
         "import Lean\nopen Lean Elab Command\n"
         'elab "add_unchecked" : command => do\n'
@@ -70,6 +78,31 @@ AUDIT_PROBES = {
         "  liftCoreM (addDecl decl)\n"
         "set_option debug.skipKernelTC true in\nadd_unchecked\n"),
 }
+# Probes for the export to the independent kernel.
+KERNEL_PROBES = {
+    "DN.Probe.Kernel": (
+        "namespace DN.Probe\ninductive Token | a | b (n : Nat) | c | d | e | f | g | h | i | j | k | l\n"
+        "  deriving DecidableEq\n"
+        "private theorem hidden : Token.a ≠ Token.b 0 := by decide\n"
+        "def halve (n : Nat) : Nat := if h : n = 0 then 0 else halve (n / 2)\n"
+        "termination_by n\ndecreasing_by omega\n"
+        "theorem halve_zero : halve 0 = 0 := by rw [halve]; simp\nend DN.Probe\n"),
+    "DN.Probe.Unwritable": (
+        "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .defnDecl\n"
+        '    { name := .str `DN.Probe "a»b", levelParams := [], type := mkConst ``Nat,\n'
+        "      value := mkNatLit 0, hints := .abbrev, safety := .safe }\n"),
+    "DN.Probe.NulName": (
+        "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .defnDecl\n"
+        '    { name := .str `DN.Probe "a\\x00--export-unsafe\\x00b", levelParams := [], type := mkConst ``Nat,\n'
+        "      value := mkNatLit 0, hints := .abbrev, safety := .safe }\n"),
+    "DN.Probe.Lookalike": (
+        "axiom «Quot.sound» : False\ntheorem DN.Probe.lookalike : (1 : Nat) = 2 := «Quot.sound».elim\n"),
+    "DN.Probe.EmptyPrefix": (
+        "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .axiomDecl\n"
+        '    { name := .str (.str .anonymous "") "propext", levelParams := [], type := mkConst ``False,\n'
+        "      isUnsafe := false }\n"),
+}
+PROBES = AUDIT_PROBES | KERNEL_PROBES
 UNSOUND = [
     "DN.Probe.transitive depends on Foreign.bad",
     "DN.Probe.isolated depends on Foreign.bad",
@@ -92,6 +125,8 @@ UNSOUND = [
     "hand-written recursion helper: DN.Probe.plain._unsafe_rec",
     "DN.Probe.MetaImport imports Lean.Elab",
     "regression is not a Bool definition: DN.Probe.regression_9002",
+    "partial definition: DN.Probe.loop",
+    "stores another version of DN.Probe.copied",
 ]
 
 ALLOWED = """\
@@ -215,7 +250,7 @@ class Probes:
             relative = Path(*module.split("."))
             source = (self.src / relative).with_suffix(".lean")
             source.parent.mkdir(parents=True, exist_ok=True)
-            source.write_text(AUDIT_PROBES[module])
+            source.write_text(PROBES[module])
             olean = (self.lib / relative).with_suffix(".olean")
             olean.parent.mkdir(parents=True, exist_ok=True)
             result = run(["lean", f"--root={self.src}", "-o", str(olean), str(source)], env=self.env)
@@ -226,6 +261,15 @@ class Probes:
         flags = [arg for root in (*roots, str(self.src)) for arg in ("--root", root)]
         return run(["lean", "--run", "scripts/Audit.lean", "--regressions", regressions(), *flags],
                    env=self.env)
+
+
+@functools.cache
+def tool(name: str) -> str:
+    result = subprocess.run(["python3", "scripts/bootstrap_tool.py", name], cwd=ROOT, text=True,
+                            capture_output=True, check=False, timeout=1800)
+    if result.returncode != 0:
+        raise AssertionError(f"cannot obtain {name}:\n{result.stderr}")
+    return result.stdout.strip()
 
 
 def source_tree(directory: Path) -> Path:
@@ -269,9 +313,11 @@ class Audit(unittest.TestCase):
             self.assertIn("no theorems found", result.stderr)
 
     def test_requires_regression_count(self) -> None:
-        result = run(["lean", "--run", "scripts/Audit.lean"])
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("usage", result.stderr)
+        for args in ([], ["--regressions", "1", "--export-list"]):
+            with self.subTest(args=args):
+                result = run(["lean", "--run", "scripts/Audit.lean", *args])
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("usage", result.stderr)
 
     def test_kernel_recheck_rejects_skipped_kernel(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -279,6 +325,79 @@ class Audit(unittest.TestCase):
             result = run(["leanchecker", "DN.Probe.SkipKernel"], env=probes.env)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("DN.Probe.bad", result.stdout + result.stderr)
+
+
+class IndependentKernel(unittest.TestCase):
+    """Probe modules exported as check.sh exports the library, then checked by nanoda with its configuration."""
+
+    @staticmethod
+    def export_list(probes: Probes) -> subprocess.CompletedProcess[str]:
+        return run(["lean", "--run", "scripts/Audit.lean", "--export-list", "--root", str(probes.src)],
+                   env=probes.env)
+
+    def kernel(self, modules: list[str]) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp:
+            probes = Probes(Path(temp), modules)
+            listing = self.export_list(probes)
+            self.assertEqual(listing.returncode, 0, listing.stderr)
+            env = {**probes.env, "LEAN_SYSROOT": run(["lean", "--print-prefix"]).stdout.strip(),
+                   "LEAN_ABORT_ON_PANIC": "1"}
+            export = subprocess.run([tool("lean4export"), *listing.stdout.split("\0")[:-1]], env=env, text=True,
+                                    capture_output=True, check=True, timeout=600).stdout
+            return subprocess.run([tool("nanoda"), "scripts/nanoda.json"], cwd=ROOT, input=export, text=True,
+                                  capture_output=True, check=False, timeout=600)
+
+    def test_export_list_names_every_checked_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            listing = self.export_list(Probes(Path(temp), ["DN.Probe.Kernel"]))
+            self.assertEqual(listing.returncode, 0, listing.stderr)
+            args = listing.stdout.split("\0")
+            self.assertEqual(args[:2], ["DN.Probe.Kernel", "--"])
+            self.assertEqual(args[-1], "")
+            names = args[2:-1]
+            self.assertIn("DN.Probe.halve", names)
+            self.assertIn("_private.DN.Probe.Kernel.0.DN.Probe.hidden", names)
+            self.assertTrue(any(".«_@»." in name for name in names), names)
+            self.assertNotIn("DN.Probe.halve._unsafe_rec", names)
+        refusals = {"DN.Probe.Unwritable": "cannot write the name", "DN.Probe.NulName": "cannot write the name",
+                    "DN.Probe.Lookalike": "«Quot.sound» reads to nanoda as the axiom Quot.sound",
+                    "DN.Probe.EmptyPrefix": "reads to nanoda as the axiom propext"}
+        for module, message in refusals.items():
+            with self.subTest(module=module), tempfile.TemporaryDirectory() as temp:
+                listing = self.export_list(Probes(Path(temp), [module]))
+                self.assertEqual(listing.returncode, 1, listing.stderr)
+                self.assertIn(message, listing.stderr)
+
+    def test_configuration_admits_only_the_audited_axioms(self) -> None:
+        audited = re.search(r"^def allowedAxioms .*$", (ROOT / "scripts/Audit.lean").read_text(), re.MULTILINE)
+        assert audited is not None
+        config = json.loads((ROOT / "scripts/nanoda.json").read_text())
+        self.assertEqual(config["permitted_axioms"], re.findall(r"``([\w.]+)", audited.group(0)))
+        self.assertIs(config["unpermitted_axiom_hard_error"], True)
+        self.assertNotIn("unsafe_permit_all_axioms", config)
+
+    def test_accepts_sound_declarations(self) -> None:
+        result = self.kernel(["DN.Probe.Kernel"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"Checked \d+ declarations with no errors")
+        admitted = re.findall(r"^axiom ([\w.]+?)\.?[ {]", result.stdout, re.MULTILINE)
+        self.assertTrue(admitted)
+        self.assertLessEqual(set(admitted), {"propext", "Classical.choice", "Quot.sound"})
+
+    def test_rejects_what_the_kernel_never_checked(self) -> None:
+        result = self.kernel(["DN.Probe.SkipKernel"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assertion failed: self.def_eq", result.stderr)
+        self.assertNotIn("with no errors", result.stdout)
+
+    def test_rejects_unpermitted_axioms(self) -> None:
+        cases = {"DN.Probe.Transitive": "Foreign.", "DN.Probe.PrivateAxiom": "hidden", "DN.Probe.Sorry": "sorryAx",
+                 "DN.Probe.Native": "native_decide"}
+        for module, axiom in cases.items():
+            with self.subTest(module=module):
+                result = self.kernel(["Foreign", module] if module == "DN.Probe.Transitive" else [module])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, f"unpermitted axiom \"[^\"]*{re.escape(axiom)}")
 
 
 class SourceGate(unittest.TestCase):
@@ -374,7 +493,8 @@ class Pipeline(unittest.TestCase):
     def test_check_script_runs_every_gate_in_order(self) -> None:
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
                  "python3 scripts/check_structure.py", "lake build DN dn-compiler",
-                 '"$(snapshot)" != "$before"', '"$leanchecker" DN', f"--regressions {regressions()}"]
+                 '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", '"$leanchecker" DN', "--export-list",
+                 '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
@@ -482,16 +602,28 @@ class Pipeline(unittest.TestCase):
                 (directory / name).write_text(f"#!/bin/sh\n{body}\n")
                 (directory / name).chmod(0o755)
 
-            for name in ("lake", "python3", "cargo", "leanchecker", "lean"):
+            for name in ("lake", "cargo", "leanchecker", "lean"):
                 stub(stubs, name, f'echo "{name} $*" >> {log}')
-            for name in ("leanchecker", "lean"):
-                stub(toolchain, name, f'echo "toolchain {name} $*" >> {log}')
+            stub(stubs, "python3", f'echo "python3 $*" >> {log}\n'
+                 f'case "$2" in lean4export | nanoda) echo "{stubs}/$2" ;; esac')
+            checker_env = "[$LEAN_PATH $LEAN_ABORT_ON_PANIC]"
+            stub(stubs, "lean4export", f'echo "lean4export $* $LEAN_SYSROOT {checker_env}" >> {log}\n'
+                 'echo export\nexit "${FAIL_EXPORT:-0}"')
+            stub(stubs, "nanoda", f'echo "nanoda $* $(cat)" >> {log}\nexit "${{FAIL_NANODA:-0}}"')
+            stub(toolchain, "leanchecker", f'echo "toolchain leanchecker $* {checker_env}" >> {log}')
+            stub(toolchain, "lean", f'echo "toolchain lean $* {checker_env}" >> {log}\ncase "$*" in\n'
+                 "  --print-prefix) echo /sysroot ;;\n  *--export-list*) printf 'M\\0--\\0N\\0' ;;\nesac")
             stub(stubs, "elan", f"echo {toolchain}/$2")
-            env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"}
+            env = {key: value for key, value in os.environ.items() if key not in ("LEAN_PATH", "LEAN_ABORT_ON_PANIC")}
+            env["PATH"] = f"{stubs}:{os.environ['PATH']}"
+            checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py", "lake build DN dn-compiler"],
-                "proofs": ["toolchain lean --print-prefix", "toolchain leanchecker DN",
-                           "toolchain lean --run scripts/Audit.lean"],
+                "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
+                           "python3 scripts/bootstrap_tool.py nanoda", f"toolchain leanchecker DN {checked}",
+                           f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
+                           f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
+                           f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo test", "python3 scripts/check_models.py"],
             }
             for stage, steps in expected.items():
@@ -502,7 +634,14 @@ class Pipeline(unittest.TestCase):
                     calls = log.read_text().splitlines()
                     self.assertEqual(len(calls), len(steps), calls)
                     for call, step in zip(calls, steps, strict=True):
-                        self.assertTrue(call.startswith(step), (call, step))
+                        self.assertTrue(call == step if stage == "proofs" else call.startswith(step), (call, step))
+            for failing in ("FAIL_EXPORT", "FAIL_NANODA"):
+                with self.subTest(failing=failing):
+                    log.write_text("")
+                    result = subprocess.run(["bash", "scripts/check.sh", "proofs"], cwd=tree,
+                                            env={**env, failing: "1"}, capture_output=True, check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("--regressions", log.read_text())
 
     def test_ci_runs_the_stages_in_one_chain(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]
@@ -556,6 +695,72 @@ class Pipeline(unittest.TestCase):
                                     capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(".deps is tracked by git", result.stderr)
+
+    def test_bootstrap_builds_tools_outside_the_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            tree, stubs, cache, log = work / "repo", work / "bin", work / "cache", work / "log"
+            (tree / "scripts").mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/bootstrap_tool.py", tree / "scripts")
+            for name in ("lean-toolchain", "rust-toolchain.toml"):
+                shutil.copy(ROOT / name, tree)
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            lock = json.loads((ROOT / "tools.lock.json").read_text())
+            archives = tree / ".deps/archives"
+            archives.mkdir(parents=True)
+
+            def source_archive(name: str, toolchain: str) -> None:
+                source = work / name / "source"
+                source.mkdir(parents=True, exist_ok=True)
+                (source / "lean-toolchain").write_text(toolchain + "\n")
+                with tarfile.open(work / name / "source.tar.gz", "w:gz") as tar:
+                    tar.add(source, arcname="source")
+                lock[name]["sha256"] = sha256(work / name / "source.tar.gz")
+                shutil.copy(work / name / "source.tar.gz", archives / lock[name]["sha256"])
+                (tree / "tools.lock.json").write_text(json.dumps(lock))
+
+            # A verified Lean release, as bootstrap records one, with a stand-in for its lake.
+            lean = tree / ".deps/tools" / f"lean-{lock['lean']['version']}"
+            (lean / "home/bin").mkdir(parents=True)
+            (lean / "archive.sha256").write_text(lock["lean"]["sha256"] + "\n")
+            lake = (f'echo "lake $* | $PWD | $LAKE_ARTIFACT_CACHE" >> {log}\n'
+                    "mkdir -p .lake/build/bin && touch .lake/build/bin/lean4export")
+            cargo = (f'echo "cargo $* | $PWD | ${{RUSTUP_TOOLCHAIN-unset}} | $(tr -d "\\n" < rust-toolchain.toml)" '
+                     f'>> {log}\nmkdir -p "$CARGO_TARGET_DIR/release" && touch "$CARGO_TARGET_DIR/release/nanoda_bin"')
+            for path, body in ((lean / "home/bin/lake", lake), (stubs / "cargo", cargo)):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"#!/bin/sh\n{body}\n")
+                path.chmod(0o755)
+            toolchain = (ROOT / "lean-toolchain").read_text().strip()
+            source_archive("lean4export", toolchain)
+            source_archive("nanoda", toolchain)
+            env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "XDG_CACHE_HOME": str(cache),
+                   "RUSTUP_TOOLCHAIN": "stable"}
+
+            def bootstrap(name: str, **extra: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(["python3", "scripts/bootstrap_tool.py", name], cwd=tree, text=True,
+                                      env=env | extra, capture_output=True, check=False)
+
+            for name, binary in (("lean4export", "lean4export"), ("nanoda", "nanoda_bin")):
+                result = bootstrap(name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(Path(result.stdout.strip()),
+                                 tree / ".deps/tools" / f"{name}-{lock[name]['version']}" / binary)
+            lake_call, cargo_call = log.read_text().splitlines()
+            rust = (ROOT / "rust-toolchain.toml").read_text().replace("\n", "")
+            source = rf"{re.escape(str(cache.resolve()))}/dn-tool-\w+/source/source"
+            self.assertRegex(lake_call, rf"^lake build lean4export \| {source} \| false$")
+            self.assertRegex(cargo_call, rf"^cargo build --release --locked \| {source} \| unset \| {re.escape(rust)}$")
+            self.assertEqual(list(cache.iterdir()), [])
+            shutil.rmtree(tree / ".deps/tools" / f"nanoda-{lock['nanoda']['version']}")
+            inside = bootstrap("nanoda", XDG_CACHE_HOME=str(tree / ".cache"))
+            self.assertNotEqual(inside.returncode, 0)
+            self.assertIn("is inside the repository", inside.stderr)
+            shutil.rmtree(tree / ".deps/tools" / f"lean4export-{lock['lean4export']['version']}")
+            source_archive("lean4export", "leanprover/lean4:v4.31.0")
+            other = bootstrap("lean4export")
+            self.assertNotEqual(other.returncode, 0)
+            self.assertIn("is not pinned to", other.stderr)
 
     def test_refuses_tracked_build_outputs(self) -> None:
         function = re.search(r"^tracked_outputs\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)

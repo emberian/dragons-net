@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, help="Previously emitted .pnk; defaults to running dn-compiler")
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "AMD64"):
-        parser.error("the initial native adapter targets Linux x86-64; model/host checks are portable")
+        parser.error("the initial native adapter targets Linux x86-64")
     cake = shutil.which(args.cake or "")
     if not cake:
         parser.error("set CAKE or --cake to a Pancake-capable compiler; no native fallback exists")

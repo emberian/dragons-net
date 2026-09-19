@@ -12,7 +12,7 @@ On Linux x86-64, install the prerequisites from the root README, then run:
 bash scripts/check_all.sh
 ```
 
-This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the portable model/host baseline, and `bash scripts/lint.sh` the static checks. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
+This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the model/host baseline without the native lanes, and `bash scripts/lint.sh` the static checks. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
 
 The default native compiler is the digest-pinned release in `tools.lock.json`. Setting `CAKE` deliberately selects a different compiler, whose digest is recorded. Neither choice silently claims the separate patched HOL backend has been rebuilt.
 
@@ -20,7 +20,7 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-check and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 7,426 declarations, including 3,255 theorems | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 7,426 declarations, including 3,255 theorems; the kernels skip the 94 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Inherited examples | 434 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
