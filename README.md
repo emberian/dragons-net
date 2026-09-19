@@ -37,10 +37,11 @@ Install Git, Python 3.10+, [elan](https://github.com/leanprover/elan), and [rust
 ```sh
 git clone https://github.com/emberian/dragons-net.git dn
 cd dn
+bash scripts/lint.sh
 bash scripts/check.sh
 ```
 
-This runs the Lean source gate, builds the Lean library and `dn-compiler`, re-checks them with `leanchecker`, runs the proof audit and its executable examples, runs gate tests, checks Rust formatting and Clippy, and runs the host and ordinary concurrency tests. Do not run overlapping Lake builds in the same checkout.
+`lint.sh` checks workflows, shell and Python scripts, Rust formatting, dependencies, secrets and documentation spelling with digest-pinned tools (Linux x86-64; the first run downloads them). `check.sh` runs the Lean source gate, builds the Lean library and `dn-compiler`, re-checks them with `leanchecker`, runs the proof audit and its executable examples, runs gate tests, Clippy, and the host and ordinary concurrency tests. Its stages `build`, `proofs` and `tests` can also run separately. Do not run overlapping Lake builds in the same checkout.
 
 Emit the supported native example:
 
@@ -66,7 +67,7 @@ build/baseline/dn-echo --port 8119
 
 Results are recorded in `build/native/report.json` and `build/baseline/report.json`, including artifact digests and measurements. See [echo usage](docs/echo.md). `bash scripts/check_all.sh` runs the complete Linux baseline in one command. The benchmark measures a region digest, **not NNTP throughput**. This release compiler is distinct from the patched source in `backend/lock.json`.
 
-[CI](.github/workflows/ci.yml) runs the baseline, Loom, and native lanes and uploads their evidence. [Backend proof instructions](backend/README.md) describe the separate HOL lane.
+[CI](.github/workflows/ci.yml) runs these lanes as one chain of jobs: lint; the source gate and build without network; the kernel re-check and proof audit on a fresh machine; then the tests, native and Loom lanes. It uploads their evidence. [Backend proof instructions](backend/README.md) describe the separate HOL lane.
 
 ## Pick up the work
 

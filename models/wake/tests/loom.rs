@@ -12,9 +12,9 @@
 
 #![cfg(loom)]
 
+use dn_wake_model::{Doorbell, WakeProtocol};
 use loom::sync::atomic::{AtomicUsize, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
-use dn_wake_model::{Doorbell, WakeProtocol};
 
 /// Counting-semaphore doorbell (eventfd semantics): `ring` deposits a
 /// persistent token, `wait` blocks until one is present and consumes all.

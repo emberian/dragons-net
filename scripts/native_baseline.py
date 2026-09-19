@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Differential compiler baseline and a real generated-code TCP echo smoke test."""
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -9,44 +11,42 @@ import platform
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MASK = (1 << 64) - 1
 
 
-def signed(n):
+def signed(n: int) -> int:
     return n if n < 1 << 63 else n - (1 << 64)
 
 
-def reference(expr, a, b):
+def reference(expr: Any, a: int, b: int) -> int:
     if isinstance(expr, int):
         return expr & MASK
     if isinstance(expr, str):
         return {"a": a, "b": b}[expr]
     op, lhs, rhs = expr
-    l, r = reference(lhs, a, b), reference(rhs, a, b)
-    if op == "+": return (l + r) & MASK
-    if op == "-": return (l - r) & MASK
-    if op == "*": return (l * r) & MASK
-    if op == "&": return l & r
-    if op == "<": return int(signed(l) < signed(r))
-    if op == "<=": return int(signed(l) <= signed(r))
-    if op == "==": return int(l == r)
-    raise ValueError(op)
+    x, y = reference(lhs, a, b), reference(rhs, a, b)
+    results = {"+": (x + y) & MASK, "-": (x - y) & MASK, "*": (x * y) & MASK, "&": x & y,
+               "<": int(signed(x) < signed(y)), "<=": int(signed(x) <= signed(y)), "==": int(x == y)}
+    if op not in results:
+        raise ValueError(op)
+    return results[op]
 
 
-def control(a, b):
+def control(a: int, b: int) -> int:
     acc = b
     for i in range(min(a & 31, 7)):
         acc = (acc + i if signed(acc) < 0 else acc * 3 + 1) & MASK
     return acc
 
 
-def digest(p):
+def digest(p: Path | str) -> str:
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cake", default=os.environ.get("CAKE"))
     parser.add_argument("--fixtures", type=Path, help="directory of previously emitted baseline.json and echo.pnk")
@@ -98,8 +98,9 @@ int main(void) {
         if (status || output[0] != 0xcafebabefeedfaceULL || output[2] != 0x0123456789abcdefULL) return 3;
         uint64_t actual = output[1];
         if (actual != expected) {
-            fprintf(stderr,"native mismatch case=%zu a=%" PRIu64 " b=%" PRIu64 " expected=%" PRIu64 " actual=%" PRIu64 "\n",
-                    index,a,b,expected,actual); return 1;
+            fprintf(stderr,"native mismatch case=%zu a=%" PRIu64 " b=%" PRIu64
+                    " expected=%" PRIu64 " actual=%" PRIu64 "\n", index,a,b,expected,actual);
+            return 1;
         }
         ++cases;
     }
@@ -121,12 +122,12 @@ int main(void) {
 '''
     (out / "probe_driver.c").write_text(driver)
 
-    def compile_source(name):
+    def compile_source(name: str) -> None:
         with (out / f"{name}.pnk").open("rb") as inp, (out / f"{name}.S").open("wb") as asm:
             subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=asm,
                            check=True, timeout=180)
 
-    def link(name, source, assembly):
+    def link(name: str, source: Path, assembly: Path) -> None:
         subprocess.run([os.environ.get("CC", "cc"), "-O2", "-g", "-Wall", "-Wextra", "-Werror",
                         "-no-pie", "-Wl,-z,noexecstack", "-I", str(ROOT / "native"),
                         str(source), str(assembly), "-o", str(out / name)], check=True, timeout=60)
@@ -136,7 +137,7 @@ int main(void) {
     vectors = "".join(f"{i} {a} {b} {expected[i][j]}\n"
                       for i in range(len(expected)) for j, (a, b) in enumerate(values))
     result = subprocess.run([str(out / "probes")], input=vectors, text=True,
-                            capture_output=True, timeout=60)
+                            capture_output=True, timeout=60, check=False)
     if result.returncode:
         raise RuntimeError(result.stderr)
     measured = json.loads(result.stdout)
@@ -155,16 +156,18 @@ int main(void) {
     (out / "broken.pnk").write_text("".join(line for line in lines if not line.lstrip().startswith("st8 ")))
     compile_source("broken")
     link("broken-check", ROOT / "native/echo_check.c", out / "broken.S")
-    broken = subprocess.run([str(out / "broken-check")], capture_output=True, text=True, timeout=30)
+    broken = subprocess.run([str(out / "broken-check")], capture_output=True, text=True, timeout=30,
+                            check=False)
     if broken.returncode != 1 or "copy/frame mismatch" not in broken.stderr:
         raise RuntimeError("copy test did not detect the deliberately removed store")
     link("dn-echo", ROOT / "native/echo_server.c", out / "echo.S")
     network = subprocess.run([sys.executable, str(ROOT / "tests/echo_integration.py"),
-                              str(out / "dn-echo")], capture_output=True, text=True, timeout=90)
+                              str(out / "dn-echo")], capture_output=True, text=True, timeout=90, check=False)
     if network.returncode:
         raise RuntimeError(f"TCP integration failed:\n{network.stdout}\n{network.stderr}")
     measured["network"] = json.loads(network.stdout)
-    report = {"status": "native-tested", "assurance": "bounded differential and integration tests, not a whole compiler proof",
+    report = {"status": "native-tested",
+              "assurance": "bounded differential and integration tests, not a whole compiler proof",
               "platform": platform.platform(), "compiler_sha256": digest(cake),
               "fixture_sha256": digest(out / "baseline.json"), "echo_source_sha256": digest(out / "echo.pnk"),
               "echo_assembly_sha256": digest(out / "echo.S"), "echo_executable_sha256": digest(out / "dn-echo"),

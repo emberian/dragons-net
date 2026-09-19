@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -17,8 +18,12 @@ spec = importlib.util.spec_from_file_location("structure", ROOT / "scripts/check
 assert spec is not None and spec.loader is not None
 structure = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(structure)
+archive_spec = importlib.util.spec_from_file_location("build_archive", ROOT / "scripts/build_archive.py")
+assert archive_spec is not None and archive_spec.loader is not None
+build_archive = importlib.util.module_from_spec(archive_spec)
+archive_spec.loader.exec_module(build_archive)
 CHECK = (ROOT / "scripts/check.sh").read_text()
-AUDIT = re.search(r"lake env lean --run scripts/Audit\.lean --regressions (\d+)", CHECK)
+AUDIT = re.search(r"--run scripts/Audit\.lean --regressions (\d+)", CHECK)
 
 AUDIT_PROBES = {
     "Foreign": "axiom Foreign.bad : False\naxiom Foreign.p : Prop\n",
@@ -367,12 +372,44 @@ class SourceGate(unittest.TestCase):
 
 class Pipeline(unittest.TestCase):
     def test_check_script_runs_every_gate_in_order(self) -> None:
-        steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)", "python3 scripts/check_structure.py",
-                 "lake build DN dn-compiler",
-                 '"$(snapshot)" != "$before"', "lake env leanchecker DN", f"--regressions {regressions()}"]
+        steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
+                 "python3 scripts/check_structure.py", "lake build DN dn-compiler",
+                 '"$(snapshot)" != "$before"', '"$leanchecker" DN', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
+        self.assertIn("all) build; proofs; tests ;;", CHECK)
+        self.assertNotIn("lake env", CHECK)
+
+    def test_build_archive_accepts_only_the_build_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "src/.lake/build/lib/lean/DN").mkdir(parents=True)
+            (root / "src/.lake/build/lib/lean/DN/M.olean").write_text("olean")
+            (root / "evil").write_text("x")
+            good = root / "good.tar"
+            with tarfile.open(good, "w") as tar:
+                tar.add(root / "src/.lake/build", arcname=".lake/build")
+            build_archive.unpack(good, root / "out")
+            self.assertEqual((root / "out/.lake/build/lib/lean/DN/M.olean").read_text(), "olean")
+            outside = {"escape": "../evil", "elsewhere": "scripts/check.sh", "absolute": "/tmp/evil",
+                       "inner escape": ".lake/build/bin/../../../scripts/check.sh",
+                       "toolchain module": ".lake/build/lib/lean/Init.olean", "file for a directory": ".lake/build/lib"}
+            for case, name in outside.items():
+                with self.subTest(case=case):
+                    bad = root / f"{case}.tar"
+                    with tarfile.open(bad, "w") as tar:
+                        tar.add(root / "evil", arcname=name)
+                    with self.assertRaises(SystemExit):
+                        build_archive.unpack(bad, root / "out")
+            link = root / "link.tar"
+            with tarfile.open(link, "w") as tar:
+                info = tarfile.TarInfo(".lake/build/bin/link")
+                info.type, info.linkname = tarfile.SYMTYPE, "/etc/passwd"
+                tar.addfile(info)
+            with self.assertRaises(SystemExit):
+                build_archive.unpack(link, root / "out")
+            self.assertFalse((root / "out/scripts").exists())
 
     def test_snapshot_covers_everything_but_vcs_and_outputs(self) -> None:
         function = re.search(r"^snapshot\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)
@@ -391,6 +428,7 @@ class Pipeline(unittest.TestCase):
                 return subprocess.run(["bash", "-c", script], cwd=tree, text=True, capture_output=True,
                                       check=True).stdout
 
+            (tree / "tests/scripts").symlink_to(tree / "scripts")
             before = snapshot()
             for name in ignored:
                 (tree / name).write_text("1")
@@ -401,6 +439,10 @@ class Pipeline(unittest.TestCase):
                     self.assertNotEqual(snapshot(), before)
                     (tree / name).write_text("0")
             (tree / "tests/test_extra.py").symlink_to(tree / "scripts/check.sh")
+            self.assertNotEqual(snapshot(), before)
+            (tree / "tests/test_extra.py").unlink()
+            (tree / "tests/scripts").unlink()
+            (tree / "tests/scripts").symlink_to(tree / "lean")
             self.assertNotEqual(snapshot(), before)
 
     def test_check_stops_before_the_gate(self) -> None:
@@ -426,6 +468,94 @@ class Pipeline(unittest.TestCase):
             (tree / ".lake/x.olean").write_text("")
             subprocess.run(["git", "add", "-f", "."], cwd=tree, check=True)
             refused("build outputs are tracked by git")
+
+    def test_check_stages_run_only_their_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            tree, stubs, toolchain = (Path(temp) / name for name in ("repo", "bin", "toolchain"))
+            (tree / "scripts").mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            log = Path(temp) / "log"
+
+            def stub(directory: Path, name: str, body: str) -> None:
+                directory.mkdir(exist_ok=True)
+                (directory / name).write_text(f"#!/bin/sh\n{body}\n")
+                (directory / name).chmod(0o755)
+
+            for name in ("lake", "python3", "cargo", "leanchecker", "lean"):
+                stub(stubs, name, f'echo "{name} $*" >> {log}')
+            for name in ("leanchecker", "lean"):
+                stub(toolchain, name, f'echo "toolchain {name} $*" >> {log}')
+            stub(stubs, "elan", f"echo {toolchain}/$2")
+            env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"}
+            expected = {
+                "build": ["python3 scripts/check_structure.py", "lake build DN dn-compiler"],
+                "proofs": ["toolchain lean --print-prefix", "toolchain leanchecker DN",
+                           "toolchain lean --run scripts/Audit.lean"],
+                "tests": ["python3 -m unittest", "cargo clippy", "cargo test", "python3 scripts/check_models.py"],
+            }
+            for stage, steps in expected.items():
+                with self.subTest(stage=stage):
+                    log.write_text("")
+                    subprocess.run(["bash", "scripts/check.sh", stage], cwd=tree, env=env, check=True,
+                                   capture_output=True)
+                    calls = log.read_text().splitlines()
+                    self.assertEqual(len(calls), len(steps), calls)
+                    for call, step in zip(calls, steps, strict=True):
+                        self.assertTrue(call.startswith(step), (call, step))
+
+    def test_ci_runs_the_stages_in_one_chain(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]
+        jobs: dict[str, str] = {}
+        for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
+            name, _, body = block.partition(":\n")
+            jobs[name] = body
+        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test"])
+        for job, previous in zip(list(jobs)[1:], list(jobs), strict=False):
+            self.assertIn(f"needs: {previous}\n", jobs[job])
+        self.assertIn("bash scripts/lint.sh", jobs["lint"])
+        for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
+            self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
+
+    def test_bootstrap_verifies_stored_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            (tree / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/bootstrap_tool.py", tree / "scripts")
+            shutil.copy(ROOT / "tools.lock.json", tree)
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            pin = json.loads((ROOT / "tools.lock.json").read_text())["typos"]
+
+            def bootstrap() -> str:
+                return subprocess.run(["python3", "scripts/bootstrap_tool.py", "typos"], cwd=tree, text=True,
+                                      capture_output=True, check=False).stderr
+
+            archive = tree / ".deps/archives" / pin["sha256"]
+            archive.parent.mkdir(parents=True)
+            archive.write_text("not the pinned archive")
+            self.assertIn("digest mismatch", bootstrap())
+            self.assertFalse(archive.exists())
+            unpacked = tree / ".deps/tools" / f"typos-{pin['version']}"
+            unpacked.mkdir(parents=True)
+            (unpacked / "archive.sha256").write_text("0" * 64 + "\n")
+            self.assertIn("does not match the lock", bootstrap())
+
+    def test_tools_come_only_from_their_archives(self) -> None:
+        lint = (ROOT / "scripts/lint.sh").read_text()
+        self.assertLess(lint.index("bash scripts/check.sh guard"), lint.index("bootstrap_tool.py"))
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            (tree / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/bootstrap_tool.py", tree / "scripts")
+            shutil.copy(ROOT / "tools.lock.json", tree)
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            (tree / ".deps/tools/typos-v1.50.1").mkdir(parents=True)
+            (tree / ".deps/tools/typos-v1.50.1/typos").write_text("")
+            subprocess.run(["git", "add", "-f", ".deps"], cwd=tree, check=True)
+            result = subprocess.run(["python3", "scripts/bootstrap_tool.py", "typos"], cwd=tree, text=True,
+                                    capture_output=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(".deps is tracked by git", result.stderr)
 
     def test_refuses_tracked_build_outputs(self) -> None:
         function = re.search(r"^tracked_outputs\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)

@@ -12,7 +12,7 @@ On Linux x86-64, install the prerequisites from the root README, then run:
 bash scripts/check_all.sh
 ```
 
-This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the portable model/host baseline. CI runs the same constituent lanes and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
+This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the portable model/host baseline, and `bash scripts/lint.sh` the static checks. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
 
 The default native compiler is the digest-pinned release in `tools.lock.json`. Setting `CAKE` deliberately selects a different compiler, whose digest is recorded. Neither choice silently claims the separate patched HOL backend has been rebuilt.
 

@@ -7,6 +7,7 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo 'The complete native baseline requires Linux x86-64. Use scripts/check.sh for portable checks.' >&2
   exit 1
 fi
+bash scripts/lint.sh
 bash scripts/check.sh
 python3 scripts/check_models.py --loom
 cake="${CAKE:-}"

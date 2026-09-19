@@ -36,7 +36,7 @@ Use a branch and a focused PR. Follow [AGENTS.md](AGENTS.md)'s build and assuran
 rules; they also describe the expectations for human contributions. Do not edit
 the frozen migration source or require access to sibling repositories.
 
-Run `bash scripts/check.sh` for active code changes. Never run concurrent Lake
+Run `bash scripts/lint.sh` and `bash scripts/check.sh` for active code changes. Never run concurrent Lake
 builds in one checkout. Use `python3 scripts/check_models.py --loom` when changing
 concurrency models, and the [native baseline](docs/baseline.md) on Linux x86-64
 when changing emitted code, compiler/FFI boundaries or the host. Backend proof

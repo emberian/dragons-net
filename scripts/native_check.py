@@ -4,6 +4,8 @@
 CAKE must name an existing compiler executable. Its digest is recorded, not
 silently treated as the verified build of backend/lock.json.
 """
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -16,11 +18,11 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def digest(path):
+def digest(path: Path | str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cake", default=os.environ.get("CAKE"))
     parser.add_argument("--source", type=Path, help="Previously emitted .pnk; defaults to running dn-compiler")

@@ -3,7 +3,7 @@ import Lean
 /-!
 Standalone proof audit for the `DN` library, run after `lake build`:
 
-  lake env lean --run scripts/Audit.lean --regressions N [--root DIR]...
+  LEAN_PATH=.lake/build/lib/lean lean --run scripts/Audit.lean --regressions N [--root DIR]...
 
 Every `.lean` file under `<root>/DN` is imported, and every constant defined in those
 modules (including private and top-level names) is checked. Axiom dependencies are

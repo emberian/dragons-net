@@ -3,9 +3,11 @@
 Read README.md, docs/handoff.md, and docs/assurance.md before extending claims.
 `dn` is the compiler/dataplane project. The adjacent `fn` directory is separate.
 
-Run `bash scripts/check.sh` for the portable baseline. Lean is pinned and uses
-only its core libraries. Set LEAN_NUM_THREADS (default 4); never start overlapping
-Lake builds in the same build directory. No Mathlib or sibling checkout is needed.
+Run `bash scripts/check.sh` for the portable baseline and `bash scripts/lint.sh`
+(Linux x86-64; it downloads pinned tools) for static checks. Lean is pinned and
+uses only its core libraries. Set LEAN_NUM_THREADS (default 4); never start
+overlapping Lake builds in the same build directory. No Mathlib or sibling
+checkout is needed.
 
 Every module under lean/DN is audited by scripts/Audit.lean and re-checked by
 leanchecker. Code from lean/ must not be able to act on the system while it is

@@ -1,0 +1,7 @@
+# RFC 6455 sample handshake key ("the sample nonce") in the preserved migration snapshot.
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:680
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:693
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:703
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:715
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:727
+a7df3aa9684a7e2dac8c2ee19b5cc2c10d5dd702:migration/dataplane/host/src/ws.rs:generic-api-key:738
