@@ -191,10 +191,12 @@ def scanBody : PancakeProg :=
         (.const (BitVec.ofNat 64 16777215))))
     (.assign "i" (.op .add (.var "i") (.const (BitVec.ofNat 64 1))))
 
-/-- The scan `While`, isolated from the region program (matches the lowered
-`DN.Compiler.Lower.regionProg` sub-term exactly): the rolling digest over the view. -/
+/-- The scan `While` of the region program: the rolling digest over the view. -/
 def scanWhile : PancakeProg :=
   .while_ (.cmp .less (.var "i") (.var "len")) scanBody
+
+/-- The emitted region program lowers: every construct it uses is modelled. -/
+theorem regionProg_lowers : Lower.regionProg.isSome := by decide
 
 /-! ### PancakeSem control-flow reduction lemmas -/
 
@@ -397,6 +399,25 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
     · rw [hs'be, hBmem.2.2.1]
     · rw [hs'ba, hBmem.2.2.2.1]
     · rw [hs'ffi, hBmem.2.2.2.2]
+
+/-- `set_var` reads back what it wrote. -/
+theorem setLocal_same (lc : String → Option Value) (v : String) (val : Value) :
+    setLocal lc v val v = some val := by
+  simp [setLocal]
+
+/-- `set_var` leaves other variables alone. -/
+theorem setLocal_ne (lc : String → Option Value) (v : String) (val : Value)
+    {k : String} (h : k ≠ v) : setLocal lc v val k = lc k := by
+  simp [setLocal, h]
+
+/-- `Seq` step with a non-increasing clock: the inlined `fix_clock` clamp
+collapses (`min s.clock s1.clock = s1.clock`). -/
+theorem seq_step (o : Oracle σ) {c1 c2 : PancakeProg} {s s1 : PancakeState σ}
+    (h : PancakeSem o c1 s = (none, s1)) (hclk : s1.clock ≤ s.clock) :
+    PancakeSem o (.seq c1 c2) s = PancakeSem o c2 s1 := by
+  rw [sem_seq_none (oracle := o) h]
+  have hm : min s.clock s1.clock = s1.clock := by omega
+  rw [hm]
 
 /-! ## 4. Composition: the region's in-bounds (digest) branch, end to end -/
 

@@ -24,10 +24,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "SourceGate.lean"
 LEAN_TOOLCHAIN = "leanprover/lean4:v4.30.0"
-# Reviewed files allowed to define syntax, pinned by SHA-256.
-SYNTAX_FILES = {
-    "lean/DN/Compiler/ProofProducing.lean": "668a1b79c1d75804bbe6bf8fb200c275130b490b2f96527d655b4ab7515b580d",
-}
+# Reviewed files allowed to define syntax, pinned by SHA-256. No module defines syntax today.
+SYNTAX_FILES: dict[str, str] = {}
 IMPORT = re.compile(r"^(?:public\s+|private\s+)?(?:meta\s+)?import\s+(?:all\s+)?(\S+)", re.MULTILINE)
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 LEAN_OPTIONS = re.compile(r"leanOptions\s*:=\s*#\[(.*?)\]", re.DOTALL)
@@ -52,9 +50,36 @@ def tree_errors(root: Path) -> list[str]:
     return errors
 
 
+def modules(root: Path) -> dict[str, Path]:
+    lean = root / "lean"
+    return {".".join(path.relative_to(lean).with_suffix("").parts): path
+            for path in sorted((lean / "DN").rglob("*.lean")) if path.is_file()}
+
+
+def stale_build_errors(root: Path) -> list[str]:
+    """Lake leaves the compiled module of a deleted source behind, and `leanchecker` then
+    re-checks a module that is no longer part of the library."""
+    built = root / ".lake/build/lib/lean/DN"
+    if not built.is_dir():
+        return []
+    known = modules(root)
+    errors = []
+    for directory, _, names in os.walk(built, followlinks=False):
+        for name in sorted(names):
+            path = Path(directory) / name
+            if path.suffix != ".olean" and not name.endswith(".olean.private"):
+                continue
+            stem = name.removesuffix(".olean.private").removesuffix(".olean")
+            module = "DN." + ".".join((*Path(directory).relative_to(built).parts, stem))
+            if module not in known:
+                errors.append(f"{path.relative_to(root)}: build output of a module that no longer "
+                              "exists; run lake clean")
+    return errors
+
+
 def static_errors(root: Path, pins: dict[str, str]) -> list[str]:
-    """Checks that need no Lean: toolchain, source tree, pins and digests."""
-    errors = tree_errors(root)
+    """Checks that need no Lean: toolchain, source tree, pins, digests and build outputs."""
+    errors = tree_errors(root) + stale_build_errors(root)
     toolchain = (root / "lean-toolchain").read_text().strip()
     if toolchain != LEAN_TOOLCHAIN:
         errors.append(f"lean-toolchain is {toolchain}; the source gate rules were reviewed for "
@@ -158,7 +183,10 @@ def check(root: Path = ROOT, pins: dict[str, str] = SYNTAX_FILES) -> list[str]:
 
 
 if __name__ == "__main__":
-    errors = check()
+    # The proofs stage re-checks the build outputs alone: the kernel re-check reads them.
+    outputs_only = sys.argv[1:] == ["outputs"]
+    errors = stale_build_errors(ROOT) if outputs_only else check()
     if errors:
         sys.exit("\n".join(errors))
-    print("structure: Lean source gate, RFC digests and backend patch digest OK")
+    print("structure: build outputs OK" if outputs_only
+          else "structure: Lean source gate, build outputs, RFC and backend digests OK")

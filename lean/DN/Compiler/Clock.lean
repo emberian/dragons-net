@@ -7,11 +7,11 @@ These definitions and theorems concern the Lean model. Correspondence to the
 HOL4 backend, pretty-printer/parser, ABI and executable is tracked separately
 in docs/assurance.md. The model is a restricted 64-bit Pancake fragment.
 -/
-import DN.Compiler.Loop
+import DN.Compiler.Region
 
 namespace DN.Compiler.Clock
 
-open DN.Compiler DN.Compiler.Region DN.Compiler.Compose DN.Compiler.Loop
+open DN.Compiler DN.Compiler.Region
 
 variable {σ : Type}
 
@@ -20,29 +20,15 @@ variable {σ : Type}
 `RefinesClk o p P Q`: from any state satisfying the precondition `P`, the emitted
 program `p` runs to a NORMAL termination (`result = none`) in a state `s'` related
 to the entry by `Q`, having consumed clock MONOTONICALLY (`s'.clock ≤ s.clock`).
-Unlike `Refines` this permits clock CONSUMPTION (a loop) and a PRECONDITION (an
+This permits clock CONSUMPTION (a loop) and a PRECONDITION (an
 invariant + budget, or an enabling context); the `≤` accounting is what keeps the
 per-boundary clock-clamps no-ops so the predicate still composes. -/
 def RefinesClk (o : Oracle σ) (p : PancakeProg)
     (P : PancakeState σ → Prop) (Q : PancakeState σ → PancakeState σ → Prop) : Prop :=
   ∀ s, P s → ∃ s', PancakeSem o p s = (none, s') ∧ Q s s' ∧ s'.clock ≤ s.clock
 
-/-! ## 1. Straight-line stages embed -/
+/-! ## 1. Straight-line stages -/
 
-/-- Every straight-line `Refines` stage is a `RefinesClk` stage with the trivial
-precondition: `Refines` gives `(φ s).clock = s.clock`, so the `≤` accounting holds
-with equality. The loop-free Gate-A theory (`emit_correct_generic`) thus lives
-inside `RefinesClk` unchanged. -/
-theorem refinesClk_of_refines (o : Oracle σ) {p : PancakeProg}
-    {φ : PancakeState σ → PancakeState σ} (h : Refines o p φ) :
-    RefinesClk o p (fun _ => True) (fun s s' => s' = φ s) := by
-  intro s _
-  obtain ⟨he, hc⟩ := h s
-  exact ⟨φ s, he, rfl, Nat.le_of_eq hc⟩
-
-/-- A CONDITIONAL straight-line assign: its RHS need only evaluate to `f s` under
-the precondition `P` (e.g. `result := acc`, whose `acc` is bound only after the
-loop). Clock is preserved (assign never touches it), so the `≤` accounting holds. -/
 theorem refinesClk_assign (o : Oracle σ) (x : String) (e : PancakeExp)
     (P : PancakeState σ → Prop) (f : PancakeState σ → Value)
     (hf : ∀ s, P s → eval s e = some (f s)) :
@@ -145,120 +131,5 @@ theorem while_inv_cond_clk (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
                if_true, hclock0, if_false, clampClock, hs2eq]
     rw [hclamp]
     exact hs'eq
-
-/-! ## 4. The SCAN loop as one `RefinesClk` stage -/
-
-/-- The scan `While` is a single `RefinesClk` stage: precondition = the entry
-invariant (`scanInv` at index `0`, i.e. `acc = 0, i = 0`, view loaded) plus the
-iteration budget `len ≤ s.clock`; postcondition = `scanInv 0` (the full digest in
-`acc`, `i = len`). Obtained by instantiating `while_inv_cond_clk` at the scan
-guard/body (reusing `scan_guard`/`scan_step` from EmitCorrectLoop). -/
-theorem refinesClk_scanWhile (o : Oracle σ) (a : List (BitVec 8)) (buf : Word) (off len : Nat)
-    (hlen63 : len < 2 ^ 63) :
-    RefinesClk o scanWhile
-      (fun s => scanInv a buf off len len s ∧ len ≤ s.clock)
-      (fun _ s' => scanInv a buf off len 0 s') := by
-  intro s hP
-  obtain ⟨hI, hclk⟩ := hP
-  obtain ⟨s', hs'eq, hs'I, hs'clk⟩ :=
-    while_inv_cond_clk o (.cmp .less (.var "i") (.var "len")) scanBody
-      (scanInv a buf off len)
-      (scan_guard a buf off len hlen63)
-      (scan_step o a buf off len hlen63)
-      len s hI hclk
-  exact ⟨s', hs'eq, hs'I, hs'clk⟩
-
-/-- THE MONEY SHOT: the loop stage `scanWhile` composed with the straight-line
-frame `result := acc` is a SINGLE `RefinesClk` stage, assembled by the compose
-rule `refinesClk_seq`. The publish frame is CONDITIONAL (its `acc` is bound only
-by the loop's postcondition), handled by `refinesClk_assign` + the seq link. This
-is a loop-bearing stage composing into the uniform clock-accounting grammar — the
-named residual, closed. -/
-theorem refinesClk_scan_publish (o : Oracle σ) (a : List (BitVec 8)) (buf : Word) (off len : Nat)
-    (hlen63 : len < 2 ^ 63) :
-    RefinesClk o (.seq scanWhile (.assign "result" (.var "acc")))
-      (fun s => scanInv a buf off len len s ∧ len ≤ s.clock)
-      (fun _ s' => ∃ s1, scanInv a buf off len 0 s1 ∧
-        s' = { s1 with locals := setLocal s1.locals "result" (BitVec.ofNat 64 (scanFrom a off len 0)) }) := by
-  have hAcc : ∀ s : PancakeState σ, scanInv a buf off len 0 s →
-      eval s (.var "acc") = some (BitVec.ofNat 64 (scanFrom a off len 0)) := by
-    intro s hI
-    obtain ⟨k, hk, hacc, _⟩ := hI
-    have : k = len := by omega
-    subst this; exact hacc
-  exact refinesClk_seq o
-    (refinesClk_scanWhile o a buf off len hlen63)
-    (refinesClk_assign o "result" (.var "acc")
-      (fun s => scanInv a buf off len 0 s)
-      (fun _ => BitVec.ofNat 64 (scanFrom a off len 0)) hAcc)
-    (fun _ _ _ hq => hq)
-
-/-! ## 5. `region_scan_correct` LIFTED into the uniform rule
-
-The whole loop-bearing region `scanElse` (`Dec acc 0; Dec i 0; (scanWhile;
-result := acc)`) assembled as a SINGLE `RefinesClk` stage purely by the compose
-rules of §2/§4 — no bespoke hand composition. This is exactly the theorem
-`region_scan_correct` proves by hand in EmitCorrectRegion, now obtained as an
-INSTANCE of the clock-accounting grammar. -/
-theorem region_via_clock (o : Oracle σ) (a : List (BitVec 8)) (buf : Word) (off len : Nat)
-    (hlen63 : len < 2 ^ 63) :
-    RefinesClk o scanElse
-      (fun s =>
-        s.locals "len" = some (BitVec.ofNat 64 len) ∧
-        s.locals "buf" = some buf ∧
-        s.locals "off" = some (BitVec.ofNat 64 off) ∧
-        ViewBytes s a buf off len ∧
-        len ≤ s.clock)
-      (fun _ s' => s'.locals "result" = some (BitVec.ofNat 64 (scanFrom a off len 0))) := by
-  -- inner body: scanWhile ; result := acc  (the money-shot stage)
-  have hbody := refinesClk_scan_publish o a buf off len hlen63
-  -- wrap `Dec i 0`
-  have hDecI :
-      RefinesClk o (.dec "i" (.const (BitVec.ofNat 64 0)) (.seq scanWhile (.assign "result" (.var "acc"))))
-        (fun s =>
-          s.locals "acc" = some (BitVec.ofNat 64 0) ∧
-          s.locals "len" = some (BitVec.ofNat 64 len) ∧
-          s.locals "buf" = some buf ∧
-          s.locals "off" = some (BitVec.ofNat 64 off) ∧
-          ViewBytes s a buf off len ∧
-          len ≤ s.clock)
-        _ :=
-    refinesClk_dec o "i" (.const (BitVec.ofNat 64 0)) _ (fun _ => BitVec.ofNat 64 0) _ _
-      (fun _ _ => rfl) hbody
-      (by
-        rintro s ⟨hacc, hlen, hbuf, hoff, hview, hclk⟩
-        refine ⟨⟨0, by omega, ?_, ?_, ?_, ?_, ?_, ?_⟩, hclk⟩
-        · simpa [setLocal, scanFrom] using hacc
-        · simp [setLocal]
-        · simpa [setLocal] using hlen
-        · simpa [setLocal] using hbuf
-        · simpa [setLocal] using hoff
-        · intro i hi; have := hview i hi; simpa [setLocal] using this)
-  -- wrap `Dec acc 0`
-  have hDecAcc :
-      RefinesClk o scanElse
-        (fun s =>
-          s.locals "len" = some (BitVec.ofNat 64 len) ∧
-          s.locals "buf" = some buf ∧
-          s.locals "off" = some (BitVec.ofNat 64 off) ∧
-          ViewBytes s a buf off len ∧
-          len ≤ s.clock)
-        _ :=
-    refinesClk_dec o "acc" (.const (BitVec.ofNat 64 0)) _ (fun _ => BitVec.ofNat 64 0) _ _
-      (fun _ _ => rfl) hDecI
-      (by
-        rintro s ⟨hlen, hbuf, hoff, hview, hclk⟩
-        refine ⟨?_, ?_, ?_, ?_, ?_, hclk⟩
-        · simp [setLocal]
-        · simpa [setLocal] using hlen
-        · simpa [setLocal] using hbuf
-        · simpa [setLocal] using hoff
-        · intro i hi; have := hview i hi; simpa [setLocal] using this)
-  -- weaken the nested postcondition down to `result = digest`
-  refine refinesClk_conseq o hDecAcc (fun s h => h) ?_
-  rintro s s' _ ⟨smidA, ⟨smidI, ⟨s1, _, rfl⟩, rfl⟩, rfl⟩
-  have dr1 : ("result" = "acc") = False := by decide
-  have dr2 : ("result" = "i") = False := by decide
-  simp only [resVar, dr1, dr2, if_false, setLocal, if_true]
 
 end DN.Compiler.Clock

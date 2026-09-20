@@ -23,6 +23,10 @@ sorry, custom axioms, native_decide, build-time IO, or weaken a theorem to make
 it green.
 An inhabited precondition still needs review for semantic adequacy.
 
+The emitted sources are pinned in tests/golden. If a change to the emitter is
+intended, regenerate them with `.lake/build/bin/dn-compiler emit-region` and
+`emit-echo`, and say in the commit why the output changed.
+
 Read docs/baseline.md before modifying the maintained compiler subset.
 Read docs/reviews/README.md before reusing inherited compiler or reactor code;
 its unresolved identity/lifetime/contract obligations are not covered by green CI.

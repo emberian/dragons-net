@@ -5,6 +5,8 @@ Unfinished work is tracked in the [project backlog](../project.md) and
 
 Four Sol reviewers independently examined the compiler assurance, emission, dataplane models, and native integration around baseline `94785d2` on 2026-09-18. The lead reviewer reproduced the maintained printer failure with the pinned CakeML executable, inspected the critical native paths, and reviewed CI failure propagation. These were bounded reviews, not exhaustive audits. Report line references generally identify the reviewed revision; subsequent comment corrections can shift them.
 
+The inherited compiler workloads this review examined (`Stage*`, `Serve*`, serializers, structure emitters, `ProofProducing`, `Compose` and `Loop`) have since been removed; the findings below are kept for the reasoning that led there.
+
 **Assessment:** keep building on the maintained native subset, but do not port the preserved reactors wholesale or count inherited conditional theorems as a completed assurance chain. The active echo path was not found to have the blocking lifetime defects described below. The preserved source remains outside the active build.
 
 ## Findings and disposition
@@ -50,7 +52,7 @@ Acceptance: deterministic traces for completion-first/cancel-first, cancellation
 
 ### 3. Repair the reusable compiler contract
 
-Replace universal-state data/memory assumptions with judgments indexed by explicit preconditions. Supply an inhabited witness, preserve unrelated locals/memory/FFI/base address, and state scratch-variable effects and fuel costs. `Certificate`/`RefinesClk` provide a starting point; the old `ProofProducing` APIs are not repaired by merely importing them.
+Replace universal-state data/memory assumptions with judgments indexed by explicit preconditions. Supply an inhabited witness, preserve unrelated locals/memory/FFI/base address, and state scratch-variable effects and fuel costs. `Certificate`/`RefinesClk` are the starting point; the interfaces that carried the universal assumptions were removed rather than repaired.
 
 Acceptance: concrete bound-local and finite-memory callers for the former stamp/redirect examples, composed without contradictory assumptions; direct model execution checks; printer/parser/native tests for the same emitted workloads. For FFI, state length and addressability constraints before claiming an effect frame.
 

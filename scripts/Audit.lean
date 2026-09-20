@@ -105,6 +105,29 @@ def isRecursionHelper (env : Environment) (name : Name) (info : ConstantInfo) : 
 def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool :=
   info matches .opaqueInfo _ && env.contains (Compiler.mkUnsafeRecName name)
 
+/-- The modules `dn-compiler` is built from. Pinned so that the executable compiler cannot
+start depending on another module without that being reviewed. -/
+def compilerModules : Array Name :=
+  #[`DN.Compiler.Abi, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy, `DN.Compiler.Bytes,
+    `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Kernels, `DN.Compiler.Lower,
+    `DN.Compiler.Main, `DN.Compiler.Region, `DN.Compiler.Semantics, `DN.Compiler.Syntax]
+
+/-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
+def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
+  let mut headers : Std.HashMap Name (Array Name) := {}
+  for h : idx in [0:env.header.moduleNames.size] do
+    headers := headers.insert env.header.moduleNames[idx]
+      ((env.header.moduleData[idx]!).imports.map (·.module))
+  let mut seen : NameSet := {}
+  let mut stack := #[`DN.Compiler.Main]
+  while h : stack.size > 0 do
+    let name := stack[stack.size - 1]
+    stack := stack.pop
+    if ours.contains name && !seen.contains name then
+      seen := seen.insert name
+      stack := stack ++ (headers.getD name #[])
+  return seen
+
 /-- Direct imports a `DN` module may have besides other audited modules. -/
 def allowedImports : NameSet :=
   [`Init, `Lean.Data.Json].foldl NameSet.insert {}
@@ -196,6 +219,14 @@ unsafe def main (args : List String) : IO UInt32 := do
   let graph := reachable env (decls.map (·.1))
   let bad := tainted env graph
   let mut errors : Array String := #[]
+  if ours.contains `DN.Compiler.Main then
+    let closure := compilerClosure env ours
+    for name in compilerModules do
+      unless closure.contains name do
+        errors := errors.push s!"dn-compiler no longer needs {name}; update compilerModules"
+    for name in closure.toList do
+      unless compilerModules.contains name do
+        errors := errors.push s!"dn-compiler now also needs {name}; review that and update compilerModules"
   for h : idx in [0:env.header.moduleNames.size] do
     let module := env.header.moduleNames[idx]
     if ours.contains module then

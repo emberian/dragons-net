@@ -32,4 +32,10 @@ theorem free_output_name_is_rejected :
 theorem return_uses_output_slot (e : PExpr) :
     returnWordStmt (.ret e) = [.store (.var "dn_result") e, .ret (.const 0)] := rfl
 
+/-- The rewrite reaches a return nested in control flow, not only a top-level one. -/
+theorem nested_return_uses_output_slot (c e : PExpr) :
+    returnWordStmts [.ite c [.ret e] [.while c [.ret e]]]
+      = [.ite c [.store (.var "dn_result") e, .ret (.const 0)]
+                [.while c [.store (.var "dn_result") e, .ret (.const 0)]]] := rfl
+
 end DN.Compiler.Abi

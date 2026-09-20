@@ -95,6 +95,8 @@ KERNEL_PROBES = {
         "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .defnDecl\n"
         '    { name := .str `DN.Probe "a\\x00--export-unsafe\\x00b", levelParams := [], type := mkConst ``Nat,\n'
         "      value := mkNatLit 0, hints := .abbrev, safety := .safe }\n"),
+    "DN.Compiler.Main": "import DN.Probe.Extra\ndef DN.Compiler.Main.value : Nat := DN.Probe.Extra.x\n",
+    "DN.Probe.Extra": "def DN.Probe.Extra.x : Nat := 1\n",
     "DN.Probe.Lookalike": (
         "axiom «Quot.sound» : False\ntheorem DN.Probe.lookalike : (1 : Nat) = 2 := «Quot.sound».elim\n"),
     "DN.Probe.EmptyPrefix": (
@@ -306,6 +308,26 @@ class Audit(unittest.TestCase):
             self.assertIn(f"expected {regressions()} passing regressions, found {int(regressions()) + 1}",
                           result.stderr)
 
+    def test_documented_counts_match_the_audit(self) -> None:
+        prefix = run(["lean", "--print-prefix"]).stdout.strip()
+        env = {**os.environ, "LEAN_PATH": f"{prefix}/lib/lean:{ROOT}/.lake/build/lib/lean"}
+        result = run(["lean", "--run", "scripts/Audit.lean", "--regressions", regressions()], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        counts = re.search(r"(\d+) modules, (\d+) declarations, (\d+) theorems", result.stdout)
+        assert counts is not None, result.stdout
+        declarations, theorems = (f"{int(counts.group(index)):,}" for index in (2, 3))
+        documented = {
+            "docs/assurance.md": (f"audit covers {declarations} declarations, including {theorems} theorems",
+                                  f"| {regressions()} executable examples |"),
+            "docs/baseline.md": (f"{declarations} declarations, including {theorems} theorems",
+                                 f"| {regressions()} executable cases |"),
+        }
+        for name, expected in documented.items():
+            with self.subTest(document=name):
+                text = (ROOT / name).read_text()
+                for phrase in expected:
+                    self.assertIn(phrase, text)
+
     def test_requires_theorems(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Probes(Path(temp), ["DN.Probe.NoTheorems"]).audit(roots=())
@@ -318,6 +340,30 @@ class Audit(unittest.TestCase):
                 result = run(["lean", "--run", "scripts/Audit.lean", *args])
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("usage", result.stderr)
+
+    def test_compiler_imports_are_pinned(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Probes(Path(temp), ["DN.Probe.Extra", "DN.Compiler.Main"]).audit(roots=())
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("dn-compiler now also needs DN.Probe.Extra; review that and update "
+                          "compilerModules", result.stderr)
+
+    def test_rejects_build_output_without_a_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = source_tree(Path(temp))
+            built = root / ".lake/build/lib/lean/DN/Compiler"
+            built.mkdir(parents=True)
+            (root / "lean/DN/Compiler").mkdir(parents=True)
+            (root / "lean/DN/Compiler/Kept.lean").write_text("def x : Nat := 1\n")
+            for name in ("Kept.olean", "Kept.olean.private"):
+                (built / name).write_text("")
+            self.assertEqual(structure.stale_build_errors(root), [])
+            (built / "Gone.olean").write_text("")
+            (built / "Gone.olean.private").write_text("")
+            stale = "build output of a module that no longer exists; run lake clean"
+            self.assertEqual(structure.stale_build_errors(root),
+                             [f".lake/build/lib/lean/DN/Compiler/Gone.olean: {stale}",
+                              f".lake/build/lib/lean/DN/Compiler/Gone.olean.private: {stale}"])
 
     def test_kernel_recheck_rejects_skipped_kernel(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -493,7 +539,8 @@ class Pipeline(unittest.TestCase):
     def test_check_script_runs_every_gate_in_order(self) -> None:
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
                  "python3 scripts/check_structure.py", "lake build DN dn-compiler",
-                 '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", '"$leanchecker" DN', "--export-list",
+                 '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
+                 '"$leanchecker" DN', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
@@ -620,7 +667,9 @@ class Pipeline(unittest.TestCase):
             expected = {
                 "build": ["python3 scripts/check_structure.py", "lake build DN dn-compiler"],
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
-                           "python3 scripts/bootstrap_tool.py nanoda", f"toolchain leanchecker DN {checked}",
+                           "python3 scripts/bootstrap_tool.py nanoda",
+                           "python3 scripts/check_structure.py outputs",
+                           f"toolchain leanchecker DN {checked}",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
@@ -791,6 +840,20 @@ class Pipeline(unittest.TestCase):
             script = f"set -euo pipefail\n{function.group(0)}\ntracked_outputs"
             outside = subprocess.run(["bash", "-c", script], cwd=tree, capture_output=True, check=False)
             self.assertNotEqual(outside.returncode, 0)
+
+    def test_emitted_sources_match_the_golden_files(self) -> None:
+        binary = ROOT / ".lake/build/bin/dn-compiler"
+
+        def emit(target: str) -> str:
+            return subprocess.run([str(binary), f"emit-{target}"], text=True, capture_output=True,
+                                  check=True, timeout=600).stdout
+
+        for name in ("region", "echo"):
+            with self.subTest(target=name):
+                self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
+        # The differential fixture is 200 KB of cases; its digest catches a change just as well.
+        self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
+                         "6d148fdb8df4f55f10d9799772ac569c104f40ac6ee841d1bf5cef162cb3730a")
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

@@ -1,17 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+import DN.Compiler.Decimal
+import DN.Compiler.Region
+
+/-!
 # DN.Compiler.NatToDecCompile
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
-
-import DN.Compiler.SerializeCompile
 
 namespace DN.Compiler.NatToDecCompile
 
-open DN.Compiler DN.Compiler.Region DN.Compiler.Loop DN.Compiler.SerializeCompile
+open DN.Compiler DN.Compiler.Region DN.Compiler.Decimal
 
 variable {σ : Type}
 
@@ -231,7 +231,7 @@ theorem digit_store (o : Oracle σ) {d : Nat} {p : Word} {s : PancakeState σ}
 
 /-! ## 3. connection to `natToDec` (the proven spec) + concrete corpus
 
-`natToDec` (DN.Compiler/SerializeCompile.lean, proven `natToDec_readback`: the emitted
+`natToDec` (`DN.Compiler.Decimal`, proven `natToDec_readback`: the emitted
 ASCII digits read back as `n`) peels the low digit `m % 10` and recurses on the
 quotient `m / 10` (`decAux`'s `else` branch). `divWhile` computes EXACTLY that
 `(m/10, m%10)` — with only `Sub`/`Add`/`NotLess`, no `Div`. So each digit position

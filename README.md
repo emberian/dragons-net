@@ -18,7 +18,7 @@ Start with [Wisper’s compiler baseline](docs/baseline.md): what is exercised, 
 
 | Area | Current state |
 | --- | --- |
-| [Compiler](lean/DN/Compiler) | All 45 original compiler source modules carried forward, under `DN.Compiler`, plus new certificates and regression tests. Includes byte operations, serializers, structured layouts, stage composition, lowering, and model correctness proofs. Inherited HTTP examples remain useful compiler exercises. |
+| [Compiler](lean/DN/Compiler) | The emitted subset and its proofs, under `DN.Compiler`: syntax, lowering, the checked emitter and ABI, model execution, byte operations, decimal rendering, certificates and regression examples. The inherited HTTP workloads were removed; the extraction manifest records where they came from. |
 | [Dataplane models](lean/DN/Dataplane) | Ring ownership, conservation and recycling; slabs and generation counters; completion handling, wakeups, deadlines, flow control, and draining. |
 | [Host primitives](crates/dn-runtime) | A small Rust library with a generational slab, connection permits, and a partial-write cursor. Tested; correspondence to the Lean models remains work. |
 | [Concurrency exploration](models) | Eight independent Rust models and 25 Loom tests, including counterexamples for deliberately broken algorithms. |

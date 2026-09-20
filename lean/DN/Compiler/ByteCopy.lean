@@ -1,32 +1,20 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
-# DN.Compiler.ByteCopy
-
-Retained compiler/dataplane development and regression examples.
-Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
--/
-
-import DN.Compiler.NatToDecFull
+import DN.Compiler.Bytes
 import DN.Compiler.Clock
 import DN.Compiler.Region
 
+/-!
+# DN.Compiler.ByteCopy
+
+Source provenance is in docs/provenance.json; assurance boundaries are in
+docs/assurance.md.
+-/
+
 namespace DN.Compiler.ByteCopy
 
-open DN.Compiler DN.Compiler.Region DN.Compiler.Bytes DN.Compiler.SerializeCompile
-open DN.Compiler.NatToDecFull DN.Compiler.Clock
+open DN.Compiler DN.Compiler.Region DN.Compiler.Bytes DN.Compiler.Clock
 
 variable {σ : Type}
-
-/-! ## 0. Byte round-trip (the `storeByte` low-byte truncation is a no-op on a
-byte widened to a word). -/
-
-/-- Truncating a byte widened to a word recovers the byte (`w2w` round-trip). The
-`StoreByte` semantics store `w.setWidth 8`; when `w = b.setWidth 64` this is `b`. -/
-theorem setWidth64_8 (b : BitVec 8) : (b.setWidth 64).setWidth 8 = b := by
-  apply BitVec.eq_of_getLsbD_eq_iff.mpr
-  intro k hk
-  simp [hk]
 
 /-! ## 1. The byte-addressed copy program. -/
 
@@ -329,7 +317,57 @@ example : copyByteWhile = .while_ (.cmp .less (.var "i") (.var "len"))
                     (.loadByte (.op .add (.var "src") (.var "i"))))
         (.assign "i" (.op .add (.var "i") (.const (BitVec.ofNat 64 1))))) := rfl
 
-/-! ## 4. Axiom audit — expect ⊆ {propext, Quot.sound, Classical.choice}, 0 sorryAx. -/
+/-- A state to copy in: the memory domain has the shape the CakeML compiler theorem
+gives (word-aligned addresses below a bound), not every address, and the destination
+word holds other bytes than the source, so a copy is observable. -/
+def demoState (ffi : σ) : PancakeState σ :=
+  { locals := fun _ => none,
+    memory := fun k => if k = 8#64 then 0xffffffffffffffff#64 else 0x0706050403020100#64,
+    memaddrs := fun a => decide (a.toNat % 8 = 0 ∧ a.toNat < 128),
+    be := false, clock := 8, ffi := ffi, baseAddr := 0 }
+
+/-- **The premises of `copySeg_landsB` are satisfiable.** On `demoState`, copying
+four bytes from address 64 to address 8 runs to completion, and the destination
+bytes read back as the source bytes `0, 1, 2, 3`. -/
+theorem copySeg_four_bytes (o : Oracle σ) (ffi : σ) :
+    ∃ s', PancakeSem o (copySeg 8#64 64#64 4) (demoState ffi) = (none, s')
+      ∧ ∀ j, j < 4 →
+          memLoadByte s'.memory (demoState ffi).memaddrs (demoState ffi).be
+              (8#64 + BitVec.ofNat 64 j)
+            = some (BitVec.ofNat 8 j) := by
+  have hsmall : ∀ (a b : Nat), a < 128 → b < 128 →
+      ((BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word)).toNat = a + b := by
+    intro a b ha hb
+    simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
+    omega
+  have hne : ∀ (a b c d : Nat), a < 128 → b < 128 → c < 128 → d < 128 → a + b ≠ c + d →
+      (BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word) ≠ BitVec.ofNat 64 c + BitVec.ofNat 64 d := by
+    intro a b c d ha hb hc hd hsum heq
+    exact hsum (by rw [← hsmall a b ha hb, ← hsmall c d hc hd, heq])
+  obtain ⟨s', hrun, hland, -, -, -⟩ :=
+    copySeg_landsB (o := o) 8#64 64#64 (fun j => BitVec.ofNat 8 j) 4 (by decide)
+      (fun i j hi hj => hne 8 i 64 j (by omega) (by omega) (by omega) (by omega) (by omega))
+      (fun i j hi hj hij => hne 8 i 8 j (by omega) (by omega) (by omega) (by omega) (by omega))
+      (demoState ffi) (by simp only [demoState]; decide)
+      (fun j hj => by
+        have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+        simp only [demoState]
+        rcases this with rfl | rfl | rfl | rfl <;> decide)
+      (fun j hj => by
+        have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+        simp only [demoState]
+        rcases this with rfl | rfl | rfl | rfl <;> decide)
+  exact ⟨s', hrun, hland⟩
+
+/-- …and the copy is what makes that true: before it runs, the destination holds
+other bytes. -/
+theorem demoState_before_copy (ffi : σ) :
+    memLoadByte (demoState ffi).memory (demoState ffi).memaddrs (demoState ffi).be
+        (8#64 + BitVec.ofNat 64 0)
+      ≠ some (BitVec.ofNat 8 0) := by
+  simp only [demoState]
+  decide
+
 
 
 end DN.Compiler.ByteCopy

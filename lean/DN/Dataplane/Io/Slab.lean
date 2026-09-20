@@ -1,6 +1,4 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import DN.Dataplane.Ring.RecycleOnce
-
 /-!
 # DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, verified
 

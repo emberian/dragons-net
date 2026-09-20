@@ -1,13 +1,12 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+import DN.Dataplane.Slab.Basic
+
+/-!
 # DN.Dataplane.Slab.Refinement
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
-
-import DN.Dataplane.Slab.Basic
 
 namespace DN.Dataplane.Slab
 

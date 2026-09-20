@@ -1,14 +1,12 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+import DN.Dataplane.Drain.Basic
+
+/-!
 # DN.Dataplane.Drain.Trace
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
-
-
-import DN.Dataplane.Drain.Basic
 
 namespace DN.Dataplane.Drain
 

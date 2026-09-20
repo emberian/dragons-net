@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "files": [
     {
       "source_repository": "breadstuffs",
@@ -23,22 +23,6 @@
       "source_path": "orb-compiler/Pancake/EmitCorrectRegion.lean",
       "source_sha256": "0d1e81235eaee9c0916ef8e92d4ad2dea915e4a81ee80970bef7f2ae3c92a242",
       "destination": "lean/DN/Compiler/Region.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
-      "source_path": "orb-compiler/Pancake/EmitCorrectCompose.lean",
-      "source_sha256": "a96fee779f765435db8990ec57be4ec9de6ef48d7273db36c9497b12971462ca",
-      "destination": "lean/DN/Compiler/Compose.lean",
-      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
-      "source_path": "orb-compiler/Pancake/EmitCorrectLoop.lean",
-      "source_sha256": "256b4cf6f94bcb0609104b1ff8b1d97c290a5400f92f88746b4a2812109467b9",
-      "destination": "lean/DN/Compiler/Loop.lean",
       "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
     },
     {
@@ -180,14 +164,6 @@
     {
       "source_repository": "breadstuffs",
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb/Flow/Basic.lean",
-      "source_sha256": "2e31f15f6b60a122f1fd6ec2e3d137495f863ddbccc25e78a9cdcfe813fdf7b0",
-      "destination": "lean/DN/Dataplane/Flow/Basic.lean",
-      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb/Flow/Deadline.lean",
       "source_sha256": "4dcb5c2787cccb1968a46124dad2c869f3c2741dea082cb802a98b846efa2e3c",
       "destination": "lean/DN/Dataplane/Flow/Deadline.lean",
@@ -215,14 +191,6 @@
       "source_path": "orb/Flow/Send.lean",
       "source_sha256": "f537e5b0973429a9ae2690691e883612d272148c4e851d58bcaf380174a11d4e",
       "destination": "lean/DN/Dataplane/Flow/Send.lean",
-      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb/Flow/Migrate.lean",
-      "source_sha256": "b0dd36877dcb01d99cfbc08735801f145923ac75b46e4f1ca3f4932988358f6c",
-      "destination": "lean/DN/Dataplane/Flow/Migrate.lean",
       "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
     },
     {
@@ -260,30 +228,6 @@
     {
       "source_repository": "breadstuffs",
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/CondRespProto.lean",
-      "source_sha256": "21cdb09ed08ebe3357b3492c2f028942e43dda5555caea9dc2159463db1cacfe",
-      "destination": "lean/DN/Compiler/CondRespProto.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/DslServe.lean",
-      "source_sha256": "c883bbbcf1f774d24f2974d984ea15127a2b83ddfe9baa24c3dc9b27344220df",
-      "destination": "lean/DN/Compiler/DslServe.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/FullResponseCompile.lean",
-      "source_sha256": "b0feb5f64f6e9132844fdeead46c60d97bccb5a02e6038e56c8b4eaa15b4acab",
-      "destination": "lean/DN/Compiler/FullResponseCompile.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb-compiler/Pancake/LowerBridge.lean",
       "source_sha256": "f2af16e637e753513bbf2cc69c9a983bed48ec38cb71a2e98c848af185eec2b9",
       "destination": "lean/DN/Compiler/LowerBridge.lean",
@@ -300,14 +244,6 @@
     {
       "source_repository": "breadstuffs",
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ModelUnify.lean",
-      "source_sha256": "00bda69c4a4d489015e99f0adf8bdb54b6ad89c31e0f46ed59515dc9b84da1a1",
-      "destination": "lean/DN/Compiler/ModelUnify.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb-compiler/Pancake/NatToDecCompile.lean",
       "source_sha256": "c1ae47bc71b991f3c6d625ba8415b13c1ae7ebb7c37263645f978e5213314ba1",
       "destination": "lean/DN/Compiler/NatToDecCompile.lean",
@@ -319,230 +255,6 @@
       "source_path": "orb-compiler/Pancake/NatToDecFull.lean",
       "source_sha256": "d35a0ddc8379842c7b6edb6ba5d0796eea1ad860e2af538a6df75cf5c1c5c57b",
       "destination": "lean/DN/Compiler/NatToDecFull.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/PredEval.lean",
-      "source_sha256": "cffe82d2a16c2ee09ea86e9208bda63ba2e50b85ce8439969a680f6f25a4f10c",
-      "destination": "lean/DN/Compiler/PredEval.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ProofProducing.lean",
-      "source_sha256": "9e47abed32b452bc7c85709aa977bbd7d7ffec48d7b2d206b9834c057a22f13f",
-      "destination": "lean/DN/Compiler/ProofProducing.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/RealStageDemo.lean",
-      "source_sha256": "8b7e449d80e788671f9fc1167e5814e17800419e6314f18d72d4dac8d9ecbbe4",
-      "destination": "lean/DN/Compiler/RealStageDemo.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/SerializeCompile.lean",
-      "source_sha256": "bc6e7dcca78a3e2305e40e68930b4e3505380e69a9df57f79a5d58f0955220c3",
-      "destination": "lean/DN/Compiler/SerializeCompile.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/SerializeFull.lean",
-      "source_sha256": "3b26417f6e55dd91e5600f281b6c83d3af60dc2eaecda7b7f2b62aebb91f0a48",
-      "destination": "lean/DN/Compiler/SerializeFull.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/SerializeHeaders.lean",
-      "source_sha256": "044322783908d6d1c4814684ce94c752c84702a17e19232bd4d4a91e9628f5cf",
-      "destination": "lean/DN/Compiler/SerializeHeaders.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/SerializeStruct.lean",
-      "source_sha256": "d7d6a2a1e555e67324d2d2aff3096ab8016f26043b51a7d2a86550c0025ee9e1",
-      "destination": "lean/DN/Compiler/SerializeStruct.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeCompose.lean",
-      "source_sha256": "22048abd1407320f30664455956f08ec90a2c342ef7c795633e779fb8a1f15bc",
-      "destination": "lean/DN/Compiler/ServeCompose.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeConfigServe.lean",
-      "source_sha256": "d11d6b429782bd8a92877644dcb3c7038f4a15a34ce0431a876af673eac40bfd",
-      "destination": "lean/DN/Compiler/ServeConfigServe.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeEmit.lean",
-      "source_sha256": "18365271cc96b6da48fc92e038a826dc565ec5c00c145674e2350b4846fca61c",
-      "destination": "lean/DN/Compiler/ServeEmit.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeExportServes.lean",
-      "source_sha256": "c0f7fcf5eab3b51e2f2c855e37b19b35d24ccaf4ea1b8f2e94c69a4283df1060",
-      "destination": "lean/DN/Compiler/ServeExportServes.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeFragment.lean",
-      "source_sha256": "3ae6449eea6a550a1ef564d17108823d19d2bba586a626da56bfc9900d1ca834",
-      "destination": "lean/DN/Compiler/ServeFragment.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeFull.lean",
-      "source_sha256": "081738ccfbae1e2f8492fbe555e71aa0080ef6bfdfc27d4b791b47d6b668ffc2",
-      "destination": "lean/DN/Compiler/ServeFull.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/ServeSlice.lean",
-      "source_sha256": "a2b9ed8b3a2e7b7cccaef87588b5730cf727bf229073d81a80559eef3c148733",
-      "destination": "lean/DN/Compiler/ServeSlice.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageCompile.lean",
-      "source_sha256": "f7e3fdc84b76bb5a6d70c6c34a89ee2cfbf8ad51a1442e9d9d4942f8fecc30f3",
-      "destination": "lean/DN/Compiler/StageCompile.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageEvenMore.lean",
-      "source_sha256": "333d5d15e9d9d52c06598bf2e689bb16705c4d06cdb493bd21063aafd949dfc0",
-      "destination": "lean/DN/Compiler/StageEvenMore.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageLift2.lean",
-      "source_sha256": "fc9b27dd254d28b938c8925e5ff61d74c1297763628b625488bfa2eb70324b7a",
-      "destination": "lean/DN/Compiler/StageLift2.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageLift2Cond.lean",
-      "source_sha256": "e04eb0c3b95f002f03a107f86d9cc0f022bb614fc50a1c3892b8d404a4d84fa6",
-      "destination": "lean/DN/Compiler/StageLift2Cond.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageLift2Inst.lean",
-      "source_sha256": "97feb5de67802dedba338d13c44e0005640eb006c2c1aa629d5846d75533e3d0",
-      "destination": "lean/DN/Compiler/StageLift2Inst.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageLiftGate.lean",
-      "source_sha256": "00d8f5dfc29d87d47346252d25d6433789cc79269817f170f502e188b9d3c2ac",
-      "destination": "lean/DN/Compiler/StageLiftGate.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageLiftHeader.lean",
-      "source_sha256": "d9efad76b38aec3f3a89cfd834d2f37b468463a2f79747146a65af6b49863bc5",
-      "destination": "lean/DN/Compiler/StageLiftHeader.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageMore.lean",
-      "source_sha256": "d1c716f6063aaed3eba995708c1eb1ab791ac3b9d26e5bc2f03155ac0f4c621b",
-      "destination": "lean/DN/Compiler/StageMore.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageProg.lean",
-      "source_sha256": "146f7f50a8cfd93519567795c58f78c50af0cdbd0c5a50a853b1bf35979e379a",
-      "destination": "lean/DN/Compiler/StageProg.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageProg2.lean",
-      "source_sha256": "58258b7e846777e1b91aa6f90b61d1580da49366011fdcd712e70b86ae8e19d7",
-      "destination": "lean/DN/Compiler/StageProg2.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StageYetMore.lean",
-      "source_sha256": "bce92e4f3fe209f38b26366389440c33c69a82bf1d5877fecf61b8c5efddd847",
-      "destination": "lean/DN/Compiler/StageYetMore.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StatusLineEmit.lean",
-      "source_sha256": "fde6f8bb039d0b9e2fccae339526006000d52b880eb8e545bc5c56464c726f8c",
-      "destination": "lean/DN/Compiler/StatusLineEmit.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StructEmit.lean",
-      "source_sha256": "3f25dcc0adc18644062af5c7a2bbe6a6c5048e45f6d4e156ac00c2218501f80e",
-      "destination": "lean/DN/Compiler/StructEmit.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb-compiler/Pancake/StructModel.lean",
-      "source_sha256": "89e428bfca976b35077c9dbcb2ee0d6c56ce8a87b3444763e55fec18f29a16ee",
-      "destination": "lean/DN/Compiler/StructModel.lean",
       "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
     },
     {
@@ -1544,6 +1256,296 @@
       "source_sha256": "baf74754d71a18b810c4c0506ede4e58cec1e7b5aa840e1c6d5e0d59f2db8f60",
       "destination": "models/oneshot-recv/src/lib.rs",
       "changes": "Crate renamed; executable concurrency model, not a verified native reactor."
+    }
+  ],
+  "removed": [
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
+      "source_path": "orb-compiler/Pancake/EmitCorrectCompose.lean",
+      "source_sha256": "a96fee779f765435db8990ec57be4ec9de6ef48d7273db36c9497b12971462ca",
+      "destination": "lean/DN/Compiler/Compose.lean",
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "a0fa6b23f2572548ef06c7750b60553e09105169",
+      "source_path": "orb-compiler/Pancake/EmitCorrectLoop.lean",
+      "source_sha256": "256b4cf6f94bcb0609104b1ff8b1d97c290a5400f92f88746b4a2812109467b9",
+      "destination": "lean/DN/Compiler/Loop.lean",
+      "changes": "Namespace/module rename; historical overview replaced; print-only audits removed. Full compiler source retained; executable examples separated from theorem audit."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Basic.lean",
+      "source_sha256": "2e31f15f6b60a122f1fd6ec2e3d137495f863ddbccc25e78a9cdcfe813fdf7b0",
+      "destination": "lean/DN/Dataplane/Flow/Basic.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Migrate.lean",
+      "source_sha256": "b0dd36877dcb01d99cfbc08735801f145923ac75b46e4f1ca3f4932988358f6c",
+      "destination": "lean/DN/Dataplane/Flow/Migrate.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/CondRespProto.lean",
+      "source_sha256": "21cdb09ed08ebe3357b3492c2f028942e43dda5555caea9dc2159463db1cacfe",
+      "destination": "lean/DN/Compiler/CondRespProto.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/DslServe.lean",
+      "source_sha256": "c883bbbcf1f774d24f2974d984ea15127a2b83ddfe9baa24c3dc9b27344220df",
+      "destination": "lean/DN/Compiler/DslServe.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/FullResponseCompile.lean",
+      "source_sha256": "b0feb5f64f6e9132844fdeead46c60d97bccb5a02e6038e56c8b4eaa15b4acab",
+      "destination": "lean/DN/Compiler/FullResponseCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ModelUnify.lean",
+      "source_sha256": "00bda69c4a4d489015e99f0adf8bdb54b6ad89c31e0f46ed59515dc9b84da1a1",
+      "destination": "lean/DN/Compiler/ModelUnify.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/PredEval.lean",
+      "source_sha256": "cffe82d2a16c2ee09ea86e9208bda63ba2e50b85ce8439969a680f6f25a4f10c",
+      "destination": "lean/DN/Compiler/PredEval.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ProofProducing.lean",
+      "source_sha256": "9e47abed32b452bc7c85709aa977bbd7d7ffec48d7b2d206b9834c057a22f13f",
+      "destination": "lean/DN/Compiler/ProofProducing.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/RealStageDemo.lean",
+      "source_sha256": "8b7e449d80e788671f9fc1167e5814e17800419e6314f18d72d4dac8d9ecbbe4",
+      "destination": "lean/DN/Compiler/RealStageDemo.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeCompile.lean",
+      "source_sha256": "bc6e7dcca78a3e2305e40e68930b4e3505380e69a9df57f79a5d58f0955220c3",
+      "destination": "lean/DN/Compiler/SerializeCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeFull.lean",
+      "source_sha256": "3b26417f6e55dd91e5600f281b6c83d3af60dc2eaecda7b7f2b62aebb91f0a48",
+      "destination": "lean/DN/Compiler/SerializeFull.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeHeaders.lean",
+      "source_sha256": "044322783908d6d1c4814684ce94c752c84702a17e19232bd4d4a91e9628f5cf",
+      "destination": "lean/DN/Compiler/SerializeHeaders.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/SerializeStruct.lean",
+      "source_sha256": "d7d6a2a1e555e67324d2d2aff3096ab8016f26043b51a7d2a86550c0025ee9e1",
+      "destination": "lean/DN/Compiler/SerializeStruct.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeCompose.lean",
+      "source_sha256": "22048abd1407320f30664455956f08ec90a2c342ef7c795633e779fb8a1f15bc",
+      "destination": "lean/DN/Compiler/ServeCompose.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeConfigServe.lean",
+      "source_sha256": "d11d6b429782bd8a92877644dcb3c7038f4a15a34ce0431a876af673eac40bfd",
+      "destination": "lean/DN/Compiler/ServeConfigServe.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeEmit.lean",
+      "source_sha256": "18365271cc96b6da48fc92e038a826dc565ec5c00c145674e2350b4846fca61c",
+      "destination": "lean/DN/Compiler/ServeEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeExportServes.lean",
+      "source_sha256": "c0f7fcf5eab3b51e2f2c855e37b19b35d24ccaf4ea1b8f2e94c69a4283df1060",
+      "destination": "lean/DN/Compiler/ServeExportServes.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeFragment.lean",
+      "source_sha256": "3ae6449eea6a550a1ef564d17108823d19d2bba586a626da56bfc9900d1ca834",
+      "destination": "lean/DN/Compiler/ServeFragment.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeFull.lean",
+      "source_sha256": "081738ccfbae1e2f8492fbe555e71aa0080ef6bfdfc27d4b791b47d6b668ffc2",
+      "destination": "lean/DN/Compiler/ServeFull.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/ServeSlice.lean",
+      "source_sha256": "a2b9ed8b3a2e7b7cccaef87588b5730cf727bf229073d81a80559eef3c148733",
+      "destination": "lean/DN/Compiler/ServeSlice.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageCompile.lean",
+      "source_sha256": "f7e3fdc84b76bb5a6d70c6c34a89ee2cfbf8ad51a1442e9d9d4942f8fecc30f3",
+      "destination": "lean/DN/Compiler/StageCompile.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageEvenMore.lean",
+      "source_sha256": "333d5d15e9d9d52c06598bf2e689bb16705c4d06cdb493bd21063aafd949dfc0",
+      "destination": "lean/DN/Compiler/StageEvenMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2.lean",
+      "source_sha256": "fc9b27dd254d28b938c8925e5ff61d74c1297763628b625488bfa2eb70324b7a",
+      "destination": "lean/DN/Compiler/StageLift2.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2Cond.lean",
+      "source_sha256": "e04eb0c3b95f002f03a107f86d9cc0f022bb614fc50a1c3892b8d404a4d84fa6",
+      "destination": "lean/DN/Compiler/StageLift2Cond.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLift2Inst.lean",
+      "source_sha256": "97feb5de67802dedba338d13c44e0005640eb006c2c1aa629d5846d75533e3d0",
+      "destination": "lean/DN/Compiler/StageLift2Inst.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLiftGate.lean",
+      "source_sha256": "00d8f5dfc29d87d47346252d25d6433789cc79269817f170f502e188b9d3c2ac",
+      "destination": "lean/DN/Compiler/StageLiftGate.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageLiftHeader.lean",
+      "source_sha256": "d9efad76b38aec3f3a89cfd834d2f37b468463a2f79747146a65af6b49863bc5",
+      "destination": "lean/DN/Compiler/StageLiftHeader.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageMore.lean",
+      "source_sha256": "d1c716f6063aaed3eba995708c1eb1ab791ac3b9d26e5bc2f03155ac0f4c621b",
+      "destination": "lean/DN/Compiler/StageMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageProg.lean",
+      "source_sha256": "146f7f50a8cfd93519567795c58f78c50af0cdbd0c5a50a853b1bf35979e379a",
+      "destination": "lean/DN/Compiler/StageProg.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageProg2.lean",
+      "source_sha256": "58258b7e846777e1b91aa6f90b61d1580da49366011fdcd712e70b86ae8e19d7",
+      "destination": "lean/DN/Compiler/StageProg2.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StageYetMore.lean",
+      "source_sha256": "bce92e4f3fe209f38b26366389440c33c69a82bf1d5877fecf61b8c5efddd847",
+      "destination": "lean/DN/Compiler/StageYetMore.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StatusLineEmit.lean",
+      "source_sha256": "fde6f8bb039d0b9e2fccae339526006000d52b880eb8e545bc5c56464c726f8c",
+      "destination": "lean/DN/Compiler/StatusLineEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StructEmit.lean",
+      "source_sha256": "3f25dcc0adc18644062af5c7a2bbe6a6c5048e45f6d4e156ac00c2218501f80e",
+      "destination": "lean/DN/Compiler/StructEmit.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb-compiler/Pancake/StructModel.lean",
+      "source_sha256": "89e428bfca976b35077c9dbcb2ee0d6c56ce8a87b3444763e55fec18f29a16ee",
+      "destination": "lean/DN/Compiler/StructModel.lean",
+      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
     }
   ]
 }

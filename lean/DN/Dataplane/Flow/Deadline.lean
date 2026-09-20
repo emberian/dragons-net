@@ -1,34 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
-# DN.Dataplane.Flow.Deadline
-
-Retained compiler/dataplane development and regression examples.
-Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
--/
-
-
 import DN.Dataplane.Flow.Token
 
-namespace DN.Dataplane.Flow
+/-!
+# DN.Dataplane.Flow.Deadline
 
-/-- The per-phase deadline keys a connection carries through its lifecycle.
-Each phase guard is a deadline in the queue keyed by (connection, phase):
-armed when the phase begins, removed when the phase completes, expired =
-the phase overran and the connection is closed. -/
-inductive PhaseKey where
-  /-- Header accumulation: total time allowed to deliver a complete
-  request head (the slow-writer guard). -/
-  | h1Headers
-  /-- TLS handshake completion. -/
-  | tlsHandshake
-  /-- Proxy-preamble (address-forwarding header) completion. -/
-  | proxyHeader
-  /-- Request body delivery. -/
-  | requestBody
-  /-- Connection idle (keep-alive) window. -/
-  | idle
-  deriving Repr, DecidableEq, Inhabited
+Source provenance is in docs/provenance.json; assurance boundaries are in
+docs/assurance.md.
+-/
+
+namespace DN.Dataplane.Flow
 
 /-- The nearest deadline in a list, if any. -/
 def nearest? (l : List (κ × Nat)) : Option Nat :=

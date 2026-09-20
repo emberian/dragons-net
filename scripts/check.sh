@@ -71,13 +71,14 @@ proofs() {
   nanoda=$(python3 scripts/bootstrap_tool.py nanoda)
   # Toolchain modules come first, and a panic stops a checker instead of returning a default.
   local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
+  python3 scripts/check_structure.py outputs
   "$leanchecker" DN
   # The independent kernel checks the library's declarations and everything they use.
   mkdir -p build/proofs
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 434
+  "$lean" --run scripts/Audit.lean --regressions 56
 }
 
 # Tests that run the built code, and the Rust crates.

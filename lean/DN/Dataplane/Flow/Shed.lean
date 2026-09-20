@@ -1,12 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+
+/-!
 # DN.Dataplane.Flow.Shed
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
-
 
 namespace DN.Dataplane.Flow
 
@@ -22,11 +21,6 @@ inductive Fate where
   closed in the same step. -/
   | killed
   deriving Repr, DecidableEq, Inhabited
-
-/-- Default backlog capacity: one quarter of the shared buffer-ring size
-(64/4), so one slow consumer cannot starve the ring for every other
-socket on the loop. -/
-def recvBacklogCap : Nat := 16
 
 /-- Per-socket shed state, over an abstract unit type `α`.
 

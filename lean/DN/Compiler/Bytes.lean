@@ -148,6 +148,17 @@ theorem addr_eq_of_align_index (w w' : Word) (be : Bool)
 
 /-! ## 5. The memory-level store/load laws -/
 
+/-- Storing a byte truncates its widened form back to itself. -/
+theorem setWidth64_8 (b : BitVec 8) : (b.setWidth 64).setWidth 8 = b := by
+  apply BitVec.eq_of_toNat_eq
+  simp only [BitVec.toNat_setWidth, BitVec.toNat_ofNat]
+  omega
+
+/-- `bs` lies at consecutive byte addresses from `base`, read back by `mem_load_byte`. -/
+def memBytesAt (m : Word → Word) (dm : Word → Bool) (be : Bool) (base : Word)
+    (bs : List (BitVec 8)) : Prop :=
+  ∀ i, i < bs.length → memLoadByte m dm be (base + BitVec.ofNat 64 i) = some bs[i]!
+
 /-- The memory after a single byte-store (the `some` branch of `mem_store_byte`). -/
 def putByte (m : Word → Word) (be : Bool) (w : Word) (b : BitVec 8) : Word → Word :=
   fun k => if k = byteAlign w then setByte w b (m (byteAlign w)) be else m k

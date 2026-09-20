@@ -2,12 +2,12 @@
 /-
 # DN.Compiler.AssuranceChecks
 
-Kernel-checked containment checks for inherited `ProofProducing` contracts.
-They record why universal bound-local and memory-domain premises must not be
-presented as usable certificates. See `docs/reviews/compiler-assurance.md`.
+Kernel-checked containment checks for inherited contracts. They record why
+universal bound-local and memory-domain premises must not be presented as usable
+certificates. See `docs/reviews/compiler-assurance.md`.
 -/
 
-import DN.Compiler.ProofProducing
+import DN.Compiler.Semantics
 
 namespace DN.Compiler.AssuranceChecks
 

@@ -1,0 +1,24 @@
+export fun dn_echo(1 src, 1 dst, 1 len, 1 cap) {
+  if len < 0 {
+    return 4294967295;
+  } else {
+    if cap < 0 {
+      return 4294967295;
+    } else {
+      if 4096 < cap {
+        return 4294967295;
+      } else {
+        if cap < len {
+          return 4294967295;
+        } else {
+          var i = 0;
+          while i < len {
+            st8 dst + i, ld8 (src + i);
+            i = i + 1;
+          }
+        }
+      }
+    }
+  }
+  return len;
+}

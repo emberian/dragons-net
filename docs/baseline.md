@@ -1,8 +1,8 @@
 # Wisper’s compiler baseline
 
-The compiler has a useful, executable core. It also has a large inherited body of model proofs and examples whose names can suggest more integration than exists. Treat those as two different levels of evidence. The maintained baseline now exercises real code generation, a documented C ABI, and a small TCP service; it is not a certification of every inherited compiler feature.
+The compiler has a useful, executable core: real code generation, a documented C ABI, and a small TCP service. The inherited workloads whose names suggested more integration than existed have been removed (see below); what is left is the emitted subset, its proofs and the dataplane models.
 
-The follow-up [four-reviewer audit and triage](reviews/README.md) fixes a nested-load printer bug and CI failure-propagation hole, and identifies concrete inherited contracts and lifecycle gaps. Read it before extending or porting the preserved modules.
+The follow-up [four-reviewer audit and triage](reviews/README.md) fixes a nested-load printer bug and CI failure-propagation hole, and identifies concrete inherited contracts and lifecycle gaps. Read it before extending or porting the preserved modules; the inherited compiler workloads it discusses were removed afterwards.
 
 ## Reproduce the baseline
 
@@ -20,8 +20,8 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 7,426 declarations, including 3,255 theorems; the kernels skip the 94 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
-| Inherited examples | 434 executable cases | Examples, not proofs or a complete workload inventory |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 3,879 declarations, including 1,861 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Executable examples | 56 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 192 cases: locals, branches, assignments, loops, and early return | One structured control workload |
@@ -63,7 +63,7 @@ An unapproved axiom inside a `DN` definition could previously escape if no audit
 
 **Reusable model results:** `Semantics`, `Region`, `Clock`, `Bytes`, `ByteCopy`, `Certificate`, and the dataplane models. The emitted echo loop lowers definitionally to `ByteCopy.copyByteWhile`, the loop used by the existing copy proof. The wrapper/host/native path still needs a complete refinement argument. Clocks represent model fuel, not CPU time.
 
-**Inherited research/compiler workloads:** `Stage*`, `Serve*`, serializers, structure emitters, and `ProofProducing`. They compile, participate in the axiom audit, and retain their examples. They do not all have native integration tests or useful inhabited caller contracts. The data-dependent universal-state well-formedness assumptions in `ProofProducing` have now been proved contradictory for states with an inhabited FFI type; the affected demonstrations are quarantined until the interface is indexed by useful preconditions. We have not reviewed every line of those modules.
+**Removed inherited workloads:** the `Stage*`, `Serve*`, serializer and structure-emitter modules were removed. Their certificates required premises that no model state satisfies, their "compiler" ignored the program it compiled, and their memory model put one byte in each machine word, which the CakeML compiler theorem never provides. The emitted code is unchanged, byte for byte; `tests/golden` now pins it. The extraction manifest records where they came from, and git history keeps them.
 
 **Preserved source:** `migration/dataplane` is still a reference snapshot. The echo host is new, small, and uses `poll`; it does not activate the old io_uring/kqueue product or prove correspondence to the abstract concurrency models.
 

@@ -1,18 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
-# DN.Compiler.NatToDecFull
-
-Retained compiler/dataplane development and regression examples.
-Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
--/
-
 import DN.Compiler.NatToDecCompile
 import DN.Compiler.Bytes
 
+/-!
+# DN.Compiler.NatToDecFull
+
+Source provenance is in docs/provenance.json; assurance boundaries are in
+docs/assurance.md.
+-/
+
 namespace DN.Compiler.NatToDecFull
 
-open DN.Compiler DN.Compiler.Region DN.Compiler.Loop DN.Compiler.SerializeCompile
+open DN.Compiler DN.Compiler.Region DN.Compiler.Decimal
 open DN.Compiler.NatToDecCompile DN.Compiler.Bytes
 
 variable {σ : Type}
@@ -130,25 +129,6 @@ termination_by m
 decreasing_by exact Nat.div_lt_self (by omega) (by omega)
 
 /-! ## 2. Control-flow helpers over `PancakeSem` -/
-
-/-- `set_var` reads back what it wrote. -/
-theorem setLocal_same (lc : String → Option Value) (v : String) (val : Value) :
-    setLocal lc v val v = some val := by
-  simp [setLocal]
-
-/-- `set_var` leaves other variables alone. -/
-theorem setLocal_ne (lc : String → Option Value) (v : String) (val : Value)
-    {k : String} (h : k ≠ v) : setLocal lc v val k = lc k := by
-  simp [setLocal, h]
-
-/-- `Seq` step with a non-increasing clock: the inlined `fix_clock` clamp
-collapses (`min s.clock s1.clock = s1.clock`). -/
-theorem seq_step (o : Oracle σ) {c1 c2 : PancakeProg} {s s1 : PancakeState σ}
-    (h : PancakeSem o c1 s = (none, s1)) (hclk : s1.clock ≤ s.clock) :
-    PancakeSem o (.seq c1 c2) s = PancakeSem o c2 s1 := by
-  rw [sem_seq_none (oracle := o) h]
-  have hm : min s.clock s1.clock = s1.clock := by omega
-  rw [hm]
 
 /-- One `While` iteration for ANY true guard word and a body consuming any
 number of ticks (generalises `NatToDecCompile.while_iter`, which is
