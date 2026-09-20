@@ -151,9 +151,9 @@ theorem while_iter_le (o : Oracle σ) {e : PancakeExp} {c : PancakeProg}
 the descending `StoreByte`) -/
 
 /-- One digit peeled, all inside the modelled/emittable subset:
-`q := 0; divWhile; p := p - 1; strb p, n + 48; n := q`. -/
+`var q = 0 { divWhile; p := p - 1; strb p, n + 48; n := q }`. -/
 def digitBody : PancakeProg :=
-  .seq (.assign "q" (.const 0))
+  .dec "q" (.const 0)
   (.seq divWhile
   (.seq (.assign "p" (.op .sub (.var "p") (.const (BitVec.ofNat 64 1))))
   (.seq (.storeByte (.var "p") (.op .add (.var "n") (.const (BitVec.ofNat 64 48))))
@@ -162,7 +162,7 @@ def digitBody : PancakeProg :=
 /-- `digitBody` executed: from `n = m`, `p = p0`, it consumes `m / 10` clock
 (the inner subtraction loop), stores `digitByte (m % 10)` at `p0 - 1`
 (`putByte`, the panSem `mem_store_byte` image), decrements `p`, and leaves
-`n = q = m / 10`. Everything else framed. -/
+`n = m / 10`. The declared quotient is restored; everything else is framed. -/
 theorem digitBody_sem (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ}
     (hn : s.locals "n" = some (BitVec.ofNat 64 m))
     (hp : s.locals "p" = some p0)
@@ -171,17 +171,13 @@ theorem digitBody_sem (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ
     (hclk : m / 10 ≤ s.clock) :
     ∃ s', PancakeSem o digitBody s = (none, s') ∧
       s'.locals "n" = some (BitVec.ofNat 64 (m / 10)) ∧
-      s'.locals "q" = some (BitVec.ofNat 64 (m / 10)) ∧
+      s'.locals "q" = s.locals "q" ∧
       s'.locals "p" = some (p0 - BitVec.ofNat 64 1) ∧
       s'.clock = s.clock - m / 10 ∧
       s'.memory = putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) ∧
       s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.baseAddr = s.baseAddr ∧
       (∀ key, key ≠ "n" → key ≠ "q" → key ≠ "p" → s'.locals key = s.locals key) := by
-  -- step 1: q := 0
-  have hA : PancakeSem o (.assign "q" (.const 0)) s
-      = (none, { s with locals := setLocal s.locals "q" (0 : Word) }) :=
-    sem_assign (oracle := o) rfl
-  -- step 2: divWhile from the q-cleared state
+  -- the body runs with the quotient declared
   obtain ⟨s2, hW, hn2, hq2, hclk2, hmem2, hma2, hbe2, hba2, hfr2⟩ :=
     divWhile_sem o (m / 10) m 0 { s with locals := setLocal s.locals "q" (0 : Word) }
       (by show setLocal s.locals "q" (0 : Word) "n" = _
@@ -211,7 +207,7 @@ theorem digitBody_sem (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ
     exact hp
   have hP : PancakeSem o (.assign "p" (.op .sub (.var "p") (.const (BitVec.ofNat 64 1)))) s2
       = (none, { s2 with locals := setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1) }) :=
-    sem_assign (oracle := o) (by simp only [eval, hp2])
+    sem_assign (oracle := o) (by simp only [eval, hp2]) hp2
   -- step 4: strb p, n + 48  (digit_store, the panSem byte store)
   have hstore : memStoreByte s2.memory s2.memaddrs s2.be (p0 - BitVec.ofNat 64 1)
       (digitByte (m % 10))
@@ -248,29 +244,43 @@ theorem digitBody_sem (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ
             (BitVec.ofNat 64 (m / 10)),
           memory := putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) }) :=
     sem_assign (oracle := o) hq4
+      (by show setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1) "n" = _
+          rw [setLocal_ne _ _ _ (by decide)]; exact hn2)
   -- assemble the run
-  refine ⟨{ s2 with
-      locals := setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
-        (BitVec.ofNat 64 (m / 10)),
-      memory := putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) },
-    ?_, ?_, ?_, ?_, hclk2, rfl, hma2, hbe2, hba2, ?_⟩
-  · unfold digitBody
-    rw [seq_step o hA (Nat.le_refl _),
-        seq_step o hW (by show s2.clock ≤ s.clock; omega),
+  have hInner : PancakeSem o
+      (.seq divWhile
+      (.seq (.assign "p" (.op .sub (.var "p") (.const (BitVec.ofNat 64 1))))
+      (.seq (.storeByte (.var "p") (.op .add (.var "n") (.const (BitVec.ofNat 64 48))))
+            (.assign "n" (.var "q")))))
+      { s with locals := setLocal s.locals "q" (0 : Word) }
+      = (none, { s2 with
+          locals := setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+            (BitVec.ofNat 64 (m / 10)),
+          memory := putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) }) := by
+    rw [seq_step o hW (by show s2.clock ≤ s.clock; omega),
         seq_step o hP (Nat.le_refl _),
         seq_step o hS (Nat.le_refl _)]
     exact hN
-  · show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+  refine ⟨_, sem_dec (oracle := o) rfl hInner, ?_, ?_, ?_, hclk2, rfl, hma2, hbe2, hba2, ?_⟩
+  · show resVar (setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+        (BitVec.ofNat 64 (m / 10))) "q" (s.locals "q") "n" = _
+    rw [resVar, if_neg (by decide : ¬ ("n" = "q"))]
+    show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
         (BitVec.ofNat 64 (m / 10)) "n" = _
     rw [setLocal_same]
-  · show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
-        (BitVec.ofNat 64 (m / 10)) "q" = _
-    rw [setLocal_ne _ _ _ (by decide), setLocal_ne _ _ _ (by decide)]
-    exact hq2'
-  · show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+  · show resVar (setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+        (BitVec.ofNat 64 (m / 10))) "q" (s.locals "q") "q" = _
+    rw [resVar, if_pos rfl]
+  · show resVar (setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+        (BitVec.ofNat 64 (m / 10))) "q" (s.locals "q") "p" = _
+    rw [resVar, if_neg (by decide : ¬ ("p" = "q"))]
+    show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
         (BitVec.ofNat 64 (m / 10)) "p" = _
     rw [setLocal_ne _ _ _ (by decide), setLocal_same]
   · intro key h1 h2 h3
+    show resVar (setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
+        (BitVec.ofNat 64 (m / 10))) "q" (s.locals "q") key = s.locals key
+    rw [resVar, if_neg h2]
     show setLocal (setLocal s2.locals "p" (p0 - BitVec.ofNat 64 1)) "n"
         (BitVec.ofNat 64 (m / 10)) key = s.locals key
     rw [setLocal_ne _ _ _ h1, setLocal_ne _ _ _ h3]

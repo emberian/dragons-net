@@ -84,7 +84,7 @@ def fixture : Except String Json := do
       pure result.toNat
     pure (Json.mkObj [("expression", exprJson e), ("expected", toJson expected)])
   let some prog := lower control | throw "control fixture does not lower"
-  let oracle : Oracle Unit := ⟨fun _ _ _ _ => .final ⟨"unexpected FFI"⟩⟩
+  let oracle : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
   let controls ← values.mapM fun (a,b) => do
     let (some (.return_ result), _) := PancakeSem oracle prog (state a b)
       | throw "control fixture did not return"

@@ -60,12 +60,12 @@ theorem divBody_sem (o : Oracle σ) {m : Nat} {q0 : Word} {s : PancakeState σ}
   unfold divBody
   have hevN : eval s (.op .sub (.var "n") (.const (BitVec.ofNat 64 10))) = some (BitVec.ofNat 64 (m - 10)) := by
     simp only [eval, hn]; rw [ofNat_sub_ten hm10 hbb]
-  rw [sem_seq_none (sem_assign (oracle := o) hevN)]
+  rw [sem_seq_none (sem_assign (oracle := o) hevN hn)]
   have hqval : (setLocal s.locals "n" (BitVec.ofNat 64 (m - 10))) "q" = some q0 := by
     simp only [setLocal, if_neg (by decide : ¬ ("q" = "n"))]; exact hq
   have hevQ : eval ({ s with locals := setLocal s.locals "n" (BitVec.ofNat 64 (m - 10)), clock := min s.clock s.clock } : PancakeState σ) (.op .add (.var "q") (.const (BitVec.ofNat 64 1))) = some (q0 + BitVec.ofNat 64 1) := by
     simp only [eval]; rw [hqval]
-  rw [sem_assign (oracle := o) hevQ]
+  rw [sem_assign (oracle := o) hevQ hqval]
   simp only [Nat.min_self]
 
 /-- The guard reads `10 <= m` off the current `n = mw` (`m < 2^63` keeps the

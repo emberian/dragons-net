@@ -20,7 +20,7 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 3,879 declarations, including 1,861 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 3,988 declarations, including 1,921 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Executable examples | 56 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |

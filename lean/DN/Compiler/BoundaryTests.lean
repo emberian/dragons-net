@@ -3,7 +3,7 @@ import DN.Compiler.Kernels
 namespace DN.Compiler.BoundaryTests
 open Syntax Lower
 
-private def oracle : Oracle Unit := ⟨fun _ _ _ _ => .final ⟨"unexpected"⟩⟩
+private def oracle : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
 private def state (alen off len : Nat) : PancakeState Unit :=
   { locals := fun x => match x with
       | "ctrl" => some 0 | "buf" => some 4096 | "len" => some (BitVec.ofNat 64 len)

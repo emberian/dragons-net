@@ -134,7 +134,7 @@ theorem copyByte_step (o : Oracle σ) (dm : Word → Bool) (be : Bool) (m0 : Wor
   obtain ⟨sB, hsBdef⟩ : ∃ sB : PancakeState σ, sB =
       { sS with locals := setLocal sS.locals "i" (BitVec.ofNat 64 (k + 1)) } := ⟨_, rfl⟩
   have hbump : PancakeSem o (.assign "i" (.op .add (.var "i") (.const (BitVec.ofNat 64 1)))) sS
-      = (none, sB) := by rw [hsBdef]; exact sem_assign (oracle := o) (x := "i") hiE
+      = (none, sB) := by rw [hsBdef]; exact sem_assign (oracle := o) (x := "i") hiE hsSi
   -- body = seq (storeByte) (bump); the clock clamp collapses (store is clock-neutral)
   have hclkSS : sS.clock = (decClock s).clock := by rw [hsSdef]
   have hbody : PancakeSem o copyByteBody (decClock s) = (none, sB) := by
@@ -198,12 +198,12 @@ theorem copyByte_step (o : Oracle σ) (dm : Word → Bool) (be : Bool) (m0 : Wor
 
 /-! ## 2. `copySeg` — set the frame, run the loop, land the bytes. -/
 
-/-- Set the `dst/src/i/len` frame from constants, then run `copyByteWhile`. -/
+/-- Declare the `dst/src/i/len` frame from constants, then run `copyByteWhile`. -/
 def copySeg (dst src : Word) (len : Nat) : PancakeProg :=
-  .seq (.assign "dst" (.const dst))
-  (.seq (.assign "src" (.const src))
-  (.seq (.assign "i"   (.const (BitVec.ofNat 64 0)))
-  (.seq (.assign "len" (.const (BitVec.ofNat 64 len)))
+  .dec "dst" (.const dst)
+  (.dec "src" (.const src)
+  (.dec "i"   (.const (BitVec.ofNat 64 0))
+  (.dec "len" (.const (BitVec.ofNat 64 len))
         copyByteWhile)))
 
 /-- **THE BYTE-ADDRESSED BODY COPY.** For a source region holding the bytes `val`
@@ -214,11 +214,10 @@ preserving every byte OUTSIDE `[dst, dst+len)` (the frame — so a previously-wr
 region survives) and `memaddrs`/`be`. This is the packed-byte body copy, the last
 word-slot residual of the serialize chain, reproved in the faithful model.
 
-`copySeg` uses ordinary assignments, so it leaves scratch locals `"dst"`,
-`"src"`, `"i"`, and `"len"` overwritten; they are not lexically restored. The
-stated postcondition does not expose preservation of unrelated locals, `ffi`, or
-`baseAddr`, does not state exact clock consumption, and gives a byte-observation
-frame rather than word-level memory equality. Those properties may follow from
+`copySeg` declares its scratch variables, so their previous bindings are restored
+on exit. The stated postcondition does not expose preservation of unrelated
+locals, `ffi`, or `baseAddr`, does not state exact clock consumption, and gives a
+byte-observation frame rather than word-level memory equality. Those properties may follow from
 the implementation but are deliberately not part of this theorem's contract.
 See `docs/reviews/compiler-assurance.md`. -/
 theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8) (len : Nat)
@@ -237,23 +236,13 @@ theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8)
           memLoadByte s'.memory s.memaddrs s.be (dst + BitVec.ofNat 64 j) = some (val j))
       ∧ (∀ a, (∀ j, j < len → a ≠ dst + BitVec.ofNat 64 j) →
           memLoadByte s'.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a)
-      ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be := by
-  -- run the four frame-setup assigns
-  have hA1 : PancakeSem o (.assign "dst" (.const dst)) s
-      = (none, { s with locals := setLocal s.locals "dst" dst }) :=
-    sem_assign (oracle := o) (x := "dst") rfl
+      ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be
+      ∧ s'.locals "dst" = s.locals "dst" ∧ s'.locals "src" = s.locals "src"
+      ∧ s'.locals "i" = s.locals "i" ∧ s'.locals "len" = s.locals "len" := by
+  -- the state inside the four declarations
   let s1 : PancakeState σ := { s with locals := setLocal s.locals "dst" dst }
-  have hA2 : PancakeSem o (.assign "src" (.const src)) s1
-      = (none, { s1 with locals := setLocal s1.locals "src" src }) :=
-    sem_assign (oracle := o) (x := "src") rfl
   let s2 : PancakeState σ := { s1 with locals := setLocal s1.locals "src" src }
-  have hA3 : PancakeSem o (.assign "i" (.const (BitVec.ofNat 64 0))) s2
-      = (none, { s2 with locals := setLocal s2.locals "i" (BitVec.ofNat 64 0) }) :=
-    sem_assign (oracle := o) (x := "i") rfl
   let s3 : PancakeState σ := { s2 with locals := setLocal s2.locals "i" (BitVec.ofNat 64 0) }
-  have hA4 : PancakeSem o (.assign "len" (.const (BitVec.ofNat 64 len))) s3
-      = (none, { s3 with locals := setLocal s3.locals "len" (BitVec.ofNat 64 len) }) :=
-    sem_assign (oracle := o) (x := "len") rfl
   let s4 : PancakeState σ := { s3 with locals := setLocal s3.locals "len" (BitVec.ofNat 64 len) }
   -- field facts for s4
   have hmem4 : s4.memory = s.memory := rfl
@@ -296,18 +285,19 @@ theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8)
   have hkl : k = len := by omega
   rw [hkl] at hprog' hfr'
   -- assemble copySeg's run
-  refine ⟨s', ?_, ?_, ?_, ?_, ?_⟩
-  · show PancakeSem o (copySeg dst src len) s = (none, s')
-    rw [copySeg]
-    rw [seq_step o hA1 (Nat.le_of_eq rfl)]
-    rw [seq_step o hA2 (Nat.le_of_eq rfl)]
-    rw [seq_step o hA3 (Nat.le_of_eq rfl)]
-    rw [seq_step o hA4 (Nat.le_of_eq rfl)]
-    exact hs'eq
+  have hrun : PancakeSem o (copySeg dst src len) s = (none, _) :=
+    sem_dec (oracle := o) rfl
+      (sem_dec (oracle := o) rfl (sem_dec (oracle := o) rfl (sem_dec (oracle := o) rfl hs'eq)))
+  refine ⟨_, hrun, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro j hj; exact hprog' j hj
   · intro a ha; exact hfr' a ha
   · exact hma'
   · exact hbe'
+  -- the four declarations restore what they shadowed
+  · simp [resVar]
+  · simp [resVar, setLocal]
+  · simp [resVar, setLocal]
+  · simp [resVar, setLocal]
 
 /-! ## 3. Non-vacuity: the loop is `len` byte stores, and a concrete 4-byte copy. -/
 

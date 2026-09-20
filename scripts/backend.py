@@ -57,6 +57,17 @@ def verify(name: str) -> None:
                     raise SystemExit("patch checksum mismatch")
                 run("git", "apply", "--cached", str(patch_path), cwd=path, env=env)
         run("git", "diff", "--exit-code", cwd=path, env=env)
+        # The files the Lean transcription of the semantics was compared against. A pin that
+        # no recorded source matches means the comparison was never made against this revision.
+        sources = [source for source in LOCK["semantics_sources"]
+                   if source["component"] == name and source["revision"] == actual]
+        if not sources:
+            raise SystemExit(f"{name}: no semantics source recorded for {actual}; redo the comparison "
+                             "in docs/pancake-semantics.md and record the digests")
+        for source in sources:
+            digest = hashlib.sha256((path / source["path"]).read_bytes()).hexdigest()
+            if digest != source["sha256"]:
+                raise SystemExit(f"{source['path']}: content differs from the recorded semantics source")
         untracked = subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"],
                                             cwd=path, text=True, env=env)
         if untracked.strip():

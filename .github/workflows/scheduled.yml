@@ -26,3 +26,17 @@ jobs:
           deny=$(python3 -P scripts/bootstrap_tool.py cargo-deny)
           "$deny" --locked check advisories
           "$deny" --locked --manifest-path models/Cargo.toml check advisories
+
+  # The files the Lean transcription of the semantics was compared against must still be
+  # those files; this needs network, so it does not run in the offline build.
+  semantics-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Recorded digests
+        run: python3 -P scripts/check_semantics_sources.py

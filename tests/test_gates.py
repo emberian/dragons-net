@@ -24,6 +24,11 @@ archive_spec = importlib.util.spec_from_file_location("build_archive", ROOT / "s
 assert archive_spec is not None and archive_spec.loader is not None
 build_archive = importlib.util.module_from_spec(archive_spec)
 archive_spec.loader.exec_module(build_archive)
+sources_spec = importlib.util.spec_from_file_location("semantics_sources",
+                                                      ROOT / "scripts/check_semantics_sources.py")
+assert sources_spec is not None and sources_spec.loader is not None
+semantics_sources = importlib.util.module_from_spec(sources_spec)
+sources_spec.loader.exec_module(semantics_sources)
 CHECK = (ROOT / "scripts/check.sh").read_text()
 AUDIT = re.search(r"--run scripts/Audit\.lean --regressions (\d+)", CHECK)
 
@@ -840,6 +845,38 @@ class Pipeline(unittest.TestCase):
             script = f"set -euo pipefail\n{function.group(0)}\ntracked_outputs"
             outside = subprocess.run(["bash", "-c", script], cwd=tree, capture_output=True, check=False)
             self.assertNotEqual(outside.returncode, 0)
+
+    def test_semantics_sources_cover_the_pinned_revisions(self) -> None:
+        lock = json.loads((ROOT / "backend/lock.json").read_text())
+        for component in ("cakeml", "hol"):
+            with self.subTest(component=component):
+                recorded = {source["revision"] for source in lock["semantics_sources"]
+                            if source["component"] == component}
+                self.assertIn(lock[component]["revision"], recorded,
+                              "the pin moved: redo the comparison and record the digests")
+        # Every file the comparison cites must be recorded, and nothing else.
+        table = (ROOT / "docs/pancake-semantics.md").read_text().partition("## The modelled subset")[0]
+        cited = set(re.findall(r"`([\w./-]+\.sml)`", table))
+        self.assertEqual(cited, {source["path"] for source in lock["semantics_sources"]})
+
+    def test_upstream_comparison_reports_a_changed_or_empty_record(self) -> None:
+        recorded = [{"component": "hol", "path": "src/n-bit/byteScript.sml", "revision": "a" * 40,
+                     "sha256": hashlib.sha256(b"upstream").hexdigest()}]
+        self.assertEqual(semantics_sources.compare(recorded, lambda _: b"upstream"), [])
+        self.assertEqual(semantics_sources.compare([], lambda _: b"upstream"),
+                         ["no semantics source is recorded"])
+        changed = semantics_sources.compare(recorded, lambda _: b"edited upstream")
+        self.assertEqual(len(changed), 1)
+        self.assertIn("byteScript.sml", changed[0])
+        asked: list[str] = []
+
+        def record(url: str) -> bytes:
+            asked.append(url)
+            return b"upstream"
+
+        semantics_sources.compare(recorded, record)
+        raw = "https://raw.githubusercontent.com/HOL-Theorem-Prover/HOL"
+        self.assertEqual(asked, [f"{raw}/{'a' * 40}/src/n-bit/byteScript.sml"])
 
     def test_emitted_sources_match_the_golden_files(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

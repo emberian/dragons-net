@@ -24,9 +24,8 @@ def increment (o : Oracle Unit) (value : Word) :
     Certificate o (fun s => s.locals "x" = some value)
       (fun s t => t = { s with locals := setLocal s.locals "x" (value + 1) }) where
   code := .assign "x" (.op .add (.var "x") (.const 1))
-  correct := refinesClk_assign o "x" _ _ (fun _ => value + 1) (by
-    intro s h
-    simp [eval, h])
+  correct := refinesClk_assign o "x" _ _ (fun _ => value + 1)
+    (by intro s h; simp [eval, h]) (fun _ h => ⟨value, h⟩)
   witness := ⟨{ locals := fun _ => some value, memory := fun _ => 0,
                 memaddrs := fun _ => false, be := false, clock := 0,
                 ffi := (), baseAddr := 0 }, rfl⟩

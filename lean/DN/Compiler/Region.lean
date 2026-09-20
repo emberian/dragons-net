@@ -113,11 +113,12 @@ theorem evaluate_boundsChk (oracle : Oracle σ) {a off len r0} {s : PancakeState
        then { s with locals := setLocal s.locals "result" (BitVec.ofNat 64 (c0Encode (boundScan a off len))) }
        else s) := by
   have he := eval_bounds_expr (σ := σ) (r0 := r0) (s := s) h
+  have hres : s.locals "result" = some r0 := h.2.2.2.1
   rw [boundsChk]
   by_cases hb : boundScan a off len = none
   · rw [PancakeSem, he]
     simp only [hb, if_true, ne_eq, show ((1 : Word) = 0) = False from by decide,
-               not_false_eq_true, if_true, PancakeSem, eval, c0Encode]
+               not_false_eq_true, if_true, PancakeSem, eval, c0Encode, hres]
   · rw [PancakeSem, he]
     simp only [hb, if_false, ne_eq, not_true, if_false, PancakeSem]
 
@@ -200,10 +201,11 @@ theorem regionProg_lowers : Lower.regionProg.isSome := by decide
 
 /-! ### PancakeSem control-flow reduction lemmas -/
 
-/-- `Assign`: run the assignment given the RHS value. -/
-theorem sem_assign {x e v} {s : PancakeState σ} (h : eval s e = some v) :
+/-- `Assign`: run the assignment given the RHS value and the variable's binding. -/
+theorem sem_assign {x e v old} {s : PancakeState σ} (h : eval s e = some v)
+    (hbound : s.locals x = some old) :
     PancakeSem oracle (.assign x e) s = (none, { s with locals := setLocal s.locals x v }) := by
-  rw [PancakeSem, h]
+  rw [PancakeSem, h, hbound]
 
 /-- `Seq` with a normally-terminating head: run the tail on the clamped state. -/
 theorem sem_seq_none {c1 c2} {s s1 : PancakeState σ}
@@ -218,7 +220,7 @@ next digest word. This isolates all the word-convention algebra (`*`,`+`,`&`,
 byte-load) so the induction below stays about control flow. -/
 theorem eval_body_acc {a : List (BitVec 8)} {buf : Word} {off len k : Nat}
     {s : PancakeState σ}
-    (hk : k < len) (hlen63 : len < 2 ^ 63)
+    (hk : k < len)
     (hacc : s.locals "acc" = some (BitVec.ofNat 64 (scanFrom a off k 0)))
     (hi : s.locals "i" = some (BitVec.ofNat 64 k))
     (hbuf : s.locals "buf" = some buf)
@@ -291,14 +293,15 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
         s'.locals "buf" = s.locals "buf" ∧
         s'.locals "off" = s.locals "off" ∧
         s'.memory = s.memory ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧
-        s'.baseAddr = s.baseAddr ∧ s'.ffi = s.ffi := by
+        s'.baseAddr = s.baseAddr ∧ s'.ffi = s.ffi ∧
+        (∀ x, x ≠ "acc" → x ≠ "i" → s'.locals x = s.locals x) := by
   intro rem
   induction rem with
   | zero =>
     intro k s hk _ hacc hi hlen hbuf hoff _
     have hkl : k = len := by omega
     subst hkl
-    refine ⟨s, ?_, hacc, hi, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    refine ⟨s, ?_, hacc, hi, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, fun _ _ _ => rfl⟩
     rw [scanWhile, PancakeSem]
     have hcnd : eval s (.cmp .less (.var "i") (.var "len"))
         = some (if signedLt (BitVec.ofNat 64 k) (BitVec.ofNat 64 k) then 1 else 0) := by
@@ -319,7 +322,7 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
                       (.loadByte (.op .add (.op .add (.var "buf") (.var "off")) (.var "i"))))
             (.const (BitVec.ofNat 64 16777215)))
           = some (BitVec.ofNat 64 (scanFrom a off (k + 1) 0)) :=
-      eval_body_acc hkl hlen63 (by rw [hdl]; exact hacc) (by rw [hdl]; exact hi)
+      eval_body_acc hkl (by rw [hdl]; exact hacc) (by rw [hdl]; exact hi)
         (by rw [hdl]; exact hbuf) (by rw [hdl]; exact hoff)
         (by intro i hi'; have := hview i hi'; simpa [decClock] using this)
     -- (2) the acc-assignment
@@ -327,20 +330,20 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
         sA = { decClock s with
                locals := setLocal (decClock s).locals "acc"
                           (BitVec.ofNat 64 (scanFrom a off (k + 1) 0)) } := ⟨_, rfl⟩
-    have hA := sem_assign (oracle := oracle) (x := "acc") haccE
+    have hA := sem_assign (oracle := oracle) (x := "acc") haccE (by rw [hdl]; exact hacc)
     rw [← hsA] at hA
     -- (3) the index-bump on sA
+    have hsAi : sA.locals "i" = some (BitVec.ofNat 64 k) := by
+      rw [hsA]; simp only [setLocal, decClock]; rw [if_neg (by decide)]; exact hi
     have hiE : eval sA (.op .add (.var "i") (.const (BitVec.ofNat 64 1)))
         = some (BitVec.ofNat 64 (k + 1)) := by
-      have hsAi : sA.locals "i" = some (BitVec.ofNat 64 k) := by
-        rw [hsA]; simp only [setLocal, decClock]; rw [if_neg (by decide)]; exact hi
       show (match eval sA (.var "i"), eval sA (.const (BitVec.ofNat 64 1)) with
             | some x, some y => some (x + y) | _, _ => none) = _
       simp only [eval, hsAi]
       rw [ofNat_add_small _ _ (by omega)]
     obtain ⟨sB, hsB⟩ : ∃ sB : PancakeState σ,
         sB = { sA with locals := setLocal sA.locals "i" (BitVec.ofNat 64 (k + 1)) } := ⟨_, rfl⟩
-    have hB := sem_assign (oracle := oracle) (x := "i") hiE
+    have hB := sem_assign (oracle := oracle) (x := "i") hiE hsAi
     rw [← hsB] at hB
     -- (4) the whole body (Seq); clamp is a no-op since assigns keep the clock
     have hclkSA : sA.clock = (decClock s).clock := by rw [hsA]
@@ -367,7 +370,7 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
     have hne7 : ("off" = "i") = False := by decide
     have hne8 : ("off" = "acc") = False := by decide
     have hBacc : sB.locals "acc" = some (BitVec.ofNat 64 (scanFrom a off (k + 1) 0)) := by
-      rw [hsB, hsA]; simp only [setLocal, decClock, hne1, hne2, if_false, if_true]
+      rw [hsB, hsA]; simp only [setLocal, decClock, hne2, if_false, if_true]
     have hBi : sB.locals "i" = some (BitVec.ofNat 64 (k + 1)) := by
       rw [hsB]; simp only [setLocal, if_true]
     have hBlen : sB.locals "len" = some (BitVec.ofNat 64 len) := by
@@ -383,9 +386,9 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
       intro i hi'; have := hview i hi'
       rw [hsB, hsA]; simpa [decClock] using this
     obtain ⟨s', hs'eq, hs'acc, hs'i, hs'len, hs'buf, hs'off,
-            hs'mem, hs'ma, hs'be, hs'ba, hs'ffi⟩ :=
+            hs'mem, hs'ma, hs'be, hs'ba, hs'ffi, hs'frame⟩ :=
       ih (k + 1) sB (by omega) (by rw [hclkSB]; omega) hBacc hBi hBlen hBbuf hBoff hBview
-    refine ⟨s', ?_, hs'acc, hs'i, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨s', ?_, hs'acc, hs'i, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · -- one loop iteration reduces to the recursive call on sB, closed by ih
       rw [scanWhile, PancakeSem]
       simp only [hcond, hbody, clampClock, ne_eq, show ((1 : Word) = 0) = False from by decide,
@@ -399,6 +402,9 @@ theorem scan_loop (a : List (BitVec 8)) (buf : Word) (off len : Nat)
     · rw [hs'be, hBmem.2.2.1]
     · rw [hs'ba, hBmem.2.2.2.1]
     · rw [hs'ffi, hBmem.2.2.2.2]
+    · intro x hxa hxi
+      rw [hs'frame x hxa hxi, hsB, hsA]
+      simp only [setLocal, decClock, if_neg hxi, if_neg hxa]
 
 /-- `set_var` reads back what it wrote. -/
 theorem setLocal_same (lc : String → Option Value) (v : String) (val : Value) :
@@ -418,6 +424,26 @@ theorem seq_step (o : Oracle σ) {c1 c2 : PancakeProg} {s s1 : PancakeState σ}
   rw [sem_seq_none (oracle := o) h]
   have hm : min s.clock s1.clock = s1.clock := by omega
   rw [hm]
+
+/-- The premises of `region_scan_correct` are satisfiable: a state that declares the
+four locals the scan reads and writes, over a one-byte view. -/
+theorem region_scan_premises_hold (ffi : σ) :
+    ∃ (s : PancakeState σ) (a : List (BitVec 8)) (buf : Word) (off len : Nat),
+      len < 2 ^ 63 ∧ len ≤ s.clock ∧
+      s.locals "len" = some (BitVec.ofNat 64 len) ∧ s.locals "buf" = some buf ∧
+      s.locals "off" = some (BitVec.ofNat 64 off) ∧ s.locals "result" = some 0 ∧
+      ViewBytes s a buf off len := by
+  refine ⟨{ locals := fun k => if k = "len" then some 1 else if k = "buf" then some 0
+                        else if k = "off" then some 0 else if k = "result" then some 0 else none,
+            memory := fun _ => 0, memaddrs := fun _ => true, be := false, clock := 4,
+            ffi := ffi, baseAddr := 0 },
+          [0], 0, 0, 1, by decide, (by decide : (1 : Nat) ≤ 4), rfl, rfl, rfl, rfl, ?_⟩
+  intro i hi
+  have h0 : i = 0 := by omega
+  subst h0
+  show memLoadByte (fun _ => 0) (fun _ => true) false (0 + BitVec.ofNat 64 0 + BitVec.ofNat 64 0)
+      = some (([0] : List (BitVec 8))[0 + 0]!)
+  decide
 
 /-! ## 4. Composition: the region's in-bounds (digest) branch, end to end -/
 
@@ -442,12 +468,13 @@ def scanElse : PancakeProg :=
 the emitted `scanElse` publishes `result = scanFrom a off len 0` — the SPEC
 digest. Composes `sem_dec` (scope), `scan_loop` (the fuel induction), and
 `sem_assign`. -/
-theorem region_scan_correct {a : List (BitVec 8)} {buf : Word} {off len : Nat}
+theorem region_scan_correct {a : List (BitVec 8)} {buf : Word} {off len : Nat} {r0 : Word}
     {s : PancakeState σ}
     (hlen63 : len < 2 ^ 63) (hclock : len ≤ s.clock)
     (hlen : s.locals "len" = some (BitVec.ofNat 64 len))
     (hbuf : s.locals "buf" = some buf)
     (hoff : s.locals "off" = some (BitVec.ofNat 64 off))
+    (hres : s.locals "result" = some r0)
     (hview : ViewBytes s a buf off len) :
     ∃ s', PancakeSem oracle scanElse s = (none, s') ∧
       s'.locals "result" = some (BitVec.ofNat 64 (scanFrom a off len 0)) := by
@@ -476,16 +503,22 @@ theorem region_scan_correct {a : List (BitVec 8)} {buf : Word} {off len : Nat}
   have h2clock : len ≤ s2.clock := by rw [hs2]; exact hclock
   have h2view : ViewBytes s2 a buf off len := by
     intro i hi'; have := hview i hi'; rw [hs2]; simpa using this
-  obtain ⟨sW, hWeq, hWacc, hWi, hWlen, hWbuf, hWoff, hWmem, hWma, hWbe, hWba, hWffi⟩ :=
+  obtain ⟨sW, hWeq, hWacc, hWi, hWlen, hWbuf, hWoff, hWmem, hWma, hWbe, hWba, hWffi, hWframe⟩ :=
     scan_loop oracle a buf off len hlen63 len 0 s2 (by omega) h2clock h2acc h2i h2len h2buf h2off h2view
   -- Seq: scanWhile then `result := acc` (on the clock-clamped post-loop state)
   obtain ⟨sWc, hsWc⟩ : ∃ sWc : PancakeState σ, sWc = { sW with clock := min s2.clock sW.clock } := ⟨_, rfl⟩
   have hAssign : eval sWc (.var "acc") = some (BitVec.ofNat 64 (scanFrom a off len 0)) := by
     rw [hsWc]; exact hWacc
+  have hWres : sWc.locals "result" = some r0 := by
+    rw [hsWc]
+    show sW.locals "result" = some r0
+    rw [hWframe "result" (by decide) (by decide), hs2]
+    simp only [setLocal, dr1, dr2, if_false]
+    exact hres
   obtain ⟨sV, hsV⟩ : ∃ sV : PancakeState σ, sV = { sWc with locals := setLocal sWc.locals "result" (BitVec.ofNat 64 (scanFrom a off len 0)) } := ⟨_, rfl⟩
   have hseq : PancakeSem oracle (.seq scanWhile (.assign "result" (.var "acc"))) s2 = (none, sV) := by
     rw [sem_seq_none hWeq, ← hsWc]
-    have := sem_assign (oracle := oracle) (x := "result") hAssign
+    have := sem_assign (oracle := oracle) (x := "result") hAssign hWres
     rw [← hsV] at this; exact this
   -- close the two Dec scopes (transport hseq across s2 = the scope literal)
   have hci := sem_dec (oracle := oracle)

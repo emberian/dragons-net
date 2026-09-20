@@ -31,11 +31,13 @@ def RefinesClk (o : Oracle σ) (p : PancakeProg)
 
 theorem refinesClk_assign (o : Oracle σ) (x : String) (e : PancakeExp)
     (P : PancakeState σ → Prop) (f : PancakeState σ → Value)
-    (hf : ∀ s, P s → eval s e = some (f s)) :
+    (hf : ∀ s, P s → eval s e = some (f s))
+    (hbound : ∀ s, P s → ∃ old, s.locals x = some old) :
     RefinesClk o (.assign x e) P
       (fun s s' => s' = { s with locals := setLocal s.locals x (f s) }) := by
   intro s hP
-  exact ⟨_, sem_assign (oracle := o) (hf s hP), rfl, Nat.le_refl _⟩
+  obtain ⟨old, hold⟩ := hbound s hP
+  exact ⟨_, sem_assign (oracle := o) (hf s hP) hold, rfl, Nat.le_refl _⟩
 
 /-! ## 2. The compose rules -/
 

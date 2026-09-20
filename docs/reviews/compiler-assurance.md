@@ -57,23 +57,23 @@ The result is useful as an AST-to-model theorem, but it is not evidence about pr
 
 ## Medium — the FFI model permits writeback beyond the declared array
 
-**Locations:** `lean/DN/Compiler/Semantics.lean:81-90`, `lean/DN/Compiler/Semantics.lean:351-364`; inherited behavior in `.deps/cakeml/pancake/semantics/panSemScript.sml:714-724`.
+**Locations:** `lean/DN/Compiler/Semantics.lean`, the oracle and the `ExtCall` clause; the semantics in `pancake/semantics/panSemScript.sml` and `semantics/ffi/ffiScript.sml` at the revisions recorded in `backend/lock.json`.
 
-`FFIResult.ret` contains an unconstrained `newBytes : List (BitVec 8)`. `ExtCall` reads exactly `arrLen` bytes but writes all returned bytes starting at `arrPtr`; it never requires `newBytes.length = arrLen` (or even `≤ arrLen`). A legal Lean `Oracle` can therefore return `arrLen + 1` bytes and mutate the next address, or wrap around the 64-bit address space. The Lean code is faithful to the raw HOL evaluation clause, which also passes `new_bytes` straight to `write_bytearray`; the missing item is the FFI invariant that makes this safe/useful, not a mismatch in this clause.
+The model used to write back whatever the oracle returned, so a reply longer than the declared array reached the next address. That was a mismatch with the semantics, not a missing external invariant: the length check lives in `call_FFI`, which the `ExtCall` clause calls. The model now goes through `call_FFI`, where a reply of the wrong length ends the run and the empty call name never reaches the oracle. See [the transcription](../pancake-semantics.md).
 
-Calling `Oracle` an “explicit trusted assumption” does not state the required assumption. Any future `ExtCall` frame theorem can be false unless it carries a length/address contract. This also matters for preservation claims: FFI return preserves locals but does not confine memory effects to the caller-declared array under the current type.
+What remains an assumption is the oracle itself: the model says what a program does with the answer, not what a real host answers. A frame theorem for an external call can now rely on the length, since a reply of another length no longer writes anything.
 
-**Fix:** introduce a contracted oracle result carrying a proof that returned length equals the input array length (matching the backend FFI invariant), or add that property as an explicit premise to every theorem about `ExtCall`. Add non-wrapping/addressability premises for every byte written. Document the exact HOL invariant being transcribed rather than treating arbitrary `Oracle.call` as the trusted boundary.
+**Still open:** non-wrapping and addressability premises for every byte written are not stated.
 
-**Regression:** define an adversarial oracle returning one extra byte and show today that the extra byte changes when addressable. The corrected semantics/contract should reject that result or make the overlong branch unrepresentable. Also test zero length and pointer wraparound.
+**Regression:** an adversarial oracle returning one extra byte now ends the run instead of writing (`extCall_overlong_reply_is_final`), a reply of the declared length is written (`extCall_exact_reply_is_written`), and an accepted reply cannot disturb a byte outside the array (`Bytes.extCall_frame`).
 
 ## Medium — the strongest byte-copy theorem omits caller-visible state behavior
 
 **Location:** `lean/DN/Compiler/ByteCopy.lean:228-244` (implementation setup at `:245-261`).
 
-`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program also overwrites locals `dst`, `src`, `i`, and `len`; these are ordinary assignments, not lexical `Dec` bindings. The theorem neither exposes this clobber set nor proves preservation of all other locals. It also omits `ffi`, `baseAddr`, the exact consumed clock, and an explicit normal-result fact beyond the execution equality. The implementation does preserve `ffi`/`baseAddr`, preserves unrelated locals, leaves the four scratch locals bound, and consumes one clock per copied byte; those facts are recoverable but are absent from the public contract.
+`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program declares `dst`, `src`, `i` and `len`, and the theorem now also proves that all four keep the bindings they had, so a caller using those names loses nothing. Still absent from the contract: `ffi`, `baseAddr`, the exact consumed clock, and an explicit normal-result fact beyond the execution equality.
 
-This makes safe composition needlessly weak and creates a practical collision risk: a caller using any scratch name loses its value even though the theorem's prose reads like a reusable body copy. The memory frame is also phrased through `memLoadByte`; a word-level frame (`s'.memory w = s.memory w` outside destination-aligned words) would make downstream whole-word preservation obligations much easier to discharge.
+The memory frame is phrased through `memLoadByte`; a word-level frame (`s'.memory w = s.memory w` outside destination-aligned words) would make downstream whole-word preservation obligations easier to discharge.
 
 **Fix:** either scope scratch locals with `Dec` and prove restoration, or state the clobber set explicitly. Strengthen the postcondition with unrelated-local preservation, `ffi` and `baseAddr` preservation, exact/founded clock consumption, and a word-level memory frame outside `{ byteAlign (dst+i) }`. A result-slot wrapper should specify its return/result behavior separately.
 
