@@ -11,7 +11,7 @@ The clauses live in the CakeML sources, the byte and alignment definitions they
 rest on in HOL4's. Every file the tables below cite is recorded in
 `backend/lock.json` with its revision and SHA-256, and `scripts/backend.py verify`
 re-checks a fetched checkout against them; a pin with no recorded source is an
-error, not a silent pass. `scripts/check_semantics_sources.py` fetches the files
+error, not a silent pass. `scripts/check_upstream_sources.py` fetches the files
 themselves by revision, so a recorded digest that never matched upstream is
 caught rather than waiting for someone to fetch a checkout; it needs network and
 runs on a schedule.

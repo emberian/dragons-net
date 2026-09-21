@@ -87,8 +87,9 @@ def lowerStmt1 : PStmt → Option PancakeProg
     match lowerExp c, lowerStmtsFold b with
     | some c', some b' => some (.while_ c' b')
     | _, _             => none
-/-- Fold a `.pnk` statement list into the right-nested `Dec`/`Seq` structure the
-DN.Compiler parser produces. -/
+/-- Fold a statement list into the right-nested `Dec`/`Seq` shape. The real parser
+wraps each statement in `Seq (Annot ..)` and folds a chain of one binary operator into
+an n-ary `Op`, so agreement with it holds only up to that normalisation. -/
 def lowerStmtsFold : List PStmt → Option PancakeProg
   | []            => some .skip
   | [s]           => lowerStmt1 s
@@ -101,6 +102,10 @@ def lowerStmtsFold : List PStmt → Option PancakeProg
     | some s', some r' => some (.seq s' r')
     | _, _             => none
 end
+
+/-- An empty body is the empty program. Stated here so the equations of the fold are
+elaborated in the module that defines it. -/
+theorem lowerStmtsFold_nil : lowerStmtsFold [] = some .skip := by simp [lowerStmtsFold]
 
 /-- Lower a whole emitter function (partial: `none` if any construct is outside
 the modelled DN.Compiler fragment). -/

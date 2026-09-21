@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MASK = (1 << 64) - 1
+# Global symbols the Cake runtime defines in every generated assembly file.
+RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
+                   "cake_codebuffer_begin", "cake_codebuffer_end", "cake_text_begin",
+                   "cml_heap", "cml_main", "cml_stack", "cml_stackend"}
+# Must stay equal to Checked.exportPrefix; a test holds the two together.
+EXPORT_PREFIX = "dn_"
 
 
 def signed(n: int) -> int:
@@ -42,8 +49,92 @@ def control(a: int, b: int) -> int:
     return acc
 
 
+def control2(a: int, b: int) -> int:
+    """Returns from an else branch, at the top level and inside a loop."""
+    acc = b
+    if a & 1:
+        return acc
+    acc = (acc + 1) & MASK
+    i = 0
+    while signed(i) < signed(a & 7):
+        if signed(i) < 3:
+            acc = (acc + 1) & MASK
+        else:
+            return (acc * 2) & MASK
+        i += 1
+    return acc
+
+
 def digest(p: Path | str) -> str:
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def check_symbols(assembly: Path, obj: Path) -> None:
+    """An exported name becomes a global C symbol.
+
+    Anything outside the runtime's own set has to stay in this project's namespace, or it can
+    displace a libc function of the host it is linked into.
+    """
+    subprocess.run([os.environ.get("CC", "cc"), "-c", str(assembly), "-o", str(obj)],
+                   check=True, timeout=60)
+    listing = subprocess.run(["nm", "--defined-only", "--extern-only", str(obj)],
+                             capture_output=True, text=True, check=True, timeout=60)
+    symbols = {line.split()[-1] for line in listing.stdout.splitlines() if line.strip()}
+    if not symbols & RUNTIME_SYMBOLS:
+        raise RuntimeError(f"{obj.name} carries no runtime symbol; the check is looking at nothing")
+    stray = sorted(s for s in symbols - RUNTIME_SYMBOLS if not s.startswith(EXPORT_PREFIX))
+    if stray:
+        raise RuntimeError(f"{assembly.name} exports symbols outside the project namespace: {stray}")
+
+
+def compiler_revision(cake: str) -> str:
+    """The revision the compiler reports for itself, not the one a lock file claims."""
+    printed = subprocess.run([cake, "--version"], capture_output=True, text=True, timeout=60,
+                             check=True).stdout
+    found = re.search(r"CakeML:\s*([0-9a-f]{40})", printed)
+    if not found:
+        raise RuntimeError(f"the compiler does not report a revision:\n{printed}")
+    return found.group(1)
+
+
+def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
+    """The compiler itself decides what a keyword is; the table has to agree with it.
+
+    Words the table calls keywords of the running compiler's revision must be refused as
+    names, and words it records only for another pinned revision must be accepted.
+    """
+    revision = compiler_revision(cake)
+    listed = {entry["revision"]: entry["keywords"] for entry in table}
+    if revision not in listed:
+        raise RuntimeError(f"the fixture carries no keyword list for {revision[:7]}")
+    here = listed[revision]
+    # With one pinned revision, or two that agree, a word no lexer reserves keeps the check
+    # two-sided: the compiler has to accept it.
+    elsewhere = sorted({word for words in listed.values() for word in words} - set(here)) or ["base"]
+    if not here:
+        raise RuntimeError("the keyword table has no words for the running compiler")
+    source = out / "keyword.pnk"
+    for word, is_keyword in [(w, True) for w in here] + [(w, False) for w in elsewhere]:
+        source.write_text(f"export fun dn_word(1 a) {{ var {word} = a; return {word}; }}\n")
+        with source.open("rb") as inp:
+            probe = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
+                                   capture_output=True, timeout=60, check=False)
+        if is_keyword and probe.returncode == 0:
+            raise RuntimeError(f"the compiler accepts {word} as a name; the table calls it a keyword")
+        if not is_keyword and probe.returncode != 0:
+            raise RuntimeError(f"the compiler refuses {word} as a name; the table does not list it")
+    return len(here) + len(elsewhere)
+
+
+def documented(measured: dict[str, Any]) -> None:
+    """The counts the documents quote must be the ones this run measured."""
+    quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
+              "copy_cases": ("README.md",)}
+    for key, files in quoted.items():
+        printed = f"{measured[key]:,}"
+        for name in files:
+            if printed not in (ROOT / name).read_text():
+                raise RuntimeError(f"{name} does not quote {key} as {printed}")
 
 
 def main() -> None:
@@ -73,11 +164,12 @@ def main() -> None:
     for i, row in enumerate(expected):
         if row != cases[i]["expected"]:
             raise RuntimeError(f"Lean/Python disagreement in expression {i}: {cases[i]['expression']}")
-    expected.append([control(a, b) for a, b in values])
-    if expected[-1] != fixture["control"]:
-        raise RuntimeError("Lean/Python control-flow disagreement")
+    for name, model in (("control", control), ("control2", control2)):
+        expected.append([model(a, b) for a, b in values])
+        if expected[-1] != fixture[name]:
+            raise RuntimeError(f"Lean/Python disagreement in {name}")
     (out / "probes.pnk").write_text(fixture["source"])
-    names = [f"dn_probe_{i}" for i in range(len(cases))] + ["dn_control"]
+    names = [f"dn_probe_{i}" for i in range(len(cases))] + ["dn_control", "dn_control2"]
     nested = fixture["nested_load_expected"]
     if nested != [0xef, 0xef, 0x0123456789abcdef, 0x0123456789abcdef]:
         raise RuntimeError("nested-load model disagrees with independent memory fixture")
@@ -123,9 +215,16 @@ int main(void) {
     (out / "probe_driver.c").write_text(driver)
 
     def compile_source(name: str) -> None:
+        # A Pancake warning (a redeclared variable, say) leaves the exit status at zero,
+        # so anything on stderr fails the build.
         with (out / f"{name}.pnk").open("rb") as inp, (out / f"{name}.S").open("wb") as asm:
-            subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=asm,
-                           check=True, timeout=180)
+            compiled = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
+                                      stdout=asm, stderr=subprocess.PIPE, timeout=180, check=False)
+        if compiled.returncode or compiled.stderr:
+            raise RuntimeError(f"{name}.pnk compiled with diagnostics:\n"
+                               f"{compiled.stderr.decode(errors='replace')}")
+        check_symbols(out / f"{name}.S", out / f"{name}.o")
+
 
     def link(name: str, source: Path, assembly: Path) -> None:
         subprocess.run([os.environ.get("CC", "cc"), "-O2", "-g", "-Wall", "-Wextra", "-Werror",
@@ -144,6 +243,16 @@ int main(void) {
     if measured["differential_cases"] != len(expected) * len(values) or measured["nested_load_native_cases"] != 2:
         raise RuntimeError("incomplete native probe execution")
     measured["nested_load_parser_cases"] = len(nested)
+    for index, source in enumerate(fixture["accepted_examples"]):
+        (out / "accepted.pnk").write_text(source)
+        with (out / "accepted.pnk").open("rb") as inp:
+            accepted = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
+                                      capture_output=True, timeout=60, check=False)
+        if accepted.returncode or accepted.stderr:
+            raise RuntimeError(f"the gate accepts example {index}, the compiler does not:\n"
+                               f"{source}{accepted.stderr.decode(errors='replace')}")
+    measured["accepted_example_cases"] = len(fixture["accepted_examples"])
+    measured["lexer_keyword_cases"] = lexer_keywords(cake, out, fixture["lexer_keywords"])
     compile_source("echo")
     link("echo-check", ROOT / "native/echo_check.c", out / "echo.S")
     measured.update(json.loads(subprocess.check_output([str(out / "echo-check")], timeout=30)))
@@ -160,6 +269,29 @@ int main(void) {
                             check=False)
     if broken.returncode != 1 or "copy/frame mismatch" not in broken.stderr:
         raise RuntimeError("copy test did not detect the deliberately removed store")
+    # Sensitivity of the two gates around the compiler: a warning must fail the build, and
+    # an export outside the project namespace must be refused.
+    (out / "warned.pnk").write_text(
+        "export fun dn_warned(1 a) { var x = a; var x = a; return x; }\n")
+    try:
+        compile_source("warned")
+    except RuntimeError as refused:
+        if "is redeclared" not in str(refused):
+            raise RuntimeError(f"the warning gate failed for another reason: {refused}") from refused
+    else:
+        raise RuntimeError("a redeclaration warning no longer fails the build")
+    (out / "stray.pnk").write_text("export fun atoi(1 a) { return a; }\n")
+    with (out / "stray.pnk").open("rb") as inp, (out / "stray.S").open("wb") as asm:
+        subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=asm,
+                       check=True, timeout=180)
+    try:
+        check_symbols(out / "stray.S", out / "stray.o")
+    except RuntimeError as refused:
+        if "outside the project namespace" not in str(refused):
+            raise RuntimeError(f"the symbol gate failed for another reason: {refused}") from refused
+    else:
+        raise RuntimeError("an export outside the project namespace is no longer refused")
+    measured["gate_sensitivity_cases"] = 2
     link("dn-echo", ROOT / "native/echo_server.c", out / "echo.S")
     network = subprocess.run([sys.executable, str(ROOT / "tests/echo_integration.py"),
                               str(out / "dn-echo")], capture_output=True, text=True, timeout=90, check=False)
@@ -174,6 +306,7 @@ int main(void) {
               "host_sha256": digest(ROOT / "native/echo_server.c"),
               "runtime_sha256": digest(ROOT / "native/cake_runtime.h"),
               "missing_store_mutant_rejected": True, "measurements": measured}
+    documented(measured)
     report_file.write_text(json.dumps(report, indent=2) + "\n")
     print(report_file.read_text(), end="")
 

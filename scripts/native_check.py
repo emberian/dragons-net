@@ -43,9 +43,22 @@ def main() -> None:
         source.write_bytes(subprocess.check_output([str(ROOT / ".lake/build/bin/dn-compiler"), "emit-region"]))
     assembly = out / "region.S"
     with source.open("rb") as inp, assembly.open("wb") as output:
-        subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=output,
-                       check=True, timeout=120)
+        # A Pancake warning keeps the exit status at zero, so treat any diagnostic as a failure.
+        compiled = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
+                                  stdout=output, stderr=subprocess.PIPE, check=True, timeout=120)
+    if compiled.stderr:
+        raise RuntimeError(f"the region source compiled with diagnostics:\n"
+                           f"{compiled.stderr.decode(errors='replace')}")
     cc = os.environ.get("CC", "cc")
+    # An exported name becomes a global symbol; only the runtime's own and this project's
+    # namespace may appear. The differential lane checks the runtime set exactly.
+    subprocess.run([cc, "-c", str(assembly), "-o", str(out / "region.o")], check=True, timeout=60)
+    listing = subprocess.run(["nm", "--defined-only", "--extern-only", str(out / "region.o")],
+                             capture_output=True, text=True, check=True, timeout=60)
+    stray = sorted(line.split()[-1] for line in listing.stdout.splitlines() if line.strip()
+                   and not line.split()[-1].startswith(("dn_", "cake_", "cml_")))
+    if stray:
+        raise RuntimeError(f"the region object exports unexpected symbols: {stray}")
     driver = ROOT / "native/region_driver.c"
     executable = out / "region-check"
     subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-no-pie", "-Wl,-z,noexecstack",

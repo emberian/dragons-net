@@ -109,8 +109,9 @@ def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool 
 start depending on another module without that being reviewed. -/
 def compilerModules : Array Name :=
   #[`DN.Compiler.Abi, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy, `DN.Compiler.Bytes,
-    `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Kernels, `DN.Compiler.Lower,
-    `DN.Compiler.Main, `DN.Compiler.Region, `DN.Compiler.Semantics, `DN.Compiler.Syntax]
+    `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Kernels, `DN.Compiler.Keywords,
+    `DN.Compiler.Lower, `DN.Compiler.Main, `DN.Compiler.Region, `DN.Compiler.Semantics,
+    `DN.Compiler.Syntax]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do

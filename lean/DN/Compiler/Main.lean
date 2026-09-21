@@ -15,8 +15,10 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["emit-region"] =>
     let program := emitExportFun { regionC0 with name := "dn_region" }
-    output (DN.Compiler.Checked.emit program)
-  | ["emit-echo"] => output (DN.Compiler.Checked.emit DN.Compiler.Kernels.echo)
+    output ((DN.Compiler.Checked.emit program).mapError DN.Compiler.Checked.Reason.message)
+  | ["emit-echo"] =>
+    output ((DN.Compiler.Checked.emit DN.Compiler.Kernels.echo).mapError
+      DN.Compiler.Checked.Reason.message)
   | ["emit-baseline"] => output (DN.Compiler.Baseline.fixture.map (·.compress))
   | ["--help"] | [] =>
     IO.println "dn-compiler {emit-region|emit-echo|emit-baseline}\nEmit checked native examples or differential fixtures."

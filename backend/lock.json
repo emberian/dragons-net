@@ -81,5 +81,19 @@
       "revision": "a9846ebe221d7c6617188a6bf66f30d5d8136b84",
       "sha256": "2a60c8a1873beaee33de7b3eed4fbdf8023f42b44f14d9386f936f5685fad92c"
     }
+  ],
+  "lexer_sources": [
+    {
+      "component": "cakeml",
+      "path": "pancake/parser/panLexerScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "8c94848f936fa43ab6358a94ab866ef3b6e6928c0714f992a1bb44bb853179d8"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/parser/panLexerScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "32ed840c5ae20b2ac1906f155800a46bc4894e8913a6e44090c254b8d21896d6"
+    }
   ]
 }

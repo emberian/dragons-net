@@ -27,9 +27,10 @@ jobs:
           "$deny" --locked check advisories
           "$deny" --locked --manifest-path models/Cargo.toml check advisories
 
-  # The files the Lean transcription of the semantics was compared against must still be
-  # those files; this needs network, so it does not run in the offline build.
-  semantics-sources:
+  # The upstream files the semantics was transcribed from and the keyword table was
+  # generated from must still be those files; this needs network, so it is not in the
+  # offline build.
+  upstream-sources:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -39,4 +40,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Recorded digests
-        run: python3 -P scripts/check_semantics_sources.py
+        run: python3 -P scripts/check_upstream_sources.py
+      - name: Generated keyword table
+        run: python3 -P scripts/gen_keywords.py --check

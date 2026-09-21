@@ -20,12 +20,12 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 3,988 declarations, including 1,921 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,253 declarations, including 2,060 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Executable examples | 56 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
-| Control-flow differential tests | 192 cases: locals, branches, assignments, loops, and early return | One structured control workload |
-| Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 20,928 cases | Shared assumptions about the intended word semantics still need review |
+| Control-flow differential tests | 384 cases over two workloads: locals, branches, assignments, loops, early return, and returns in an `else` branch at the top level and inside a loop | Two structured control workloads |
+| Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 21,120 cases | Shared assumptions about the intended word semantics still need review |
 | ABI adapter | Full-word output slots checked in the model and native execution, with native guard words | Output pointer alignment, writability, and disjointness are caller obligations |
 | Region kernel | 99,240 native/reference comparisons, including 196 extreme-range cases; invalid inputs receive a protected buffer | Caller must report the real allocation length and supply valid control/output pointers |
 | Copy kernel | 6,215 cases: byte offsets, lengths through 4 KiB, preserved surrounding bytes, protected pointers on rejection | Requires disjoint source/destination; not memmove |
@@ -47,7 +47,7 @@ The exported function now rejects sign-bit-set sizes/offsets/lengths, requires `
 
 The pinned x86-64 export trampoline uses `mov %edi, %eax` at `cake_return`. Our old C prototype claimed a 64-bit return. The existing digest fits in 24 bits and hid the problem; the new probe `0 + 2^32` returned zero to C despite computing the full word internally.
 
-The native interfaces now declare a 32-bit result. `Abi.wordResult` rewrites value returns, including returns nested in control flow, to write a caller-owned word and return status zero. The model and native baseline check that transformation on all 109 fixture functions. The echo kernel returns only a bounded length (0–4096) or `UINT32_MAX`. This is an explicit adaptation to the backend ABI, not an assembly patch or a claimed upstream compiler fix.
+The native interfaces now declare a 32-bit result. `Abi.wordResult` rewrites value returns, including returns nested in control flow, to write a caller-owned word and return status zero. The model and native baseline check that transformation on all 110 fixture functions. The echo kernel returns only a bounded length (0–4096) or `UINT32_MAX`. This is an explicit adaptation to the backend ABI, not an assembly patch or a claimed upstream compiler fix.
 
 ### The theorem-only audit missed isolated definitions
 
@@ -55,7 +55,11 @@ An unapproved axiom inside a `DN` definition could previously escape if no audit
 
 ### Raw printing and lowering were not an emission contract
 
-`lower` intentionally handles a restricted model and ignores function-level ABI details. `ppFun` is a printer, not a validator. `Checked.emit` now checks scalar parameters, a conservative ASCII identifier/keyword policy, unique names, local scope, word-sized literals, allowed effects, and an explicit final return before CLI emission. Unsupported shapes, calls, and FFI are rejected in this exported profile. It does not establish memory safety, pointer validity, or termination.
+`lower` intentionally handles a restricted model and ignores function-level ABI details. `ppFun` is a printer, not a validator. `Checked.emit` checks scalar parameters, ASCII identifiers, keywords, unique names, local scope, word-sized literals, allowed effects, an exported name inside the `dn_` namespace, and an explicit final return before CLI emission. Each rule has its own refusal reason, and `Checked.catalog` carries a rejected/accepted pair per reason: a rule with no pair, or a pair refused by a different rule, fails the build. That an accepted function has a model image is proven (`Checked.accepted_lowers`), not checked at runtime. Unsupported shapes, calls, and FFI are rejected in this exported profile. It does not establish memory safety, pointer validity, or termination.
+
+What the gate accepts, the compiler must accept silently: every accepted example of the catalog is compiled in the native lane and any diagnostic fails the build. The gate is not a copy of the compiler's own analyses, though. It does not reproduce the check that a store address is derived from a pointer the caller supplied, so a program storing through a literal address passes the gate and is then refused by the build for the compiler's warning rather than by the gate. Treat the diagnostics as the boundary of the profile, not the gate alone.
+
+The keyword list is not written by hand: `scripts/gen_keywords.py` generates `DN.Compiler.Keywords` from `get_keyword_def` in the Pancake lexer of each pinned revision, the scheduled job regenerates it and fails on a difference, and the native lane checks the table against the compiler it actually runs — a word the table calls a keyword must be refused as a name, and a word it records only for the other revision must be accepted. Two details of the lexer matter to anyone writing `.pnk` by hand: `@base`, `@top` and `@biw` are keywords only with the `@` (and `@top` lexes to the same token as `@base`), and a leading digit in a declaration is read as a shape, so `var 1x = a;` silently declares `x`.
 
 ## Which parts should Wisper trust enough to build on?
 

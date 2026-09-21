@@ -52,6 +52,21 @@ def control : PFun :=
           [.dec "temp" (eMul (v "acc") (n 3)), .assign "acc" (eAdd (v "temp") (n 1))],
         .assign "i" (eAdd (v "i") (n 1))], .ret (v "acc")] }
 
+/-- Returns in an `else` branch, both at the top level and inside a loop: the output-slot
+rewrite has to reach them too. -/
+def control2 : PFun :=
+  { name := "dn_control2", exported := true, params := [(1,"a"),(1,"b")], body :=
+    [.dec "acc" (v "b"),
+     .ite (eEq (eAnd (v "a") (n 1)) (n 0))
+       [.assign "acc" (eAdd (v "acc") (n 1))]
+       [.ret (v "acc")],
+     .dec "i" (n 0),
+     .while (eLt (v "i") (eAnd (v "a") (n 7)))
+       [.ite (eLt (v "i") (n 3)) [.assign "acc" (eAdd (v "acc") (n 1))]
+         [.ret (eMul (v "acc") (n 2))],
+        .assign "i" (eAdd (v "i") (n 1))],
+     .ret (v "acc")] }
+
 /-- All load-address nesting pairs must parse. The two inner-byte cases are
 parser/model tests only: their absolute 8-bit result is not a usable native
 userspace pointer. Inner-word cases also execute against real pointer cells. -/
@@ -70,9 +85,10 @@ def nestedState : PancakeState Unit :=
     be := false, clock := 0, ffi := (), baseAddr := 0 }
 
 def fixture : Except String Json := do
-  let wrapped := (functions ++ [control]).map Abi.wordResult
-  let sources ← (functions ++ [control]).mapM Abi.emitWord
-  let memorySources ← nestedFunctions.mapM Abi.emitWord
+  let wrapped := (functions ++ [control, control2]).map Abi.wordResult
+  let sources ← ((functions ++ [control, control2]).mapM Abi.emitWord).mapError
+    Checked.Reason.message
+  let memorySources ← (nestedFunctions.mapM Abi.emitWord).mapError Checked.Reason.message
   let memoryExpected ← nestedLoads.mapM fun e => do
     let some lowered := lowerExp e | throw "nested load does not lower"
     let some value := eval nestedState lowered | throw "nested model load failed"
@@ -83,12 +99,15 @@ def fixture : Except String Json := do
       let some result := eval (state a b) lowered | throw "fixture evaluation failed"
       pure result.toNat
     pure (Json.mkObj [("expression", exprJson e), ("expected", toJson expected)])
-  let some prog := lower control | throw "control fixture does not lower"
   let oracle : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
-  let controls ← values.mapM fun (a,b) => do
-    let (some (.return_ result), _) := PancakeSem oracle prog (state a b)
-      | throw "control fixture did not return"
-    pure result.toNat
+  let run (f : PFun) : Except String (List Nat) := do
+    let some prog := lower f | throw "control fixture does not lower"
+    values.mapM fun (a,b) => do
+      let (some (.return_ result), _) := PancakeSem oracle prog (state a b)
+        | throw "control fixture did not return"
+      pure result.toNat
+  let controls ← run control
+  let controls2 ← run control2
   -- Check the modeled ABI adapter as well as the original return-value model.
   for (f, index) in wrapped.zipIdx do
     let some p := lower f | throw "ABI wrapper does not lower"
@@ -96,7 +115,7 @@ def fixture : Except String Json := do
       let original := state a b
       let s := { original with locals := setLocal original.locals "dn_result" 16, memaddrs := fun address => address == 16 }
       let (result, final) := PancakeSem oracle p s
-      let some originalFunction := (functions ++ [control])[index]?
+      let some originalFunction := (functions ++ [control, control2])[index]?
         | throw "original function missing"
       let some originalProg := lower originalFunction
         | throw "original function missing"
@@ -104,9 +123,19 @@ def fixture : Except String Json := do
         | throw "original did not return"
       unless result == some (.return_ 0) && final.memory 16 == expected do
         throw "ABI model output-slot mismatch"
+  -- What the gate accepts must also compile without a diagnostic: the native lane runs
+  -- every accepted example past the real compiler.
+  let accepted ← ((Checked.catalog.map (·.accepted)).mapM Checked.emit).mapError
+    Checked.Reason.message
+  -- The keyword table is what the validator claims about the real lexers; the native
+  -- lane checks it against the compiler it actually runs.
+  let keywords := Keywords.byRevision.map fun (revision, words) =>
+    Json.mkObj [("revision", toJson revision), ("keywords", toJson words)]
   return Json.mkObj [("source", toJson (String.join (sources ++ memorySources))),
     ("values", toJson (values.map (fun (a,b) => [a,b]))),
     ("cases", toJson cases), ("control", toJson controls),
-    ("nested_load_expected", toJson memoryExpected)]
+    ("control2", toJson controls2),
+    ("nested_load_expected", toJson memoryExpected),
+    ("lexer_keywords", toJson keywords), ("accepted_examples", toJson accepted)]
 
 end DN.Compiler.Baseline
