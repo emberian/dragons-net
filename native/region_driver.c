@@ -10,13 +10,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-extern void *cml_heap, *cml_stack, *cml_stackend;
-extern void cml_main(void);
-extern uint32_t dn_region(uint64_t, uint64_t, uint64_t, uint64_t);
+#include "cake_runtime.h"
 
-void cml_clear(void) {}
-void cml_err(int code) { fprintf(stderr, "Cake runtime error %d\n", code); abort(); }
-void cml_exit(int code) { fprintf(stderr, "unexpected Cake exit %d\n", code); abort(); }
+extern uint32_t dn_region(uint64_t, uint64_t, uint64_t, uint64_t);
 
 static uint64_t reference(const unsigned char *bytes, size_t off, size_t len) {
     uint64_t result = 0;
@@ -41,13 +37,7 @@ static uint64_t now_ns(void) {
 }
 
 int main(void) {
-    const size_t heap_size = 1024 * 1024, stack_size = 1024 * 1024;
-    unsigned char *region = malloc(heap_size + stack_size);
-    if (!region) return 1;
-    cml_heap = region;
-    cml_stack = region + heap_size;
-    cml_stackend = region + heap_size + stack_size;
-    cml_main();
+    dn_runtime_init();
 
     unsigned char bytes[4096];
     uint64_t random = 0x12345678, vectors = 0;
@@ -97,7 +87,7 @@ int main(void) {
     uint64_t elapsed = now_ns() - start;
     printf("{\"vectors\":%" PRIu64 ",\"bytes\":%zu,\"elapsed_ns\":%" PRIu64
            ",\"checksum\":%" PRIu64 ",\"heap_bytes\":%zu,\"stack_bytes\":%zu}\n",
-           vectors, iterations * sizeof(bytes), elapsed, checksum, heap_size, stack_size);
-    free(region);
+           vectors, iterations * sizeof(bytes), elapsed, checksum,
+           (size_t)DN_RUNTIME_SEGMENT_BYTES, (size_t)DN_RUNTIME_SEGMENT_BYTES);
     return 0;
 }

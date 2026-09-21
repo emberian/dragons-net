@@ -16,6 +16,13 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MASK = (1 << 64) - 1
+# Hardening the linked binaries: position-independent with full RELRO, fortified library
+# calls, stack protection and control-flow protection. The generated assembly is
+# position-independent, so nothing here needs a fixed load address.
+HARDENING = ["-O2", "-Wall", "-Wextra", "-Werror", "-fPIE", "-pie",
+             "-Wl,-z,relro,-z,now", "-Wl,-z,noexecstack",
+             "-D_FORTIFY_SOURCE=3", "-fstack-protector-strong", "-fstack-clash-protection",
+             "-fcf-protection=full", "-Wformat=2"]
 # Global symbols the Cake runtime defines in every generated assembly file.
 RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
                    "cake_codebuffer_begin", "cake_codebuffer_end", "cake_text_begin",
@@ -72,6 +79,16 @@ def digest(p: Path | str) -> str:
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
 
+def loud(command: list[str], *, timeout: int, what: str, stdin: Any = None) -> str:
+    """Run a step and, when it fails, say what it printed rather than only its status."""
+    done = subprocess.run(command, stdin=stdin, capture_output=True, text=True,
+                          timeout=timeout, check=False)
+    if done.returncode:
+        raise RuntimeError(f"{what} failed with status {done.returncode}:\n"
+                           f"{done.stdout}{done.stderr}")
+    return done.stdout
+
+
 def check_symbols(assembly: Path, obj: Path) -> None:
     """An exported name becomes a global C symbol.
 
@@ -98,6 +115,28 @@ def compiler_revision(cake: str) -> str:
     if not found:
         raise RuntimeError(f"the compiler does not report a revision:\n{printed}")
     return found.group(1)
+
+
+def hardened(binary: Path) -> None:
+    """The linked binary must carry the protections it was built with, read off the file."""
+    name = binary.name
+    header = loud(["readelf", "-hdl", str(binary)], timeout=60, what=f"reading {name}")
+    symbols = loud(["nm", "-u", str(binary)], timeout=60, what=f"reading symbols of {name}")
+    if "DYN (" not in header:
+        raise RuntimeError(f"{name} is not position-independent")
+    if "BIND_NOW" not in header:
+        raise RuntimeError(f"{name} was linked without BIND_NOW")
+    if "GNU_RELRO" not in header:
+        raise RuntimeError(f"{name} has no read-only-after-relocation segment")
+    if "TEXTREL" in header:
+        raise RuntimeError(f"{name} needs text relocations")
+    stack = [line for line in header.splitlines() if "GNU_STACK" in line]
+    if not stack or "RWE" in stack[0]:
+        raise RuntimeError(f"{name} does not declare a non-executable stack")
+    if "__stack_chk_fail" not in symbols:
+        raise RuntimeError(f"{name} was built without stack protection")
+    if not any(check in symbols for check in ("_chk@", "_chk")):
+        raise RuntimeError(f"{name} was built without fortified library calls")
 
 
 def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
@@ -132,7 +171,8 @@ def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
 def documented(measured: dict[str, Any]) -> None:
     """The counts the documents quote must be the ones this run measured."""
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
-              "copy_cases": ("README.md",)}
+              "copy_cases": ("README.md", "docs/baseline.md"),
+              "render_cases": ("docs/baseline.md",)}
     for key, files in quoted.items():
         printed = f"{measured[key]:,}"
         for name in files:
@@ -155,9 +195,10 @@ def main() -> None:
     report_file = out / "report.json"
     report_file.unlink(missing_ok=True)
     compiler = ROOT / ".lake/build/bin/dn-compiler"
-    for name, command in [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo")]:
+    for name, command in [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"),
+                          ("render.pnk", "emit-render")]:
         data = ((args.fixtures / name).read_bytes() if args.fixtures else
-                subprocess.check_output([str(compiler), command], timeout=60))
+                loud([str(compiler), command], timeout=60, what=f"emitting {name}").encode())
         (out / name).write_bytes(data)
     fixture = json.loads((out / "baseline.json").read_text())
     cases, values = fixture["cases"], fixture["values"]
@@ -230,19 +271,21 @@ int main(void) {
 
 
     def link(name: str, source: Path, assembly: Path) -> None:
-        subprocess.run([os.environ.get("CC", "cc"), "-O2", "-g", "-Wall", "-Wextra", "-Werror",
-                        "-no-pie", "-Wl,-z,noexecstack", "-I", str(ROOT / "native"),
-                        str(source), str(assembly), "-o", str(out / name)], check=True, timeout=60)
+        loud([os.environ.get("CC", "cc"), *HARDENING, "-g", "-I", str(ROOT / "native"),
+              str(source), str(ROOT / "native/cake_runtime.c"), str(assembly),
+              "-o", str(out / name)], timeout=60, what=f"linking {name}")
+        hardened(out / name)
 
     compile_source("probes")
     link("probes", out / "probe_driver.c", out / "probes.S")
     vectors = "".join(f"{i} {a} {b} {expected[i][j]}\n"
                       for i in range(len(expected)) for j, (a, b) in enumerate(values))
-    result = subprocess.run([str(out / "probes")], input=vectors, text=True,
+    probed = subprocess.run([str(out / "probes")], input=vectors, text=True,
                             capture_output=True, timeout=60, check=False)
-    if result.returncode:
-        raise RuntimeError(result.stderr)
-    measured = json.loads(result.stdout)
+    if probed.returncode:
+        raise RuntimeError(f"the differential probes failed with status {probed.returncode}:\n"
+                           f"{probed.stdout}{probed.stderr}")
+    measured = json.loads(probed.stdout)
     if measured["differential_cases"] != len(expected) * len(values) or measured["nested_load_native_cases"] != 2:
         raise RuntimeError("incomplete native probe execution")
     measured["nested_load_parser_cases"] = len(nested)
@@ -256,9 +299,14 @@ int main(void) {
                                f"{source}{accepted.stderr.decode(errors='replace')}")
     measured["accepted_example_cases"] = len(fixture["accepted_examples"])
     measured["lexer_keyword_cases"] = lexer_keywords(cake, out, fixture["lexer_keywords"])
+    compile_source("render")
+    link("render-check", ROOT / "native/render_check.c", out / "render.S")
+    measured.update(json.loads(loud([str(out / "render-check")], timeout=60,
+                                    what="the decimal render check")))
     compile_source("echo")
     link("echo-check", ROOT / "native/echo_check.c", out / "echo.S")
-    measured.update(json.loads(subprocess.check_output([str(out / "echo-check")], timeout=30)))
+    measured.update(json.loads(loud([str(out / "echo-check")], timeout=30,
+                                    what="the copy and frame check")))
     # Sensitivity check: compiling a kernel without its store must fail the same
     # native contract test. No checked-in source or backend checkout is mutated.
     text = (out / "echo.pnk").read_text()
@@ -272,6 +320,7 @@ int main(void) {
                             check=False)
     if broken.returncode != 1 or "copy/frame mismatch" not in broken.stderr:
         raise RuntimeError("copy test did not detect the deliberately removed store")
+    measured["missing_store_mutant_rejected"] = True
     # Sensitivity of the two gates around the compiler: a warning must fail the build, and
     # an export outside the project namespace must be refused.
     (out / "warned.pnk").write_text(
@@ -302,13 +351,18 @@ int main(void) {
         raise RuntimeError(f"TCP integration failed:\n{network.stdout}\n{network.stderr}")
     measured["network"] = json.loads(network.stdout)
     report = {"status": "native-tested",
+              "sources": "supplied" if args.fixtures else "emitted by dn-compiler",
+              "compiler_digest": digest(compiler) if not args.fixtures else None,
               "assurance": "bounded differential and integration tests, not a whole compiler proof",
               "platform": platform.platform(), "compiler_sha256": digest(cake),
               "fixture_sha256": digest(out / "baseline.json"), "echo_source_sha256": digest(out / "echo.pnk"),
-              "echo_assembly_sha256": digest(out / "echo.S"), "echo_executable_sha256": digest(out / "dn-echo"),
+              "echo_assembly_sha256": digest(out / "echo.S"),
+              "render_source_sha256": digest(out / "render.pnk"),
+              "render_assembly_sha256": digest(out / "render.S"), "echo_executable_sha256": digest(out / "dn-echo"),
               "host_sha256": digest(ROOT / "native/echo_server.c"),
-              "runtime_sha256": digest(ROOT / "native/cake_runtime.h"),
-              "missing_store_mutant_rejected": True, "measurements": measured}
+              "runtime_sha256": digest(ROOT / "native/cake_runtime.c"),
+              "runtime_header_sha256": digest(ROOT / "native/cake_runtime.h"),
+              "measurements": measured}
     documented(measured)
     report_file.write_text(json.dumps(report, indent=2) + "\n")
     print(report_file.read_text(), end="")

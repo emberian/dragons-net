@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import resource
 import selectors
 import socket
 import struct
@@ -16,9 +17,15 @@ from typing import Any
 
 
 @contextmanager
-def server(binary: Path, *options: str) -> Iterator[tuple[int, dict[str, Any]]]:
-    process = subprocess.Popen([str(binary), *options], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True)
+def server(binary: Path, *options: str,
+           descriptors: int | None = None) -> Iterator[tuple[int, dict[str, Any]]]:
+    limit = None if descriptors is None else (lambda: resource.setrlimit(
+        resource.RLIMIT_NOFILE, (descriptors, descriptors)))
+    # The descriptor limit is what one of the cases below exercises. The call runs before
+    # any thread is started here, which is what makes preexec_fn safe in this file.
+    process = subprocess.Popen(
+        [str(binary), *options], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, preexec_fn=limit)  # noqa: PLW1509
     stats: dict[str, Any] = {}
     try:
         if process.stdout is None:
@@ -40,6 +47,18 @@ def server(binary: Path, *options: str) -> Iterator[tuple[int, dict[str, Any]]]:
         if process.returncode:
             raise RuntimeError(f"echo server failed: {process.returncode}: {error}")
         stats.update(json.loads(error))
+
+
+SLOTS = 32
+
+
+def small_reader(port: int, buffer_bytes: int = 2048) -> socket.socket:
+    """A client whose receive window is small, set before connecting so it takes effect."""
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffer_bytes)
+    sock.settimeout(10)
+    sock.connect(("127.0.0.1", port))
+    return sock
 
 
 def exchange(port: int, payload: bytes, chunk: int = 4096, slow: bool = False) -> int:
@@ -123,11 +142,85 @@ def main() -> None:
         with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
             if sock.recv(1) != b"":
                 raise AssertionError("idle connection not closed")
+        # Clients that write and never read leave the server holding replies it cannot
+        # hand over. If such slots did not expire, they would take the whole table with
+        # them: after the timeout a fresh client must still be served.
+        stuck = []
+        try:
+            for _ in range(SLOTS):
+                sock = small_reader(port)
+                sock.setblocking(False)
+                stuck.append(sock)
+                try:
+                    for _ in range(500):
+                        sock.send(b"x" * 4096)
+                except (BlockingIOError, OSError):
+                    pass
+            time.sleep(1.5)
+            total += exchange(port, b"the table came back")
+            cases += 1
+        finally:
+            for sock in stuck:
+                sock.close()
         total += exchange(port, b"slot reusable after timeout")
-        cases += 2
+        cases += 3
     if idle["idle_expired"] < 1:
         raise AssertionError("idle cleanup path not exercised")
-    print(json.dumps({"cases": cases, "verified_bytes": total, "host": stats, "idle_host": idle}))
+    if idle["recv_renewals"] < 1:
+        raise AssertionError("receiving did not renew the idle timer")
+    # A flood of connections under a descriptor limit must not cost the ones already being
+    # served. The startup check keeps enough descriptors for every slot, so this exercises
+    # the listener going quiet when the table is full rather than a real EMFILE.
+    with server(binary, descriptors=44) as (port, starved):
+        held = [socket.create_connection(("127.0.0.1", port), timeout=5) for _ in range(8)]
+        try:
+            for sock in held:
+                sock.sendall(b"still here")
+                if sock.recv(64) != b"still here":
+                    raise AssertionError("a served connection was lost")
+            extra = []
+            try:
+                for _ in range(40):
+                    extra.append(socket.create_connection(("127.0.0.1", port), timeout=5))
+            except OSError:
+                pass
+            for sock in extra:
+                sock.close()
+            for sock in held:
+                sock.sendall(b"survived")
+                if sock.recv(64) != b"survived":
+                    raise AssertionError("a served connection was lost after the flood")
+                total += 8
+            cases += 1
+        finally:
+            for sock in held:
+                sock.close()
+
+    if starved["accepted"] < 8:
+        raise AssertionError(f"the flood never reached the listener: {starved}")
+    # A slow but live reader must not be dropped. The server's send buffer is small, so the
+    # reply is handed over in many rounds across more than the idle timeout: the connection
+    # survives only because progress on the send side renews the deadline.
+    with server(binary, "--idle-ms", "400", "--write-chunk", "64",
+                "--send-buffer", "2048") as (port, slow), \
+            small_reader(port, 1024) as sock:
+        sock.settimeout(5)
+        payload = b"y" * 4096
+        sock.sendall(payload)
+        received = 0
+        while received < len(payload):
+            chunk = sock.recv(256)
+            if chunk == b"":
+                raise AssertionError("a reader making progress was dropped")
+            received += len(chunk)
+            time.sleep(0.05)
+        total += received
+        cases += 1
+    if slow["partial_progress"] < 8:
+        raise AssertionError(f"the handover was not slow enough to exercise renewal: {slow}")
+    print(json.dumps({"cases": cases, "verified_bytes": total, "host": stats,
+                      "idle_host": idle, "starved_host": starved,
+                      "slow_reader_host": slow}))
 
 
 if __name__ == "__main__":

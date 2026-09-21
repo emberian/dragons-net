@@ -20,15 +20,16 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,284 declarations, including 2,083 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
-| Executable examples | 61 executable cases | Examples, not proofs or a complete workload inventory |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,313 declarations, including 2,103 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Executable examples | 62 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 113 expression shapes × 192 input pairs, all seven current operators and the logical right shift at its boundaries, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 384 cases over two workloads: locals, branches, assignments, loops, early return, and returns in an `else` branch at the top level and inside a loop | Two structured control workloads |
 | Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 22,080 cases | Shared assumptions about the intended word semantics still need review |
 | ABI adapter | Full-word output slots checked in the model and native execution, with native guard words | Output pointer alignment, writability, and disjointness are caller obligations |
 | Region kernel | 99,240 native/reference comparisons, including 196 extreme-range cases; invalid inputs receive a protected buffer | Caller must report the real allocation length and supply valid control/output pointers |
-| Copy kernel | 6,215 cases: byte offsets, lengths through 4 KiB, preserved surrounding bytes, protected pointers on rejection | Requires disjoint source/destination; not memmove |
+| Decimal render | 976 numbers, including every power-of-two boundary and the whole-word maximum, checked against the C library's own conversion, with the bytes outside the digits required to stay untouched | The digit sequence lowers definitionally to the proven model; the saved start pointer, the returned count, and the host are not covered by that equality |
+| Copy kernel | 24,869 cases: byte offsets, lengths through 4 KiB, four capacities per length (the length itself, one more, halfway to the buffer, and the whole buffer), preserved surrounding bytes, a page with no access right after the destination, protected pointers on rejection | Requires disjoint source/destination; not memmove |
 | Test sensitivity | A separately compiled copy kernel with its store removed must fail the real copy test | One mutation family, not a mutation score for the whole project |
 | TCP integration | Binary bytes, arbitrary application chunks, 4 KiB boundaries, a 512 KiB stream, eight concurrent clients, slow reads, half-close, reset, slot reuse, capacity admission, idle expiry | Reference `poll` adapter; no io_uring, TLS, persistence, or NNTP |
 | Host/concurrency | Runtime unit tests and 25 bounded Loom tests | Abstract algorithms are not automatically the native host implementation |
@@ -75,8 +76,14 @@ Pancake's truncating multiplication loses nothing here.
 A digit now costs no clock at all — the model spends clock only in loops — so the render
 spends one tick per digit after the first, and never more than nineteen for any machine
 word (`NatToDec.natToDecProg_sem` with `renderFuel_le_nineteen`); two theorems run it on a
-concrete state, for 404 and for zero. The rendering specification and its byte-level
-postcondition are the ones that were there before.
+concrete state, for 404 and for zero. The same render is emitted as `dn_render` and run
+natively against the C library's conversion. The model has the shape the emitter prints:
+the working names are declared once, ahead of the loop, and assigned inside it, so the
+emitted digit sequence lowers definitionally to the program the theorem runs
+(`Kernels.render_body_lowering`, `Kernels.digit_loop_lowering`). What is still read rather
+than proven is the rest of the emitted function — the saved start pointer and the returned
+byte count — and the native host, as for the other kernels. The rendering specification and
+its byte-level postcondition are the ones that were there before.
 
 ## Which parts should Wisper trust enough to build on?
 

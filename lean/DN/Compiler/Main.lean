@@ -19,10 +19,13 @@ def main (args : List String) : IO UInt32 := do
   | ["emit-echo"] =>
     output ((DN.Compiler.Checked.emit DN.Compiler.Kernels.echo).mapError
       DN.Compiler.Checked.Reason.message)
+  | ["emit-render"] =>
+    output ((DN.Compiler.Checked.emit DN.Compiler.Kernels.render).mapError
+      DN.Compiler.Checked.Reason.message)
   | ["emit-baseline"] => output (DN.Compiler.Baseline.fixture.map (·.compress))
   | ["--help"] | [] =>
-    IO.println "dn-compiler {emit-region|emit-echo|emit-baseline}\nEmit checked native examples or differential fixtures."
+    IO.println "dn-compiler {emit-region|emit-echo|emit-render|emit-baseline}\nEmit checked native examples or differential fixtures."
     return 0
   | _ =>
-    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-baseline}"
+    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-render|emit-baseline}"
     return 2

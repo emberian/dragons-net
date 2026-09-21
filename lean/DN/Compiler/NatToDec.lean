@@ -106,7 +106,7 @@ theorem natToDec_lt10 {m : Nat} (hm : m < 10) : natToDec m = [digitByte m] := by
   exact if_pos hm
 
 /-- The peel: for `m ≥ 10` the render is the quotient's render with the low
-digit appended — EXACTLY what one `digitBody` + recursion realises. -/
+digit appended — EXACTLY what one digit step plus the recursion realises. -/
 theorem natToDec_split {m : Nat} (hm : 10 ≤ m) :
     natToDec m = natToDec (m / 10) ++ [digitByte (m % 10)] := by
   have hdiv : m / 10 < m := Nat.div_lt_self (by omega) (by omega)
@@ -159,17 +159,29 @@ theorem while_exit (o : Oracle σ) {e : PancakeExp} {c : PancakeProg}
 
 /-! ## 3. One digit, without a division loop -/
 
-/-- The three statements after the quotient is in scope: step the pointer back, store the
-digit, and carry the quotient into `n`. No clock is spent. -/
+/-- The working names of the digit step. They are declared once, ahead of the loop, and
+assigned inside it: Pancake rejects a second declaration of a name already in scope. -/
+def scratch : List String := ["hi", "lo", "qh", "rh", "t", "qt", "q"]
+
+/-- The three statements that place a digit: step the pointer back, store the digit, and
+carry the quotient into `n`. No clock is spent. -/
 def digitTail : PancakeProg :=
   .seq (.assign "p" (.op .sub (.var "p") (.const 1)))
   (.seq (.storeByte (.var "p")
           (.op .add (.op .sub (.var "n") (.mul (.var "q") (.const 10))) (.const 48)))
         (.assign "n" (.var "q")))
 
-/-- One decimal digit, with the quotient built by multiplication instead of a
-subtraction loop: no statement here costs clock. -/
-def digitBody : PancakeProg :=
+/-- The same three statements with the rest of the block after them: the shape the block
+takes when the loop follows the first digit. -/
+def digitTailK (rest : PancakeProg) : PancakeProg :=
+  .seq (.assign "p" (.op .sub (.var "p") (.const 1)))
+  (.seq (.storeByte (.var "p")
+          (.op .add (.op .sub (.var "n") (.mul (.var "q") (.const 10))) (.const 48)))
+  (.seq (.assign "n" (.var "q")) rest))
+
+/-- The seven working values, declared around `cont`. A declaration scopes over the rest of
+its block, so everything the loop does happens inside these seven. -/
+def digitPrefix (cont : PancakeProg) : PancakeProg :=
   .dec "hi" (.shiftR (.var "n") (.const 32))
   (.dec "lo" (.op .and_ (.var "n") (.const 4294967295))
   (.dec "qh" (.shiftR (.mul (.var "hi") (.const 3435973837)) (.const 35))
@@ -178,22 +190,90 @@ def digitBody : PancakeProg :=
   (.dec "qt" (.shiftR (.mul (.var "t") (.const 3435973837)) (.const 35))
   (.dec "q" (.op .add (.op .add (.mul (.var "qh") (.const 4294967296))
                                 (.mul (.var "rh") (.const 429496729))) (.var "qt"))
-  digitTail))))))
+  cont))))))
 
-theorem digitTail_sem (o : Oracle σ) {w q p0 : Word} {s : PancakeState σ}
+/-- One decimal digit inside the loop: the same arithmetic as the declarations, assigning
+the names they introduced. The quotient comes from a multiplication, so no statement here
+costs clock. -/
+def digitBodyAssign : PancakeProg :=
+  .seq (.assign "hi" (.shiftR (.var "n") (.const 32)))
+  (.seq (.assign "lo" (.op .and_ (.var "n") (.const 4294967295)))
+  (.seq (.assign "qh" (.shiftR (.mul (.var "hi") (.const 3435973837)) (.const 35)))
+  (.seq (.assign "rh" (.op .sub (.var "hi") (.mul (.var "qh") (.const 10))))
+  (.seq (.assign "t" (.op .add (.mul (.var "rh") (.const 6)) (.var "lo")))
+  (.seq (.assign "qt" (.shiftR (.mul (.var "t") (.const 3435973837)) (.const 35)))
+  (.seq (.assign "q" (.op .add (.op .add (.mul (.var "qh") (.const 4294967296))
+                                         (.mul (.var "rh") (.const 429496729))) (.var "qt")))
+        digitTail))))))
+
+/-- What the seven names hold once they are bound: the halves of `w`, the two partial
+quotients, and `w / 10` in `q`. -/
+def scratchLocals (lc : String → Option Value) (w : Word) : String → Option Value :=
+  setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal lc
+    "hi" (w >>> 32))
+    "lo" (w &&& 4294967295))
+    "qh" (((w >>> 32) * 3435973837) >>> 35))
+    "rh" ((w >>> 32) - (((w >>> 32) * 3435973837) >>> 35) * 10))
+    "t" (((w >>> 32) - (((w >>> 32) * 3435973837) >>> 35) * 10) * 6 + (w &&& 4294967295)))
+    "qt" (((((w >>> 32) - (((w >>> 32) * 3435973837) >>> 35) * 10) * 6
+             + (w &&& 4294967295)) * 3435973837) >>> 35))
+    "q" (div10w w)
+
+/-- Leaving the declarations puts back what they shadowed — `res_var`, once per name. -/
+def restoreScratch (lc old : String → Option Value) : String → Option Value :=
+  fun k => if k ∈ scratch then old k else lc k
+
+theorem restoreScratch_ne (lc old : String → Option Value) {k : String} (hk : k ∉ scratch) :
+    restoreScratch lc old k = lc k := by
+  simp [restoreScratch, hk]
+
+theorem restoreScratch_mem (lc old : String → Option Value) {k : String} (hk : k ∈ scratch) :
+    restoreScratch lc old k = old k := by
+  simp [restoreScratch, hk]
+
+theorem scratchLocals_ne (lc : String → Option Value) (w : Word) {k : String}
+    (hk : k ∉ scratch) : scratchLocals lc w k = lc k := by
+  simp only [scratch, List.mem_cons, not_or] at hk
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hk
+  simp [scratchLocals, setLocal, h1, h2, h3, h4, h5, h6, h7]
+
+theorem scratchLocals_bound (lc : String → Option Value) (w : Word) {k : String}
+    (hk : k ∈ scratch) : (scratchLocals lc w k).isSome = true := by
+  simp only [scratch] at hk
+  rcases List.mem_cons.mp hk with h | hk1
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk1 with h | hk2
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk2 with h | hk3
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk3 with h | hk4
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk4 with h | hk5
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk5 with h | hk6
+  · subst h; simp [scratchLocals, setLocal]
+  rcases List.mem_cons.mp hk6 with h | hk7
+  · subst h; simp [scratchLocals, setLocal]
+  simp at hk7
+
+theorem scratchLocals_q (lc : String → Option Value) (w : Word) :
+    scratchLocals lc w "q" = some (div10w w) := by
+  simp [scratchLocals, setLocal]
+
+/-- The pointer step and the byte store, whatever follows them: neither costs clock, so the
+run continues from the state that has the digit in memory. -/
+theorem digitStore_sem (o : Oracle σ) {w q p0 : Word} {s : PancakeState σ} {rest : PancakeProg}
     (hn : s.locals "n" = some w) (hp : s.locals "p" = some p0) (hq : s.locals "q" = some q)
     (hdm : s.memaddrs (byteAlign (p0 - 1)) = true) :
-    PancakeSem o digitTail s
-      = (none, { s with locals := setLocal (setLocal s.locals "p" (p0 - 1)) "n" q, memory := putByte s.memory s.be (p0 - 1) ((w - q * 10 + 48).setWidth 8) }) := by
-  simp only [digitTail]
+    PancakeSem o (.seq (.assign "p" (.op .sub (.var "p") (.const 1)))
+        (.seq (.storeByte (.var "p")
+          (.op .add (.op .sub (.var "n") (.mul (.var "q") (.const 10))) (.const 48))) rest)) s
+      = PancakeSem o rest
+          { s with locals := setLocal s.locals "p" (p0 - 1),
+                   memory := putByte s.memory s.be (p0 - 1) ((w - q * 10 + 48).setWidth 8) } := by
   have ep : eval s (.op .sub (.var "p") (.const 1)) = some (p0 - 1) := by simp [eval, hp]
-  have h1 := sem_assign (oracle := o) ep hp
-  rw [seq_step o h1 (by simp)]
+  rw [seq_step o (sem_assign (oracle := o) ep hp) (by simp)]
   have hp1 : (setLocal s.locals "p" (p0 - 1)) "p" = some (p0 - 1) := setLocal_same _ _ _
-  have hn1 : (setLocal s.locals "p" (p0 - 1)) "n" = some w := by
-    rw [setLocal_ne _ _ _ (by decide)]; exact hn
-  have hq1 : (setLocal s.locals "p" (p0 - 1)) "q" = some q := by
-    rw [setLocal_ne _ _ _ (by decide)]; exact hq
   have ed : eval ({ s with locals := setLocal s.locals "p" (p0 - 1) } : PancakeState σ)
       (.op .add (.op .sub (.var "n") (.mul (.var "q") (.const 10))) (.const 48))
       = some (w - q * 10 + 48) := by
@@ -203,25 +283,50 @@ theorem digitTail_sem (o : Oracle σ) {w q p0 : Word} {s : PancakeState σ}
   have h2 : PancakeSem o (.storeByte (.var "p")
         (.op .add (.op .sub (.var "n") (.mul (.var "q") (.const 10))) (.const 48)))
       ({ s with locals := setLocal s.locals "p" (p0 - 1) } : PancakeState σ)
-      = (none, { s with locals := setLocal s.locals "p" (p0 - 1), memory := putByte s.memory s.be (p0 - 1) ((w - q * 10 + 48).setWidth 8) }) := by
+      = (none, { s with locals := setLocal s.locals "p" (p0 - 1),
+                        memory := putByte s.memory s.be (p0 - 1)
+                          ((w - q * 10 + 48).setWidth 8) }) := by
     rw [PancakeSem]
     simp only [ea, ed, memStore_eq _ _ _ _ _ hdm]
-  rw [seq_step o h2 (by simp)]
-  have hq2 : (setLocal s.locals "p" (p0 - 1)) "q" = some q := hq1
-  exact sem_assign (oracle := o) hq2 hn1
+  exact seq_step o h2 (by simp)
 
-theorem digitBody_sem (o : Oracle σ) {w p0 : Word} {s : PancakeState σ}
-    (hn : s.locals "n" = some w)
-    (hp : s.locals "p" = some p0)
+theorem digitTail_sem (o : Oracle σ) {w q p0 : Word} {s : PancakeState σ}
+    (hn : s.locals "n" = some w) (hp : s.locals "p" = some p0) (hq : s.locals "q" = some q)
     (hdm : s.memaddrs (byteAlign (p0 - 1)) = true) :
-    ∃ s', PancakeSem o digitBody s = (none, s') ∧
-      s'.locals "n" = some (div10w w) ∧
-      s'.locals "p" = some (p0 - 1) ∧
-      s'.clock = s.clock ∧
-      s'.memory = putByte s.memory s.be (p0 - 1)
-        (BitVec.setWidth 8 (w - div10w w * 10 + 48)) ∧
-      s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.baseAddr = s.baseAddr ∧
-      (∀ key, key ≠ "n" → key ≠ "p" → s'.locals key = s.locals key) := by
+    PancakeSem o digitTail s
+      = (none, { s with locals := setLocal (setLocal s.locals "p" (p0 - 1)) "n" q,
+                        memory := putByte s.memory s.be (p0 - 1)
+                          ((w - q * 10 + 48).setWidth 8) }) := by
+  simp only [digitTail]
+  rw [digitStore_sem o hn hp hq hdm]
+  have hq1 : (setLocal s.locals "p" (p0 - 1)) "q" = some q := by
+    rw [setLocal_ne _ _ _ (by decide)]; exact hq
+  have hn1 : (setLocal s.locals "p" (p0 - 1)) "n" = some w := by
+    rw [setLocal_ne _ _ _ (by decide)]; exact hn
+  exact sem_assign (oracle := o) hq1 hn1
+
+theorem digitTailK_sem (o : Oracle σ) {w q p0 : Word} {s : PancakeState σ} {rest : PancakeProg}
+    (hn : s.locals "n" = some w) (hp : s.locals "p" = some p0) (hq : s.locals "q" = some q)
+    (hdm : s.memaddrs (byteAlign (p0 - 1)) = true) :
+    PancakeSem o (digitTailK rest) s
+      = PancakeSem o rest { s with locals := setLocal (setLocal s.locals "p" (p0 - 1)) "n" q,
+                                   memory := putByte s.memory s.be (p0 - 1)
+                                     ((w - q * 10 + 48).setWidth 8) } := by
+  simp only [digitTailK]
+  rw [digitStore_sem o hn hp hq hdm]
+  have hq1 : (setLocal s.locals "p" (p0 - 1)) "q" = some q := by
+    rw [setLocal_ne _ _ _ (by decide)]; exact hq
+  have hn1 : (setLocal s.locals "p" (p0 - 1)) "n" = some w := by
+    rw [setLocal_ne _ _ _ (by decide)]; exact hn
+  exact seq_step o (sem_assign (oracle := o) hq1 hn1) (by simp)
+
+/-- **The declarations.** They bind the seven names to the digit arithmetic of `w`, run
+`cont` in that scope, and put the shadowed bindings back on the way out. -/
+theorem digitPrefix_sem (o : Oracle σ) {cont : PancakeProg} {w : Word} {res : Option Result}
+    {s s2 : PancakeState σ} (hn : s.locals "n" = some w)
+    (hcont : PancakeSem o cont { s with locals := scratchLocals s.locals w } = (res, s2)) :
+    PancakeSem o (digitPrefix cont) s
+      = (res, { s2 with locals := restoreScratch s2.locals s.locals }) := by
   have e1 : eval (s : PancakeState σ) (.shiftR (.var "n") (.const 32)) = some (w >>> 32) := by
     simp [eval, hn, BitVec.toNat_ofNat]
   have e2 : eval ({ s with locals := setLocal (s.locals) "hi" (w >>> 32) } : PancakeState σ) (.op .and_ (.var "n") (.const 4294967295)) = some (w &&& 4294967295) := by
@@ -239,20 +344,128 @@ theorem digitBody_sem (o : Oracle σ) {w p0 : Word} {s : PancakeState σ}
                           (.mul (.var "rh") (.const 429496729))) (.var "qt"))
       = some (div10w w) := by
     simp [eval, setLocal, div10w]
-  have hn7 : (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35)) "q" (div10w w)) "n" = some w := by simp [setLocal, hn]
-  have hp7 : (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35)) "q" (div10w w)) "p" = some p0 := by simp [setLocal, hp]
-  have hq7 : (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35)) "q" (div10w w)) "q" = some (div10w w) := setLocal_same _ _ _
-  have htail := digitTail_sem (w := w) (q := div10w w) (p0 := p0) (o := o)
-    (s := { s with locals := setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35)) "q" (div10w w) }) hn7 hp7 hq7 hdm
-  have hrun := sem_dec (oracle := o) e1 (sem_dec (oracle := o) e2 (sem_dec (oracle := o) e3 (sem_dec (oracle := o) e4 (sem_dec (oracle := o) e5 (sem_dec (oracle := o) e6 (sem_dec (oracle := o) e7 (htail)))))))
-  refine ⟨_, hrun, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
-    try simp [resVar, setLocal]
-  intro key hkn hkp
-  by_cases h1 : key = "hi" <;> by_cases h2 : key = "lo" <;> by_cases h3 : key = "qh" <;>
-    by_cases h4 : key = "rh" <;> by_cases h5 : key = "t" <;> by_cases h6 : key = "qt" <;>
-    by_cases h7 : key = "q" <;>
-    simp [h1, h2, h3, h4, h5, h6, h7, hkn, hkp]
+  have hrun := sem_dec (oracle := o) e1 (sem_dec (oracle := o) e2 (sem_dec (oracle := o) e3
+    (sem_dec (oracle := o) e4 (sem_dec (oracle := o) e5 (sem_dec (oracle := o) e6
+      (sem_dec (oracle := o) e7 hcont))))))
+  refine hrun.trans ?_
+  have hpair : ∀ a b : String → Option Value, a = b →
+      ((res, { s2 with locals := a }) : Option Result × PancakeState σ)
+        = (res, { s2 with locals := b }) := by
+    intro a b h; rw [h]
+  apply hpair
+  funext k
+  by_cases h1 : k = "hi" <;> by_cases h2 : k = "lo" <;> by_cases h3 : k = "qh" <;>
+    by_cases h4 : k = "rh" <;> by_cases h5 : k = "t" <;> by_cases h6 : k = "qt" <;>
+    by_cases h7 : k = "q" <;>
+    simp [resVar, setLocal, restoreScratch, scratch, h1, h2, h3, h4, h5, h6, h7]
 
+/-- **The first digit**, rendered in the scope the declarations opened: the loop continues
+from a state with the quotient in `n`, the digit in memory, and the seven names bound. -/
+theorem digitFirst_sem (o : Oracle σ) {w p0 : Word} {s : PancakeState σ} {loop : PancakeProg}
+    (hn : s.locals "n" = some w) (hp : s.locals "p" = some p0)
+    (hdm : s.memaddrs (byteAlign (p0 - 1)) = true) :
+    ∃ sb, PancakeSem o (digitTailK loop) { s with locals := scratchLocals s.locals w }
+        = PancakeSem o loop sb ∧
+      sb.locals "n" = some (div10w w) ∧
+      sb.locals "p" = some (p0 - 1) ∧
+      sb.clock = s.clock ∧
+      sb.memory = putByte s.memory s.be (p0 - 1)
+        (BitVec.setWidth 8 (w - div10w w * 10 + 48)) ∧
+      sb.memaddrs = s.memaddrs ∧ sb.be = s.be ∧ sb.baseAddr = s.baseAddr ∧
+      (∀ x, x ∈ scratch → (sb.locals x).isSome = true) ∧
+      (∀ key, key ≠ "n" → key ≠ "p" → key ∉ scratch → sb.locals key = s.locals key) := by
+  have hn' : (scratchLocals s.locals w) "n" = some w := by
+    rw [scratchLocals_ne _ _ (by decide)]; exact hn
+  have hp' : (scratchLocals s.locals w) "p" = some p0 := by
+    rw [scratchLocals_ne _ _ (by decide)]; exact hp
+  refine ⟨_, digitTailK_sem o (s := { s with locals := scratchLocals s.locals w })
+    hn' hp' (scratchLocals_q s.locals w) hdm, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp [setLocal]
+  · simp [setLocal]
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · intro x hx
+    have hxn : x ≠ "n" := by intro h; subst h; simp [scratch] at hx
+    have hxp : x ≠ "p" := by intro h; subst h; simp [scratch] at hx
+    simpa [setLocal, hxn, hxp] using scratchLocals_bound s.locals w hx
+  · intro key hkn hkp hks
+    simpa [setLocal, hkn, hkp] using scratchLocals_ne s.locals w hks
+
+/-- **One loop iteration.** The seven names are already in scope; the body assigns them,
+writes the digit, and leaves `w / 10` in `n`. -/
+theorem digitBodyAssign_sem (o : Oracle σ) {w p0 : Word} {s : PancakeState σ}
+    (hn : s.locals "n" = some w) (hp : s.locals "p" = some p0)
+    (bound : ∀ x, x ∈ scratch → (s.locals x).isSome = true)
+    (hdm : s.memaddrs (byteAlign (p0 - 1)) = true) :
+    ∃ s', PancakeSem o digitBodyAssign s = (none, s') ∧
+      s'.locals "n" = some (div10w w) ∧
+      s'.locals "p" = some (p0 - 1) ∧
+      s'.clock = s.clock ∧
+      s'.memory = putByte s.memory s.be (p0 - 1)
+        (BitVec.setWidth 8 (w - div10w w * 10 + 48)) ∧
+      s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.baseAddr = s.baseAddr ∧
+      (∀ x, x ∈ scratch → (s'.locals x).isSome = true) ∧
+      (∀ key, key ≠ "n" → key ≠ "p" → key ∉ scratch → s'.locals key = s.locals key) := by
+  simp only [digitBodyAssign]
+  obtain ⟨old1, b1⟩ : ∃ v, (s.locals) "hi" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "hi" (by decide))
+  have e1 : eval s (.shiftR (.var "n") (.const 32)) = some (w >>> 32) := by
+    simp [eval, hn]
+  obtain ⟨old2, b2⟩ : ∃ v, (setLocal (s.locals) "hi" (w >>> 32)) "lo" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "lo" (by decide))
+  have e2 : eval ({ s with locals := setLocal (s.locals) "hi" (w >>> 32) } : PancakeState σ) (.op .and_ (.var "n") (.const 4294967295)) = some (w &&& 4294967295) := by
+    simp [eval, setLocal, hn]
+  obtain ⟨old3, b3⟩ : ∃ v, (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "qh" (by decide))
+  have e3 : eval ({ s with locals := setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295) } : PancakeState σ) (.shiftR (.mul (.var "hi") (.const 3435973837)) (.const 35)) = some (((w >>> 32) * 3435973837) >>> 35) := by
+    simp [eval, setLocal]
+  obtain ⟨old4, b4⟩ : ∃ v, (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "rh" (by decide))
+  have e4 : eval ({ s with locals := setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35) } : PancakeState σ) (.op .sub (.var "hi") (.mul (.var "qh") (.const 10))) = some ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) := by
+    simp [eval, setLocal]
+  obtain ⟨old5, b5⟩ : ∃ v, (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "t" (by decide))
+  have e5 : eval ({ s with locals := setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) } : PancakeState σ) (.op .add (.mul (.var "rh") (.const 6)) (.var "lo")) = some (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295)) := by
+    simp [eval, setLocal]
+  obtain ⟨old6, b6⟩ : ∃ v, (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "qt" (by decide))
+  have e6 : eval ({ s with locals := setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295)) } : PancakeState σ) (.shiftR (.mul (.var "t") (.const 3435973837)) (.const 35)) = some ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35) := by
+    simp [eval, setLocal]
+  obtain ⟨old7, b7⟩ : ∃ v, (setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35)) "q" = some v :=
+    Option.isSome_iff_exists.mp (by simpa [setLocal] using bound "q" (by decide))
+  have e7 : eval ({ s with locals := setLocal (setLocal (setLocal (setLocal (setLocal (setLocal (s.locals) "hi" (w >>> 32)) "lo" (w &&& 4294967295)) "qh" (((w >>> 32) * 3435973837) >>> 35)) "rh" ((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10)) "t" (((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) "qt" ((((((w >>> 32) - ((((w >>> 32) * 3435973837) >>> 35)) * 10) * 6 + (w &&& 4294967295))) * 3435973837) >>> 35) } : PancakeState σ) (.op .add (.op .add (.mul (.var "qh") (.const 4294967296)) (.mul (.var "rh") (.const 429496729))) (.var "qt")) = some (div10w w) := by
+    simp [eval, setLocal, div10w]
+  rw [seq_step o (sem_assign (oracle := o) e1 b1) (by simp),
+      seq_step o (sem_assign (oracle := o) e2 b2) (by simp),
+      seq_step o (sem_assign (oracle := o) e3 b3) (by simp),
+      seq_step o (sem_assign (oracle := o) e4 b4) (by simp),
+      seq_step o (sem_assign (oracle := o) e5 b5) (by simp),
+      seq_step o (sem_assign (oracle := o) e6 b6) (by simp),
+      seq_step o (sem_assign (oracle := o) e7 b7) (by simp)]
+  have hnf : (scratchLocals s.locals w) "n" = some w := by
+    rw [scratchLocals_ne _ _ (by decide)]; exact hn
+  have hpf : (scratchLocals s.locals w) "p" = some p0 := by
+    rw [scratchLocals_ne _ _ (by decide)]; exact hp
+  have htail := digitTail_sem (w := w) (q := div10w w) (p0 := p0) (o := o)
+    (s := { s with locals := scratchLocals s.locals w })
+    hnf hpf (scratchLocals_q s.locals w) hdm
+  refine ⟨_, htail, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp [setLocal]
+  · simp [setLocal]
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · intro x hx
+    have hxn : x ≠ "n" := by intro h; subst h; simp [scratch] at hx
+    have hxp : x ≠ "p" := by intro h; subst h; simp [scratch] at hx
+    simpa [setLocal, hxn, hxp] using scratchLocals_bound s.locals w hx
+  · intro key hkn hkp hks
+    simpa [setLocal, hkn, hkp] using scratchLocals_ne s.locals w hks
 
 theorem div10w_ofNat {m : Nat} (h : m < 2 ^ 64) :
     div10w (BitVec.ofNat 64 m) = BitVec.ofNat 64 (m / 10) := by
@@ -286,20 +499,44 @@ theorem digit_byte_eq {m : Nat} (h : m < 2 ^ 64) :
     omega
   exact BitVec.eq_of_toNat_eq this
 
-/-- The digit step in terms of the number it renders. -/
-theorem digitBody_nat (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ}
+/-- The first digit in terms of the number it renders. -/
+theorem digitFirst_nat (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ}
+    {loop : PancakeProg}
     (hn : s.locals "n" = some (BitVec.ofNat 64 m)) (hp : s.locals "p" = some p0)
     (hm : m < 2 ^ 64) (hdm : s.memaddrs (byteAlign (p0 - BitVec.ofNat 64 1)) = true) :
-    ∃ s', PancakeSem o digitBody s = (none, s') ∧
+    ∃ sb, PancakeSem o (digitTailK loop)
+          { s with locals := scratchLocals s.locals (BitVec.ofNat 64 m) }
+        = PancakeSem o loop sb ∧
+      sb.locals "n" = some (BitVec.ofNat 64 (m / 10)) ∧
+      sb.locals "p" = some (p0 - BitVec.ofNat 64 1) ∧
+      sb.clock = s.clock ∧
+      sb.memory = putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) ∧
+      sb.memaddrs = s.memaddrs ∧ sb.be = s.be ∧ sb.baseAddr = s.baseAddr ∧
+      (∀ x, x ∈ scratch → (sb.locals x).isSome = true) ∧
+      (∀ key, key ≠ "n" → key ≠ "p" → key ∉ scratch → sb.locals key = s.locals key) := by
+  obtain ⟨sb, hrun, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbb, hbfr⟩ :=
+    digitFirst_sem o (loop := loop) hn hp hdm
+  refine ⟨sb, hrun, ?_, hbp, hbclk, ?_, hbma, hbbe, hbba, hbb, hbfr⟩
+  · rw [hbn, div10w_ofNat hm]
+  · rw [hbmem, digit_byte_eq hm]
+    rfl
+
+/-- One loop iteration in terms of the number it renders. -/
+theorem digitBodyAssign_nat (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ}
+    (hn : s.locals "n" = some (BitVec.ofNat 64 m)) (hp : s.locals "p" = some p0)
+    (bound : ∀ x, x ∈ scratch → (s.locals x).isSome = true)
+    (hm : m < 2 ^ 64) (hdm : s.memaddrs (byteAlign (p0 - BitVec.ofNat 64 1)) = true) :
+    ∃ s', PancakeSem o digitBodyAssign s = (none, s') ∧
       s'.locals "n" = some (BitVec.ofNat 64 (m / 10)) ∧
       s'.locals "p" = some (p0 - BitVec.ofNat 64 1) ∧
       s'.clock = s.clock ∧
       s'.memory = putByte s.memory s.be (p0 - BitVec.ofNat 64 1) (digitByte (m % 10)) ∧
       s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.baseAddr = s.baseAddr ∧
-      (∀ key, key ≠ "n" → key ≠ "p" → s'.locals key = s.locals key) := by
-  obtain ⟨s', hrun, hn', hp', hclk', hmem', hma', hbe', hba', hfr'⟩ :=
-    digitBody_sem o hn hp hdm
-  refine ⟨s', hrun, ?_, hp', hclk', ?_, hma', hbe', hba', hfr'⟩
+      (∀ x, x ∈ scratch → (s'.locals x).isSome = true) ∧
+      (∀ key, key ≠ "n" → key ≠ "p" → key ∉ scratch → s'.locals key = s.locals key) := by
+  obtain ⟨s', hrun, hn', hp', hclk', hmem', hma', hbe', hba', hb', hfr'⟩ :=
+    digitBodyAssign_sem o hn hp bound hdm
+  refine ⟨s', hrun, ?_, hp', hclk', ?_, hma', hbe', hba', hb', hfr'⟩
   · rw [hn', div10w_ofNat hm]
   · rw [hmem', digit_byte_eq hm]
     rfl
@@ -309,8 +546,11 @@ theorem digitBody_nat (o : Oracle σ) {m : Nat} {p0 : Word} {s : PancakeState σ
 /-- Postcondition of rendering `m`'s decimal digits with end-pointer `p0`:
 `n = 0`, `p = p0 - L`, the `L = (natToDec m).length` ASCII digit bytes laid at
 `[p0 - L, p0)` most-significant first, every OTHER byte (read through
-`mem_load_byte`) and every other state field / local framed. -/
-abbrev RenderPost (m : Nat) (p0 : Word) (s0 s' : PancakeState σ) : Prop :=
+`mem_load_byte`) and every other state field / local framed. `skip` names the
+locals left out of the frame — the loop's working names, which the declarations
+around it put back. -/
+abbrev RenderPostFrame (skip : List String) (m : Nat) (p0 : Word)
+    (s0 s' : PancakeState σ) : Prop :=
   s'.locals "n" = some (0 : Word) ∧
   s'.locals "p" = some (p0 - BitVec.ofNat 64 (natToDec m).length) ∧
   (∀ j b, (natToDec m)[j]? = some b →
@@ -320,21 +560,25 @@ abbrev RenderPost (m : Nat) (p0 : Word) (s0 s' : PancakeState σ) : Prop :=
     memLoadByte s'.memory s'.memaddrs s'.be a
       = memLoadByte s0.memory s0.memaddrs s0.be a) ∧
   s'.memaddrs = s0.memaddrs ∧ s'.be = s0.be ∧ s'.baseAddr = s0.baseAddr ∧
-  (∀ key, key ≠ "n" → key ≠ "p" → s'.locals key = s0.locals key)
+  (∀ key, key ≠ "n" → key ≠ "p" → key ∉ skip → s'.locals key = s0.locals key)
 
-/-- The `m < 10` case: ONE `digitBody` (already run, post-state `sb`) IS the
+/-- The render's postcondition with every local framed. -/
+abbrev RenderPost (m : Nat) (p0 : Word) (s0 s' : PancakeState σ) : Prop :=
+  RenderPostFrame [] m p0 s0 s'
+
+/-- The `m < 10` case: ONE digit step (already run, post-state `sb`) IS the
 whole render. -/
-theorem single_digit_post {m : Nat} {p0 : Word} {s0 sb : PancakeState σ}
-    (hm10 : m < 10)
+theorem single_digit_post {skip : List String} {m : Nat} {p0 : Word}
+    {s0 sb : PancakeState σ} (hm10 : m < 10)
     (hsbn : sb.locals "n" = some (BitVec.ofNat 64 (m / 10)))
     (hsbp : sb.locals "p" = some (p0 - BitVec.ofNat 64 1))
     (hsbmem : sb.memory = putByte s0.memory s0.be (p0 - BitVec.ofNat 64 1)
       (digitByte (m % 10)))
     (hsbma : sb.memaddrs = s0.memaddrs) (hsbbe : sb.be = s0.be)
     (hsbba : sb.baseAddr = s0.baseAddr)
-    (hsbfr : ∀ key, key ≠ "n" → key ≠ "p" → sb.locals key = s0.locals key)
+    (hsbfr : ∀ key, key ≠ "n" → key ≠ "p" → key ∉ skip → sb.locals key = s0.locals key)
     (hdm1 : s0.memaddrs (byteAlign (p0 - BitVec.ofNat 64 1)) = true) :
-    RenderPost m p0 s0 sb := by
+    RenderPostFrame skip m p0 s0 sb := by
   have hL : natToDec m = [digitByte m] := natToDec_lt10 hm10
   have hLen : (natToDec m).length = 1 := by rw [hL]; rfl
   have hmod : m % 10 = m := Nat.mod_eq_of_lt hm10
@@ -359,21 +603,21 @@ theorem single_digit_post {m : Nat} {p0 : Word} {s0 sb : PancakeState σ}
     rw [hsbmem, hsbma, hsbbe]
     exact load_putByte_diff s0.memory s0.memaddrs s0.be _ _ a ha0
 
-/-- The `m ≥ 10` composition: one `digitBody` peeled the low digit into
+/-- The `m ≥ 10` composition: one digit step peeled the low digit into
 `p0 - 1` (post-state `sb`), and the recursive render of `m / 10` from `sb`
 with end-pointer `p0 - 1` reached `s'`. Together they render `m`. The peeled
 byte at `p0 - 1` SURVIVES the recursive run because the recursion writes only
 strictly below it (its frame clause + subtraction cancellation). -/
-theorem multi_digit_post {m : Nat} {p0 : Word} {s0 sb s' : PancakeState σ}
-    (hm10 : 10 ≤ m) (hm64 : m < 2 ^ 64)
+theorem multi_digit_post {skip : List String} {m : Nat} {p0 : Word}
+    {s0 sb s' : PancakeState σ} (hm10 : 10 ≤ m) (hm64 : m < 2 ^ 64)
     (hsbmem : sb.memory = putByte s0.memory s0.be (p0 - BitVec.ofNat 64 1)
       (digitByte (m % 10)))
     (hsbma : sb.memaddrs = s0.memaddrs) (hsbbe : sb.be = s0.be)
     (hsbba : sb.baseAddr = s0.baseAddr)
-    (hsbfr : ∀ key, key ≠ "n" → key ≠ "p" → sb.locals key = s0.locals key)
+    (hsbfr : ∀ key, key ≠ "n" → key ≠ "p" → key ∉ skip → sb.locals key = s0.locals key)
     (hdm1 : s0.memaddrs (byteAlign (p0 - BitVec.ofNat 64 1)) = true)
-    (hpost : RenderPost (m / 10) (p0 - BitVec.ofNat 64 1) sb s') :
-    RenderPost m p0 s0 s' := by
+    (hpost : RenderPostFrame skip (m / 10) (p0 - BitVec.ofNat 64 1) sb s') :
+    RenderPostFrame skip m p0 s0 s' := by
   obtain ⟨hn', hp', hbytes, hfr, hma', hbe', hba', hlfr⟩ := hpost
   have hsplit : natToDec m = natToDec (m / 10) ++ [digitByte (m % 10)] :=
     natToDec_split hm10
@@ -382,7 +626,7 @@ theorem multi_digit_post {m : Nat} {p0 : Word} {s0 sb s' : PancakeState σ}
     rw [hsplit]
     simp
   refine ⟨hn', ?_, ?_, ?_, hma'.trans hsbma, hbe'.trans hsbbe, hba'.trans hsbba,
-          fun key h1 h2 => (hlfr key h1 h2).trans (hsbfr key h1 h2)⟩
+          fun key h1 h2 h3 => (hlfr key h1 h2 h3).trans (hsbfr key h1 h2 h3)⟩
   · rw [hLm, sub_ofNat_succ]
     exact hp'
   · -- the byte clause
@@ -400,7 +644,7 @@ theorem multi_digit_post {m : Nat} {p0 : Word} {s0 sb s' : PancakeState σ}
             sub_ofNat_succ]
       rw [haddr]
       exact hbytes j b hjb'
-    · -- the low digit at `p0 - 1`: stored by `digitBody`, framed by the recursion
+    · -- the low digit at `p0 - 1`: stored by the digit step, framed by the recursion
       have hjlt : j < (natToDec (m / 10)).length + 1 := by
         refine (Nat.lt_or_ge j ((natToDec (m / 10)).length + 1)).elim (fun h => h)
           (fun hge => ?_)
@@ -476,19 +720,21 @@ theorem renderFuel_le_nineteen {m : Nat} (h : m < 2 ^ 64) : renderFuel m ≤ 19 
   unfold renderFuel
   omega
 /-- **The digit loop, executed.** Each iteration costs one tick and renders one digit, so
-the loop spends exactly as many ticks as `m` has digits. -/
+the loop spends exactly as many ticks as `m` has digits. The working names are in scope
+throughout, assigned rather than declared, so the loop frames every local but those. -/
 theorem digitLoop_sem (o : Oracle σ) : ∀ (k m : Nat) (p0 : Word) (s : PancakeState σ),
     (natToDec m).length ≤ k + 1 → m ≠ 0 → m < 2 ^ 64 →
     s.locals "n" = some (BitVec.ofNat 64 m) → s.locals "p" = some p0 →
+    (∀ x, x ∈ scratch → (s.locals x).isSome = true) →
     (∀ j, j < (natToDec m).length →
       s.memaddrs (byteAlign (p0 - BitVec.ofNat 64 (j + 1))) = true) →
     (natToDec m).length ≤ s.clock →
-    ∃ s', PancakeSem o (.while_ (.var "n") digitBody) s = (none, s') ∧
-      s'.clock = s.clock - (natToDec m).length ∧ RenderPost m p0 s s' := by
+    ∃ s', PancakeSem o (.while_ (.var "n") digitBodyAssign) s = (none, s') ∧
+      s'.clock = s.clock - (natToDec m).length ∧ RenderPostFrame scratch m p0 s s' := by
   intro k
   induction k with
   | zero =>
-    intro m p0 s hlen hm0 hm hn hp hdm hclk
+    intro m p0 s hlen hm0 hm hn hp hb hdm hclk
     have h10 : m < 10 := by
       rcases Nat.lt_or_ge m 10 with h | hge
       · exact h
@@ -501,8 +747,9 @@ theorem digitLoop_sem (o : Oracle σ) : ∀ (k m : Nat) (p0 : Word) (s : Pancake
     have hLpos := natToDec_length_pos m
     have hgW : eval s (.var "n") = some (BitVec.ofNat 64 m) := hn
     have hwne : (BitVec.ofNat 64 m : Word) ≠ 0 := ofNat64_ne_zero hm0 (by omega)
-    obtain ⟨sb, hbody, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbfr⟩ :=
-      digitBody_nat o (m := m) (p0 := p0) (s := decClock s) hn hp (by omega) (hdm 0 hLpos)
+    obtain ⟨sb, hbody, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbb, hbfr⟩ :=
+      digitBodyAssign_nat o (m := m) (p0 := p0) (s := decClock s) hn hp hb (by omega)
+        (hdm 0 hLpos)
     have hclk0 : s.clock ≠ 0 := by omega
     have hsbclk : sb.clock ≤ s.clock - 1 := by rw [hbclk]; exact Nat.le_refl _
     have hstep := while_iter_le o hgW hwne hclk0 hbody hsbclk
@@ -510,25 +757,24 @@ theorem digitLoop_sem (o : Oracle σ) : ∀ (k m : Nat) (p0 : Word) (s : Pancake
     have hexitg : eval sb (.var "n") = some (0 : Word) := by
       show sb.locals "n" = some (0 : Word)
       rw [hbn, hq0]; rfl
-    have hbfr' := hbfr
     refine ⟨sb, ?_, ?_, ?_⟩
     · rw [hstep]; exact while_exit o hexitg
     · have : (natToDec m).length = 1 := by rw [natToDec_lt10 h10]; rfl
       rw [this, hbclk]
       show s.clock - 1 = s.clock - 1
       rfl
-    · exact single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr' (hdm 0 hLpos)
+    · exact single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr (hdm 0 hLpos)
   | succ k ih =>
-    intro m p0 s hlen hm0 hm hn hp hdm hclk
+    intro m p0 s hlen hm0 hm hn hp hb hdm hclk
     have hLpos := natToDec_length_pos m
     have hgW : eval s (.var "n") = some (BitVec.ofNat 64 m) := hn
     have hwne : (BitVec.ofNat 64 m : Word) ≠ 0 := ofNat64_ne_zero hm0 (by omega)
-    obtain ⟨sb, hbody, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbfr⟩ :=
-      digitBody_nat o (m := m) (p0 := p0) (s := decClock s) hn hp (by omega) (hdm 0 hLpos)
+    obtain ⟨sb, hbody, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbb, hbfr⟩ :=
+      digitBodyAssign_nat o (m := m) (p0 := p0) (s := decClock s) hn hp hb (by omega)
+        (hdm 0 hLpos)
     have hclk0 : s.clock ≠ 0 := by omega
     have hsbclk : sb.clock ≤ s.clock - 1 := by rw [hbclk]; exact Nat.le_refl _
     have hstep := while_iter_le o hgW hwne hclk0 hbody hsbclk
-    have hbfr' := hbfr
     by_cases h10 : m < 10
     · have hq0 : m / 10 = 0 := Nat.div_eq_of_lt h10
       have hexitg : eval sb (.var "n") = some (0 : Word) := by
@@ -540,7 +786,7 @@ theorem digitLoop_sem (o : Oracle σ) : ∀ (k m : Nat) (p0 : Word) (s : Pancake
         rw [hone, hbclk]
         show s.clock - 1 = s.clock - 1
         rfl
-      · exact single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr' (hdm 0 hLpos)
+      · exact single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr (hdm 0 hLpos)
     · have hmq0 : m / 10 ≠ 0 := by omega
       have hLm : (natToDec m).length = (natToDec (m / 10)).length + 1 := by
         rw [natToDec_split (by omega : 10 ≤ m)]
@@ -552,17 +798,40 @@ theorem digitLoop_sem (o : Oracle σ) : ∀ (k m : Nat) (p0 : Word) (s : Pancake
         rw [hbma, ← sub_ofNat_succ]
         exact hdm (j + 1) (by omega)
       obtain ⟨s', hrun, hclk', hpost⟩ :=
-        ih (m / 10) (p0 - BitVec.ofNat 64 1) sb (by omega) hmq0 (by omega) hbn hbp hdm'
+        ih (m / 10) (p0 - BitVec.ofNat 64 1) sb (by omega) hmq0 (by omega) hbn hbp hbb hdm'
           (by rw [hbclk]; show (natToDec (m / 10)).length ≤ s.clock - 1; omega)
       refine ⟨s', ?_, ?_, ?_⟩
       · rw [hstep]; exact hrun
       · rw [hclk', hbclk, hLm]
         show s.clock - 1 - (natToDec (m / 10)).length = s.clock - ((natToDec (m / 10)).length + 1)
         omega
-      · exact multi_digit_post (by omega) (by omega) hbmem hbma hbbe hbba hbfr' (hdm 0 hLpos)
+      · exact multi_digit_post (by omega) (by omega) hbmem hbma hbbe hbba hbfr (hdm 0 hLpos)
           hpost
-/-- The whole render: one digit, then the loop for the rest. -/
-def natToDecProg : PancakeProg := .seq digitBody (.while_ (.var "n") digitBody)
+
+/-- The whole render, as the emitted block runs it: the working names declared once, the
+first digit, then the loop for the rest. -/
+def natToDecProg : PancakeProg :=
+  digitPrefix (digitTailK (.while_ (.var "n") digitBodyAssign))
+
+/-- Leaving the declarations puts the seven names back, so the whole render frames every
+local except `n` and `p`. -/
+theorem renderPost_restore {m : Nat} {p0 : Word} {s s2 : PancakeState σ}
+    (h : RenderPostFrame scratch m p0 s s2) :
+    RenderPost m p0 s { s2 with locals := restoreScratch s2.locals s.locals } := by
+  obtain ⟨hn, hp, hbytes, hfr, hma, hbe, hba, hlfr⟩ := h
+  refine ⟨?_, ?_, hbytes, hfr, hma, hbe, hba, ?_⟩
+  · show restoreScratch s2.locals s.locals "n" = _
+    rw [restoreScratch_ne _ _ (by decide)]
+    exact hn
+  · show restoreScratch s2.locals s.locals "p" = _
+    rw [restoreScratch_ne _ _ (by decide)]
+    exact hp
+  · intro key h1 h2 _
+    show restoreScratch s2.locals s.locals key = _
+    by_cases hk : key ∈ scratch
+    · rw [restoreScratch_mem _ _ hk]
+    · rw [restoreScratch_ne _ _ hk]
+      exact hlfr key h1 h2 hk
 
 /-- **The render, executed.** Every digit is written below `p0`, and the clock it spends is
 one tick per digit after the first — at most nineteen, whatever the number. -/
@@ -576,26 +845,24 @@ theorem natToDecProg_sem (o : Oracle σ) (m : Nat) (p0 : Word) (s : PancakeState
     ∃ s', PancakeSem o natToDecProg s = (none, s') ∧
       s'.clock = s.clock - renderFuel m ∧ RenderPost m p0 s s' := by
   have hLpos := natToDec_length_pos m
-  obtain ⟨sb, hbody, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbfr⟩ :=
-    digitBody_nat o (m := m) (p0 := p0) (s := s) hn hp (by omega) (hdm 0 hLpos)
-  have hbfr' := hbfr
-  have hprog : PancakeSem o natToDecProg s
-      = PancakeSem o (.while_ (.var "n") digitBody) sb :=
-    seq_step o hbody (by rw [hbclk]; exact Nat.le_refl _)
+  obtain ⟨sb, hstep, hbn, hbp, hbclk, hbmem, hbma, hbbe, hbba, hbb, hbfr⟩ :=
+    digitFirst_nat o (m := m) (p0 := p0) (s := s)
+      (loop := .while_ (.var "n") digitBodyAssign) hn hp hm64 (hdm 0 hLpos)
   by_cases h10 : m < 10
   · have hq0 : m / 10 = 0 := Nat.div_eq_of_lt h10
     have hexitg : eval sb (.var "n") = some (0 : Word) := by
       show sb.locals "n" = some (0 : Word)
       rw [hbn, hq0]; rfl
-    refine ⟨sb, ?_, ?_, ?_⟩
-    · rw [hprog]; exact while_exit o hexitg
-    · have hone : renderFuel m = 0 := by
+    refine ⟨_, digitPrefix_sem o hn (hstep.trans (while_exit o hexitg)), ?_, ?_⟩
+    · show sb.clock = _
+      have hone : renderFuel m = 0 := by
         unfold renderFuel
         rw [natToDec_lt10 h10]
         rfl
       rw [hone, hbclk]
       omega
-    · exact single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr' (hdm 0 hLpos)
+    · exact renderPost_restore
+        (single_digit_post h10 hbn hbp hbmem hbma hbbe hbba hbfr (hdm 0 hLpos))
   · have hmq0 : m / 10 ≠ 0 := by omega
     have hLm : (natToDec m).length = (natToDec (m / 10)).length + 1 := by
       rw [natToDec_split (by omega : 10 ≤ m)]
@@ -605,16 +872,17 @@ theorem natToDecProg_sem (o : Oracle σ) (m : Nat) (p0 : Word) (s : PancakeState
       intro j hj
       rw [hbma, ← sub_ofNat_succ]
       exact hdm (j + 1) (by omega)
-    obtain ⟨s', hrun, hclk', hpost⟩ :=
+    obtain ⟨s2, hrun, hclk2, hpost⟩ :=
       digitLoop_sem o (natToDec (m / 10)).length (m / 10) (p0 - BitVec.ofNat 64 1) sb
-        (by omega) hmq0 (by omega) hbn hbp hdm'
+        (by omega) hmq0 (by omega) hbn hbp hbb hdm'
         (by rw [hbclk]; unfold renderFuel at hclk; omega)
-    refine ⟨s', ?_, ?_, ?_⟩
-    · rw [hprog]; exact hrun
-    · rw [hclk', hbclk]
+    refine ⟨_, digitPrefix_sem o hn (hstep.trans hrun), ?_, ?_⟩
+    · show s2.clock = _
+      rw [hclk2, hbclk]
       unfold renderFuel
       omega
-    · exact multi_digit_post (by omega) hm64 hbmem hbma hbbe hbba hbfr' (hdm 0 hLpos) hpost
+    · exact renderPost_restore
+        (multi_digit_post (by omega) hm64 hbmem hbma hbbe hbba hbfr (hdm 0 hLpos) hpost)
 
 /-- A state with a writable window of `len` bytes below `p0`, and nothing else in range. -/
 def window (ffi : σ) (p0 : Word) (len : Nat) (m : Nat) : PancakeState σ :=

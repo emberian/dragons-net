@@ -24,8 +24,8 @@ it green.
 An inhabited precondition still needs review for semantic adequacy.
 
 The emitted sources are pinned in tests/golden. If a change to the emitter is
-intended, regenerate them with `.lake/build/bin/dn-compiler emit-region` and
-`emit-echo`, and say in the commit why the output changed.
+intended, regenerate them with `.lake/build/bin/dn-compiler emit-region`,
+`emit-echo` and `emit-render`, and say in the commit why the output changed.
 
 Read docs/baseline.md before modifying the maintained compiler subset.
 Read docs/reviews/README.md before reusing inherited compiler or reactor code;

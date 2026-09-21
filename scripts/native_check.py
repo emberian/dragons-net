@@ -14,8 +14,11 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import native_baseline as baseline  # noqa: E402 - the path above is what makes it importable
 
 
 def digest(path: Path | str) -> str:
@@ -61,9 +64,15 @@ def main() -> None:
         raise RuntimeError(f"the region object exports unexpected symbols: {stray}")
     driver = ROOT / "native/region_driver.c"
     executable = out / "region-check"
-    subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-no-pie", "-Wl,-z,noexecstack",
-                    str(driver), str(assembly), "-o", str(executable)], check=True, timeout=60)
-    result = subprocess.run([str(executable)], text=True, capture_output=True, check=True, timeout=60)
+    baseline.loud([cc, *baseline.HARDENING, "-I", str(ROOT / "native"), str(driver),
+                   str(ROOT / "native/cake_runtime.c"), str(assembly), "-o", str(executable)],
+                  timeout=60, what="linking the region check")
+    baseline.hardened(executable)
+    result = subprocess.run([str(executable)], text=True, capture_output=True, check=False,
+                            timeout=60)
+    if result.returncode:
+        raise RuntimeError(f"the region check failed with status {result.returncode}:\n"
+                           f"{result.stdout}{result.stderr}")
     measured = json.loads(result.stdout)
     if measured["vectors"] != 99240 or measured["checksum"] == 0 or measured["elapsed_ns"] <= 0:
         raise RuntimeError("native region coverage or execution evidence is incomplete")

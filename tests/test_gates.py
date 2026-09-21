@@ -957,7 +957,7 @@ class Pipeline(unittest.TestCase):
             return subprocess.run([str(binary), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo"):
+        for name in ("region", "echo", "render"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
