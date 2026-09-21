@@ -28,6 +28,7 @@ inductive PExpr
   | binop (op : POp) (l r : PExpr)   -- `l op r`
   | loadw (shape : Nat) (addr : PExpr) -- `lds <shape> <addr>` (word/shaped load)
   | loadb (addr : PExpr)             -- `ld8 <addr>` (byte load)
+  | shr (l r : PExpr)                -- `l >>> r` (logical shift right)
   deriving Repr
 
 /-- DN.Compiler statements (the emitted subset). -/
@@ -80,13 +81,14 @@ def wrapOperand (parentOp : POp) (child : PExpr) (s : String) : String :=
   | .binop cop _ _ => if isAssoc parentOp && parentOp == cop then s else "(" ++ s ++ ")"
   | .loadw _ _     => "(" ++ s ++ ")"
   | .loadb _       => "(" ++ s ++ ")"
+  | .shr _ _       => "(" ++ s ++ ")"
   | _              => s
 
 /-- Non-recursive parenthesisation for a load's address operand. -/
 def wrapAtom (child : PExpr) (s : String) : String :=
   match child with
   | .binop _ _ _ => "(" ++ s ++ ")"
-  | .loadw _ _ | .loadb _ => "(" ++ s ++ ")"
+  | .loadw _ _ | .loadb _ | .shr _ _ => "(" ++ s ++ ")"
   | _ => s
 
 /-- The expression pretty-printer. All recursive calls are on strict subterms
@@ -99,6 +101,9 @@ def ppExpr : PExpr → String
       wrapOperand op l (ppExpr l) ++ " " ++ opSym op ++ " " ++ wrapOperand op r (ppExpr r)
   | .loadw sh a => "lds " ++ toString sh ++ " " ++ wrapAtom a (ppExpr a)
   | .loadb a    => "ld8 " ++ wrapAtom a (ppExpr a)
+  -- The left operand is parenthesised because the shift level sits between `&` and `+`;
+  -- the distance is printed bare, which is the only form both pinned grammars accept.
+  | .shr l r    => "(" ++ ppExpr l ++ ") >>> " ++ ppExpr r
 
 mutual
 /-- Render one statement as a list of indented lines. -/

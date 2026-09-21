@@ -9,7 +9,7 @@ Start with the [inherited-code review and prioritized repairs](reviews/README.md
 
 1. `lean/DN/Compiler/Main.lean`, `Syntax.lean`, `Lower.lean`, `Checked.lean`, and `Abi.lean`: the actual emitted example and the supported lowering boundary.
 2. `Semantics.lean`, `Region.lean`, `Clock.lean`, and `Certificate.lean`: model execution and composition, including a certificate requiring an inhabited precondition.
-3. `ByteCopy.lean`, `ByteLit.lean`, `Decimal.lean`, `NatToDecCompile.lean`, `NatToDecFull.lean`, `LowerBridge.lean` and `LowerBridgeSem.lean`: byte-addressed writes, decimal rendering, and the bridge from the lowered program to its execution.
+3. `ByteCopy.lean`, `ByteLit.lean`, `Decimal.lean`, `Div10.lean`, `NatToDec.lean`, `LowerBridge.lean` and `LowerBridgeSem.lean`: byte-addressed writes, decimal rendering, and the bridge from the lowered program to its execution.
 4. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
 5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection.
 

@@ -246,16 +246,16 @@
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb-compiler/Pancake/NatToDecCompile.lean",
       "source_sha256": "c1ae47bc71b991f3c6d625ba8415b13c1ae7ebb7c37263645f978e5213314ba1",
-      "destination": "lean/DN/Compiler/NatToDecCompile.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+      "destination": "lean/DN/Compiler/NatToDec.lean",
+      "changes": "The divide-by-ten subtraction loop was replaced by multiplication (DN.Compiler.Div10); the render and its proofs moved into DN.Compiler.NatToDec. Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
     },
     {
       "source_repository": "breadstuffs",
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb-compiler/Pancake/NatToDecFull.lean",
       "source_sha256": "d35a0ddc8379842c7b6edb6ba5d0796eea1ad860e2af538a6df75cf5c1c5c57b",
-      "destination": "lean/DN/Compiler/NatToDecFull.lean",
-      "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+      "destination": "lean/DN/Compiler/NatToDec.lean",
+      "changes": "The divide-by-ten subtraction loop was replaced by multiplication (DN.Compiler.Div10); the render and its proofs moved into DN.Compiler.NatToDec. Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
     },
     {
       "source_repository": "breadstuffs",

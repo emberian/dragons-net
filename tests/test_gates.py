@@ -962,7 +962,7 @@ class Pipeline(unittest.TestCase):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "0ba3e8eda6237f1a8433fdec4e92c24bca1701422b57ab870d0f1360881e67f9")
+                         "51082f8e08484077f5ad9bc2cd59f060e23a0e9381a4353353fe569dfee6113a")
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

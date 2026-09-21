@@ -20,6 +20,7 @@ inductive Reason
   | unboundVariable     -- a read of a name that is not in scope
   | baseAddress         -- the FFI control-block pointer
   | loadShape           -- a load of something other than one word
+  | shiftAmount         -- a shift that is not a literal below one word
   | declarationName     -- a declared name that is not an identifier
   | redeclaration       -- a name declared while already in scope
   | unboundAssignment   -- an assignment to a name that is not in scope
@@ -41,6 +42,7 @@ def Reason.message : Reason → String
   | .unboundVariable => "variable not in scope"
   | .baseAddress => "base address is outside the exported profile"
   | .loadShape => "load of a shape other than one word"
+  | .shiftAmount => "shift by other than a literal below one word"
   | .declarationName => "invalid declared name"
   | .redeclaration => "name already in scope"
   | .unboundAssignment => "assignment to a variable not in scope"
@@ -74,6 +76,12 @@ def expression (scope : List String) : PExpr → Except Reason Unit
   | .binop _ a b => do expression scope a; expression scope b
   | .loadw sh a => if sh == 1 then expression scope a else .error .loadShape
   | .loadb a => expression scope a
+  -- The semantics has no value for a nonzero shift of a whole word or more, so the
+  -- distance has to be a literal the gate can see.
+  | .shr l r =>
+    match r with
+    | .const n => if n < 64 then expression scope l else .error .shiftAmount
+    | _ => .error .shiftAmount
 
 mutual
 /-- Statements after which control never reaches the next one. The compiler requires a body
@@ -177,6 +185,17 @@ theorem expression_lowers {scope : List String} :
     cases hLa : lowerExp a with
     | none => rw [hLa] at ha; simp at ha
     | some a' => simp [lowerExp, hLa]
+  | shr l r ihl ihr =>
+    intro h
+    simp only [expression] at h
+    split at h
+    · split at h
+      · have hl := ihl h
+        cases hLl : lowerExp l with
+        | none => rw [hLl] at hl; simp at hl
+        | some l' => simp [lowerExp, hLl]
+      · simp at h
+    · simp at h
 
 private theorem exp_some {scope : List String} {e : PExpr} (h : expression scope e = .ok ()) :
     ∃ v, lowerExp e = some v := by
@@ -335,6 +354,8 @@ def catalog : List RuleCase :=
    { reason := .baseAddress, rejected := scalar [.ret .base], accepted := scalar body1 },
    { reason := .loadShape, rejected := scalar [.ret (.loadw 2 (.var "a"))],
      accepted := scalar [.ret (.loadw 1 (.var "a"))] },
+   { reason := .shiftAmount, rejected := scalar [.ret (.shr (.var "a") (.const 64))],
+     accepted := scalar [.ret (.shr (.var "a") (.const 63))] },
    { reason := .declarationName, rejected := scalar [.dec "1x" (.var "a"), .ret (.var "a")],
      accepted := scalar [.dec "x" (.var "a"), .ret (.var "x")] },
    { reason := .redeclaration,

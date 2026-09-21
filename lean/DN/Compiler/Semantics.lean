@@ -215,6 +215,7 @@ inductive PancakeExp
   | cmp      (c : Cmp) (l r : PancakeExp)     -- `Cmp Less/Equal/NotLess l r` (Less/NotLess SIGNED)
   | loadByte (addr : PancakeExp)              -- `LoadByte addr`
   | loadWord (addr : PancakeExp)              -- `Load One addr`
+  | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
 deriving Repr
 
 /-- `word_cmp Less` = HOL `word_lt` = SIGNED comparison. In Lean `BitVec.slt` is
@@ -238,6 +239,14 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
   | .mul l r =>
     match eval s l, eval s r with
     | some a, some b => some (a * b)  -- `pan_op Mul [a;b] = SOME (a*b)` (pan_op_def)
+    | _, _ => none
+  -- `Shift sh e1 e2 = OPTION_MAP ValWord (word_sh sh w1 (w2n w2))`, and `word_sh`
+  -- has no value for a nonzero shift of a whole word or more.
+  | .shiftR l r =>
+    match eval s l, eval s r with
+    | some a, some b =>
+      let places := b.toNat
+      if places ≠ 0 && places ≥ 64 then none else some (a >>> places)
     | _, _ => none
   | .cmp .less l r =>
     match eval s l, eval s r with
@@ -492,6 +501,29 @@ theorem eval_unbound_var_is_none (ffi : σ) : eval (bareState ffi) (.var "x") = 
 /-- An operand without a value leaves the operator without one. -/
 theorem eval_op_of_none (ffi : σ) :
     eval (bareState ffi) (.op .add (.var "x") (.const 1)) = none := rfl
+
+/-- A shift of a whole word or more has no value, as in `word_sh`. The zero case is
+spelled out because `word_sh` states it separately, not because it is special here. -/
+theorem eval_shiftR_whole_word_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 1) (.const 64)) = none := rfl
+
+theorem eval_shiftR_by_zero (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 7) (.const 0)) = some 7 := rfl
+
+/-- The shift goes right and drops the bits it passes, which a left shift would not. -/
+theorem eval_shiftR_value (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 0x1234) (.const 4)) = some 0x123 := rfl
+
+/-- It is the logical shift: the sign bit does not fill in behind it. -/
+theorem eval_shiftR_is_logical (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 0x8000000000000000) (.const 63)) = some 1 := rfl
+
+/-- A distance far beyond the word has no value either. -/
+theorem eval_shiftR_huge_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 1) (.const 0xFFFFFFFFFFFFFFFF)) = none := rfl
+
+theorem eval_shiftR_of_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.var "x") (.const 1)) = none := rfl
 
 /-- Loading a byte outside the memory domain has no value. -/
 theorem eval_loadByte_outside_domain (ffi : σ) :

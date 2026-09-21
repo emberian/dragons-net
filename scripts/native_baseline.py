@@ -35,8 +35,11 @@ def reference(expr: Any, a: int, b: int) -> int:
         return {"a": a, "b": b}[expr]
     op, lhs, rhs = expr
     x, y = reference(lhs, a, b), reference(rhs, a, b)
+    if op == ">>>" and y >= 64:
+        raise ValueError("the model gives a shift of a whole word or more no value")
     results = {"+": (x + y) & MASK, "-": (x - y) & MASK, "*": (x * y) & MASK, "&": x & y,
-               "<": int(signed(x) < signed(y)), "<=": int(signed(x) <= signed(y)), "==": int(x == y)}
+               "<": int(signed(x) < signed(y)), "<=": int(signed(x) <= signed(y)), "==": int(x == y),
+               ">>>": (x >> y) & MASK}
     if op not in results:
         raise ValueError(op)
     return results[op]
@@ -158,7 +161,7 @@ def main() -> None:
         (out / name).write_bytes(data)
     fixture = json.loads((out / "baseline.json").read_text())
     cases, values = fixture["cases"], fixture["values"]
-    if len(cases) != 108 or len(values) != 192:
+    if len(cases) != 113 or len(values) != 192:
         raise RuntimeError("unexpected differential fixture coverage")
     expected = [[reference(case["expression"], a, b) for a, b in values] for case in cases]
     for i, row in enumerate(expected):

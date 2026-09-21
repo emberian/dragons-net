@@ -20,7 +20,7 @@ runs on a schedule.
 | --- | --- | --- |
 | `semantics/ffi/ffiScript.sml` | CakeML | `e8eca63`, `ed31510` (identical text) |
 | `pancake/semantics/panSemScript.sml` | CakeML | `e8eca63`, `ed31510` |
-| `pancake/panLangScript.sml` | CakeML | `e8eca63` |
+| `pancake/panLangScript.sml` | CakeML | `e8eca63`, `ed31510` (the `Shift` node differs) |
 | `misc/miscScript.sml` (`read_bytearray`) | CakeML | `e8eca63` |
 | `compiler/backend/wordLangScript.sml` (`word_op`) | CakeML | `e8eca63` |
 | `compiler/encoders/asm/asmScript.sml` (`word_cmp`) | CakeML | `e8eca63` |
@@ -29,9 +29,16 @@ runs on a schedule.
 
 `e8eca63` is the source revision of the release compiler the native lane runs;
 `ed31510` is the revision the curated backend patch applies to. The two differ in
-function calls (return shapes in `code` and `lookup_code`), in `Shift`, in an
-exception declaration and in the type of `code`, none of which this subset
-models; every clause below is the same text on both.
+function calls (return shapes in `code` and `lookup_code`), in an exception
+declaration, in the type of `code` — none of which this subset models — and in
+`Shift`, which it does. Every other clause below is the same text on both.
+
+`Shift` is the one clause that differs: at `e8eca63` it is `Shift sh e1 e2`, whose
+distance is an expression read through `w2n`, and at `ed31510` it is `Shift sh e n`,
+whose distance is a literal. The model follows `e8eca63`, the revision the native
+lane compiles with, and the gate only accepts a literal distance, so the emitted
+programs stay inside the form both grammars accept: the distance is printed bare,
+because at `ed31510` the parser takes a literal there and nothing else.
 
 ## The modelled subset
 
@@ -43,8 +50,9 @@ constructor for the rest.
 Left out of `panLang$prog`: `Call`, `DecCall`, `Primitive`, `Raise`, `Tick`,
 `Annot`, `Break`, `Continue`, `Store32`, `ShMemLoad`, `ShMemStore`. Left out of
 `panLang$exp`: structs (`RStruct`, `RField`, `NStruct`, `NField`), `Load` of a
-shape other than one word, `Load32`, `Panop` other than multiplication, `Shift`,
-`TopAddr`, `BytesInWord`, and `Var Global`. Left out of the state: `globals`,
+shape other than one word, `Load32`, `Panop` other than multiplication, `TopAddr`,
+`BytesInWord`, and `Var Global`. Of `Shift`, only the logical right shift (`Lsr`) is
+modelled; `Lsl`, `Asr` and `Ror` are not. Left out of the state: `globals`,
 `structs`, `code`, `eshapes`, `sh_memaddrs`, `top_addr`.
 
 Values are words: every value the subset produces has shape `One`, so the shape
@@ -63,6 +71,7 @@ never stores a label.
 | `Panop Mul [a;b]` | `.mul` | same |
 | `Cmp cmp e1 e2` (`Less`, `Equal`, `NotLess`) | `.cmp` | same, including that `Less`/`NotLess` are signed |
 | `LoadByte addr` | `.loadByte` | same: out of domain has no value |
+| `Shift Lsr e1 e2` | `.shiftR` | same at `e8eca63`, including that a nonzero shift of a whole word or more has no value |
 | `Load One addr` | `.loadWord` | same: out of domain has no value |
 
 ## Programs (`evaluate_def`)

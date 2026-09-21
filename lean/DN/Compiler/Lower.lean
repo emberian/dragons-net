@@ -47,6 +47,10 @@ def lowerExp : PExpr → Option PancakeExp
     match lowerExp a with
     | some a' => some (.loadByte a')
     | none    => none
+  | .shr l r     =>
+    match lowerExp l, lowerExp r with
+    | some l', some r' => some (.shiftR l' r')
+    | _, _             => none
 
 mutual
 /-- Lower a single non-`dec` statement (the `dec` scoping is handled by

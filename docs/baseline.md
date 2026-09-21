@@ -20,12 +20,12 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,253 declarations, including 2,060 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
-| Executable examples | 56 executable cases | Examples, not proofs or a complete workload inventory |
-| Arithmetic differential tests | 108 expression shapes × 192 input pairs, all seven current operators, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,284 declarations, including 2,083 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Executable examples | 61 executable cases | Examples, not proofs or a complete workload inventory |
+| Arithmetic differential tests | 113 expression shapes × 192 input pairs, all seven current operators and the logical right shift at its boundaries, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 384 cases over two workloads: locals, branches, assignments, loops, early return, and returns in an `else` branch at the top level and inside a loop | Two structured control workloads |
-| Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 21,120 cases | Shared assumptions about the intended word semantics still need review |
+| Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 22,080 cases | Shared assumptions about the intended word semantics still need review |
 | ABI adapter | Full-word output slots checked in the model and native execution, with native guard words | Output pointer alignment, writability, and disjointness are caller obligations |
 | Region kernel | 99,240 native/reference comparisons, including 196 extreme-range cases; invalid inputs receive a protected buffer | Caller must report the real allocation length and supply valid control/output pointers |
 | Copy kernel | 6,215 cases: byte offsets, lengths through 4 KiB, preserved surrounding bytes, protected pointers on rejection | Requires disjoint source/destination; not memmove |
@@ -60,6 +60,23 @@ An unapproved axiom inside a `DN` definition could previously escape if no audit
 What the gate accepts, the compiler must accept silently: every accepted example of the catalog is compiled in the native lane and any diagnostic fails the build. The gate is not a copy of the compiler's own analyses, though. It does not reproduce the check that a store address is derived from a pointer the caller supplied, so a program storing through a literal address passes the gate and is then refused by the build for the compiler's warning rather than by the gate. Treat the diagnostics as the boundary of the profile, not the gate alone.
 
 The keyword list is not written by hand: `scripts/gen_keywords.py` generates `DN.Compiler.Keywords` from `get_keyword_def` in the Pancake lexer of each pinned revision, the scheduled job regenerates it and fails on a difference, and the native lane checks the table against the compiler it actually runs — a word the table calls a keyword must be refused as a name, and a word it records only for the other revision must be accepted. Two details of the lexer matter to anyone writing `.pnk` by hand: `@base`, `@top` and `@biw` are keywords only with the `@` (and `@top` lexes to the same token as `@base`), and a leading digit in a declaration is read as a shape, so `var 1x = a;` silently declares `x`.
+
+### Decimal rendering took time proportional to the number
+
+The digit loop divided by ten by repeated subtraction, so rendering `m` cost about `m/10`
+iterations: 238,609,298 of them for the largest article number RFC 3977 allows. Pancake has
+no division and its multiplication yields only the low half of a product, so the quotient is
+now built from two multiplications by `3435973837`, one per half of the word, with
+`2^32 = 429496729 * 10 + 6` carrying the remainder between them (`DN.Compiler.Div10`). The
+correspondence with division is proven for every machine word, and a separate theorem
+states that no intermediate product overflows (`Div10.div10w_products_fit`), which is why
+Pancake's truncating multiplication loses nothing here.
+
+A digit now costs no clock at all — the model spends clock only in loops — so the render
+spends one tick per digit after the first, and never more than nineteen for any machine
+word (`NatToDec.natToDecProg_sem` with `renderFuel_le_nineteen`); two theorems run it on a
+concrete state, for 404 and for zero. The rendering specification and its byte-level
+postcondition are the ones that were there before.
 
 ## Which parts should Wisper trust enough to build on?
 

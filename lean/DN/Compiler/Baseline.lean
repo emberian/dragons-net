@@ -16,7 +16,10 @@ def expressions : List PExpr :=
     [.binop o (.binop p (v "a") (v "b")) (n 3),
      .binop o (v "a") (.binop p (v "b") (n 3))])) ++
   [n (2^64-1), eAdd (v "a") (n (2^64-1)),
-   eSub (v "a") (eSub (v "b") (n 1))]
+   eSub (v "a") (eSub (v "b") (n 1))] ++
+  -- the shift, the one operator the decimal render adds, at its boundaries
+  [.shr (v "a") (n 0), .shr (v "a") (n 1), .shr (v "a") (n 35), .shr (v "a") (n 63),
+   .shr (.binop .mul (v "a") (n 3435973837)) (n 35)]
 
 def boundaries : List Nat := [0, 1, 2, 255, 2^32, 2^63-1, 2^63, 2^64-1]
 def values : List (Nat × Nat) :=
@@ -35,6 +38,7 @@ def exprJson : PExpr → Json
   | .var x => toJson x
   | .const x => toJson x
   | .binop o a b => Json.arr #[toJson (opSym o), exprJson a, exprJson b]
+  | .shr a b => Json.arr #[toJson ">>>", exprJson a, exprJson b]
   | _ => Json.null -- no loads in this arithmetic fixture family
 
 def functions : List PFun := expressions.zipIdx |>.map (fun (e, i) =>

@@ -4,7 +4,7 @@
 
 Decimal rendering of a natural number as ASCII bytes, with the round trip that
 reading the rendered digits back recovers the number. The Pancake program that
-performs this rendering is in `DN.Compiler.NatToDecCompile`.
+performs this rendering is in `DN.Compiler.NatToDec`.
 -/
 
 namespace DN.Compiler.Decimal

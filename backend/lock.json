@@ -53,6 +53,12 @@
     },
     {
       "component": "cakeml",
+      "path": "pancake/panLangScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "743709b9cf3f34decbe2de9a3f9338a02a5e287941bce3daab8501b35b3885d7"
+    },
+    {
+      "component": "cakeml",
       "path": "misc/miscScript.sml",
       "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
       "sha256": "a2cf2e076954319bdaf1627bc50994c62d009fcba07cd83eddd62af4f8a23286"
