@@ -66,6 +66,8 @@ whole-reactor safety claims.
 
 namespace DN.Dataplane.Io
 
+variable {α ρ : Type}
+
 /-- An emitted completion: the correlator it was delivered under, the operation
 it finishes, and the kernel result. -/
 structure Completion (α ρ : Type) where
@@ -85,8 +87,11 @@ structure RState (α ρ : Type) where
   /-- Emitted completions, newest first. -/
   done : List (Completion α ρ)
 
-/-- The reserved wakeup-sentinel correlator (index 0): never a live slab key, so
-an inline completion cannot be confused with a real slot's completion. -/
+/-- The reserved wakeup-sentinel correlator (index 0). `Slab.allocAt` never
+allocates index 0, `Slab.Reserved` is preserved by insert and remove, and
+`slab_index0_reserved` turns that into `get = none`, so this correlator cannot
+denote a live slot. Reserving it is this application's convention: the kernel
+treats a completion's user data as opaque bytes and reserves nothing. -/
 def sentinelKey : Key := ⟨0, 0⟩
 
 /-- **Submit**: register an operation, returning its fresh correlator and the new
@@ -235,13 +240,16 @@ private def inlineVsDeferred : Bool :=
 def regression_228 : Bool := decide (inlineVsDeferred == true
   )
 
--- A stale completion (wrong generation) is rejected: emits nothing.
-private def staleRejected : Nat :=
-  let (k, s1) := r0.submit 100
-  let s2 := s1.complete k 7          -- k's slot recycled here
-  (s2.complete k 9).done.length      -- second complete on stale k: no emission
+-- A correlator whose slot has been reused is rejected. The second component
+-- records that the reuse really happened: without it the test would pass on a
+-- slab that never recycles the index.
+private def staleAfterReuse : Nat × Bool :=
+  let (kA, s1) := r0.submit 100
+  let s2 := s1.complete kA 7         -- kA's slot is free again here
+  let (kB, s3) := s2.submit 200      -- same index, newer generation
+  ((s3.complete kA 9).done.length, kB.idx == kA.idx)
 
-def regression_236 : Bool := decide (staleRejected == 1
+def regression_236 : Bool := decide (staleAfterReuse == (1, true)
   )
 
 end DN.Dataplane.Io

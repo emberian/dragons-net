@@ -5,6 +5,15 @@
 
 Source provenance is in docs/provenance.json; assurance boundaries are in
 docs/assurance.md.
+
+Two races live here. The first is the Dekker handshake between a producer
+posting a wakeup and a reactor deciding to sleep (`wake_no_lost`). The second is
+the drain itself: a reactor that reads its queue before clearing the wakeup flag
+leaves a window where the producer skips the doorbell and the message is never
+looked at (`clear_then_read_no_lost`, `read_then_clear_loses`). Both are proven
+over every program-order-respecting interleaving of the two threads, under
+sequentially consistent ordering; reordering inside a thread is outside the
+model.
 -/
 
 namespace DN.Dataplane.Io.Wake
@@ -210,6 +219,144 @@ def regression_245 : Bool := decide (delivered (runSchedule [Ev.RW, Ev.RR, Ev.PW
 
 -- The wrong (check-before-announce) reactor order loses this one.
 def regression_248 : Bool := decide (delivered (runSchedule [Ev.RR, Ev.PW, Ev.PR, Ev.RW]) == false
+  )
+
+/-! ## The second race: the queue and the flag
+
+The flags above answer "may the reactor sleep?". They do not answer "did the
+reactor see the message?", because the model has no queue and never clears
+`pending`. The real loss lives in the clearing: a reactor that reads its queue
+*before* clearing the flag leaves a window in which a producer sees the flag
+still raised, skips the doorbell, and enqueues a message nobody will look at.
+The events below add the queue and split the drain into its two writes, so both
+orders are expressible and one of them is refuted. -/
+
+/-- The operations of one round once the message queue is part of the state.
+`Enq` publishes a message; `PW` is the producer's `swap` on the wakeup flag; `PR`
+its read of `mightBlock`; `RC` the reactor clearing the flag; `RD` its read of
+the queue; `RW` its announcement that it might block; `RR` its last look at the
+flag. -/
+inductive QEv | Enq | PW | PR | RC | RD | RW | RR
+deriving DecidableEq, Repr
+
+/-- What a run of one round observes: how many messages were published and how
+many the reactor took, the two flags, and what each side saw. -/
+structure QSim where
+  /-- Messages the producer has published. -/
+  queue        : Nat
+  /-- Messages the reactor has taken. -/
+  seen         : Nat
+  /-- The wakeup flag. -/
+  pending      : Bool
+  /-- The reactor's announcement that it may block. -/
+  mightBlock   : Bool
+  /-- The producer's `swap` result: it performed the false→true transition. -/
+  owner        : Bool
+  /-- What the producer read from `mightBlock`. -/
+  prSawMB      : Bool
+  /-- What the reactor read from `pending`. -/
+  rrSawPending : Bool
+deriving Repr
+
+def QSim.init : QSim := ⟨0, 0, false, false, false, false, false⟩
+
+/-- One atomic operation, sequentially consistent. -/
+def qstep (s : QSim) : QEv → QSim
+  | .Enq => { s with queue := s.queue + 1 }
+  | .PW => { s with owner := !s.pending, pending := true }
+  | .PR => { s with prSawMB := s.mightBlock }
+  | .RC => { s with pending := false }
+  | .RD => { s with seen := s.queue }
+  | .RW => { s with mightBlock := true }
+  | .RR => { s with rrSawPending := s.pending }
+
+/-- Run a whole schedule from the empty state. -/
+def qrun (sch : List QEv) : QSim := sch.foldl qstep QSim.init
+
+/-- The message is not dropped silently: either the reactor already took
+everything published, or it will not go to sleep without looking again — the
+producer rang the doorbell, or the reactor saw the flag on its last read. It
+does **not** say the reactor has read the message: in most schedules the second
+disjunct is what holds. -/
+def noLost (s : QSim) : Bool :=
+  (s.seen == s.queue) || ((s.owner && s.prSawMB) || s.rrSawPending)
+
+/-- Program-order-respecting interleaving, as for `IL` above. -/
+inductive QIL : List QEv → List QEv → List QEv → Prop
+  | nil : QIL [] [] []
+  | left  {a as bs cs} : QIL as bs cs → QIL (a :: as) bs (a :: cs)
+  | right {b as bs cs} : QIL as bs cs → QIL as (b :: bs) (b :: cs)
+
+/-- Merges of `a :: as` with the reactor's remaining events, recursing on the
+latter. Split out so that both recursions are structural and the enumeration
+reduces in the kernel. -/
+def mergesAux (f : List QEv → List (List QEv)) (a : QEv) (as : List QEv) :
+    List QEv → List (List QEv)
+  | [] => [a :: as]
+  | b :: bs => (f (b :: bs)).map (a :: ·) ++ (mergesAux f a as bs).map (b :: ·)
+
+/-- Every program-order-respecting merge of two schedules. -/
+def merges : List QEv → List QEv → List (List QEv)
+  | [], bs => [bs]
+  | a :: as, bs => mergesAux (merges as) a as bs
+
+theorem merges_nil_right (as : List QEv) : merges as [] = [as] := by
+  cases as <;> rfl
+
+theorem merges_cons_cons (a b : QEv) (as bs : List QEv) :
+    merges (a :: as) (b :: bs)
+      = (merges as (b :: bs)).map (a :: ·) ++ (merges (a :: as) bs).map (b :: ·) := rfl
+
+theorem mem_merges_of_QIL : ∀ {as bs sch}, QIL as bs sch → sch ∈ merges as bs := by
+  intro as bs sch h
+  induction h with
+  | nil => simp [merges]
+  | @left a as bs cs _ ih =>
+      cases bs with
+      | nil =>
+          rw [merges_nil_right] at ih ⊢
+          simp at ih
+          simp [ih]
+      | cons b bs =>
+          rw [merges_cons_cons]
+          exact List.mem_append_left _ (List.mem_map_of_mem ih)
+  | @right b as bs cs _ ih =>
+      cases as with
+      | nil =>
+          simp [merges] at ih ⊢
+          simp [ih]
+      | cons a as =>
+          rw [merges_cons_cons]
+          exact List.mem_append_right _ (List.mem_map_of_mem ih)
+
+/-- All 35 schedules of the correct round satisfy `noLost`. -/
+theorem merges_all_no_lost :
+    (merges [.Enq, .PW, .PR] [.RC, .RD, .RW, .RR]).all (fun sch => noLost (qrun sch))
+      = true := by decide
+
+/-- Clear the flag, then read the queue: on every schedule of one producer round
+against one reactor round, the message is not dropped silently. -/
+theorem clear_then_read_no_lost {sch : List QEv}
+    (h : QIL [.Enq, .PW, .PR] [.RC, .RD, .RW, .RR] sch) : noLost (qrun sch) = true :=
+  List.all_eq_true.mp merges_all_no_lost sch (mem_merges_of_QIL h)
+
+/-- Read the queue, then clear the flag: two of the 35 schedules drop the
+message — the reactor never took it and will sleep without looking again. -/
+theorem read_then_clear_loses :
+    QIL [.Enq, .PW, .PR] [.RD, .RC, .RW, .RR] [.RD, .Enq, .PW, .PR, .RC, .RW, .RR] ∧
+      noLost (qrun [.RD, .Enq, .PW, .PR, .RC, .RW, .RR]) = false :=
+  ⟨.right (.left (.left (.left (.right (.right (.right .nil)))))), by decide⟩
+
+-- Every schedule of the correct order keeps the message; the wrong order has a
+-- schedule that drops it.
+def regression_249 : Bool := decide ((merges [QEv.Enq, QEv.PW, QEv.PR]
+    [QEv.RC, QEv.RD, QEv.RW, QEv.RR]).length == 35
+  )
+def regression_250 : Bool := decide ((merges [QEv.Enq, QEv.PW, QEv.PR]
+    [QEv.RC, QEv.RD, QEv.RW, QEv.RR]).all (fun sch => noLost (qrun sch)) == true
+  )
+def regression_251 : Bool := decide (noLost (qrun [QEv.RD, QEv.Enq, QEv.PW, QEv.PR,
+    QEv.RC, QEv.RW, QEv.RR]) == false
   )
 
 end DN.Dataplane.Io.Wake

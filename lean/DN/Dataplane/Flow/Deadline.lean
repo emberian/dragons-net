@@ -10,6 +10,9 @@ docs/assurance.md.
 
 namespace DN.Dataplane.Flow
 
+universe u
+variable {κ : Type u}
+
 /-- The nearest deadline in a list, if any. -/
 def nearest? (l : List (κ × Nat)) : Option Nat :=
   l.foldr
@@ -41,7 +44,7 @@ theorem nearest?_le {l : List (κ × Nat)} {k : κ} {d : Nat}
       exact ⟨min e.2 t, by rw [nearest?_cons, ht], by omega⟩
 
 /-- The keyed deadline queue. `live` is the authoritative key → deadline
-map (unique keys by construction); `armed` records the deadline that the model
+map (keys unique: `Inv.unique`); `armed` records the deadline that the model
 requests for its single timer. This file does not model the syscall, an arm
 failure, or eventual timer delivery. `armed` may be *earlier* than every live
 deadline (a lazy-deletion tombstone's timer) — never later. -/
@@ -80,38 +83,63 @@ def DeadlineQueue.step [DecidableEq κ] (s : DeadlineQueue κ) :
     ({ live := rest, armed := nearest? rest },
      (s.live.filter (fun e => e.2 ≤ now)).map Prod.fst)
 
-/-- **The requested-arm ordering invariant**: every live deadline has an
-`armed` value at or before it. (In particular: live nonempty → the model records
-a requested arm.) This is not a syscall-success or timer-progress property. -/
-def DeadlineQueue.Inv (s : DeadlineQueue κ) : Prop :=
-  ∀ k d, (k, d) ∈ s.live → ∃ t, s.armed = some t ∧ t ≤ d
+/-- **The queue invariant.** `armed`: every live deadline has an `armed` value at
+or before it (in particular, live nonempty → the model records a requested arm).
+`unique`: a key carries at most one deadline, which the "unique keys by
+construction" comment above asserted but nothing proved. Neither is a
+syscall-success or timer-progress property. -/
+structure DeadlineQueue.Inv (s : DeadlineQueue κ) : Prop where
+  /-- The requested arm is at or before every live deadline. -/
+  armed : ∀ k d, (k, d) ∈ s.live → ∃ t, s.armed = some t ∧ t ≤ d
+  /-- A key appears with at most one deadline. -/
+  unique : ∀ k d d', (k, d) ∈ s.live → (k, d') ∈ s.live → d = d'
 
-theorem DeadlineQueue.init_inv : (DeadlineQueue.init : DeadlineQueue κ).Inv :=
-  fun _ _ h => absurd h (List.not_mem_nil)
+theorem DeadlineQueue.init_inv : (DeadlineQueue.init : DeadlineQueue κ).Inv where
+  armed _ _ h := absurd h (List.not_mem_nil)
+  unique _ _ _ h _ := absurd h (List.not_mem_nil)
 
-/-- **Preservation**: set, lazy remove, and fire all preserve requested-arm
-ordering. -/
+/-- **Preservation**: set, lazy remove, and fire all preserve both halves of the
+invariant — the requested-arm ordering and the uniqueness of keys. -/
 theorem DeadlineQueue.step_inv [DecidableEq κ] (s : DeadlineQueue κ)
     (e : DeadlineEv κ) (h : s.Inv) : (s.step e).1.Inv := by
   cases e with
   | set k d =>
-    intro k' d' hmem
-    simp only [step, List.mem_cons] at hmem
-    rcases hmem with heq | hmem
-    · cases heq
-      cases ha : s.armed with
-      | none => exact ⟨d, by simp [step, ha], Nat.le_refl d⟩
-      | some t => exact ⟨min t d, by simp [step, ha], by omega⟩
-    · rcases h k' d' ((List.mem_filter.mp hmem).1) with ⟨t, hat, hle⟩
-      exact ⟨min t d, by simp [step, hat], by omega⟩
+    refine ⟨?_, ?_⟩
+    · intro k' d' hmem
+      simp only [step, List.mem_cons] at hmem
+      rcases hmem with heq | hmem
+      · cases heq
+        cases ha : s.armed with
+        | none => exact ⟨d, by simp [step, ha], Nat.le_refl d⟩
+        | some t => exact ⟨min t d, by simp [step, ha], by omega⟩
+      · rcases h.armed k' d' ((List.mem_filter.mp hmem).1) with ⟨t, hat, hle⟩
+        exact ⟨min t d, by simp [step, hat], by omega⟩
+    · intro k' d₁ d₂ h₁ h₂
+      simp only [step, List.mem_cons, Prod.mk.injEq, List.mem_filter,
+        decide_eq_true_eq] at h₁ h₂
+      rcases h₁ with ⟨hk₁, hd₁⟩ | ⟨hm₁, hne₁⟩
+      · rcases h₂ with ⟨_, hd₂⟩ | ⟨_, hne₂⟩
+        · rw [hd₁, hd₂]
+        · exact absurd hk₁ hne₂
+      · rcases h₂ with ⟨hk₂, _⟩ | ⟨hm₂, _⟩
+        · exact absurd hk₂ hne₁
+        · exact h.unique k' d₁ d₂ hm₁ hm₂
   | remove k =>
-    intro k' d' hmem
-    simp only [step] at hmem ⊢
-    exact h k' d' ((List.mem_filter.mp hmem).1)
+    refine ⟨?_, ?_⟩
+    · intro k' d' hmem
+      simp only [step] at hmem ⊢
+      exact h.armed k' d' ((List.mem_filter.mp hmem).1)
+    · intro k' d₁ d₂ h₁ h₂
+      simp only [step] at h₁ h₂
+      exact h.unique k' d₁ d₂ (List.mem_filter.mp h₁).1 (List.mem_filter.mp h₂).1
   | fire now =>
-    intro k' d' hmem
-    simp only [step] at hmem ⊢
-    exact nearest?_le hmem
+    refine ⟨?_, ?_⟩
+    · intro k' d' hmem
+      simp only [step] at hmem ⊢
+      exact nearest?_le hmem
+    · intro k' d₁ d₂ h₁ h₂
+      simp only [step] at h₁ h₂
+      exact h.unique k' d₁ d₂ (List.mem_filter.mp h₁).1 (List.mem_filter.mp h₂).1
 
 /-- Run a trace of events. -/
 def DeadlineQueue.run [DecidableEq κ] (s : DeadlineQueue κ) :
@@ -146,12 +174,22 @@ theorem DeadlineQueue.fire_expires_iff [DecidableEq κ]
 regardless of what the (adversarial) clock input does. -/
 theorem DeadlineQueue.no_early_expiry [DecidableEq κ]
     (s : DeadlineQueue κ) (now : Nat) (k : κ) (d : Nat)
-    (_hmem : (k, d) ∈ s.live) (hkd : ∀ d', (k, d') ∈ s.live → d' = d)
-    (hfut : now < d) : k ∉ (s.step (.fire now)).2 := by
+    (huniq : ∀ k d d', (k, d) ∈ s.live → (k, d') ∈ s.live → d = d')
+    (hmem : (k, d) ∈ s.live) (hfut : now < d) : k ∉ (s.step (.fire now)).2 := by
   intro hexp
   rcases (fire_expires_iff s now k).mp hexp with ⟨d', hmem', hle⟩
-  have := hkd d' hmem'
+  have := huniq k d' d hmem' hmem
   omega
+
+/-- The same for any trace from the empty queue. The key-uniqueness side
+condition used to be the caller's obligation; it is now part of the invariant
+every reachable state carries. -/
+theorem DeadlineQueue.no_early_expiry_run [DecidableEq κ] (es : List (DeadlineEv κ))
+    (now : Nat) (k : κ) (d : Nat)
+    (hmem : (k, d) ∈ ((DeadlineQueue.init : DeadlineQueue κ).run es).live)
+    (hfut : now < d) :
+    k ∉ (((DeadlineQueue.init : DeadlineQueue κ).run es).step (.fire now)).2 :=
+  no_early_expiry _ now k d (run_init_inv es).unique hmem hfut
 
 /-- **No lost deadline**: after a fire, every previously live entry either
 expired (deadline ≤ now) or is still live with its deadline intact. -/
@@ -166,14 +204,23 @@ theorem DeadlineQueue.fire_partitions [DecidableEq κ]
     simp only [step, List.mem_filter]
     exact ⟨hmem, by simp; omega⟩
 
-/-- **A sufficiently early arm is requested**: from the invariant, whenever a
-deadline is live the model's `armed` field is at or before it. This theorem does
-not establish that a kernel timer was successfully installed or that the host
-will eventually supply its `fire` event. -/
+/-- **A sufficiently early arm is requested**: unpacking the invariant, whenever
+a deadline is live the model's `armed` field is at or before it. What carries the
+weight is that every event preserves the invariant (`step_inv`); this theorem
+establishes neither that a kernel timer was installed nor that the host will
+supply its `fire` event. -/
 theorem DeadlineQueue.wake_scheduled (s : DeadlineQueue κ) (h : s.Inv)
     (k : κ) (d : Nat) (hmem : (k, d) ∈ s.live) :
     ∃ t, s.armed = some t ∧ t ≤ d :=
-  h k d hmem
+  h.armed k d hmem
+
+/-- The same for any trace from the empty queue: no invariant has to be supplied
+by the caller, because `run_init_inv` establishes it. -/
+theorem DeadlineQueue.wake_scheduled_run [DecidableEq κ] (es : List (DeadlineEv κ))
+    (k : κ) (d : Nat)
+    (hmem : (k, d) ∈ ((DeadlineQueue.init : DeadlineQueue κ).run es).live) :
+    ∃ t, ((DeadlineQueue.init : DeadlineQueue κ).run es).armed = some t ∧ t ≤ d :=
+  (run_init_inv es).armed k d hmem
 
 /-- **Spurious fires are harmless**: if nothing has expired, `fire` leaves
 the live set untouched and expires nothing. (This is what makes lazy
@@ -235,5 +282,14 @@ sweep test) can therefore never steal another timer's completion. -/
 theorem deadline_token_unambiguous {t : TimeoutToken} (ht : t.Wf)
     (h : t.encode = TimeoutToken.deadlineMain.encode) : t = .deadlineMain :=
   TimeoutToken.encode_inj ht trivial h
+
+-- A trace that sets two keys, slides one and fires: the queue moves, so the
+-- trace forms above are not statements about an idle model.
+def regression_459 : Bool := decide (((DeadlineQueue.init : DeadlineQueue Nat).run
+    [.set 1 10, .set 2 20, .set 1 30]).live.length == 2
+  )
+def regression_460 : Bool := decide ((((DeadlineQueue.init : DeadlineQueue Nat).run
+    [.set 1 10, .set 2 20]).step (.fire 15)).2 == [1]
+  )
 
 end DN.Dataplane.Flow

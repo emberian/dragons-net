@@ -202,13 +202,13 @@ theorem regionProg_lowers : Lower.regionProg.isSome := by decide
 /-! ### PancakeSem control-flow reduction lemmas -/
 
 /-- `Assign`: run the assignment given the RHS value and the variable's binding. -/
-theorem sem_assign {x e v old} {s : PancakeState σ} (h : eval s e = some v)
+theorem sem_assign {oracle : Oracle σ} {x e v old} {s : PancakeState σ} (h : eval s e = some v)
     (hbound : s.locals x = some old) :
     PancakeSem oracle (.assign x e) s = (none, { s with locals := setLocal s.locals x v }) := by
   rw [PancakeSem, h, hbound]
 
 /-- `Seq` with a normally-terminating head: run the tail on the clamped state. -/
-theorem sem_seq_none {c1 c2} {s s1 : PancakeState σ}
+theorem sem_seq_none {oracle : Oracle σ} {c1 c2} {s s1 : PancakeState σ}
     (h : PancakeSem oracle c1 s = (none, s1)) :
     PancakeSem oracle (.seq c1 c2) s
       = PancakeSem oracle c2 { s1 with clock := min s.clock s1.clock } := by

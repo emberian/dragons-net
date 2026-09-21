@@ -354,13 +354,11 @@ theorem captured_ne_newer {r : Reactor σ} (h : r.GWF) {fd g : Nat}
     have := hcap.lt_next h
     omega
 
-/-- **Stale-guard soundness (Rank 3's headline).** Capture a `(fd, g)` token,
-run any sequence of opens/closes/updates, and suppose `fd` is now occupied by
-a *different* incarnation (any connection whose generation differs from what
-`fd` held at capture time — in particular any connection opened after the fd
-was recycled).  Then the guard rejects: the stale token resolves to `none`,
-never to the newer connection's slot. -/
-theorem stale_token_never_resolves {r : Reactor σ} (h : r.GWF) {fd g : Nat}
+/-- The guard rejects whenever the occupant's generation differs from every
+generation `fd` held at capture time. The hypothesis `hnew` is most of the work:
+`stale_after_close` derives the same conclusion from an *event* — a close of
+`fd` — instead. -/
+theorem resolve_none_of_gen_ne {r : Reactor σ} (h : r.GWF) {fd g : Nat}
     (hcap : Captured r fd g) (ops : List (Op σ)) {c' : Conn σ}
     (hl : ((r.run ops).table.lookup fd) = some c')
     (hnew : ∀ c, r.table.lookup fd = some c → c.gen ≠ c'.gen) :
@@ -371,27 +369,60 @@ theorem stale_token_never_resolves {r : Reactor σ} (h : r.GWF) {fd g : Nat}
   show (if c'.gen = g then some c'.state else none) = none
   rw [if_neg hne]
 
-/-- Complement: a resolution that *does* succeed after a run identifies the
-same incarnation the token was captured against — same fd, same generation,
-still live. -/
-theorem resolve_same_incarnation {r : Reactor σ} (h : r.GWF) {fd g : Nat}
-    (hcap : Captured r fd g) (ops : List (Op σ)) {st : σ}
-    (hres : (r.run ops).resolve fd g = some st) :
-    ∃ c, ((r.run ops).table.lookup fd) = some c ∧ c.gen = g
-      ∧ (∃ c₀, r.table.lookup fd = some c₀ ∧ c₀.gen = g) := by
-  obtain ⟨c, hl, hg, _⟩ := resolve_some hres
-  refine ⟨c, hl, hg, ?_⟩
-  cases run_incarnation h ops fd hl with
-  | inl hsame =>
-    obtain ⟨c₀, hl₀, hg₀⟩ := hsame
-    exact ⟨c₀, hl₀, by rw [hg₀, hg]⟩
-  | inr hge =>
-    -- the occupant would be a new incarnation, but its generation equals a
-    -- captured (hence past) one — impossible.
-    have := hcap.lt_next h
-    omega
+/-- A run splits at any point: everything before an operation, that operation,
+everything after. -/
+theorem run_append (r : Reactor σ) (ops₁ ops₂ : List (Op σ)) :
+    r.run (ops₁ ++ ops₂) = (r.run ops₁).run ops₂ := by
+  induction ops₁ generalizing r with
+  | nil => rfl
+  | cons op ops ih => simpa [run] using ih (r.step op)
 
-/-! ### The wraparound assumption — this rank's one named axiom
+/-- **Stale-guard soundness, from an event.** Capture a `(fd, g)` token, then
+let the run close `fd` at any later point. From there the token never resolves
+again, whatever the run does afterwards — including opening a new connection on
+the same `fd`. Unlike `resolve_none_of_gen_ne`, the premise here is an event in
+the trace, not a statement about the answer. -/
+theorem stale_after_close {r : Reactor σ} (h : r.GWF) {fd g : Nat}
+    (hcap : Captured r fd g) (ops₁ ops₂ : List (Op σ)) :
+    (r.run (ops₁ ++ .closeConn fd :: ops₂)).resolve fd g = none := by
+  have hg : g < r.nextGen := hcap.lt_next h
+  have hmono : r.nextGen ≤ (r.run ops₁).nextGen := nextGen_mono_run r ops₁
+  have hclosed : ((r.run ops₁).step (.closeConn fd)).table.lookup fd = none :=
+    Table.lookup_remove_self _ fd
+  have hnext : ((r.run ops₁).step (.closeConn fd)).nextGen = (r.run ops₁).nextGen := rfl
+  have hwf : ((r.run ops₁).step (.closeConn fd)).GWF := (h.run ops₁).step _
+  cases hres : (r.run (ops₁ ++ .closeConn fd :: ops₂)).resolve fd g with
+  | none => rfl
+  | some st =>
+    exfalso
+    obtain ⟨c, hl, hcg, _⟩ := resolve_some hres
+    rw [run_append, run] at hl
+    cases run_incarnation hwf ops₂ fd hl with
+    | inl hsame =>
+      obtain ⟨c₀, hl₀, _⟩ := hsame
+      rw [hclosed] at hl₀
+      exact absurd hl₀ (by simp)
+    | inr hge =>
+      rw [hnext] at hge
+      omega
+
+/-- The premises are satisfiable: a reactor that accepted a connection on `fd`
+is well-formed, the token captured against it is `Captured`, and the theorem
+applies to a run that closes `fd` and opens it again. -/
+theorem stale_after_close_applies :
+    (((Reactor.empty (σ := Nat)).openConn 7 100).run
+      ([] ++ .closeConn 7 :: [.openConn 7 200])).resolve 7 1 = none :=
+  stale_after_close (GWF.empty.openConn 7 100) ⟨⟨100, 1⟩, rfl, rfl⟩ [] [.openConn 7 200]
+
+/-- And the fd really is reused: the first token resolves to nothing, the second
+to the new connection's state, so the guard is not rejecting everything. -/
+example : ((Reactor.empty (σ := Nat)).run
+      [.openConn 7 100, .closeConn 7, .openConn 7 200]).resolve 7 1 = none ∧
+    ((Reactor.empty (σ := Nat)).run
+      [.openConn 7 100, .closeConn 7, .openConn 7 200]).resolve 7 2 = some 200 := by
+  decide
+
+/-! ### The wraparound assumption — a hypothesis, not an axiom
 
 The counter above is `Nat`: it genuinely never repeats, and every theorem in
 this file is unconditional. The active Rust slab uses a 64-bit machine word and
@@ -414,7 +445,10 @@ that policy and this model remains to be proved. -/
 def genBound : Nat := 2 ^ 64
 
 /-- The named wraparound assumption: the counter has not exhausted the
-64-bit space. -/
+64-bit space. This is the width the guard's machine comparison uses; it is not
+the width of any token encoding. `DN.Dataplane.Flow.Token` carries 31 generation
+bits, so a reactor that encodes these generations into that token runs out of
+encoding long before it runs out of counter — see `counter_passes_31_bits`. -/
 def NoWrap (r : Reactor σ) : Prop := r.nextGen < genBound
 
 /-- Under `NoWrap`, the mod-2^64 projection is injective on live
@@ -450,6 +484,38 @@ theorem noWrap_of_run_length (ops : List (Op σ))
   have hb : 2 ≤ genBound := by decide
   unfold NoWrap
   have hemp : (empty : Reactor σ).nextGen = 1 := rfl
+  omega
+
+/-- Each accepted connection spends exactly one generation. -/
+theorem nextGen_replicate_open (st : σ) (fd n : Nat) :
+    ((empty : Reactor σ).run (List.replicate n (.openConn fd st))).nextGen = n + 1 := by
+  have general : ∀ (m : Nat) (r : Reactor σ),
+      (r.run (List.replicate m (.openConn fd st))).nextGen = r.nextGen + m := by
+    intro m
+    induction m with
+    | zero => intro r; simp [run]
+    | succ m ih =>
+        intro r
+        show ((r.step (.openConn fd st)).run (List.replicate m _)).nextGen = _
+        rw [ih (r.step (.openConn fd st))]
+        show r.nextGen + 1 + m = r.nextGen + (m + 1)
+        omega
+  rw [general n (empty : Reactor σ)]
+  show 1 + n = n + 1
+  omega
+
+/-- **The counter passes 31 bits while `NoWrap` still holds.** After `2^31`
+accepted connections the generation counter is past `2^31`, which is what
+`DN.Dataplane.Flow.Token` can encode, and `NoWrap` — a statement about the
+64-bit comparison — is still true. A reactor that hands these generations to
+that encoding has to retire the slot at the encoding's bound; the counter alone
+will not warn it. -/
+theorem counter_passes_31_bits (st : σ) (fd : Nat) :
+    NoWrap ((empty : Reactor σ).run (List.replicate (2 ^ 31) (.openConn fd st))) ∧
+      2 ^ 31 < ((empty : Reactor σ).run (List.replicate (2 ^ 31) (.openConn fd st))).nextGen := by
+  rw [NoWrap, nextGen_replicate_open]
+  refine ⟨?_, by omega⟩
+  show 2 ^ 31 + 1 < 2 ^ 64
   omega
 
 end Reactor

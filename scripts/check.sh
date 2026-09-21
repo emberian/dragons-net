@@ -52,7 +52,9 @@ build() {
   local before
   before=$(snapshot)
   python3 scripts/check_structure.py
-  lake build DN dn-compiler
+  # --wfail: a warning fails the build. Lake replays a module's stored log, so
+  # this holds on a warm cache as well as on a fresh checkout.
+  lake build --wfail DN dn-compiler
   if [[ "$(snapshot)" != "$before" ]]; then
     echo 'check: repository files changed during the source gate or the build' >&2
     exit 1
@@ -78,7 +80,7 @@ proofs() {
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 62
+  "$lean" --run scripts/Audit.lean --regressions 79
 }
 
 # Tests that run the built code, and the Rust crates.

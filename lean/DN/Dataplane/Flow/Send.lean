@@ -9,6 +9,9 @@ docs/assurance.md.
 
 namespace DN.Dataplane.Flow
 
+universe u
+variable {α : Type u}
+
 /-- Result code returned to the producer. -/
 inductive SendResult where
   /-- Payload accepted: inline-sent in full, or partially sent with the
@@ -208,12 +211,20 @@ theorem SendConn.run_init_inv (es : List (SendEv α)) :
     ((SendConn.init : SendConn α).run es).Inv :=
   run_inv _ es init_inv
 
-/-- **Order preservation.** The wire is always a prefix of the accepted
-payloads' concatenation: no byte overtakes another across partial writes
-and blocked/resume cycles. -/
+/-- **Order preservation.** The conservation invariant read as a prefix property:
+the wire is what has been accepted minus what is still pending, so no byte
+overtakes another. It holds in every reachable state because every event
+preserves the invariant (`step_inv`). -/
 theorem SendConn.wire_prefix (s : SendConn α) (h : s.Inv) :
     ∃ rest, s.wire ++ rest = s.accepted.flatten :=
   ⟨s.pendingBytes ++ s.killed, h.1⟩
+
+/-- The same for any trace from a fresh connection: across partial writes and
+blocked/resume cycles, the wire stays a prefix of the accepted payloads. -/
+theorem SendConn.wire_prefix_run (es : List (SendEv α)) :
+    ∃ rest, ((SendConn.init : SendConn α).run es).wire ++ rest
+      = ((SendConn.init : SendConn α).run es).accepted.flatten :=
+  wire_prefix _ (run_init_inv es)
 
 /-- **Completeness on drain.** When the socket is open with no in-flight
 remainder, the wire equals the accepted payloads' concatenation exactly. -/
@@ -285,5 +296,15 @@ theorem SendConn.complete_short_requeues (s : SendConn α) (rem : List α)
   have h1 : min m rem.length = m := by omega
   have h2 : m ≠ rem.length := by omega
   simp [step, hp, h1, h2]
+
+-- A partial write followed by its completion: the wire really advances, so the
+-- prefix theorem above is about a moving state.
+def regression_457 : Bool := decide (((SendConn.init : SendConn Nat).run
+    [.submit [1, 2, 3] 2, .complete 1]).wire == [1, 2, 3]
+  )
+def regression_458 : Bool := decide (((SendConn.init : SendConn Nat).run
+    [.submit [1, 2, 3] 2]).wire == [1, 2]
+  && ((SendConn.init : SendConn Nat).run [.submit [1, 2, 3] 2]).pendingBytes == [3]
+  )
 
 end DN.Dataplane.Flow

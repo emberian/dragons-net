@@ -2,7 +2,7 @@ import Lake
 open Lake DSL
 
 package dn where
-  leanOptions := #[⟨`autoImplicit, true⟩, ⟨`maxRecDepth, 16384⟩,
+  leanOptions := #[⟨`autoImplicit, false⟩, ⟨`maxRecDepth, 16384⟩,
                    ⟨`maxHeartbeats, 4000000⟩]
 
 @[default_target]

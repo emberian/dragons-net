@@ -11,8 +11,9 @@ The **inline** way never builds the array at all: it *folds* the consumer over
 the completions as they are drained, one at a time, applying the consumer to
 each completion at the moment it is produced and letting the intermediate
 storage evaporate. This file models the inline drain and proves it is
-observationally the buffered drain for that one-shot transition system — same
-observations, zero intermediate list. It does not model non-final multishot
+observationally the buffered drain for that one-shot transition system. That no
+intermediate list exists is how the model is written, not a proven statement
+about memory. It does not model non-final multishot
 events, cancellation races, or kernel queue ownership.
 
 The inline consumer is richer than a passive observer: during the callback for a
@@ -50,14 +51,14 @@ into the slab and append it to `submits`. `HState.drain` is exactly
 
 * `handler_inline_no_buffer` — the inline drain's observation log equals the
   buffered drain's: first materialize every completion into a list
-  (`bufCollect`), then consume it. Same observations — but `HState` has no
-  completion-list field, so the inline path materializes nothing. Buffer
-  eliminated, result unchanged. (`drain_is_fold` states literally that the drain
-  is a `List.foldl`, not a collect.)
+  (`bufCollect`), then consume it. Same observations, and `HState` has no
+  completion-list field to materialize. (`drain_is_fold` states literally that
+  the drain is a `List.foldl`, not a collect.)
 * `handler_resubmit_ordered` — a submit issued during a completion callback is
-  enqueued and processed: `submits` after the drain is exactly the prior submits
+  enqueued in order: `submits` after the drain is exactly the prior submits
   followed by the re-submitted ops **in the order their callbacks fired**
-  (`pendingSubmits`). None dropped, none reordered. The single-step
+  (`pendingSubmits`, which recomputes the same deltas). None dropped, none
+  reordered; that they are later executed is not part of this model. The single-step
   `step_resubmit_live` shows the re-submitted op is retrievable from the slab
   the instant it is enqueued — no lost work item.
 * `handler_refines_reactor` — the inline drain observably equals this model's
@@ -145,9 +146,9 @@ def consumeBuf (obs : α → ρ → β) (l0 : List β) (cs : List (α × ρ)) : 
 /-- **Inline ≡ buffered (no intermediate list).** The inline drain's observation
 log is exactly what you get by first materializing every completion into a list
 (`bufCollect`) and then consuming it (`consumeBuf`). The results are identical —
-yet `HState` has no completion-list field, so the inline path never builds
-`bufCollect`. The buffer is eliminated at no observable cost: a fold, not a
-collect. -/
+yet `HState` has no completion-list field for the inline path to build. What is
+proven is the equality of the two observation logs; that one shape allocates less
+than the other is a property of the model's shape, not of measured memory. -/
 theorem handler_inline_no_buffer (obs : α → ρ → β) (resub : α → ρ → Option α)
     (h : HState α ρ β) (evs : List (Key × ρ)) :
     (HState.drain obs resub h evs).log
@@ -207,12 +208,12 @@ theorem step_submits (obs : α → ρ → β) (resub : α → ρ → Option α)
           | none => []) := by
   unfold HState.step
   cases hrm : h.slab.remove ev.1 with
-  | none => simp [hrm]
+  | none => simp
   | some p =>
       obtain ⟨op, sl⟩ := p
       cases hres : resub op ev.2 with
-      | none => simp [hrm, hres]
-      | some n => simp [hrm, hres]
+      | none => simp [hres]
+      | some n => simp [hres]
 
 /-- **Re-submit during a callback is enqueued and retrievable — no lost work.**
 On a live completion whose callback re-submits `n`, the resulting slab holds `n`
@@ -231,9 +232,9 @@ theorem step_resubmit_live (obs : α → ρ → β) (resub : α → ρ → Optio
 
 /-- **Re-submits are enqueued in order, none lost (the headline).** After the
 inline drain, `submits` is exactly the prior submits followed by every
-re-submitted op **in the order its callback fired** (`pendingSubmits`). Nothing
-is dropped and nothing is reordered: a submit issued mid-drain lands, in FIFO
-position, in the work queue. -/
+re-submitted op **in the order its callback fired** (`pendingSubmits`, which
+recomputes the same per-completion deltas). Nothing is dropped and nothing is
+reordered; whether the queued ops are later executed is outside this model. -/
 theorem handler_resubmit_ordered (obs : α → ρ → β) (resub : α → ρ → Option α)
     (h : HState α ρ β) (evs : List (Key × ρ)) :
     (HState.drain obs resub h evs).submits

@@ -1,6 +1,6 @@
 # NNTP implementation plan
 
-There are no NNTP commands implemented yet. `DN.News.Framing` proves a chunk-composition property for CRLF detection; it is the beginning of a specification, not a protocol parser. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
+There are no NNTP commands implemented yet. `DN.News.Framing` states the CRLF delimiter count as a specification and proves the counter equal to it (`feed_counts_crlf`); chunk invariance holds for any left fold and is a consequence, not the specification. It is the beginning of a specification, not a protocol parser: no line boundaries, no 512-octet limit, no dot-stuffing, no error recovery. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
 
 ## Initial profile
 

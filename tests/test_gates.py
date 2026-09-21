@@ -197,6 +197,11 @@ def odd : Nat → Bool
 end
 open Nat in
 theorem z : succ 0 = 1 := rfl
+section
+variable [DecidableEq Nat]
+omit [DecidableEq Nat] in
+theorem om : True := trivial
+end
 example : two + 0 = 2 := by simp +arith [two]
 end DN.Probe.Allowed
 """
@@ -506,6 +511,14 @@ class SourceGate(unittest.TestCase):
             errors = structure.gate_errors(root, {})
             self.assertTrue(any("maximum recursion depth" in e for e in errors), errors)
 
+    def test_auto_implicit_is_off(self) -> None:
+        self.assertIn("⟨`autoImplicit, false⟩", (ROOT / "lakefile.lean").read_text())
+        with tempfile.TemporaryDirectory() as temp:
+            root = source_tree(Path(temp))
+            (root / "lean/DN/Deep.lean").write_text("theorem t (x : Unbound) : x = x := rfl\n")
+            errors = structure.gate_errors(root, {})
+            self.assertTrue(any("Unknown identifier" in e for e in errors), errors)
+
     def test_static_checks(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = source_tree(Path(temp))
@@ -567,7 +580,7 @@ class SourceGate(unittest.TestCase):
 class Pipeline(unittest.TestCase):
     def test_check_script_runs_every_gate_in_order(self) -> None:
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
-                 "python3 scripts/check_structure.py", "lake build DN dn-compiler",
+                 "python3 scripts/check_structure.py", "lake build --wfail DN dn-compiler",
                  '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
                  '"$leanchecker" DN', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
@@ -694,7 +707,8 @@ class Pipeline(unittest.TestCase):
             env["PATH"] = f"{stubs}:{os.environ['PATH']}"
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
-                "build": ["python3 scripts/check_structure.py", "lake build DN dn-compiler"],
+                "build": ["python3 scripts/check_structure.py",
+                          "lake build --wfail DN dn-compiler"],
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",

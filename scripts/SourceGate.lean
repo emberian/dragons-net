@@ -25,7 +25,8 @@ def allowedImports : NameSet := [`Init, `Lean.Data.Json].foldl NameSet.insert {}
 def allowedCommands : NameSet :=
   [``Parser.Command.declaration, ``Parser.Command.namespace, ``Parser.Command.section,
    ``Parser.Command.end, ``Parser.Command.open, ``Parser.Command.variable,
-   ``Parser.Command.universe, ``Parser.Command.mutual, ``Parser.Command.moduleDoc,
+   ``Parser.Command.universe, ``Parser.Command.omit, ``Parser.Command.mutual,
+   ``Parser.Command.moduleDoc,
    ``Parser.Command.set_option, ``Parser.Command.attribute, ``Parser.Command.in].foldl
     NameSet.insert {}
 

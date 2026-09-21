@@ -8,9 +8,9 @@ A completion reactor must wake *exactly* when the nearest of many pending
 deadlines expires: connection idle timeouts, request body deadlines, handshake
 and keepalive windows all funnel into a single queue that arms **one** kernel
 timer for the earliest deadline and re-arms as deadlines come and go. The
-running engines realize this with a `BinaryHeap` keyed by deadline plus a hash
-map of the live keys; every safety property there lives in a property test.
-Here it is a **theorem**.
+running engine would use a `BinaryHeap` keyed by deadline plus a hash map of the
+live keys. What follows is a model of that structure: the theorems below are
+about this model, and no refinement theorem connects it to a running queue.
 
 ## The model
 
@@ -18,8 +18,10 @@ A `DQ K` (deadline queue over correlator/connection keys `K`) holds three parts:
 
 * `heap` — the min-heap, modeled by its *ordered projection*: the exact sequence
   a real binary min-heap yields on repeated pop, i.e. entries in nondecreasing
-  deadline order. `Sorted` names that invariant, and `insert` preserves it
-  (`insert_sorted`), so every reachable state satisfies it.
+  deadline order. `Sorted` names that invariant, and `insertSorted` preserves it
+  (`insertSorted_sorted`). This file does not carry `Sorted` as a field of `DQ`
+  or track it along a run, so every theorem below that needs it takes it as a
+  hypothesis.
 * `live` — the authoritative map from key to its **current** deadline. A heap
   entry `⟨d, k⟩` is *live* iff `live` still maps `k` to that exact `d`
   (`Live`); otherwise it is a **tombstone** (the key was removed, or its
@@ -41,26 +43,36 @@ superseded entry becomes a tombstone the same way.
   removed**: after `remove k` the heap is byte-for-byte unchanged, yet `k` is
   never emitted by a drain — its entry is passed over as a tombstone.
 * `heap_arm_one` — **only the nearest deadline arms the kernel timer**: the
-  deadline `arm` selects is a live deadline and is ≤ every live deadline; a queue
-  carries at most one armed timer.
+  deadline `arm` selects is a live deadline and is ≤ every live deadline. That a
+  queue carries at most one armed timer is structural, not a theorem: `armed` is
+  an `Option`.
 * `heap_pop_ordered` — **deadlines fire in order**: the sequence a drain emits is
   itself sorted by deadline (nondecreasing) — no timer fires before an earlier
   one.
+* `insertKeepingSmall_bounded` / `removeKeepingSmall_bounded` /
+  `runKeepingSmall_bounded` — **the tombstones stay bounded**: re-arming a key to
+  the deadline it already holds pushes nothing, and sweeping when the tombstones
+  outnumber the live entries keeps the heap within twice its live content — at
+  every state of every trace, so a client that resets its idle timer on every
+  command cannot grow the heap with the command rate.
 
 ## Composition with the reactor
 
-The keys are the reactor's correlators (`DN.Dataplane.Io.Key`) or connection handles: the
-armed deadline is the timeout the reactor's `wake`/`complete` loop blocks on, and
-a fired key drives a `complete` (idle-close, body-timeout) on the slab. The
-lazy-tombstone discipline mirrors the slab's generation tags — a superseded
-deadline is skipped exactly as a recycled correlator is rejected in
-`DN.Dataplane.Io.Slab`. This is the SPEC the running heap-plus-map queue refines.
+The keys have to carry a generation: the reactor's correlators
+(`DN.Dataplane.Io.Key`), or connection handles that do. A bare file descriptor is
+not a safe key, because the kernel reuses it and a deadline set for a closed
+connection would fire on its successor. The armed deadline is the timeout a
+reactor loop blocks on, and a fired key drives a `complete` (idle-close,
+body-timeout) on the slab. The lazy-tombstone discipline mirrors the slab's
+generation tags — a superseded deadline is skipped exactly as a recycled
+correlator is rejected in `DN.Dataplane.Io.Slab`. This is a candidate
+specification for such a queue, not a description of a running one.
 -/
 
 namespace DN.Dataplane.Io
 
 /-- A heap entry: a deadline (in kernel ticks) paired with the key it belongs to.
-The kernel-facing `BinaryHeap<Reverse<HeapEntry>>` orders these by `deadline`. -/
+A running engine would order these by `deadline` in its own heap. -/
 structure Entry (K : Type) where
   /-- Absolute deadline in monotonic ticks. -/
   deadline : Nat
@@ -225,6 +237,7 @@ def remove (dq : DQ K) (k : K) : DQ K :=
 def Sorted (h : List (Entry K)) : Prop :=
   h.Pairwise (fun a b => a.deadline ≤ b.deadline)
 
+omit [DecidableEq K] in
 /-- Membership in `insertSorted` is membership in the list plus the new entry. -/
 theorem mem_insertSorted {x e : Entry K} {l : List (Entry K)} :
     x ∈ insertSorted e l ↔ x = e ∨ x ∈ l := by
@@ -238,8 +251,10 @@ theorem mem_insertSorted {x e : Entry K} {l : List (Entry K)} :
       simp only [List.mem_cons, ih]
       exact or_left_comm
 
-/-- **`insert` preserves the sorted invariant** — every reachable state is
-sorted, so the peek/arm/pop theorems apply to real queues, not only ideal ones. -/
+omit [DecidableEq K] in
+/-- **`insert` preserves the sorted invariant**: a sorted heap stays sorted. The
+peek/arm/pop theorems take sortedness as a hypothesis, and this is what
+discharges it for a heap built by insertion. -/
 theorem insertSorted_sorted (e : Entry K) (l : List (Entry K)) (h : Sorted l) :
     Sorted (insertSorted e l) := by
   induction l with
@@ -262,8 +277,150 @@ theorem insertSorted_sorted (e : Entry K) (l : List (Entry K)) (h : Sorted l) :
       · exact hae
       · exact ha x hx
 
+omit [DecidableEq K] in
 /-- Empty heaps are sorted. -/
 theorem sorted_nil : Sorted ([] : List (Entry K)) := List.Pairwise.nil
+
+/-! ## Compaction: keeping the tombstones bounded
+
+Lazy deletion never rewrites the heap, so every `remove` and every slid deadline
+leaves a tombstone behind. A client that resets an idle timer on each command —
+which RFC 3977 §3.1 asks a server to do — therefore grows the heap with the
+command rate, not with the number of connections. Compaction is the sweep that
+drops the tombstones. Sweeping when they outnumber the live entries keeps the
+heap within twice its live content, which is what the bounds below state; the
+cost of the sweeps themselves is not part of this model. -/
+
+/-- How many live entries the heap carries (the rest are tombstones). -/
+def liveCount (dq : DQ K) : Nat := dq.heap.countP (fun e => isLive dq.live e)
+
+/-- **Compaction**: drop every tombstone from the heap, keeping the live entries
+in their order. The live map and the armed deadline are untouched. -/
+def compact (dq : DQ K) : DQ K :=
+  { dq with heap := dq.heap.filter (fun e => isLive dq.live e) }
+
+/-- After compaction the heap is exactly its live entries. -/
+theorem compact_length (dq : DQ K) : (compact dq).heap.length = liveCount dq := by
+  simp [compact, liveCount, List.countP_eq_length_filter]
+
+/-- Compaction keeps every live entry and drops exactly the tombstones. -/
+theorem mem_compact {dq : DQ K} {e : Entry K} :
+    e ∈ (compact dq).heap ↔ e ∈ dq.heap ∧ isLive dq.live e = true :=
+  List.mem_filter
+
+/-- Compaction loses no live entry: the live count is unchanged. -/
+theorem compact_liveCount (dq : DQ K) : liveCount (compact dq) = liveCount dq := by
+  simp [compact, liveCount, List.countP_eq_length_filter, List.filter_filter]
+
+/-- Compaction keeps the heap ordered, so every peek/arm/pop theorem applies to
+the compacted queue. -/
+theorem compact_sorted {dq : DQ K} (hs : Sorted dq.heap) : Sorted (compact dq).heap :=
+  List.Pairwise.sublist List.filter_sublist hs
+
+/-- Compaction does not change which entry surfaces first: `find?` skips exactly
+the entries the filter removes. So the armed deadline survives a sweep. -/
+theorem compact_firstLive (dq : DQ K) : firstLive (compact dq) = firstLive dq := by
+  show (dq.heap.filter (fun e => isLive dq.live e)).find? (fun e => isLive dq.live e)
+      = dq.heap.find? (fun e => isLive dq.live e)
+  induction dq.heap with
+  | nil => rfl
+  | cons e rest ih =>
+      by_cases h : isLive dq.live e = true
+      · simp [h, List.find?_cons_of_pos]
+      · simp [h, List.find?_cons_of_neg, ih]
+
+/-- The heap is within twice its live content: the tombstones do not outnumber
+the entries that still matter. -/
+def Bounded (dq : DQ K) : Prop := dq.heap.length ≤ 2 * liveCount dq
+
+/-- An empty queue is bounded. -/
+theorem init_bounded : Bounded (⟨[], [], none⟩ : DQ K) := by
+  simp [Bounded, liveCount]
+
+/-- **Insert with compaction.** Re-arming a key to the deadline it already has
+changes nothing, so it pushes no entry; otherwise push and sweep if the
+tombstones have come to outnumber the live entries. -/
+def insertKeepingSmall (dq : DQ K) (k : K) (d : Nat) : DQ K :=
+  if lookupD dq.live k = some d then dq
+  else
+    let dq' := insert dq k d
+    if 2 * liveCount dq' < dq'.heap.length then arm (compact dq') else dq'
+
+/-- **Remove with compaction.** The removal itself stays lazy; the sweep runs
+only when the tombstones have outgrown the live entries. -/
+def removeKeepingSmall (dq : DQ K) (k : K) : DQ K :=
+  let dq' := remove dq k
+  if 2 * liveCount dq' < dq'.heap.length then arm (compact dq') else dq'
+
+/-- **The bound is preserved by an insert.** Re-arming to the same deadline
+leaves the queue alone, and any other insert either stays under the bound or is
+swept back under it. -/
+theorem insertKeepingSmall_bounded {dq : DQ K} (hb : Bounded dq) (k : K) (d : Nat) :
+    Bounded (insertKeepingSmall dq k d) := by
+  unfold insertKeepingSmall
+  by_cases hsame : lookupD dq.live k = some d
+  · rw [if_pos hsame]; exact hb
+  · rw [if_neg hsame]
+    by_cases h : 2 * liveCount (insert dq k d) < (insert dq k d).heap.length
+    · rw [if_pos h]
+      show (compact (insert dq k d)).heap.length ≤ 2 * liveCount (compact (insert dq k d))
+      rw [compact_length, compact_liveCount]
+      omega
+    · rw [if_neg h]
+      show (insert dq k d).heap.length ≤ 2 * liveCount (insert dq k d)
+      omega
+
+/-- The bound is preserved by a removal. -/
+theorem removeKeepingSmall_bounded (dq : DQ K) (k : K) :
+    Bounded (removeKeepingSmall dq k) := by
+  unfold removeKeepingSmall
+  by_cases h : 2 * liveCount (remove dq k) < (remove dq k).heap.length
+  · rw [if_pos h]
+    show (compact (remove dq k)).heap.length ≤ 2 * liveCount (compact (remove dq k))
+    rw [compact_length, compact_liveCount]
+    omega
+  · rw [if_neg h]
+    show (remove dq k).heap.length ≤ 2 * liveCount (remove dq k)
+    omega
+
+/-- Sweeping does not change which deadline is armed. -/
+theorem compact_nearest (dq : DQ K) : nearest (compact dq) = nearest dq := by
+  simp [nearest, compact_firstLive]
+
+/-- What a caller does to the queue: arm a key for a deadline, or cancel it. -/
+inductive DQOp (K : Type) where
+  /-- Arm (or re-arm) `k` for deadline `d`. -/
+  | set (k : K) (d : Nat)
+  /-- Cancel `k`. -/
+  | cancel (k : K)
+
+/-- One operation under the sweeping policy. -/
+def stepKeepingSmall (dq : DQ K) : DQOp K → DQ K
+  | .set k d => insertKeepingSmall dq k d
+  | .cancel k => removeKeepingSmall dq k
+
+/-- A trace of operations under the sweeping policy. -/
+def runKeepingSmall (dq : DQ K) : List (DQOp K) → DQ K
+  | [] => dq
+  | op :: rest => runKeepingSmall (stepKeepingSmall dq op) rest
+
+/-- **The bound holds along a whole trace.** Starting from an empty queue, every
+state a sequence of arms and cancels can reach keeps the heap within twice its
+live content — however long the trace and however often one key is re-armed. -/
+theorem runKeepingSmall_bounded (ops : List (DQOp K)) :
+    Bounded (runKeepingSmall (⟨[], [], none⟩ : DQ K) ops) := by
+  have general : ∀ (l : List (DQOp K)) (dq : DQ K),
+      Bounded dq → Bounded (runKeepingSmall dq l) := by
+    intro l
+    induction l with
+    | nil => intro dq h; exact h
+    | cons op rest ih =>
+        intro dq h
+        refine ih (stepKeepingSmall dq op) ?_
+        cases op with
+        | set k d => exact insertKeepingSmall_bounded h k d
+        | cancel k => exact removeKeepingSmall_bounded dq k
+  exact general ops _ init_bounded
 
 /-! ## Headline theorem 1 — peek returns the earliest deadline -/
 
@@ -344,11 +501,11 @@ theorem heap_lazy_delete (dq : DQ K) (k : K) (now : Nat) :
 
 /-! ## Headline theorem 3 — only the nearest deadline arms the kernel timer -/
 
-/-- **`heap_arm_one` — only the nearest deadline arms the kernel timer.** The
-deadline `arm` installs (when it installs one) is a *live* deadline realized by
-an actual heap entry, and it is ≤ every live entry's deadline. Combined with the
-`armed : Option Nat` field (at most one armed timer at a time), the queue arms
-exactly one timer, for exactly the earliest deadline. -/
+/-- **`heap_arm_one` — the armed deadline is the earliest live one.** From a
+sorted heap, the deadline `arm` records (when it records one) is a *live*
+deadline realized by an actual heap entry, and it is ≤ every live entry's
+deadline. That no second timer can be recorded is structural — `armed` is an
+`Option` — and nothing here says the kernel installed the timer. -/
 theorem heap_arm_one (dq : DQ K) (hs : Sorted dq.heap) (d : Nat)
     (h : (arm dq).armed = some d) :
     (∃ e ∈ dq.heap, Live dq.live e ∧ e.deadline = d) ∧
@@ -361,13 +518,6 @@ theorem heap_arm_one (dq : DQ K) (hs : Sorted dq.heap) (d : Nat)
   refine ⟨⟨e, List.mem_of_find?_eq_some hfe, hlive, hde⟩, ?_⟩
   intro e' he' hlive'
   rw [← hde]; exact hmin e' he' hlive'
-
-/-- At most one timer is armed at a time: the armed deadline is an `Option`, so a
-queue can carry no more than a single kernel timeout — the single-arm discipline
-is structural, not merely a proven side condition. -/
-theorem armed_at_most_one (dq : DQ K) (d₁ d₂ : Nat)
-    (h₁ : dq.armed = some d₁) (h₂ : dq.armed = some d₂) : d₁ = d₂ := by
-  rw [h₁] at h₂; exact (Option.some.injEq _ _).mp h₂
 
 /-! ## Headline theorem 4 — deadlines fire in order -/
 
@@ -389,10 +539,10 @@ theorem fired_subset (heap : List (Entry K)) (live : List (K × Nat)) (now : Nat
       · rw [if_neg h2] at hx
         exact List.mem_cons_of_mem _ (ih live hx)
 
-/-- **`heap_pop_ordered` — deadlines fire in order.** The sequence a drain emits
-is itself sorted by nondecreasing deadline: no timer fires before one with an
-earlier deadline. (Sortedness of the heap is preserved by `insert`, so this holds
-for every reachable queue.) -/
+/-- **`heap_pop_ordered` — deadlines fire in order.** From a sorted heap, the
+sequence a drain emits is itself sorted by nondecreasing deadline: no timer fires
+before one with an earlier deadline. Sortedness comes in as a hypothesis;
+`insertSorted_sorted` is what supplies it for a heap built by insertion. -/
 theorem heap_pop_ordered (heap : List (Entry K)) (live : List (K × Nat)) (now : Nat)
     (hs : Sorted heap) : Sorted (fired heap live now) := by
   induction heap generalizing live with
@@ -450,6 +600,47 @@ def regression_439 : Bool := decide ((fired (remove sampleDQ 20).heap (remove sa
 def regression_443 : Bool := decide (((insert sampleDQ 10 9).heap).length == 4   -- old entry retained (tombstone)
   )
 def regression_444 : Bool := decide ((fired (insert sampleDQ 10 9).heap (insert sampleDQ 10 9).live 6).map (·.key) == [20]
+  )
+
+-- Sliding one key's deadline again and again is what an idle timer does on a
+-- client that keeps sending commands. With lazy deletion alone the heap grows by
+-- one tombstone per slide; with compaction it stays within twice the live set.
+private def slideLazy : Nat → DQ Nat
+  | 0 => insert ⟨[], [], none⟩ 1 100
+  | n + 1 => insert (slideLazy n) 1 (101 + n)
+
+private def slideCompacting : Nat → DQ Nat
+  | 0 => insertKeepingSmall ⟨[], [], none⟩ 1 100
+  | n + 1 => insertKeepingSmall (slideCompacting n) 1 (101 + n)
+
+private def resetSameDeadline : Nat → DQ Nat
+  | 0 => insertKeepingSmall ⟨[], [], none⟩ 1 100
+  | n + 1 => insertKeepingSmall (resetSameDeadline n) 1 100
+
+def regression_445 : Bool := decide ((slideLazy 15).heap.length == 16
+  )
+-- The sweep keeps the heap small AND keeps the deadline that must still fire:
+-- a sweep that emptied the heap would pass the length test and lose the timer.
+def regression_446 : Bool := decide ((slideCompacting 15).heap.length <= 2
+  && (slideCompacting 15).live.length == 1
+  && nearest (slideCompacting 15) == some 115
+  )
+-- Re-arming to the deadline a key already has pushes nothing, so a client that
+-- keeps resetting its timer inside one tick does not grow the heap either.
+def regression_447 : Bool := decide ((resetSameDeadline 29).heap.length == 1
+  && nearest (resetSameDeadline 29) == some 100
+  )
+
+-- A mixed trace of arms, re-arms and cancels: the heap stays within twice the
+-- live set at the end, and the live keys are the ones the trace left armed.
+private def mixedTrace : List (DQOp Nat) :=
+  [.set 1 10, .set 2 20, .set 1 30, .cancel 2, .set 3 40, .set 1 50, .set 3 60, .cancel 1]
+
+def regression_448 : Bool := decide (
+  (runKeepingSmall (⟨[], [], none⟩ : DQ Nat) mixedTrace).heap.length
+    <= 2 * liveCount (runKeepingSmall (⟨[], [], none⟩ : DQ Nat) mixedTrace)
+  && (runKeepingSmall (⟨[], [], none⟩ : DQ Nat) mixedTrace).live.length == 1
+  && nearest (runKeepingSmall (⟨[], [], none⟩ : DQ Nat) mixedTrace) == some 60
   )
 
 /-! ### Mutant witnesses (the contract bites)

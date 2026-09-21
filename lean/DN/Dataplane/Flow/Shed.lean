@@ -9,6 +9,9 @@ docs/assurance.md.
 
 namespace DN.Dataplane.Flow
 
+universe u
+variable {α : Type u}
+
 /-- The explicit fate of a settled unit. Every way out of the backlog is
 one of these — the "declared policy" per edge. -/
 inductive Fate where
@@ -115,6 +118,34 @@ def ShedQueue.step (s : ShedQueue α) : ShedEv α → ShedQueue α × ShedResult
                 settled := s.settled ++ s.backlog.map (fun v => (v, .shed)),
                 closed := true }, .closedOk)
 
+/-- **The stream policy.** Dropping the oldest unit is sound only when units are
+independent messages. On a byte stream it is not: the reader would see the tail
+of one write spliced onto the head of a later one, and a command parser would
+read the splice as a command. When the units are stream segments, a full backlog
+therefore leaves only two sound moves — stop taking data, or end the connection —
+and this step takes the second, the same transition a bufferless completion
+makes. -/
+def ShedQueue.streamStep (s : ShedQueue α) : ShedEv α → ShedQueue α × ShedResult
+  | .admit u =>
+      if s.closed || s.backlog.length < s.cap then s.step (.admit u)
+      else s.step (.bufferlessKill u)
+  | e => s.step e
+
+/-- **A stream never sheds silently**: when the backlog is full, admitting one
+more unit closes the socket instead of dropping data from the middle. -/
+theorem ShedQueue.stream_overflow_closes (s : ShedQueue α) (u : α)
+    (hopen : s.closed = false) (hfull : ¬ s.backlog.length < s.cap) :
+    (s.streamStep (.admit u)).1.closed = true ∧
+      (s.streamStep (.admit u)).2 = .killedClosed := by
+  simp [streamStep, step, hopen, hfull]
+
+/-- And below the cap the stream policy admits exactly as the datagram one does,
+so the difference shows up only at the overflow edge. -/
+theorem ShedQueue.stream_under_cap (s : ShedQueue α) (u : α)
+    (hroom : s.backlog.length < s.cap) :
+    s.streamStep (.admit u) = s.step (.admit u) := by
+  simp [streamStep, hroom]
+
 /-- Run a trace of events. -/
 def ShedQueue.run (s : ShedQueue α) : List (ShedEv α) → ShedQueue α
   | [] => s
@@ -169,19 +200,19 @@ theorem ShedQueue.step_inv (s : ShedQueue α) (e : ShedEv α) (h : s.Inv) :
         | nil =>
           have hcap0 : s.cap = 0 := by rw [hb] at hlen; simp at hlen; omega
           refine ⟨?_, ?_, ?_⟩
-          · simp [step, hc, hlen, hb, hcap0, ← hacct]
-          · simp [step, hc, hlen, hb, hcap0]
-          · simp [step, hc, hlen, hb, hcap0]
+          · simp [step, hc, hb, hcap0, ← hacct]
+          · simp [step, hc, hb, hcap0]
+          · simp [step, hc, hb, hcap0]
         | cons v rest =>
           have hlen' : ¬ (rest.length + 1 < s.cap) := by
             rw [hb] at hlen; simpa using hlen
           have hcap' : rest.length + 1 ≤ s.cap := by
             rw [hb] at hcap; simpa using hcap
           refine ⟨?_, ?_, ?_⟩
-          · simp [step, hc, hlen, hlen', hb, ← hacct]
-          · simp [step, hc, hlen, hlen', hb]
+          · simp [step, hc, hlen', hb, ← hacct]
+          · simp [step, hc, hlen', hb]
             omega
-          · simp [step, hc, hlen, hlen', hb]
+          · simp [step, hc, hlen', hb]
   | consume =>
     cases hb : s.backlog with
     | nil => simp only [step, hb]; exact ⟨hacct, hcap, hclosed⟩
@@ -255,10 +286,19 @@ theorem ShedQueue.settled_prefix (s : ShedQueue α) (h : s.Inv) :
     ∃ rest, s.settled.map Prod.fst ++ rest = s.admitted :=
   ⟨s.backlog, h.1⟩
 
-/-- **The cap is respected** at every reachable state. -/
+/-- **The cap is respected**: the backlog bound is one conjunct of the invariant,
+so it holds wherever the invariant does — in every reachable state, by
+`run_init_inv`. -/
 theorem ShedQueue.backlog_bounded (s : ShedQueue α) (h : s.Inv) :
     s.backlog.length ≤ s.cap :=
   h.2.1
+
+/-- The same for any trace from a fresh queue: no event sequence can push the
+backlog past the capacity it was created with. -/
+theorem ShedQueue.backlog_bounded_run (cap : Nat) (es : List (ShedEv α)) :
+    ((ShedQueue.init cap : ShedQueue α).run es).backlog.length
+      ≤ ((ShedQueue.init cap : ShedQueue α).run es).cap :=
+  backlog_bounded _ (run_init_inv cap es)
 
 /-- **Oldest-drop is exact.** When the backlog is full, admitting `u` sheds
 precisely the *oldest* entry (the front), records it, and keeps FIFO order
@@ -271,7 +311,7 @@ theorem ShedQueue.oldest_drop_exact (s : ShedQueue α) (u v : α)
     (s.step (.admit u)).2 = .admittedDropOldest := by
   have hfull' : ¬ (rest.length + 1 < s.cap) := by
     rw [hb] at hfull; simpa using hfull
-  simp [step, hc, hfull, hfull', hb]
+  simp [step, hc, hfull', hb]
 
 /-- **Consumption is FIFO**: consuming takes exactly the oldest entry and
 records it delivered. -/
@@ -301,5 +341,29 @@ theorem ShedQueue.bufferless_kill_closes (s : ShedQueue α) (u : α)
     (s.step (.bufferlessKill u)).1.backlog = [] ∧
     (u, Fate.killed) ∈ (s.step (.bufferlessKill u)).1.settled := by
   simp [step, hc]
+
+/-- Run a trace under the stream policy. -/
+def ShedQueue.runStream (s : ShedQueue α) : List (ShedEv α) → ShedQueue α
+  | [] => s
+  | e :: es => ((s.streamStep e).1).runStream es
+
+-- Three units into a queue with room for two. The datagram policy sheds the
+-- oldest and keeps serving; the stream policy ends the connection instead, so
+-- no reader ever sees the splice. Both runs are over the same trace.
+private def overflowTrace : List (ShedEv Nat) := [.admit 1, .admit 2, .admit 3]
+
+def regression_452 : Bool := decide (((ShedQueue.init 2 : ShedQueue Nat).run
+    overflowTrace).closed == false
+  && ((ShedQueue.init 2 : ShedQueue Nat).run overflowTrace).backlog == [2, 3]
+  )
+def regression_453 : Bool := decide (((ShedQueue.init 2 : ShedQueue Nat).runStream
+    overflowTrace).closed == true
+  && ((ShedQueue.init 2 : ShedQueue Nat).runStream overflowTrace).backlog == []
+  )
+
+-- Under the cap the two policies agree.
+def regression_454 : Bool := decide (((ShedQueue.init 4 : ShedQueue Nat).runStream
+    overflowTrace).backlog == [1, 2, 3]
+  )
 
 end DN.Dataplane.Flow

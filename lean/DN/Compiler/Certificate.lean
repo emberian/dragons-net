@@ -7,13 +7,18 @@ The certificate concerns model execution, not printed source or native code. -/
 namespace DN.Compiler
 open Clock Region
 
+variable {σ : Type}
+
 structure Certificate (o : Oracle σ) (P : PancakeState σ → Prop)
     (Q : PancakeState σ → PancakeState σ → Prop) where
   code : PancakeProg
   correct : RefinesClk o code P Q
   witness : ∃ s, P s
 
-def Certificate.then (first : Certificate o P Q) (second : Certificate o R S)
+def Certificate.then {o : Oracle σ} {P : PancakeState σ → Prop}
+    {Q : PancakeState σ → PancakeState σ → Prop} {R : PancakeState σ → Prop}
+    {S : PancakeState σ → PancakeState σ → Prop}
+    (first : Certificate o P Q) (second : Certificate o R S)
     (link : ∀ s t, P s → Q s t → R t) :
     Certificate o P (fun s u => ∃ t, Q s t ∧ S t u) :=
   ⟨.seq first.code second.code,

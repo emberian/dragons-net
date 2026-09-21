@@ -183,8 +183,9 @@ theorem Trace.append_split {cfg : Cfg} {s s'' : St} {l₁ l₂ : List Lbl}
       obtain ⟨mid, tl, tr⟩ := ih t'
       exact ⟨mid, .cons h tl, tr⟩
 
-/-- Progress half of no-leak: a held lease always has its recycle move
-enabled — the discipline can never wedge a buffer it holds. -/
+/-- Enabledness, not progress: a held lease always has its recycle move
+available, so the discipline can never wedge a buffer it holds. Nothing here
+forces the client to take that move. -/
 theorem recycle_enabled {cfg : Cfg} {s : St} {b : Bid}
     (h : b ∈ s.held) : ∃ s', Step cfg s (.recycle b) s' := by
   obtain ⟨h₁, h₂, hs⟩ := List.append_of_mem h

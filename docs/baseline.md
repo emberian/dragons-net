@@ -20,8 +20,8 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,313 declarations, including 2,103 theorems; the kernels skip the 40 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
-| Executable examples | 62 executable cases | Examples, not proofs or a complete workload inventory |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,616 declarations, including 2,212 theorems; the kernels skip the 57 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Executable examples | 79 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 113 expression shapes × 192 input pairs, all seven current operators and the logical right shift at its boundaries, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 384 cases over two workloads: locals, branches, assignments, loops, early return, and returns in an `else` branch at the top level and inside a loop | Two structured control workloads |
@@ -34,7 +34,7 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 | TCP integration | Binary bytes, arbitrary application chunks, 4 KiB boundaries, a 512 KiB stream, eight concurrent clients, slow reads, half-close, reset, slot reuse, capacity admission, idle expiry | Reference `poll` adapter; no io_uring, TLS, persistence, or NNTP |
 | Host/concurrency | Runtime unit tests and 25 bounded Loom tests | Abstract algorithms are not automatically the native host implementation |
 
-Some inherited Lean files produce nonfatal style/unused-variable warnings. They are visible in CI; the baseline does not suppress them or treat a warning-free log as a correctness argument.
+The Lean build carries no warnings, and `--wfail` makes one fail the build; Lake replays a module's stored log, so this holds on a warm cache as well as on a fresh checkout. A warning-free log is a hygiene property, not a correctness argument. `autoImplicit` is off, so a mistyped name is an error instead of a silent new variable.
 
 ## Concrete findings fixed during baseline work
 
