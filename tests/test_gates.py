@@ -11,34 +11,33 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
+from typing import Any
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("structure", ROOT / "scripts/check_structure.py")
-assert spec is not None and spec.loader is not None
-structure = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(structure)
-archive_spec = importlib.util.spec_from_file_location("build_archive", ROOT / "scripts/build_archive.py")
-assert archive_spec is not None and archive_spec.loader is not None
-build_archive = importlib.util.module_from_spec(archive_spec)
-archive_spec.loader.exec_module(build_archive)
-baseline_spec = importlib.util.spec_from_file_location("native_baseline",
-                                                       ROOT / "scripts/native_baseline.py")
-assert baseline_spec is not None and baseline_spec.loader is not None
-native_baseline = importlib.util.module_from_spec(baseline_spec)
-baseline_spec.loader.exec_module(native_baseline)
-keywords_spec = importlib.util.spec_from_file_location("gen_keywords",
-                                                       ROOT / "scripts/gen_keywords.py")
-assert keywords_spec is not None and keywords_spec.loader is not None
-gen_keywords = importlib.util.module_from_spec(keywords_spec)
-keywords_spec.loader.exec_module(gen_keywords)
-sources_spec = importlib.util.spec_from_file_location("upstream_sources",
-                                                      ROOT / "scripts/check_upstream_sources.py")
-assert sources_spec is not None and sources_spec.loader is not None
-upstream_sources = importlib.util.module_from_spec(sources_spec)
-sources_spec.loader.exec_module(upstream_sources)
+
+
+def script(name: str) -> Any:
+    """Load a script as a module under its own name, which dataclasses in it need."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / f"scripts/{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+structure = script("check_structure")
+build_archive = script("build_archive")
+native_baseline = script("native_baseline")
+gen_keywords = script("gen_keywords")
+upstream_sources = script("check_upstream_sources")
+bootstrap_tool = script("bootstrap_tool")
+verify_run = script("verify_run")
+check_holmake = script("check_holmake")
 CHECK = (ROOT / "scripts/check.sh").read_text()
 AUDIT = re.search(r"--run scripts/Audit\.lean --regressions (\d+)", CHECK)
 
@@ -755,6 +754,306 @@ class Pipeline(unittest.TestCase):
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
         for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
             self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
+        # A job added or renamed here is a job the verify lane stops requiring.
+        self.assertEqual(verify_run.REQUIRED_JOBS, tuple(jobs))
+
+    def test_verify_judges_a_run_from_outside_the_change(self) -> None:
+        green: list[dict[str, object]] = [{"name": name, "status": "completed", "conclusion": "success"}
+                                          for name in verify_run.REQUIRED_JOBS]
+        base = {"scripts/check.sh": "a", ".github/workflows/ci.yml": "b", "tools.lock.json": "c",
+                "lean/DN/A.lean": "d", "docs/x.md": "e", "README.md": "f",
+                "models/expected-tests.txt": "g", "models/Cargo.lock": "h",
+                "crates/dn-runtime/Cargo.toml": "i"}
+        ok = verify_run.Run(url="https://example.invalid/run", conclusion="success",
+                            default_branch="main", base_refs=("main",))
+
+        def tree(paths: dict[str, str], truncated: bool = False,
+                 mode: str = "100644", extra: list[dict[str, str]] | None = None) -> dict[str, object]:
+            entries: list[dict[str, str]] = [{"path": "scripts", "type": "tree", "sha": "t"}]
+            entries += [{"path": p, "type": "blob", "mode": mode, "sha": s} for p, s in paths.items()]
+            return {"truncated": truncated, "tree": entries + (extra or [])}
+
+        def verdict(head: dict[str, str], truncated: bool = False,
+                    jobs: list[dict[str, object]] | None = None,
+                    run: Any = ok, extra: list[dict[str, str]] | None = None) -> Any:
+            return verify_run.judge(green if jobs is None else jobs, tree(base),
+                                    tree(head, truncated, extra=extra), run)
+
+        self.assertEqual(verdict(base).conclusion, "success")
+        for subject in ("lean/DN/A.lean", "docs/x.md", "README.md"):
+            with self.subTest(subject=subject):
+                # What the checks read is the change under review; it may differ.
+                self.assertEqual(verdict({**base, subject: "x"}).conclusion, "success")
+        critical = {"edited": {**base, "scripts/check.sh": "x"},
+                    "workflow edited": {**base, ".github/workflows/ci.yml": "x"},
+                    "pin moved": {**base, "tools.lock.json": "x"},
+                    # Inside the subject directories, but not subjects: the list the
+                    # model gate requires the tests to match, and dependency pins.
+                    "test list shortened": {**base, "models/expected-tests.txt": "x"},
+                    "model pin moved": {**base, "models/Cargo.lock": "x"},
+                    "manifest edited": {**base, "crates/dn-runtime/Cargo.toml": "x"},
+                    "added": {**base, "scripts/graphlib.py": "x"},
+                    "removed": {k: v for k, v in base.items() if k != "scripts/check.sh"}}
+        for case, head in critical.items():
+            with self.subTest(case=case):
+                answer = verdict(head)
+                self.assertEqual(answer.conclusion, "neutral")
+                self.assertNotIn("lean/DN/A.lean", answer.summary)
+        self.assertIn("scripts/graphlib.py", verdict(critical["added"]).summary)
+        # Without the whole listing there is nothing to conclude.
+        self.assertEqual(verdict(base, truncated=True).conclusion, "neutral")
+        # A check that stops being executable is a change to the checks as well.
+        mode = verify_run.judge(green, tree(base), tree(base, mode="100755"), ok)
+        self.assertEqual(mode.conclusion, "neutral")
+        self.assertIn("scripts/check.sh", mode.summary)
+        # A submodule carries content the comparison would otherwise not see.
+        link = [{"path": "vendor", "type": "commit", "mode": "160000", "sha": "s"}]
+        self.assertEqual(verdict(base, extra=link).conclusion, "neutral")
+        missing = [job for job in green if job["name"] != "proofs"]
+        skipped = [{**job, "conclusion": "skipped"} if job["name"] == "proofs" else job for job in green]
+        twice: list[dict[str, object]] = [
+            *green, {"name": "proofs", "status": "completed", "conclusion": "success"}]
+        for case, jobs in (("job removed", missing), ("job skipped", skipped), ("job twice", twice)):
+            with self.subTest(case=case):
+                # A run may conclude successfully with a job missing, allowed to
+                # fail, or answered for by a second job of the same name.
+                answer = verdict(base, jobs=jobs)
+                self.assertEqual(answer.conclusion, "failure")
+                self.assertIn("proofs", answer.summary)
+        # Nothing to certify: the run itself is red, and its own jobs say why.
+        for conclusion in ("failure", "skipped", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                ended = verify_run.Run(url="u", conclusion=conclusion, default_branch="main")
+                answer = verdict(base, run=ended)
+                self.assertEqual(answer.conclusion, "neutral")
+                self.assertIn(conclusion, answer.summary)
+        # The summary has a size limit, so neither list may grow without one.
+        many: list[dict[str, object]] = [*green] + [
+            {"name": f"extra-{n}", "status": "completed", "conclusion": "success"}
+            for n in range(verify_run.LISTED)]
+        crowded = verdict(base, jobs=many)
+        self.assertEqual(crowded.conclusion, "success")
+        self.assertIn(f"and {len(many) - verify_run.LISTED} more", crowded.summary)
+        # The checks that ran are the base branch's, and this speaks for one branch.
+        other = verify_run.Run(url="u", conclusion="success", default_branch="main",
+                               base_refs=("release",))
+        answer = verdict(base, run=other)
+        self.assertEqual(answer.conclusion, "neutral")
+        self.assertIn("release", answer.summary)
+
+    def test_verify_never_runs_the_change_it_judges(self) -> None:
+        workflow = (ROOT / ".github/workflows/verify.yml").read_text()
+        self.assertIn("workflows: [checks]", workflow)
+        # The default branch's copy, by name: `github.sha` would be one more thing to trust.
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", workflow)
+        self.assertIn("python3 -P scripts/verify_run.py", workflow)
+        # And it proves that is what it got before running anything from the checkout.
+        self.assertIn('compare/$DEFAULT_BRANCH...$head', workflow)
+        # The write permission is safe only while nothing from the change runs in this job.
+        self.assertIn("checks: write", workflow)
+        # Comments name what the lane is about; the steps are what it does.
+        steps = "\n".join(line for line in workflow.splitlines() if not line.lstrip().startswith("#"))
+        checkout = steps.partition("- name: Read the finished run")[0]
+        for forbidden in ("head_sha", "head_branch", "head_repository"):
+            self.assertNotIn(forbidden, checkout)
+        for forbidden in ("pull_request_target", "scripts/check.sh", "lake ", "cargo "):
+            self.assertNotIn(forbidden, steps)
+        # The trigger matches the other workflow by name, so the two must agree.
+        self.assertTrue((ROOT / ".github/workflows/ci.yml").read_text().startswith("name: checks\n"))
+        # Only one thing from the checkout runs, and only the check run is written.
+        self.assertEqual(steps.count("python3 "), 1)
+        self.assertEqual(re.findall(r"^\s+\w+: write$", steps, re.MULTILINE), ["      checks: write"])
+        # What makes the job itself red when the verdict is a failure.
+        self.assertIn('[[ "$conclusion" != failure ]]', steps)
+        # A pull request from a fork whose commit this repository cannot read.
+        self.assertIn('repos/$HEAD_REPO/git/trees/$HEAD_SHA', steps)
+        # The branch the run was merged into decides which checks ran.
+        self.assertIn("commits/$HEAD_SHA/pulls", steps)
+        self.assertIn("--base-refs", steps)
+        self.assertIn("--conclusion", steps)
+
+    def test_verify_publishes_what_it_judged(self) -> None:
+        """The published body is the verdict, and a hostile path cannot forge a line in it."""
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            jobs = [{"name": name, "status": "completed", "conclusion": "success"}
+                    for name in verify_run.REQUIRED_JOBS]
+            (work / "jobs.json").write_text(json.dumps({"jobs": jobs}))
+            forged = "scripts/x`\n- every required job succeeded | success"
+            entries = [{"path": "scripts/check.sh", "type": "blob", "mode": "100755", "sha": "a"}]
+            base = {"truncated": False, "tree": entries}
+            head = {"truncated": False, "tree": [
+                *entries, {"path": forged, "type": "blob", "mode": "100644", "sha": "b"}]}
+            (work / "base.json").write_text(json.dumps(base))
+            (work / "head.json").write_text(json.dumps(head))
+            sha = "0" * 40
+
+            def run_verify(*extra: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["python3", "-P", str(ROOT / "scripts/verify_run.py"),
+                     "--jobs", str(work / "jobs.json"), "--base-tree", str(work / "base.json"),
+                     "--head-tree", str(work / "head.json"), "--head-sha", sha,
+                     "--conclusion", "success", "--default-branch", "main",
+                     "--run-url", "https://example.invalid/run", *extra],
+                    capture_output=True, text=True, check=False)
+
+            result = run_verify("--details-url", "https://example.invalid/verify")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            body = json.loads(result.stdout)
+            self.assertEqual(body["name"], "verify")
+            self.assertEqual(body["head_sha"], sha)
+            self.assertEqual(body["status"], "completed")
+            self.assertEqual(body["conclusion"], "neutral")
+            self.assertEqual(body["details_url"], "https://example.invalid/verify")
+            summary = body["output"]["summary"]
+            self.assertIn("This change edits its own checks", body["output"]["title"])
+            # One bullet per path, and the forged cell and line break are gone.
+            bullets = [line for line in summary.splitlines() if line.startswith("- ")]
+            self.assertEqual(len(bullets), 1, bullets)
+            self.assertNotIn("|", bullets[0])
+            self.assertEqual(bullets[0].count("`"), 2, "a path closed its own quoting")
+            self.assertLess(len(summary), 65536)
+            # A reference is not a commit, and the body is published against one.
+            refused = subprocess.run(
+                ["python3", "-P", str(ROOT / "scripts/verify_run.py"),
+                 "--jobs", str(work / "jobs.json"), "--base-tree", str(work / "base.json"),
+                 "--head-tree", str(work / "head.json"), "--head-sha", "refs/heads/main",
+                 "--conclusion", "success", "--default-branch", "main",
+                 "--run-url", "https://example.invalid/run"],
+                capture_output=True, text=True, check=False)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("not a commit", refused.stderr)
+
+    def test_holmake_gate_reads_the_job_logs_as_well(self) -> None:
+        """A parallel Holmake prints a status word and writes the details to a log file.
+
+        Reading only the captured standard output would therefore see nothing, so
+        each way of recording a cheat, an oracle tag or a cache hit is checked here.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            tree = work / "cakeml"
+            (tree / "pancake/proofs/.hol/logs").mkdir(parents=True)
+            built = tree / "pancake/proofs/pan_to_targetProofTheory.uo"
+            built.write_text("theory")
+            output = work / "holmake.log"
+
+            def found(stdout: str, log: str, jobs: int = 2, target: Path | None = built,
+                      since: float = 0.0) -> Any:
+                output.write_text(stdout)
+                (tree / "pancake/proofs/.hol/logs/job").write_text(log)
+                return check_holmake.problems(output, tree, jobs, target, since)
+
+            self.assertEqual(found("Finished pan_to_targetProofTheory OK", "no complaints"), [])
+            for pattern in check_holmake.RECORDED:
+                with self.subTest(recorded=pattern):
+                    # A single-job build prints these; a parallel one writes them.
+                    self.assertTrue(found(f"...{pattern}...", "clean"))
+                    self.assertTrue(found("everything OK", f"...{pattern}..."))
+            for word in check_holmake.STATUS:
+                with self.subTest(status=word):
+                    self.assertTrue(found(f"pan_to_targetProofTheory {word} (1m)", "clean"))
+            # `OK` is printed for a clean job and for one whose theorems are oracle
+            # tagged, so the word alone must not clear the run.
+            self.assertTrue(found("pan_to_targetProofTheory OK", "Saved ORACLE thm _"))
+            self.assertEqual(found("OK", "clean", jobs=1), [])
+            shutil.rmtree(tree / "pancake/proofs/.hol")
+            self.assertTrue(check_holmake.problems(output, tree, 2, built, 0.0),
+                            "a parallel build with no job logs was accepted")
+            self.assertEqual(check_holmake.problems(output, tree, 1, built, 0.0), [])
+            self.assertTrue(check_holmake.problems(output, tree, 1, built, built.stat().st_mtime + 60),
+                            "a target older than the run was accepted")
+            self.assertTrue(check_holmake.problems(output, tree, 1, tree / "missing.uo", 0.0))
+
+    def test_checkers_cover_what_decides_the_checks(self) -> None:
+        """The tests stage runs code from the change; what it may not change is this."""
+        function = re.search(r"^checkers\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)
+        assert function is not None
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            for name in ("scripts/check.sh", "tests/test_gates.py", ".github/workflows/ci.yml",
+                         "lakefile.lean", "lean-toolchain", "tools.lock.json", "ruff.toml",
+                         "lean/DN/A.lean", "docs/x.md", "crates/dn-runtime/src/lib.rs"):
+                (tree / name).parent.mkdir(parents=True, exist_ok=True)
+                (tree / name).write_text("0")
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            (tree / ".gitignore").write_text("__pycache__/\n")
+            subprocess.run(["git", "add", "-A"], cwd=tree, check=True)
+
+            def checkers() -> str:
+                script = f"set -euo pipefail\n{function.group(0)}\ncheckers"
+                return subprocess.run(["bash", "-c", script], cwd=tree, text=True,
+                                      capture_output=True, check=True).stdout
+
+            before = checkers()
+            for name in ("lean/DN/A.lean", "docs/x.md", "crates/dn-runtime/src/lib.rs"):
+                with self.subTest(subject=name):
+                    # The subject of the checks changes with the change under review.
+                    (tree / name).write_text("1")
+                    self.assertEqual(checkers(), before)
+            for name in ("scripts/check.sh", "tests/test_gates.py", ".github/workflows/ci.yml",
+                         "lakefile.lean", "lean-toolchain", "tools.lock.json", "ruff.toml"):
+                with self.subTest(changed=name):
+                    (tree / name).write_text("1")
+                    self.assertNotEqual(checkers(), before)
+                    (tree / name).write_text("0")
+            self.assertEqual(checkers(), before)
+            # A module dropped in during the run counts; bytecode the run writes does not.
+            (tree / "tests/graphlib.py").write_text("x")
+            self.assertNotEqual(checkers(), before)
+            (tree / "tests/graphlib.py").unlink()
+            (tree / "scripts/__pycache__").mkdir()
+            (tree / "scripts/__pycache__/check.pyc").write_text("x")
+            self.assertEqual(checkers(), before)
+
+    def test_backend_refuses_a_target_that_is_an_option(self) -> None:
+        """`DN_BACKEND_TARGET` reaches Holmake as an argument; `--fast` cheats every tactic."""
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp) / "dn"
+            (tree / "scripts").mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/check_backend.sh", tree / "scripts")
+            for target, ok in (("--fast", False), ("-j4", False), ("../evil", False),
+                               ("loop_liveProofTheory.uo", True)):
+                with self.subTest(target=target):
+                    result = subprocess.run(["bash", "scripts/check_backend.sh"], cwd=tree,
+                                            env={**os.environ, "DN_BACKEND_TARGET": target},
+                                            capture_output=True, text=True, check=False)
+                    refused = "must name a theory object" in result.stderr
+                    self.assertEqual(refused, not ok, result.stderr)
+                    if not ok:
+                        self.assertEqual(result.returncode, 2)
+
+    def test_no_script_shadows_a_standard_library_module(self) -> None:
+        """`unittest discover` puts tests/ first on the path, which PYTHONSAFEPATH does not undo."""
+        for directory in ("scripts", "tests"):
+            for path in sorted((ROOT / directory).rglob("*.py")):
+                with self.subTest(module=str(path.relative_to(ROOT))):
+                    self.assertNotIn(path.stem, sys.stdlib_module_names)
+
+    def test_tree_digest_sees_more_than_file_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            tool = Path(temp) / "tool"
+            (tool / "inner").mkdir(parents=True)
+            (tool / "tool.bin").write_text("binary")
+            (tool / "link").symlink_to("tool.bin")
+
+            def digest() -> Any:
+                # The walk is cached within a run, which no caller defeats by
+                # rewriting a tool it has already checked; a test does.
+                bootstrap_tool.tree_digest.cache_clear()
+                return bootstrap_tool.tree_digest(tool)
+
+            before = digest()
+            (tool / "tool.bin").chmod(0o755)
+            self.assertNotEqual(digest(), before, "the executable bit is not in the manifest")
+            (tool / "tool.bin").chmod(0o644)
+            self.assertEqual(digest(), before)
+            (tool / "extra").mkdir()
+            self.assertNotEqual(digest(), before, "an added directory is not in the manifest")
+            (tool / "extra").rmdir()
+            (tool / "link").unlink()
+            (tool / "link").symlink_to("elsewhere")
+            self.assertNotEqual(digest(), before, "a symlink's target is not in the manifest")
 
     def test_bootstrap_verifies_stored_tools(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -778,6 +1077,17 @@ class Pipeline(unittest.TestCase):
             unpacked.mkdir(parents=True)
             (unpacked / "archive.sha256").write_text("0" * 64 + "\n")
             self.assertIn("does not match the lock", bootstrap())
+            # The archive is verified once, when it is downloaded; a stored tool is
+            # verified on every use against a manifest over its whole content.
+            (unpacked / "archive.sha256").write_text(pin["sha256"] + "\n")
+            (unpacked / pin["binary"]).write_text("the tool")
+            (unpacked / "tree.sha256").write_text(bootstrap_tool.tree_digest(unpacked) + "\n")
+            self.assertEqual(bootstrap(), "")
+            (unpacked / pin["binary"]).write_text("something else")
+            self.assertIn("has changed since it was installed", bootstrap())
+            (unpacked / pin["binary"]).write_text("the tool")
+            (unpacked / "extra").write_text("smuggled in")
+            self.assertIn("has changed since it was installed", bootstrap())
 
     def test_tools_come_only_from_their_archives(self) -> None:
         lint = (ROOT / "scripts/lint.sh").read_text()
@@ -831,6 +1141,7 @@ class Pipeline(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(f"#!/bin/sh\n{body}\n")
                 path.chmod(0o755)
+            (lean / "tree.sha256").write_text(bootstrap_tool.tree_digest(lean) + "\n")
             toolchain = (ROOT / "lean-toolchain").read_text().strip()
             source_archive("lean4export", toolchain)
             source_archive("nanoda", toolchain)
@@ -891,6 +1202,63 @@ class Pipeline(unittest.TestCase):
             script = f"set -euo pipefail\n{function.group(0)}\ntracked_outputs"
             outside = subprocess.run(["bash", "-c", script], cwd=tree, capture_output=True, check=False)
             self.assertNotEqual(outside.returncode, 0)
+
+    def test_backend_verify_rejects_stale_build_outputs(self) -> None:
+        """A pinned proof tree carrying build outputs cannot be verified.
+
+        Upstream ignores its own `*.uo` and `*Theory.sml` files, so a stale or
+        substituted theory object would otherwise pass the check and let Holmake
+        treat the target as already built.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/backend.py", root / "scripts/backend.py")
+            tree = root / ".deps/cakeml"
+            tree.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", str(tree)], check=True)
+            (tree / ".gitignore").write_text("*.uo\n")
+            (tree / "pancake.sml").write_text("val x = 1;\n")
+            env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                   "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+            subprocess.run(["git", "-C", str(tree), "add", "."], check=True, env=env)
+            subprocess.run(["git", "-C", str(tree), "-c", "commit.gpgsign=false",
+                            "commit", "-qm", "pinned"], check=True, env=env)
+            revision = subprocess.check_output(["git", "-C", str(tree), "rev-parse", "HEAD"],
+                                               text=True).strip()
+            (root / "backend").mkdir()
+            (root / "backend/lock.json").write_text(json.dumps({
+                "format": 1,
+                "cakeml": {"url": "file:///none", "revision": revision},
+                "patches": [],
+                "semantics_sources": [{"component": "cakeml", "revision": revision,
+                                       "path": "pancake.sml",
+                                       "sha256": sha256(tree / "pancake.sml")}],
+            }))
+            verify = ["python3", str(root / "scripts/backend.py"), "verify", "cakeml"]
+            clean = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+            self.assertIn("no build outputs present", clean.stdout)
+            # The kind of file upstream ignores: invisible to a check that only
+            # looks at non-ignored files.
+            (tree / "loop_liveProofTheory.uo").write_text("stale")
+            stale = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertNotEqual(stale.returncode, 0, stale.stdout)
+            self.assertIn("build outputs present in the pinned tree", stale.stderr)
+            self.assertIn("loop_liveProofTheory.uo", stale.stderr)
+            # A whole ignored directory is one entry, and a file upstream does not
+            # ignore is refused by the older check for a different reason.
+            (tree / "outputs").mkdir()
+            (tree / "outputs/a.uo").write_text("stale")
+            (tree / "loop_liveProofTheory.uo").unlink()
+            directory = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertNotEqual(directory.returncode, 0, directory.stdout)
+            self.assertIn("outputs/", directory.stderr)
+            shutil.rmtree(tree / "outputs")
+            (tree / "left-over.txt").write_text("not ignored")
+            untracked = subprocess.run(verify, capture_output=True, text=True, check=False)
+            self.assertNotEqual(untracked.returncode, 0, untracked.stdout)
+            self.assertIn("untracked files outside upstream ignores", untracked.stderr)
 
     def test_semantics_sources_cover_the_pinned_revisions(self) -> None:
         lock = json.loads((ROOT / "backend/lock.json").read_text())

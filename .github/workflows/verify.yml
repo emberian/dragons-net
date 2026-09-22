@@ -1,0 +1,114 @@
+name: verify
+# The `checks` workflow cannot certify the change that supplies it: for a pull
+# request GitHub runs the workflow file, and the scripts it starts, from the pull
+# request's own merge commit. `scripts/check.sh`, the proof audit and the gate
+# tests all come from the change they are checking.
+#
+# This workflow runs on `workflow_run`, whose file and checkout always come from
+# the default branch, so a pull request can neither edit it nor stop it. It reads
+# the finished run's job list and the two commit trees through the API and
+# publishes what can be decided from outside: whether every required job ran and
+# succeeded, and whether the files that decide what the checks do are the default
+# branch's. `scripts/verify_run.py` explains what that does and does not settle.
+#
+# It checks out, builds and runs nothing from the change under review -- that is
+# what lets this job hold `checks: write` without handing the write token to
+# code from a pull request. That is also why the trigger below, which is dangerous
+# whenever a workflow does run such code, is the safe one here.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [checks]
+    types: [completed]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+# Its own group: sharing one with `checks` would let either cancel the other.
+concurrency:
+  group: verify-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    # No condition on how the run ended: a run that failed, or that skipped every
+    # job, is reported as neutral. A report that is simply absent cannot be told
+    # from this workflow not being on the default branch yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # By name, not by `github.sha`: this job must run the default branch's
+          # copy of the script, and it compares against the commit it ran.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check that this is the default branch's copy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # This workflow file comes from the default branch whatever the checkout
+          # is, so this step can prove what the next ones will run: a commit that
+          # is on the default branch, not one a pull request wrote.
+          head=$(git rev-parse HEAD)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$head" --jq .status)
+          case "$status" in
+            identical | behind) echo "the checkout is $status the default branch" ;;
+            *) echo "the checkout is $status the default branch, not on it" >&2; exit 1 ;;
+          esac
+      - name: Read the finished run and the two trees
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          mkdir -p build/verify
+          # The branch the run was merged into decides which checks ran; this
+          # lane can only speak for the default branch, so it reads them.
+          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/pulls" \
+            --jq '[.[].base.ref] | unique | join(" ")' > build/verify/base-refs ||
+            echo > build/verify/base-refs
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | {name, status, conclusion}' \
+            | jq -s '{jobs: .}' > build/verify/jobs.json
+          base_sha=$(git rev-parse HEAD)
+          gh api "repos/$GITHUB_REPOSITORY/git/trees/$base_sha?recursive=1" > build/verify/base.json
+          # A pull request from a fork is usually readable here, through the
+          # reference this repository keeps for it; its own repository is the
+          # fallback, and either way the tree is data, never something to run.
+          gh api "repos/$GITHUB_REPOSITORY/git/trees/$HEAD_SHA?recursive=1" > build/verify/head.json ||
+            gh api "repos/$HEAD_REPO/git/trees/$HEAD_SHA?recursive=1" > build/verify/head.json
+      - name: Judge the run
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 -P scripts/verify_run.py \
+            --jobs build/verify/jobs.json \
+            --base-tree build/verify/base.json --head-tree build/verify/head.json \
+            --head-sha "$HEAD_SHA" --run-url "$RUN_URL" --details-url "$DETAILS_URL" \
+            --conclusion "$CONCLUSION" --default-branch "$DEFAULT_BRANCH" \
+            --base-refs "$(cat build/verify/base-refs)" \
+            --summary "$GITHUB_STEP_SUMMARY" > build/verify/check-run.json
+      - name: Publish the result on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            --input build/verify/check-run.json --silent
+      - name: Fail when the run checked less than it claims
+        run: |
+          conclusion=$(jq -r .conclusion build/verify/check-run.json)
+          echo "verify: $conclusion"
+          [[ "$conclusion" != failure ]]

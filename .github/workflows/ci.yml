@@ -82,6 +82,7 @@ jobs:
         if: always()
         with:
           name: build-log
+          if-no-files-found: error
           path: build/evidence/
 
   proofs:
@@ -114,6 +115,7 @@ jobs:
         if: always()
         with:
           name: proofs-log
+          if-no-files-found: error
           path: build/evidence/
 
   test:

@@ -5,7 +5,8 @@
     "url": "https://github.com/CakeML/cakeml/releases/download/v3479/cake-x64-64.tar.gz",
     "sha256": "e110bfcba19d6524ee4748608a67a275647445a048928cf623c2c9a973e31c9a",
     "source_revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
-    "role": "Native smoke-test compiler; distinct from the patched backend source pin"
+    "role": "Native smoke-test compiler; distinct from the patched backend source pin",
+    "binary": "cake"
   },
   "elan": {
     "version": "v4.2.4",

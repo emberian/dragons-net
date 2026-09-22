@@ -1,2 +1,4 @@
 [default.extend-words]
 Wisper = "Wisper"
+# HOL4 spells its theorem-checking helper `check_thm`.
+thm = "thm"

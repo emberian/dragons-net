@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A module in scripts/ with the name of a standard-library one would otherwise
+# shadow it: Python puts the script's directory first on the path. It does the
+# same for tests/, which this flag does not cover, so a gate test forbids the
+# names there instead.
+export PYTHONSAFEPATH=1
 
 # The whole script is parsed before it runs, and the build must not change any
 # repository file, so it cannot alter the checks that follow it.
@@ -7,6 +12,16 @@ snapshot() {
   local skip=(\( -path ./.git -o -path ./.lake -o -path ./build \) -prune -o)
   find . "${skip[@]}" -type f -print0 | sort -z | xargs -0 sha256sum
   find . "${skip[@]}" -type l -printf '%p -> %l\n' | sort
+}
+
+# The files that decide what the checks do. The tests run code from the change in
+# the same checkout as the scripts that run after them, so a test that rewrote one
+# of those on disk would be checked by what it wrote; the tests stage compares this
+# before and after. Bytecode caches are written by the tests themselves.
+checkers() {
+  git ls-files -z --cached --others --exclude-standard -- \
+    scripts tests .github lakefile.lean lean-toolchain '*.toml' '*.json' ':!:*__pycache__*' \
+    | xargs -0 -r sha256sum
 }
 
 # Lake and Python reuse build outputs that match the sources, so the checks may use only
@@ -85,6 +100,8 @@ proofs() {
 
 # Tests that run the built code, and the Rust crates.
 tests() {
+  local before
+  before=$(checkers)
   python3 -m unittest discover -s tests -v
   cargo clippy --locked --workspace --all-targets -- -D warnings
   # The models are a second workspace, and both configurations have to lint:
@@ -96,6 +113,10 @@ tests() {
   RUSTFLAGS='--cfg loom' cargo clippy --locked --workspace --all-targets -- -D warnings
   cargo test --locked --workspace
   python3 scripts/check_models.py
+  if [[ "$(checkers)" != "$before" ]]; then
+    echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2
+    exit 1
+  fi
 }
 
 main "$@"

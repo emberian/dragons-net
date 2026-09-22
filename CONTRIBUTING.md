@@ -61,4 +61,7 @@ and environment data, not only a digest microbenchmark.
 
 On completion, update the roadmap and inspect dependent issues. CI protects the
 tested baseline; it does not discharge the open ownership or compiler proof
-obligations recorded in the backlog.
+obligations recorded in the backlog. A pull request that edits the scripts,
+workflows, gate tests or pins is checked by the copy of them it supplies, and the
+`verify` check run says so: read that difference before trusting the result it
+produced.

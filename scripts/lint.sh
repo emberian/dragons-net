@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A module in scripts/ with the name of a standard-library one would otherwise
+# shadow it: Python puts the script's directory first on the path. It does the
+# same for tests/, which this flag does not cover, so a gate test forbids the
+# names there instead.
+export PYTHONSAFEPATH=1
 
 # Checks that need no build: workflows, shell, Python, Rust formatting, secrets, and the
 # spelling and whitespace of documentation. Every tool is pinned by digest in

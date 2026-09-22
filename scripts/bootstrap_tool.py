@@ -8,6 +8,7 @@ once under .deps/tools.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -22,11 +23,51 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 MARKER = "archive.sha256"
-BUILT = ("lean4export", "nanoda")
+MANIFEST = "tree.sha256"
+BUILT = ("lean4export", "nanoda", "cake")
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Content hash, read in chunks: some pinned archives and shared libraries are large."""
+    total = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            total.update(chunk)
+    return total.hexdigest()
+
+
+@functools.cache
+def tree_digest(path: Path) -> str:
+    """One digest over an unpacked tool: every entry's kind, name, mode and content.
+
+    The archive is verified once, when it is downloaded; this is what makes a
+    stored tree verifiable on every later use, so a tool that was edited or
+    truncated after installation is refused instead of executed. The manifest is
+    written beside the tool at install time, not derived from the lock, so it
+    answers "still what was installed", not "installed from the pinned archive".
+
+    One walk of the Lean toolchain is seconds, and a single run asks for the same
+    tool more than once, so the answer is kept.
+    """
+    total = hashlib.sha256()
+    for item in sorted(path.rglob("*"), key=lambda entry: entry.relative_to(path).as_posix()):
+        relative = item.relative_to(path).as_posix()
+        if relative == MANIFEST:
+            continue
+        if item.is_symlink():
+            total.update(f"l {relative} {os.readlink(item)}\n".encode())
+        elif item.is_dir():
+            total.update(f"d {relative}\n".encode())
+        else:
+            executable = "x" if os.access(item, os.X_OK) else "-"
+            total.update(f"f {relative} {executable} {digest(item)}\n".encode())
+    return total.hexdigest()
+
+
+def seal(content: Path, pin: dict[str, str]) -> None:
+    """Record what the tool was built from and what it consists of."""
+    (content / MARKER).write_text(pin["sha256"] + "\n")
+    (content / MANIFEST).write_text(tree_digest(content) + "\n")
 
 
 def fetch(pin: dict[str, str]) -> Path:
@@ -36,7 +77,8 @@ def fetch(pin: dict[str, str]) -> Path:
         archive.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=archive.parent) as temp:
             partial = Path(temp) / "download"
-            subprocess.run(["curl", "--proto", "=https", "--tlsv1.2", "--fail", "--location", "--retry", "3",
+            subprocess.run(["curl", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2",
+                            "--fail", "--location", "--retry", "3",
                             "--silent", "--show-error", "--output", str(partial), pin["url"]], check=True)
             partial.rename(archive)
     if digest(archive) != pin["sha256"]:
@@ -61,7 +103,7 @@ def unpack(pin: dict[str, str], archive: Path, target: Path) -> None:
         else:
             with tarfile.open(archive) as tar:
                 tar.extractall(content, filter="data")
-        (content / MARKER).write_text(pin["sha256"] + "\n")
+        seal(content, pin)
         os.rename(content, target)
 
 
@@ -77,7 +119,10 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
     with tempfile.TemporaryDirectory(prefix="dn-tool-", dir=cache) as temp:
         unpack(pin, archive, Path(temp) / "source")
         (source,) = [p for p in (Path(temp) / "source").iterdir() if p.is_dir()]
-        if name == "lean4export":
+        if name == "cake":
+            command = ["make", "-C", str(source), "cake", "LDFLAGS=-Wl,-z,noexecstack"]
+            env = dict(os.environ)
+        elif name == "lean4export":
             toolchain = f"leanprover/lean4:{lock['lean']['version']}"
             if (source / "lean-toolchain").read_text().strip() != toolchain:
                 raise SystemExit(f"lean4export {pin['version']} is not pinned to {toolchain}")
@@ -95,22 +140,30 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
         with tempfile.TemporaryDirectory(dir=target.parent) as staging:
             content = Path(staging) / "content"
             content.mkdir()
+            # The pin names the binary inside the source tree; only that file is kept.
             shutil.copy2(source / pin["binary"], content)
-            (content / MARKER).write_text(pin["sha256"] + "\n")
+            seal(content, pin)
             os.rename(content, target)
 
 
 def install(name: str, lock: dict[str, dict[str, str]]) -> Path:
     pin = lock[name]
     target = DEPS / "tools" / f"{name}-{pin['version']}"
+    if target.exists():
+        if (target / MARKER).read_text().strip() != pin["sha256"]:
+            raise SystemExit(f"{target} does not match the lock; remove it")
+        if not (target / MANIFEST).exists():
+            # Installed before the stored tree was sealed: redo it from the
+            # archive, which is still verified by its digest.
+            shutil.rmtree(target)
+        elif (target / MANIFEST).read_text().strip() != tree_digest(target):
+            raise SystemExit(f"{target} has changed since it was installed; remove it")
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         if name in BUILT:
             build(name, lock, fetch(pin), target)
         else:
             unpack(pin, fetch(pin), target)
-    elif (target / MARKER).read_text().strip() != pin["sha256"]:
-        raise SystemExit(f"{target} does not match the lock; remove it")
     return target
 
 
@@ -136,12 +189,7 @@ def main() -> None:
         raise SystemExit(".deps is tracked by git; pinned tools must come from their archives")
     pin = lock[args.tool]
     target = install(args.tool, lock)
-    if args.tool == "cake":
-        source = target / "cake-x64-64"
-        subprocess.run(["make", "-C", str(source), "cake", "LDFLAGS=-Wl,-z,noexecstack"],
-                       check=True, stdout=sys.stderr)
-        print(source / "cake")
-    elif args.tool == "elan":
+    if args.tool == "elan":
         subprocess.run([str(target / "elan-init"), "-y", "--no-modify-path", "--default-toolchain", "none"],
                        check=True, stdout=sys.stderr)
     elif args.tool == "lean":

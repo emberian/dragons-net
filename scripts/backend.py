@@ -72,7 +72,27 @@ def verify(name: str) -> None:
                                             cwd=path, text=True, env=env)
         if untracked.strip():
             raise SystemExit(f"{name}: untracked files outside upstream ignores: {untracked}")
-    print(f"{name}: pinned source and patch content verified")
+        # -z: a path may contain a space, and the count below is reported as a fact.
+        ignored = subprocess.check_output(["git", "ls-files", "-z", "--others", "--ignored",
+                                           "--exclude-standard", "--directory"],
+                                          cwd=path, text=True, env=env).split("\0")
+        ignored = [name for name in ignored if name]
+    if name == "cakeml":
+        # Upstream ignores its own build outputs (`*.uo`, `*Theory.sml`, `.HOLMK`, ...),
+        # so this check would otherwise pass on a tree where a stale or substituted
+        # theory object makes Holmake believe the target is already built.
+        if ignored:
+            listing = " ".join(ignored[:10]) + (" ..." if len(ignored) > 10 else "")
+            raise SystemExit(
+                f"{name}: build outputs present in the pinned tree: {listing}\n"
+                "Remove them (git clean -fdX) so the proof is rebuilt from source."
+            )
+        print(f"{name}: pinned source and patch content verified, no build outputs present")
+        return
+    # The prover is built inside its own checkout, so its build outputs are expected
+    # here and are not certified by this check; what is certified is the source they
+    # were built from.
+    print(f"{name}: pinned source verified; {len(ignored)} build outputs present, not certified")
 
 
 if __name__ == "__main__":
