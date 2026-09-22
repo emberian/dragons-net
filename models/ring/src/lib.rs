@@ -6,10 +6,12 @@
 //!
 //! - **Free-running counters.** `head` (consumer position) and `tail`
 //!   (producer position) increase monotonically and wrap only at the integer
-//!   boundary; they are masked (`index & (capacity - 1)`) only when indexing
-//!   the slot array. The governing invariant is
-//!   `head <= tail <= head + capacity`; slot `i` holds an initialized value
-//!   iff `head <= i < tail`.
+//!   boundary. Both are stored shifted left by one, because the low bit of
+//!   `tail` carries the close flag; the position is masked
+//!   (`(word >> 1) & (capacity - 1)`) only when indexing the slot array. The
+//!   governing invariant, in encoded units, is
+//!   `head <= tail <= head + capacity * 2`; the slot at encoded position `i`
+//!   holds an initialized value iff `head <= i < tail`.
 //! - **Release/Acquire publication.** The producer writes the slot, then
 //!   stores `tail` with `Release`; the consumer loads `tail` with `Acquire`
 //!   before reading the slot (and symmetrically for `head` when returning a
@@ -19,14 +21,24 @@
 //!   consumer, enforced at the type level: `Sender` keeps its cached tail in
 //!   a [`Cell`], which makes it `!Sync`; `Receiver` takes `&mut self` for
 //!   every consuming operation. Neither handle can be aliased across threads.
-//! - **Close flag.** Either side may set the shared `closed` flag (never
-//!   cleared) and wake the peer. A closed ring rejects new pushes; the
-//!   receiver may still drain items published before the close.
+//! - **Close flag.** Either side may set the close bit of `tail` (never
+//!   cleared) and wake the peer. A closed ring rejects new pushes, including a
+//!   push that had already written its slot: publication is a
+//!   compare-exchange on the same word the close bit lives in, so it fails
+//!   after a close instead of stranding an accepted value. The receiver still
+//!   drains everything published before the close.
 //! - **Check-register-recheck waker handoff, both directions.** When the
 //!   consumer finds the ring empty it registers a waker and then re-checks
 //!   `tail`; when the producer finds the ring full it registers a waker and
 //!   then re-checks `head`. See [`WakeCell`] for why the handoff needs
 //!   `SeqCst` fences and cannot be built from Release/Acquire alone.
+//!
+//! # What the model leaves out
+//!
+//! Dropping a handle does not close the ring: a `Sender` that goes away leaves
+//! a `Receiver` waiting for a value that will never arrive, and the other way
+//! round. A real channel closes on drop; this model asks for an explicit
+//! `close`, and the tests always call it.
 //!
 //! # Wake discipline
 //!
@@ -142,11 +154,12 @@ struct Ring<T> {
     /// Consumer position. Only the consumer stores to this (Release);
     /// the producer loads it (Acquire) for the full check.
     head: AtomicUsize,
-    /// Producer position. Only the producer stores to this (Release);
-    /// the consumer loads it (Acquire) for the empty check.
+    /// Producer position **and** the close flag, in one word: the position
+    /// shifted left by one, with [`CLOSED`] in the low bit. Publishing a value
+    /// and closing the ring are then two writes to the same location, so they
+    /// cannot be reordered with respect to each other and a push can never be
+    /// accepted after the consumer has been told the ring is drained.
     tail: AtomicUsize,
-    /// Set once by either side; never cleared.
-    closed: AtomicBool,
     /// Woken by the producer after each push and on close.
     consumer_waker: WakeCell,
     /// Woken by the consumer after each pop and on close.
@@ -161,17 +174,23 @@ struct Ring<T> {
 unsafe impl<T: Send> Send for Ring<T> {}
 unsafe impl<T: Send> Sync for Ring<T> {}
 
+/// The close bit of the `tail` word.
+const CLOSED: usize = 1;
+
+/// One position step in the encoded `head`/`tail` words.
+const STEP: usize = 2;
+
 impl<T> Drop for Ring<T> {
     fn drop(&mut self) {
         // Sole owner at this point; drop any undrained items.
         let head = self.head.load(Ordering::Acquire);
-        let tail = self.tail.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire) & !CLOSED;
         let mut i = head;
         while i != tail {
-            let slot = i & self.mask;
+            let slot = (i >> 1) & self.mask;
             // SAFETY: slots in [head, tail) are initialized and unaliased.
             self.buffer[slot].with_mut(|p| unsafe { (*p).assume_init_drop() });
-            i = i.wrapping_add(1);
+            i = i.wrapping_add(STEP);
         }
     }
 }
@@ -208,7 +227,6 @@ pub fn channel<T: Send>(capacity: usize) -> (Sender<T>, Receiver<T>) {
         capacity,
         head: AtomicUsize::new(0),
         tail: AtomicUsize::new(0),
-        closed: AtomicBool::new(false),
         consumer_waker: WakeCell::new(),
         producer_waker: WakeCell::new(),
     });
@@ -235,35 +253,52 @@ impl<T: Send> Sender<T> {
         }
         let tail = self.cached_tail.get();
         let head = self.ring.head.load(Ordering::Acquire);
-        if tail.wrapping_sub(head) >= self.ring.capacity {
+        if tail.wrapping_sub(head) >= self.ring.capacity * STEP {
             return Err(PushError::Full(value));
         }
 
-        let slot = tail & self.ring.mask;
+        let slot = (tail >> 1) & self.ring.mask;
         // SAFETY: `head <= tail < head + capacity` was just established, so
         // this slot is outside [head, tail) — the consumer will not touch it
-        // until the Release store below makes it visible.
+        // until the publication below makes it visible.
         self.ring.buffer[slot].with_mut(|p| unsafe { (*p).write(value) });
 
-        // Publish: the slot write above becomes visible to any Acquire load
-        // of `tail` that observes the new value.
-        self.ring
-            .tail
-            .store(tail.wrapping_add(1), Ordering::Release);
-        self.cached_tail.set(tail.wrapping_add(1));
-
-        self.ring.consumer_waker.wake();
-        Ok(())
+        // Publish. The compare-exchange fails exactly when the ring was closed
+        // after the check above, because the close sets a bit in this very
+        // word: the value stays unpublished and goes back to the caller.
+        match self.ring.tail.compare_exchange(
+            tail,
+            tail.wrapping_add(STEP),
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                self.cached_tail.set(tail.wrapping_add(STEP));
+                self.ring.consumer_waker.wake();
+                Ok(())
+            }
+            Err(observed) => {
+                debug_assert_eq!(
+                    observed & !CLOSED,
+                    tail,
+                    "only the close bit may change under a single producer"
+                );
+                // SAFETY: the slot was written above and never published, so
+                // the consumer cannot have taken it.
+                let value = self.ring.buffer[slot].with_mut(|p| unsafe { (*p).assume_init_read() });
+                Err(PushError::Closed(value))
+            }
+        }
     }
 
     /// `true` once either side has closed the ring.
     pub fn is_closed(&self) -> bool {
-        self.ring.closed.load(Ordering::Acquire)
+        self.ring.tail.load(Ordering::Acquire) & CLOSED != 0
     }
 
     /// Close the ring and wake the consumer so it can observe the close.
     pub fn close(&self) {
-        self.ring.closed.store(true, Ordering::Release);
+        self.ring.tail.fetch_or(CLOSED, Ordering::AcqRel);
         self.ring.consumer_waker.wake();
     }
 
@@ -335,12 +370,12 @@ impl<T: Send> Receiver<T> {
     /// under weak memory.
     pub fn try_pop(&mut self) -> Option<T> {
         let head = self.cached_head;
-        let tail = self.ring.tail.load(Ordering::Acquire);
+        let tail = self.ring.tail.load(Ordering::Acquire) & !CLOSED;
         if head == tail {
             return None;
         }
 
-        let slot = head & self.ring.mask;
+        let slot = (head >> 1) & self.ring.mask;
         // SAFETY: head < tail, so the slot was initialized by the producer
         // and published by the Release store of `tail` we just observed.
         let value = self.ring.buffer[slot].with_mut(|p| unsafe { (*p).assume_init_read() });
@@ -349,8 +384,8 @@ impl<T: Send> Receiver<T> {
         // observes the new value.
         self.ring
             .head
-            .store(head.wrapping_add(1), Ordering::Release);
-        self.cached_head = head.wrapping_add(1);
+            .store(head.wrapping_add(STEP), Ordering::Release);
+        self.cached_head = head.wrapping_add(STEP);
 
         self.ring.producer_waker.wake();
         Some(value)
@@ -358,12 +393,16 @@ impl<T: Send> Receiver<T> {
 
     /// `true` once either side has closed the ring.
     pub fn is_closed(&self) -> bool {
-        self.ring.closed.load(Ordering::Acquire)
+        self.ring.tail.load(Ordering::Acquire) & CLOSED != 0
     }
 
     /// Close the ring and wake the producer so it can observe the close.
+    ///
+    /// A push that has not published yet fails after this: the close and the
+    /// publication are writes to the same word, so no accepted value can be
+    /// stranded behind a `None` from [`Receiver::recv`].
     pub fn close(&self) {
-        self.ring.closed.store(true, Ordering::Release);
+        self.ring.tail.fetch_or(CLOSED, Ordering::AcqRel);
         self.ring.producer_waker.wake();
     }
 
@@ -380,9 +419,9 @@ impl<T: Send> Receiver<T> {
             return Poll::Ready(Some(v));
         }
         if self.is_closed() {
-            // The Acquire load of `closed` synchronizes with the closer's
-            // Release store, so everything pushed before the close is now
-            // visible; one final pop drains it.
+            // The Acquire load of the tail word carries both the close bit and
+            // every publication that preceded it, so one final pop drains what
+            // the producer got in before the close.
             return Poll::Ready(self.try_pop());
         }
         // Check-register-recheck: the ring was empty and open; park a waker,

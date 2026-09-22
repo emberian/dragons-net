@@ -59,6 +59,7 @@ dependencies = [
 name = "dn-oneshot-recv-model"
 version = "0.1.0"
 dependencies = [
+ "dn-borrow-recycle-model",
  "loom",
 ]
 
@@ -73,6 +74,7 @@ dependencies = [
 name = "dn-splitsend-model"
 version = "0.1.0"
 dependencies = [
+ "dn-borrow-recycle-model",
  "loom",
 ]
 

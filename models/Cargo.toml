@@ -1,3 +1,9 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["ring", "wake", "borrow-recycle", "splitsend", "multishot", "conn-limit", "config-publish", "oneshot-recv"]
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(loom)"] }
+
+[workspace.lints.clippy]
+all = "warn"

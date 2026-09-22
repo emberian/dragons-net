@@ -87,6 +87,13 @@ proofs() {
 tests() {
   python3 -m unittest discover -s tests -v
   cargo clippy --locked --workspace --all-targets -- -D warnings
+  # The models are a second workspace, and both configurations have to lint:
+  # the loom code paths are compiled only under the cfg.
+  cargo clippy --locked --manifest-path models/Cargo.toml --workspace --all-targets \
+    -- -D warnings
+  RUSTFLAGS='--cfg loom' cargo clippy --locked --manifest-path models/Cargo.toml \
+    --workspace --all-targets -- -D warnings
+  RUSTFLAGS='--cfg loom' cargo clippy --locked --workspace --all-targets -- -D warnings
   cargo test --locked --workspace
   python3 scripts/check_models.py
 }

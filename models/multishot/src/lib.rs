@@ -27,18 +27,18 @@
 //! ## Honest scope
 //!
 //! This models a **prospective** multishot design. The DEPLOYED `uring.rs` recv
-//! path is *one-shot*: `recv_br_sqe` (uring.rs:757) builds a plain buffer-select
-//! `Recv` with NO multishot flag, `on_recv_br` (uring.rs:1975) handles one
-//! completion and the shard re-arms explicitly, and `recycle_bid` (uring.rs:2157)
+//! path is *one-shot*: `recv_br_sqe` (uring.rs) builds a plain buffer-select
+//! `Recv` with NO multishot flag, `on_recv_br` (uring.rs) handles one
+//! completion and the shard re-arms explicitly, and `recycle_bid` (uring.rs)
 //! runs on the SAME shard thread — so today there is no cross-thread re-arm race
 //! to explore. The F_MORE terminal-vs-more discipline this model turns on does
 //! already exist in the deployed zero-copy SEND path (`on_send_zc`, `cqueue::more`,
-//! uring.rs:2386). This crate is loom evidence for ONE re-arm invariant on a
+//! uring.rs). This crate is loom evidence for ONE re-arm invariant on a
 //! faithful hand-model of a multishot recv path — NOT a proof that `uring.rs` is
 //! verified, and NOT a claim that the current deploy contains this race.
 //!
 //! The model itself lives in `tests/loom.rs`, exercised under `--cfg loom` for
-//! exhaustive schedule exploration. This crate is deliberately zero-dependency
+//! schedule exploration. This crate stands alone
 //! and separate from `dataplane`: the dataplane package's `build.rs` links the
 //! Lean runtime (`libleanshared`) into every target, and that runtime breaks
 //! loom's unwind-based panic capture inside its stackful coroutines — the same

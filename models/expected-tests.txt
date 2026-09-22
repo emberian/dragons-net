@@ -1,0 +1,47 @@
+#   python3 scripts/check_models.py --loom --record     (loom lane)
+#   python3 scripts/check_models.py --record            (plain lane)
+# "<lane> <package>::<test>". scripts/check_models.py refuses any difference, so
+# The concurrency tests this repository claims to run, one per line, as
+# a crate dropped from the workspace or a cfg that stops matching fails the lane
+# instead of quietly shrinking it. Regenerate with:
+loom dn-borrow-recycle-model::borrow_recycle_is_interleaving_safe
+loom dn-borrow-recycle-model::recycle_without_worker_signal_discloses
+loom dn-config-publish-model::packed_read_is_always_a_whole_generation
+loom dn-config-publish-model::torn_read_reached
+loom dn-config-publish-model::torn_read_reached_even_seqcst
+loom dn-conn-limit-model::admit_close_conserved
+loom dn-conn-limit-model::admit_gate_never_over_admits
+loom dn-conn-limit-model::split_check_and_increment_over_admits
+loom dn-multishot-model::multishot_rearm_exactly_once
+loom dn-multishot-model::recycle_without_recheck_drops_rearm
+loom dn-multishot-model::split_check_and_arm_double_arms
+loom dn-oneshot-recv-model::oneshot_recv_cycle_recycles_once_and_conserves
+loom dn-oneshot-recv-model::overlapping_recv_leaks_lease
+loom dn-ring-model::accepted_async_sends_are_all_received
+loom dn-ring-model::close_after_send_drains_then_none
+loom dn-ring-model::close_wakes_receiver_parked_on_empty
+loom dn-ring-model::close_wakes_sender_parked_on_full
+loom dn-ring-model::conservation_capacity_1
+loom dn-ring-model::conservation_capacity_2_wraparound
+loom dn-ring-model::no_push_succeeds_after_recv_reported_drained
+loom dn-ring-model::release_acquire_handoff_admits_store_buffering
+loom dn-runtime::a_released_slot_carries_the_previous_holders_writes
+loom dn-runtime::limit_of_one_is_never_exceeded
+loom dn-runtime::slots_are_returned_after_contention
+loom dn-splitsend-model::recycle_before_writev_settles_discloses
+loom dn-splitsend-model::split_send_recycle_is_interleaving_safe
+loom dn-splitsend-model::split_send_recycle_once_across_rearm
+loom dn-wake-model::no_missed_wakeup_single_producer
+loom dn-wake-model::no_missed_wakeup_two_producers
+loom dn-wake-model::release_acquire_variant_admits_missed_wakeup
+plain dn-config-publish-model::tests::generation_predicate
+plain dn-config-publish-model::tests::packed_roundtrips_both_generations
+plain dn-config-publish-model::torn_path_tears_and_packed_path_never_does
+plain dn-ring-model::async_conservation_and_close
+plain dn-ring-model::destruction_survives_slot_reuse
+plain dn-ring-model::receiver_close_releases_blocked_sender
+plain dn-ring-model::spin_conservation_and_close
+plain dn-ring-model::undrained_items_are_destroyed_exactly_once
+plain dn-wake-model::no_missed_wakeup_under_stress
+plain dn-wake-model::tests::coalescing_exactly_one_ring_per_edge
+plain dn-wake-model::tests::no_ring_when_consumer_awake

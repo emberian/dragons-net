@@ -27,6 +27,45 @@ jobs:
           "$deny" --locked check advisories
           "$deny" --locked --manifest-path models/Cargo.toml check advisories
 
+  # The concurrency tests are only evidence while they can fail. This replays the
+  # recorded defects against a copy of the tree and requires each one to go red.
+  # It takes minutes, so it runs here rather than in the per-commit chain.
+  rust-mutations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Mutations the concurrency tests must catch
+        run: python3 -P scripts/mutate_rust.py
+
+  # Miri interprets the unsafe code of the ring model (slot writes through
+  # `UnsafeCell` and `MaybeUninit`) and reports undefined behaviour the ordinary
+  # test run cannot see. It needs a nightly toolchain, so it stays out of the
+  # pinned build and its result is advisory until it has run here.
+  miri:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly-2026-09-01 --profile minimal --component miri
+          rustup run nightly-2026-09-01 cargo miri setup
+      - name: Undefined behaviour in the ring model
+        env:
+          MIRIFLAGS: "-Zmiri-strict-provenance"
+        run: |
+          rustup run nightly-2026-09-01 cargo miri test --locked \
+            --manifest-path models/Cargo.toml -p dn-ring-model
+
   # The upstream files the semantics was transcribed from and the keyword table was
   # generated from must still be those files; this needs network, so it is not in the
   # offline build.

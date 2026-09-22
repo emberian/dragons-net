@@ -1,5 +1,5 @@
 //! Blocking reactor's SHARED per-source **connection-limit gate**
-//! (`SharedStanding::admit` / `on_close`, `crates/dataplane/src/standing.rs`):
+//! (`SharedStanding::admit` / `on_close`, `migration/dataplane/host/src/standing.rs`):
 //! the `ConnLimit` check-and-increment must be a SINGLE critical section so
 //! concurrent accept/worker threads from one source can never both read
 //! `active == cap-1` and both admit — the TOCTOU over-admit that lets a source
@@ -15,32 +15,32 @@
 //! # What the real gate is (standing.rs, drorb)
 //!
 //! The io_uring / kqueue shards keep their per-source counters in the LOCK-FREE
-//! [`Standing`] (`standing.rs:60`): one `Standing` per shard, touched only by that
+//! [`Standing`] (`standing.rs`): one `Standing` per shard, touched only by that
 //! shard's single event-loop thread. There is NO cross-thread race there — that is
 //! precisely why it needs no lock, and why loom has nothing to explore for it
 //! (modeling it would be vacuous: a single thread, one interleaving).
 //!
-//! The `SharedStanding` variant (`standing.rs:155`) is the concurrent one — the
+//! The `SharedStanding` variant (`standing.rs`) is the concurrent one — the
 //! thread-per-connection *blocking* reactor, whose accept loop and per-connection
 //! worker threads run at the same time. Its per-source counter is striped under
 //! `Mutex<HashMap<IpAddr,u32>>`, and one source's traffic all hashes to one stripe,
 //! so two concurrent accepts from that source contend on the SAME lock:
 //!
-//! 1. **accept thread**, `admit(ip, cap)` (`standing.rs:229`): takes the stripe
+//! 1. **accept thread**, `admit(ip, cap)` (`standing.rs`): takes the stripe
 //!    lock ONCE, reads `n = active(ip)`, and — still holding the lock — refuses if
 //!    `n >= cap`, else increments and admits. The check and the increment are one
-//!    critical section (`standing.rs:230-236`).
-//! 2. **worker thread**, `on_close(ip)` (`standing.rs:241`): when the connection's
+//!    critical section (`standing.rs`).
+//! 2. **worker thread**, `on_close(ip)` (`standing.rs`): when the connection's
 //!    worker returns, takes the stripe lock, decrements (saturating at zero, drops
 //!    the entry at zero).
 //!
-//! The safety claim (`standing.rs:227-228`, doc-comment, machine-checked nowhere
+//! The safety claim (`standing.rs`, doc-comment, machine-checked nowhere
 //! before this model): *the single critical section means concurrent accepts from
 //! one source cannot both slip past the cap boundary — no TOCTOU over-admit*, so
 //! `active(ip)` never exceeds `cap`; and accept/close is conserved
 //! (`active = #admitted - #closed`, never negative). This is the run-time
 //! counterpart of the `conn_conservation` / `ConnLimit.admits` invariants proven
-//! in `Reactor/StandingCounters.lean`. `SharedStanding::rate_note` (`standing.rs:211`,
+//! in `Reactor/StandingCounters.lean`. `SharedStanding::rate_note` (`standing.rs`,
 //! the `429` gate) rests on the IDENTICAL single-critical-section discipline (one
 //! stripe held across age-and-count), so this model witnesses that pattern too.
 //!
@@ -83,7 +83,7 @@ struct Gate {
 }
 
 /// FAITHFUL `admit`: the whole check-and-increment under ONE stripe lock
-/// (`standing.rs:229-237`). Returns whether this accept was admitted.
+/// (`standing.rs`). Returns whether this accept was admitted.
 fn admit(gate: &Mutex<Gate>, cap: u32) -> bool {
     let mut g = gate.lock().unwrap();
     if cap != 0 && g.active >= cap {
@@ -96,10 +96,16 @@ fn admit(gate: &Mutex<Gate>, cap: u32) -> bool {
     true
 }
 
-/// FAITHFUL `on_close` (`standing.rs:241-249`): one decrement under the stripe lock.
+/// FAITHFUL `on_close` (`standing.rs`): one decrement under the stripe
+/// lock. The decrement is checked, not saturating: a close without a matching
+/// admit is a bug, and a saturating counter would hide it behind a correct
+/// looking `active == 0` at the end of the test.
 fn close(gate: &Mutex<Gate>) {
     let mut g = gate.lock().unwrap();
-    g.active = g.active.saturating_sub(1);
+    g.active = g
+        .active
+        .checked_sub(1)
+        .expect("close without a matching admit");
 }
 
 /// Count of loom schedules explored, per test, for the report.

@@ -16,13 +16,13 @@
 //!
 //! 1. **shard thread**, terminal CQE: the kernel drained the last free buffer
 //!    and posted `res == -ENOBUFS` with `F_MORE` cleared. In the deployed
-//!    one-shot analog this is `on_recv_br`'s ENOBUFS arm (uring.rs:1979) and the
-//!    F_MORE terminal test is `on_send_zc`'s `cqueue::more(flags)` (uring.rs:2386).
+//!    one-shot analog this is `on_recv_br`'s ENOBUFS arm (uring.rs) and the
+//!    F_MORE terminal test is `on_send_zc`'s `cqueue::more(flags)` (uring.rs).
 //!    The shard publishes `armed = OFF`, then RE-CHECKS whether a buffer is free
 //!    and, if so, tries to claim the re-arm.
 //! 2. **worker thread**, recycle: a serve worker finished with its lease and
-//!    republishes the slot into the ring — `BufRing::recycle`/`add` (bufring.rs:129/136),
-//!    the model's `recycle_bid` (uring.rs:2157) moved onto the worker. It
+//!    republishes the slot into the ring — `BufRing::recycle`/`add` (bufring.rs),
+//!    the model's `recycle_bid` (uring.rs) moved onto the worker. It
 //!    publishes `free += 1`, then RE-CHECKS whether the multishot is OFF and, if
 //!    so, tries to claim the re-arm.
 //!

@@ -27,6 +27,11 @@ inductive SendResult where
   | closed
   /-- Acknowledgement for non-submit events. -/
   | ok
+  /-- The completion claimed more bytes than were in flight. The state is left
+  untouched: a kernel cannot have sent bytes that were never submitted, so this
+  is an adapter error, not a short write. `dn_runtime::OutputCursor::complete`
+  rejects the same input. -/
+  | overCompleted
   deriving Repr, DecidableEq, Inhabited
 
 /-- Per-socket send state, over an abstract byte type `α`.
@@ -96,14 +101,14 @@ def SendConn.step (s : SendConn α) : SendEv α → SendConn α × SendResult
       | none => (s, .full)
   | .complete m =>
     match s.pending with
-    | none => (s, .ok)
+    | none => if m = 0 then (s, .ok) else (s, .overCompleted)
     | some rem =>
-      let k := min m rem.length
-      if k = rem.length then
+      if rem.length < m then (s, .overCompleted)
+      else if m = rem.length then
         ({ s with wire := s.wire ++ rem, pending := none }, .ok)
       else
-        ({ s with wire := s.wire ++ rem.take k,
-                  pending := some (rem.drop k) }, .ok)
+        ({ s with wire := s.wire ++ rem.take m,
+                  pending := some (rem.drop m) }, .ok)
   | .completeErr =>
     ({ s with pending := none, closed := true,
               killed := s.killed ++ s.pendingBytes }, .ok)
@@ -166,7 +171,8 @@ theorem SendConn.step_inv (s : SendConn α) (e : SendEv α) (h : s.Inv) :
   | complete m =>
     cases hp : s.pending with
     | none =>
-      have hred : (s.step (.complete m)).1 = s := by simp [step, hp]
+      have hred : (s.step (.complete m)).1 = s := by
+        cases m <;> simp [step, hp]
       rw [hred]; exact ⟨hflow, hkill, hpend⟩
     | some rem =>
       have hc : s.closed = false := by
@@ -176,10 +182,15 @@ theorem SendConn.step_inv (s : SendConn α) (e : SendEv α) (h : s.Inv) :
       have hk : s.killed = [] := hkill hc
       have hw : s.wire ++ rem = s.accepted.flatten := by
         simpa [pendingBytes, hp, hk] using hflow
-      by_cases hm : min m rem.length = rem.length
+      by_cases hover : rem.length < m
+      · have hred : (s.step (.complete m)).1 = s := by simp [step, hp, hover]
+        rw [hred]; exact ⟨hflow, hkill, hpend⟩
+      by_cases hm : m = rem.length
       · simp [step, hp, hm, Inv, pendingBytes, hk, hc, hw]
-      · simp [step, hp, hm, Inv, pendingBytes, hk, hc,
-          List.take_append_drop, hw]
+      · have htake : rem.take m ++ rem.drop m = rem := List.take_append_drop m rem
+        simp only [step, hp, hover, hm, if_false, Inv, pendingBytes, hk, hc]
+        refine ⟨?_, by simp, by simp⟩
+        simpa [List.append_assoc, htake] using hw
   | completeErr =>
     refine ⟨?_, by simp [step], by simp [step]⟩
     cases hc : s.closed with
@@ -269,23 +280,34 @@ theorem SendConn.wire_monotone (s : SendConn α) (e : SendEv α) :
     · exact ⟨[], by simp [step, hc]⟩
   | complete m =>
     cases hp : s.pending with
-    | none => exact ⟨[], by simp [step, hp]⟩
+    | none => exact ⟨[], by cases m <;> simp [step, hp]⟩
     | some rem =>
-      by_cases hm : min m rem.length = rem.length
+      by_cases hover : rem.length < m
+      · exact ⟨[], by simp [step, hp, hover]⟩
+      by_cases hm : m = rem.length
       · exact ⟨rem, by simp [step, hp, hm]⟩
-      · exact ⟨rem.take (min m rem.length), by simp [step, hp, hm]⟩
+      · exact ⟨rem.take m, by simp [step, hp, hover, hm]⟩
   | completeErr => exact ⟨[], by simp [step]⟩
   | close => exact ⟨[], by simp [step]⟩
 
-/-- **Unblocking is exact.** A full completion of the remainder unblocks
-the socket (the write-ready observable) and puts the entire remainder on
-the wire. -/
+/-- **Unblocking is exact.** A full completion unblocks the socket (the
+write-ready observable) and puts the whole remainder on
+the wire. `m` must be exactly the remainder: a larger count is refused
+(`over_completion_is_refused`), and a smaller one requeues the tail
+(`complete_short_requeues`). -/
 theorem SendConn.complete_full_unblocks (s : SendConn α) (rem : List α)
-    (hp : s.pending = some rem) (m : Nat) (hm : rem.length ≤ m) :
+    (hp : s.pending = some rem) (m : Nat) (hm : m = rem.length) :
     (s.step (.complete m)).1.pending = none ∧
     (s.step (.complete m)).1.wire = s.wire ++ rem := by
-  have : min m rem.length = rem.length := by omega
-  simp [step, hp, this]
+  simp [step, hp, hm]
+
+/-- **An over-completion changes nothing.** A completion claiming more bytes
+than were in flight is refused and the socket keeps its remainder, so a
+miscounting adapter cannot make the model believe bytes were sent. -/
+theorem SendConn.over_completion_is_refused (s : SendConn α) (rem : List α)
+    (hp : s.pending = some rem) (m : Nat) (hm : rem.length < m) :
+    s.step (.complete m) = (s, .overCompleted) := by
+  simp [step, hp, hm]
 
 /-- **Short completions keep the socket blocked** with exactly the unsent
 tail queued: the retry cannot lose or reorder the tail. -/
@@ -293,9 +315,9 @@ theorem SendConn.complete_short_requeues (s : SendConn α) (rem : List α)
     (hp : s.pending = some rem) (m : Nat) (hm : m < rem.length) :
     (s.step (.complete m)).1.pending = some (rem.drop m) ∧
     (s.step (.complete m)).1.wire = s.wire ++ rem.take m := by
-  have h1 : min m rem.length = m := by omega
+  have hover : ¬ rem.length < m := by omega
   have h2 : m ≠ rem.length := by omega
-  simp [step, hp, h1, h2]
+  simp [step, hp, hover, h2]
 
 -- A partial write followed by its completion: the wire really advances, so the
 -- prefix theorem above is about a moving state.

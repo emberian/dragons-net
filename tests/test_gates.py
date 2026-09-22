@@ -511,6 +511,13 @@ class SourceGate(unittest.TestCase):
             errors = structure.gate_errors(root, {})
             self.assertTrue(any("maximum recursion depth" in e for e in errors), errors)
 
+    def test_documented_loom_count_matches_the_recorded_tests(self) -> None:
+        recorded = (ROOT / "models/expected-tests.txt").read_text().splitlines()
+        loom = sum(1 for line in recorded if line.startswith("loom "))
+        for name in ("docs/baseline.md", "docs/assurance.md", "README.md"):
+            with self.subTest(document=name):
+                self.assertIn(f"{loom} Loom tests", (ROOT / name).read_text())
+
     def test_auto_implicit_is_off(self) -> None:
         self.assertIn("⟨`autoImplicit, false⟩", (ROOT / "lakefile.lean").read_text())
         with tempfile.TemporaryDirectory() as temp:
@@ -716,7 +723,8 @@ class Pipeline(unittest.TestCase):
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
-                "tests": ["python3 -m unittest", "cargo clippy", "cargo test", "python3 scripts/check_models.py"],
+                "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
+                          "cargo clippy", "cargo test", "python3 scripts/check_models.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):

@@ -7,5 +7,11 @@ license.workspace = true
 description = "Bounded host-side primitives for dragon's news"
 publish = false
 
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
 [lints]
 workspace = true

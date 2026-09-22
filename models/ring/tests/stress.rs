@@ -7,6 +7,7 @@
 use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::thread;
 
@@ -134,4 +135,85 @@ fn receiver_close_releases_blocked_sender() {
     thread::yield_now();
     rx.close();
     producer.join().unwrap();
+}
+
+/// A value that reports its own destruction and owns a heap allocation, so the
+/// ring's `Drop` can be held to "each stored value is destroyed exactly once".
+/// The allocation matters: destroying a slot that was already taken is
+/// undefined behaviour, and a counter alone cannot see it — freeing the same
+/// box twice is loud, and the Miri lane reads the same tests.
+#[derive(Debug)]
+struct Counted {
+    drops: Arc<AtomicUsize>,
+    owned: Box<u64>,
+}
+
+impl Counted {
+    fn new(drops: &Arc<AtomicUsize>, value: u64) -> Counted {
+        Counted {
+            drops: drops.clone(),
+            owned: Box::new(value),
+        }
+    }
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        assert_ne!(
+            *self.owned,
+            u64::MAX,
+            "a destroyed value was destroyed again"
+        );
+        *self.owned = u64::MAX;
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// **Undrained items are destroyed once.** Dropping a ring that still holds
+/// values must run each destructor exactly once: the slot walk in `Drop` reads
+/// the encoded counters, and an index computed from the wrong one would destroy
+/// a slot twice or leak it. Every other test in this crate stores integers,
+/// whose destructor is a no-op and cannot show the difference.
+#[test]
+fn undrained_items_are_destroyed_exactly_once() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    {
+        let (tx, mut rx) = channel::<Counted>(4);
+        for _ in 0..4 {
+            tx.try_push(Counted::new(&drops, 1)).expect("capacity 4");
+        }
+        // One value leaves through the consumer and dies here; three stay in
+        // the ring and must die with it.
+        drop(rx.try_pop().expect("one item"));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(rx.try_pop().is_some());
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        4,
+        "every value stored in the ring was destroyed exactly once"
+    );
+}
+
+/// The same across the wrap of the slot array: pushes and pops keep cycling the
+/// same four slots, so a `Drop` that walked the wrong range would show up here.
+#[test]
+fn destruction_survives_slot_reuse() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    {
+        let (tx, mut rx) = channel::<Counted>(2);
+        // Four push/pop pairs walk the two slots twice round, so the counters
+        // are well past the slot array by the time anything is left behind.
+        for _ in 0..4 {
+            tx.try_push(Counted::new(&drops, 2))
+                .expect("the ring is empty here");
+            drop(rx.try_pop().expect("an item to take"));
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), 4);
+        // Two values left in reused slots for the ring's own `Drop` to destroy.
+        tx.try_push(Counted::new(&drops, 3)).expect("capacity 2");
+        tx.try_push(Counted::new(&drops, 3)).expect("capacity 2");
+    }
+    assert_eq!(drops.load(Ordering::SeqCst), 6);
 }
