@@ -387,26 +387,62 @@ theorem removeKeepingSmall_bounded (dq : DQ K) (k : K) :
 theorem compact_nearest (dq : DQ K) : nearest (compact dq) = nearest dq := by
   simp [nearest, compact_firstLive]
 
-/-- What a caller does to the queue: arm a key for a deadline, or cancel it. -/
+/-- **The drain as an operation.** What is due leaves, what survives stays, and
+the timer is re-armed for the nearest deadline that is left — the step a fired
+kernel timer drives. The entries it emits are `fired dq.heap dq.live now`, which
+the theorems below characterise; the sweep is the one the other operations use,
+because a drain can leave the heap with more tombstones than live entries. -/
+def drained (dq : DQ K) (now : Nat) : DQ K :=
+  { heap := (drainExpired dq.heap dq.live now).2.1,
+    live := (drainExpired dq.heap dq.live now).2.2,
+    armed := dq.armed }
+
+/-- The drain as one step under the sweeping policy: drain, sweep if the
+tombstones have outgrown the live entries, and re-arm for what is left. -/
+def fireKeepingSmall (dq : DQ K) (now : Nat) : DQ K :=
+  arm (if 2 * liveCount (drained dq now) < (drained dq now).heap.length
+       then compact (drained dq now) else drained dq now)
+
+/-- What happens to the queue: arm a key for a deadline, cancel it, or let the
+armed timer fire. -/
 inductive DQOp (K : Type) where
   /-- Arm (or re-arm) `k` for deadline `d`. -/
   | set (k : K) (d : Nat)
   /-- Cancel `k`. -/
   | cancel (k : K)
+  /-- The timer fires at `now`: everything due is drained. -/
+  | fire (now : Nat)
 
 /-- One operation under the sweeping policy. -/
 def stepKeepingSmall (dq : DQ K) : DQOp K → DQ K
   | .set k d => insertKeepingSmall dq k d
   | .cancel k => removeKeepingSmall dq k
+  | .fire now => fireKeepingSmall dq now
 
 /-- A trace of operations under the sweeping policy. -/
 def runKeepingSmall (dq : DQ K) : List (DQOp K) → DQ K
   | [] => dq
   | op :: rest => runKeepingSmall (stepKeepingSmall dq op) rest
 
+/-- **The bound is preserved by a drain.** A drain removes keys from the live map
+and leaves the future entries in the heap, so it can leave more tombstones than
+live entries behind; the same sweep puts it back under the bound. -/
+theorem fireKeepingSmall_bounded (dq : DQ K) (now : Nat) :
+    Bounded (fireKeepingSmall dq now) := by
+  unfold fireKeepingSmall
+  by_cases h : 2 * liveCount (drained dq now) < (drained dq now).heap.length
+  · rw [if_pos h]
+    show (compact (drained dq now)).heap.length ≤ 2 * liveCount (compact (drained dq now))
+    rw [compact_length, compact_liveCount]
+    omega
+  · rw [if_neg h]
+    show (drained dq now).heap.length ≤ 2 * liveCount (drained dq now)
+    omega
+
 /-- **The bound holds along a whole trace.** Starting from an empty queue, every
-state a sequence of arms and cancels can reach keeps the heap within twice its
-live content — however long the trace and however often one key is re-armed. -/
+state a sequence of arms, cancels and drains can reach keeps the heap within
+twice its live content — however long the trace and however often one key is
+re-armed. -/
 theorem runKeepingSmall_bounded (ops : List (DQOp K)) :
     Bounded (runKeepingSmall (⟨[], [], none⟩ : DQ K) ops) := by
   have general : ∀ (l : List (DQOp K)) (dq : DQ K),
@@ -420,6 +456,7 @@ theorem runKeepingSmall_bounded (ops : List (DQOp K)) :
         cases op with
         | set k d => exact insertKeepingSmall_bounded h k d
         | cancel k => exact removeKeepingSmall_bounded dq k
+        | fire now => exact fireKeepingSmall_bounded dq now
   exact general ops _ init_bounded
 
 /-! ## Headline theorem 1 — peek returns the earliest deadline -/
@@ -560,6 +597,406 @@ theorem heap_pop_ordered (heap : List (Entry K)) (live : List (K × Nat)) (now :
         exact hhead x (fired_subset rest (removeKey e.key live) now x hx)
       · rw [if_neg h2]; exact ih live htail
 
+/-! ## The invariant and the firing semantics
+
+A second model of this queue used to live beside this one, with the live map and
+the armed deadline but no heap. Two models of one component mean two sets of
+claims and nothing connecting them, so what the other one proved is proven here,
+over the representation that also carries the heap and its tombstones. Key
+uniqueness, which that model had to assume, is not needed: `lookupD` reads the
+first binding and `upsert` writes to the front, so a key's current deadline is
+whatever the map answers.
+-/
+
+/-- Removing another key leaves a key's binding alone. -/
+theorem lookupD_removeKey_other {l : List (K × Nat)} {k k' : K} (h : k' ≠ k) :
+    lookupD (removeKey k' l) k = lookupD l k := by
+  induction l with
+  | nil => rfl
+  | cons p t ih =>
+    obtain ⟨a, d⟩ := p
+    by_cases ha : a = k'
+    · subst ha; simp [removeKey, lookupD, h, ih]
+    · simp [removeKey, lookupD, ha, ih]
+
+/-- Writing another key leaves a key's binding alone. -/
+theorem lookupD_upsert_other {l : List (K × Nat)} {k k' : K} {d : Nat} (h : k' ≠ k) :
+    lookupD (upsert l k' d) k = lookupD l k := by
+  simp [upsert, lookupD, h, lookupD_removeKey_other h]
+
+/-- **Every live deadline is in the heap.** Lazy deletion leaves tombstones
+behind; it never does the opposite, so a deadline the live map records always has
+its own entry to surface on pop. This is what makes `nearest` a lower bound on
+the live deadlines rather than on the entries that happen to remain. -/
+def Covered (dq : DQ K) : Prop :=
+  ∀ k d, lookupD dq.live k = some d → (⟨d, k⟩ : Entry K) ∈ dq.heap
+
+/-- **The queue invariant.** The heap is ordered, every live deadline has an
+entry, and the armed deadline is at or before every live one. The last part is
+one-sided on purpose: a lazy removal leaves the timer armed for a deadline that
+is no longer live (a tombstone's timer, which fires into a no-op), so `armed` may
+be *earlier* than every live deadline — never later. -/
+structure Inv (dq : DQ K) : Prop where
+  /-- The heap is in nondecreasing deadline order. -/
+  sorted : Sorted dq.heap
+  /-- Every live deadline has its entry in the heap. -/
+  covered : Covered dq
+  /-- The armed deadline is at or before every live deadline. -/
+  armed : ∀ k d, lookupD dq.live k = some d → ∃ t, dq.armed = some t ∧ t ≤ d
+
+/-- The empty queue satisfies the invariant. -/
+theorem init_inv : Inv (⟨[], [], none⟩ : DQ K) where
+  sorted := sorted_nil
+  covered := by intro k d h; exact absurd h (by simp [lookupD])
+  armed := by intro k d h; exact absurd h (by simp [lookupD])
+
+/-- A covered live key gives the heap a live entry, so `firstLive` finds one. -/
+theorem firstLive_isSome {dq : DQ K} (hc : Covered dq) {k : K} {d : Nat}
+    (h : lookupD dq.live k = some d) : ∃ e, firstLive dq = some e := by
+  have hmem : (⟨d, k⟩ : Entry K) ∈ dq.heap := hc k d h
+  have hlive : isLive dq.live (⟨d, k⟩ : Entry K) = true := by
+    simp [isLive, h]
+  cases hf : firstLive dq with
+  | none =>
+    have := List.find?_eq_none.mp hf (⟨d, k⟩ : Entry K) hmem
+    exact absurd hlive (by simpa using this)
+  | some e => exact ⟨e, rfl⟩
+
+/-- **The armed deadline of an armed queue is the nearest live one.** In a queue
+that satisfies the invariant, `nearest` is a lower bound on every live deadline —
+the minimum is taken over what the live map says, not over the entries left in
+the heap. -/
+theorem nearest_le_live {dq : DQ K} (hs : Sorted dq.heap) (hc : Covered dq)
+    {k : K} {d : Nat} (h : lookupD dq.live k = some d) :
+    ∃ t, nearest dq = some t ∧ t ≤ d := by
+  obtain ⟨e, he⟩ := firstLive_isSome hc h
+  obtain ⟨_, hmin⟩ := heap_min_correct dq hs e he
+  refine ⟨e.deadline, ?_, hmin (⟨d, k⟩ : Entry K) (hc k d h) h⟩
+  unfold nearest
+  rw [he]
+  rfl
+
+/-- **Arming restores the invariant**: a queue whose heap is ordered and whose
+live deadlines are covered satisfies all of it once the timer is armed for the
+nearest one. -/
+theorem arm_inv {dq : DQ K} (hs : Sorted dq.heap) (hc : Covered dq) : Inv (arm dq) where
+  sorted := hs
+  covered := hc
+  armed _ _ h := nearest_le_live hs hc h
+
+/-- Compaction keeps every live deadline covered: it drops tombstones only. -/
+theorem compact_covered {dq : DQ K} (hc : Covered dq) : Covered (compact dq) := by
+  intro k d h
+  have hlive : lookupD dq.live k = some d := h
+  exact mem_compact.mpr ⟨hc k d h, by simp [isLive, hlive]⟩
+
+/-- A removal keeps every remaining live deadline covered. -/
+theorem remove_covered {dq : DQ K} (hc : Covered dq) (k : K) : Covered (remove dq k) := by
+  intro k' d h
+  by_cases hk : k = k'
+  · subst hk
+    rw [show (remove dq k).live = removeKey k dq.live from rfl,
+      lookupD_removeKey_self] at h
+    exact absurd h (by simp)
+  · rw [show (remove dq k).live = removeKey k dq.live from rfl,
+      lookupD_removeKey_other hk] at h
+    exact hc k' d h
+
+/-- An insert keeps every live deadline covered: the new one gets its own entry,
+and the others keep theirs. -/
+theorem insert_covered {dq : DQ K} (hc : Covered dq) (k : K) (d : Nat) :
+    Covered (insert dq k d) := by
+  intro k' d' h
+  by_cases hk : k = k'
+  · subst hk
+    rw [show (insert dq k d).live = upsert dq.live k d from rfl,
+      lookupD_upsert_self] at h
+    injection h with h
+    subst h
+    exact mem_insertSorted.mpr (Or.inl rfl)
+  · rw [show (insert dq k d).live = upsert dq.live k d from rfl,
+      lookupD_upsert_other hk] at h
+    exact mem_insertSorted.mpr (Or.inr (hc k' d' h))
+
+/-- What a drain leaves of the heap is a suffix of it: the walk stops at the
+first entry that is not due and never reorders anything. -/
+theorem drain_suffix (heap : List (Entry K)) (live : List (K × Nat)) (now : Nat) :
+    (drainExpired heap live now).2.1 <:+ heap := by
+  induction heap generalizing live with
+  | nil => exact List.suffix_rfl
+  | cons e rest ih =>
+    unfold drainExpired
+    by_cases h1 : now < e.deadline
+    · rw [if_pos h1]; exact List.suffix_rfl
+    · rw [if_neg h1]
+      by_cases h2 : isLive live e
+      · rw [if_pos h2]
+        exact (ih (removeKey e.key live)).trans (List.suffix_cons e rest)
+      · rw [if_neg h2]
+        exact (ih live).trans (List.suffix_cons e rest)
+
+/-- A drain leaves every deadline it did not fire covered: it drops a key from
+the live map only when it emits that key's entry, and it drops an entry from the
+heap only when it emitted it or found it a tombstone. -/
+theorem drain_covered {heap : List (Entry K)} {live : List (K × Nat)} {now : Nat}
+    (hc : ∀ k d, lookupD live k = some d → (⟨d, k⟩ : Entry K) ∈ heap) :
+    ∀ k d, lookupD (drainExpired heap live now).2.2 k = some d →
+      (⟨d, k⟩ : Entry K) ∈ (drainExpired heap live now).2.1 := by
+  induction heap generalizing live with
+  | nil =>
+    intro k d h
+    exact absurd (hc k d h) (by simp)
+  | cons e rest ih =>
+    intro k d h
+    unfold drainExpired at h ⊢
+    by_cases h1 : now < e.deadline
+    · rw [if_pos h1] at h ⊢
+      exact hc k d h
+    · rw [if_neg h1] at h ⊢
+      by_cases h2 : isLive live e
+      · rw [if_pos h2] at h ⊢
+        refine ih (live := removeKey e.key live) ?_ k d h
+        intro k' d' h'
+        have hne : e.key ≠ k' := by
+          intro hk
+          rw [hk, lookupD_removeKey_self] at h'
+          exact absurd h' (by simp)
+        have hold : lookupD live k' = some d' := by
+          rw [← lookupD_removeKey_other hne]; exact h'
+        rcases List.mem_cons.mp (hc k' d' hold) with heq | hmem
+        · exact absurd (congrArg Entry.key heq.symm) hne
+        · exact hmem
+      · rw [if_neg h2] at h ⊢
+        refine ih (live := live) ?_ k d h
+        intro k' d' h'
+        rcases List.mem_cons.mp (hc k' d' h') with heq | hmem
+        · exact absurd (by rw [← heq]; simpa [isLive, Live] using h' : isLive live e = true) (by simp [h2])
+        · exact hmem
+
+/-- **Every operation preserves the invariant**, sweeping or not. -/
+theorem stepKeepingSmall_inv {dq : DQ K} (h : Inv dq) (op : DQOp K) :
+    Inv (stepKeepingSmall dq op) := by
+  cases op with
+  | set k d =>
+    show Inv (insertKeepingSmall dq k d)
+    unfold insertKeepingSmall
+    by_cases hsame : lookupD dq.live k = some d
+    · rw [if_pos hsame]; exact h
+    · rw [if_neg hsame]
+      have hs' : Sorted (insert dq k d).heap := insertSorted_sorted _ _ h.sorted
+      have hc' : Covered (insert dq k d) := insert_covered h.covered k d
+      by_cases hsweep : 2 * liveCount (insert dq k d) < (insert dq k d).heap.length
+      · rw [if_pos hsweep]
+        exact arm_inv (compact_sorted hs') (compact_covered hc')
+      · rw [if_neg hsweep]
+        exact { sorted := hs', covered := hc', armed := fun k' d' h' => nearest_le_live hs' hc' h' }
+  | fire now =>
+    show Inv (fireKeepingSmall dq now)
+    unfold fireKeepingSmall
+    have hs' : Sorted (drained dq now).heap :=
+      List.Pairwise.sublist (drain_suffix dq.heap dq.live now).sublist h.sorted
+    have hc' : Covered (drained dq now) := drain_covered h.covered
+    by_cases hsweep : 2 * liveCount (drained dq now) < (drained dq now).heap.length
+    · rw [if_pos hsweep]
+      exact arm_inv (compact_sorted hs') (compact_covered hc')
+    · rw [if_neg hsweep]
+      exact arm_inv hs' hc'
+  | cancel k =>
+    show Inv (removeKeepingSmall dq k)
+    unfold removeKeepingSmall
+    have hs' : Sorted (remove dq k).heap := h.sorted
+    have hc' : Covered (remove dq k) := remove_covered h.covered k
+    by_cases hsweep : 2 * liveCount (remove dq k) < (remove dq k).heap.length
+    · rw [if_pos hsweep]
+      exact arm_inv (compact_sorted hs') (compact_covered hc')
+    · rw [if_neg hsweep]
+      refine { sorted := hs', covered := hc', armed := ?_ }
+      intro k' d hk'
+      by_cases hk : k = k'
+      · subst hk
+        rw [show (remove dq k).live = removeKey k dq.live from rfl,
+          lookupD_removeKey_self] at hk'
+        exact absurd hk' (by simp)
+      · rw [show (remove dq k).live = removeKey k dq.live from rfl,
+          lookupD_removeKey_other hk] at hk'
+        exact h.armed k' d hk'
+
+/-- The invariant holds along a whole trace. -/
+theorem runKeepingSmall_inv {dq : DQ K} (h : Inv dq) (ops : List (DQOp K)) :
+    Inv (runKeepingSmall dq ops) := by
+  induction ops generalizing dq with
+  | nil => exact h
+  | cons op rest ih => exact ih (stepKeepingSmall_inv h op)
+
+/-- The invariant holds in every state reachable from the empty queue. -/
+theorem runKeepingSmall_init_inv (ops : List (DQOp K)) :
+    Inv (runKeepingSmall (⟨[], [], none⟩ : DQ K) ops) :=
+  runKeepingSmall_inv init_inv ops
+
+/-! ### What a fire does -/
+
+/-- Everything a drain emits was due: the walk stops at the first entry whose
+deadline is still in the future. -/
+theorem fired_due (heap : List (Entry K)) (live : List (K × Nat)) (now : Nat) :
+    ∀ e ∈ fired heap live now, e.deadline ≤ now := by
+  induction heap generalizing live with
+  | nil => intro e he; simp [fired] at he
+  | cons x rest ih =>
+    intro e he
+    unfold fired at he
+    by_cases h1 : now < x.deadline
+    · rw [if_pos h1] at he; simp at he
+    · rw [if_neg h1] at he
+      by_cases h2 : isLive live x
+      · rw [if_pos h2] at he
+        rcases List.mem_cons.mp he with rfl | he
+        · omega
+        · exact ih _ e he
+      · rw [if_neg h2] at he
+        exact ih _ e he
+
+/-- A key still bound to a future deadline is not emitted, whatever the clock
+input claims and however many tombstones it carries. The other model needed key
+uniqueness as a side condition here; reading the live map answers that. -/
+theorem no_early_expiry {dq : DQ K} {k : K} {d now : Nat}
+    (h : lookupD dq.live k = some d) (hfut : now < d) :
+    ∀ e ∈ fired dq.heap dq.live now, e.key ≠ k := by
+  have general : ∀ (heap : List (Entry K)) (live : List (K × Nat)),
+      lookupD live k = some d → ∀ e ∈ fired heap live now, e.key ≠ k := by
+    intro heap
+    induction heap with
+    | nil => intro live _ e he; simp [fired] at he
+    | cons x rest ih =>
+      intro live hlive e he
+      unfold fired at he
+      by_cases h1 : now < x.deadline
+      · rw [if_pos h1] at he; simp at he
+      · rw [if_neg h1] at he
+        by_cases h2 : isLive live x
+        · rw [if_pos h2] at he
+          rcases List.mem_cons.mp he with rfl | he
+          · intro hkey
+            have : lookupD live e.key = some e.deadline := by
+              simpa [isLive, Live] using h2
+            rw [hkey, hlive] at this
+            injection this with this
+            omega
+          · refine ih (removeKey x.key live) ?_ e he
+            by_cases hx : x.key = k
+            · exfalso
+              have hxl : lookupD live x.key = some x.deadline := by
+                simpa [isLive, Live] using h2
+              rw [hx, hlive] at hxl
+              injection hxl with hxl
+              omega
+            · rw [lookupD_removeKey_other hx]; exact hlive
+        · rw [if_neg h2] at he
+          exact ih live hlive e he
+  exact general dq.heap dq.live h
+
+/-- A live entry whose deadline is due is emitted: the walk reaches it, because
+every earlier entry in the ordered heap is due as well, and it is still live when
+it does, because a drain removes only the keys it has emitted. -/
+theorem fired_of_due {heap : List (Entry K)} {live : List (K × Nat)} {k : K} {d now : Nat}
+    (hs : Sorted heap) (hmem : (⟨d, k⟩ : Entry K) ∈ heap)
+    (hlive : lookupD live k = some d) (hdue : d ≤ now) :
+    ∃ e ∈ fired heap live now, e.key = k := by
+  induction heap generalizing live with
+  | nil => exact absurd hmem (by simp)
+  | cons x rest ih =>
+    obtain ⟨hhead, htail⟩ := List.pairwise_cons.mp hs
+    unfold fired
+    by_cases h1 : now < x.deadline
+    · exfalso
+      rcases List.mem_cons.mp hmem with rfl | hrest
+      · simp at h1; omega
+      · have hxd : x.deadline ≤ d := by simpa using hhead _ hrest
+        omega
+    · rw [if_neg h1]
+      by_cases hlx : isLive live x = true
+      · rw [if_pos hlx]
+        by_cases hk : x.key = k
+        · exact ⟨x, List.mem_cons_self .., hk⟩
+        · have hrest : (⟨d, k⟩ : Entry K) ∈ rest := by
+            rcases List.mem_cons.mp hmem with rfl | hr
+            · exact absurd rfl hk
+            · exact hr
+          obtain ⟨e, he, hek⟩ :=
+            ih htail hrest (by rw [lookupD_removeKey_other hk]; exact hlive)
+          exact ⟨e, List.mem_cons_of_mem _ he, hek⟩
+      · rw [if_neg hlx]
+        have hrest : (⟨d, k⟩ : Entry K) ∈ rest := by
+          rcases List.mem_cons.mp hmem with rfl | hr
+          · exact absurd (by simp [isLive, hlive] : isLive live (⟨d, k⟩ : Entry K) = true) hlx
+          · exact hr
+        exact ih htail hrest hlive
+
+/-- **Nothing is lost by a fire**: a live key whose deadline is due fires, and one
+still in the future keeps the deadline it had. -/
+theorem fire_partitions {dq : DQ K} {k : K} {d : Nat} (hs : Sorted dq.heap)
+    (hc : Covered dq) (now : Nat) (h : lookupD dq.live k = some d) :
+    (d ≤ now ∧ ∃ e ∈ fired dq.heap dq.live now, e.key = k) ∨
+    (now < d ∧ lookupD (drainExpired dq.heap dq.live now).2.2 k = some d) := by
+  by_cases hfut : now < d
+  · refine Or.inr ⟨hfut, ?_⟩
+    have general : ∀ (heap : List (Entry K)) (live : List (K × Nat)),
+        lookupD live k = some d → lookupD (drainExpired heap live now).2.2 k = some d := by
+      intro heap
+      induction heap with
+      | nil => intro live hlive; simpa [drainExpired] using hlive
+      | cons x rest ih =>
+        intro live hlive
+        unfold drainExpired
+        by_cases h1 : now < x.deadline
+        · rw [if_pos h1]; exact hlive
+        · rw [if_neg h1]
+          by_cases h2 : isLive live x
+          · rw [if_pos h2]
+            refine ih (removeKey x.key live) ?_
+            by_cases hx : x.key = k
+            · exfalso
+              have hxl : lookupD live x.key = some x.deadline := by
+                simpa [isLive, Live] using h2
+              rw [hx, hlive] at hxl
+              injection hxl with hxl
+              omega
+            · rw [lookupD_removeKey_other hx]; exact hlive
+          · rw [if_neg h2]; exact ih live hlive
+    exact general dq.heap dq.live h
+  · exact Or.inl ⟨by omega, fired_of_due hs (hc k d h) h (by omega)⟩
+
+/-- **A spurious fire is a no-op**: when nothing is due, the drain emits nothing
+and the live map is untouched. This is what makes lazy deletion sound — the timer
+left armed for a removed key fires into an empty drain. -/
+theorem spurious_fire {dq : DQ K} {now : Nat}
+    (hfresh : ∀ k d, lookupD dq.live k = some d → now < d) :
+    fired dq.heap dq.live now = [] ∧ (drainExpired dq.heap dq.live now).2.2 = dq.live := by
+  have general : ∀ (heap : List (Entry K)) (live : List (K × Nat)),
+      (∀ k d, lookupD live k = some d → now < d) →
+      fired heap live now = [] ∧ (drainExpired heap live now).2.2 = live := by
+    intro heap
+    induction heap with
+    | nil => intro live _; exact ⟨rfl, rfl⟩
+    | cons x rest ih =>
+      intro live hf
+      unfold fired drainExpired
+      by_cases h1 : now < x.deadline
+      · rw [if_pos h1, if_pos h1]; exact ⟨rfl, rfl⟩
+      · rw [if_neg h1, if_neg h1]
+        have h2 : isLive live x = false := by
+          cases hb : isLive live x with
+          | false => rfl
+          | true =>
+            exfalso
+            have hlive : lookupD live x.key = some x.deadline := by
+              simpa [isLive, Live] using hb
+            have := hf x.key x.deadline hlive
+            omega
+        have hne : ¬ (isLive live x = true) := by simp [h2]
+        rw [if_neg hne, if_neg hne]
+        exact ih live hf
+  exact general dq.heap dq.live hfresh
+
 /-! ## Non-vacuity: a concrete queue, evaluated
 
 Real numbers, not schematic hypotheses. Three connection keys with staggered
@@ -682,5 +1119,77 @@ def regression_481 : Bool := decide (nearest reactorDQ == some 100
   )
 def regression_482 : Bool := decide ((fired reactorDQ.heap reactorDQ.live 150).map (·.key) == [(⟨1, 0⟩ : Key)]
   )
+
+/-! ### Non-vacuity of the invariant and the firing semantics
+
+The trace below moves the queue: two keys are armed, one slides to a later
+deadline, and a fire at an instant between them expires exactly the due key. -/
+
+/-- A trace of three arms, the last one sliding key 1 from 10 to 30. -/
+def armedDQ : DQ Nat :=
+  runKeepingSmall (⟨[], [], none⟩ : DQ Nat) [.set 1 10, .set 2 20, .set 1 30]
+
+-- Sliding a key leaves one binding for it, not two.
+def regression_459 : Bool := decide (armedDQ.live.length == 2
+  )
+
+-- The slid deadline is what the queue answers for that key.
+def regression_484 : Bool := decide (lookupD armedDQ.live 1 == some 30
+  )
+
+-- The timer is armed for the nearest live deadline, which is now key 2's.
+def regression_485 : Bool := decide (armedDQ.armed == some 20
+  )
+
+/-- The same trace without the slide, where a fire at 15 is due for one key. -/
+private def twoArmed : DQ Nat :=
+  runKeepingSmall (⟨[], [], none⟩ : DQ Nat) [.set 1 10, .set 2 20]
+
+-- A fire between the two deadlines expires exactly the due key.
+def regression_460 : Bool := decide ((fired twoArmed.heap twoArmed.live 15).map (·.key) == [1]
+  )
+
+-- ... and the key that is still in the future keeps its deadline.
+def regression_486 : Bool := decide (
+    lookupD (drainExpired twoArmed.heap twoArmed.live 15).2.2 2 == some 20
+  )
+
+-- A fire before both deadlines is a no-op on the live map.
+def regression_487 : Bool := decide (
+    (fired twoArmed.heap twoArmed.live 5).isEmpty
+      && (drainExpired twoArmed.heap twoArmed.live 5).2.2 == twoArmed.live
+  )
+
+-- A drain is a step: what is due leaves, what is not keeps its deadline, and the
+-- timer is re-armed for what is left.
+def regression_489 : Bool :=
+  let q := runKeepingSmall (⟨[], [], none⟩ : DQ Nat) [.set 1 10, .set 2 20, .fire 15]
+  (lookupD q.live 1 == none) && (lookupD q.live 2 == some 20) && (q.armed == some 20)
+
+-- A drain that fires nothing leaves the queue alone but re-arms it.
+def regression_490 : Bool :=
+  let q := runKeepingSmall (⟨[], [], none⟩ : DQ Nat) [.set 1 10, .set 2 20, .fire 5]
+  (lookupD q.live 1 == some 10) && (q.armed == some 10) && (q.heap.length == 2)
+
+-- A drain sweeps the tombstones it leaves behind: three arms of one key and a
+-- fire leave a heap no larger than twice what is live.
+def regression_491 : Bool :=
+  let q := runKeepingSmall (⟨[], [], none⟩ : DQ Nat)
+    [.set 1 10, .set 1 20, .set 1 30, .set 2 40, .fire 5]
+  q.heap.length <= 2 * liveCount q
+
+/-- The invariant holds in a state the operations really reach. -/
+theorem armedDQ_inv : Inv armedDQ := runKeepingSmall_init_inv _
+
+/-- Witness: the coverage premise is satisfiable — that queue covers its live
+deadlines. -/
+theorem Covered_witness : Covered armedDQ := armedDQ_inv.covered
+
+/-- Witness: the liveness premise is satisfiable — key 2 still holds deadline 20
+in that queue, so the tombstone tests are not vacuous. -/
+theorem Live_witness : Live armedDQ.live ⟨20, 2⟩ := by
+  show lookupD armedDQ.live 2 = some 20
+  decide
+
 
 end DN.Dataplane.Io

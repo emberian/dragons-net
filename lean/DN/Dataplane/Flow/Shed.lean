@@ -366,4 +366,8 @@ def regression_454 : Bool := decide (((ShedQueue.init 4 : ShedQueue Nat).runStre
     overflowTrace).backlog == [1, 2, 3]
   )
 
+/-- Witness: the queue invariant is satisfiable at a concrete capacity. -/
+theorem ShedQueue.Inv_witness : (ShedQueue.init 4 : ShedQueue Nat).Inv :=
+  ShedQueue.init_inv 4
+
 end DN.Dataplane.Flow

@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
+import DN.Dataplane.Recycling
 import DN.Dataplane.Slab.Refinement
 
 /-!
@@ -377,6 +378,50 @@ theorem run_append (r : Reactor σ) (ops₁ ops₂ : List (Op σ)) :
   | nil => rfl
   | cons op ops ih => simpa [run] using ih (r.step op)
 
+/-! ### The shared recycling discipline
+
+The pending-operation slab of `DN.Dataplane.Io.Slab` faces the same danger with a
+different key space: it counts a generation per slot, this table counts one for
+the whole reactor and keys by descriptor. Which of the two a completion adapter
+keeps is decided when that adapter exists; what both owe is the same property,
+and it is stated and proven once in `DN.Dataplane.Recycling`.
+-/
+
+/-- The connection table as an instance of the recycling discipline. A `(fd, gen)`
+token has ended once the descriptor no longer holds that generation and the
+counter has already moved past it — which is exactly what a close leaves behind.
+Both obligations come from `step_incarnation`: what a descriptor holds after a
+step is either the incarnation that was there or one this step opened. -/
+def recycling (σ : Type u) : Recycling (Reactor σ) (Op σ) (Nat × Nat) σ where
+  step := Reactor.step
+  resolve r k := r.resolve k.1 k.2
+  Wf r := r.GWF
+  Ended r k := (∀ c, r.table.lookup k.1 = some c → c.gen ≠ k.2) ∧ k.2 < r.nextGen
+  wf_step _ op h := h.step op
+  ended_step r op k hwf h := by
+    obtain ⟨hne, hlt⟩ := h
+    refine ⟨?_, Nat.lt_of_lt_of_le hlt (nextGen_mono_step r op)⟩
+    intro c hl
+    cases step_incarnation hwf op k.1 hl with
+    | inl hsame =>
+      obtain ⟨c₀, hl₀, hg⟩ := hsame
+      rw [← hg]
+      exact hne c₀ hl₀
+    | inr hge => omega
+  resolve_ended r k _ h := by
+    obtain ⟨hne, _⟩ := h
+    unfold Reactor.resolve
+    cases hl : r.table.lookup k.1 with
+    | none => rfl
+    | some c => simp [hne c hl]
+
+/-- Running the operations is running them under the discipline. -/
+theorem run_eq (r : Reactor σ) (ops : List (Op σ)) :
+    Recycling.run (recycling σ) r ops = r.run ops := by
+  induction ops generalizing r with
+  | nil => rfl
+  | cons op rest ih => exact ih (r.step op)
+
 /-- **Stale-guard soundness, from an event.** Capture a `(fd, g)` token, then
 let the run close `fd` at any later point. From there the token never resolves
 again, whatever the run does afterwards — including opening a new connection on
@@ -387,24 +432,29 @@ theorem stale_after_close {r : Reactor σ} (h : r.GWF) {fd g : Nat}
     (r.run (ops₁ ++ .closeConn fd :: ops₂)).resolve fd g = none := by
   have hg : g < r.nextGen := hcap.lt_next h
   have hmono : r.nextGen ≤ (r.run ops₁).nextGen := nextGen_mono_run r ops₁
-  have hclosed : ((r.run ops₁).step (.closeConn fd)).table.lookup fd = none :=
-    Table.lookup_remove_self _ fd
   have hnext : ((r.run ops₁).step (.closeConn fd)).nextGen = (r.run ops₁).nextGen := rfl
+  have hend : (recycling σ).Ended ((r.run ops₁).step (.closeConn fd)) (fd, g) := by
+    refine ⟨?_, by rw [hnext]; omega⟩
+    intro c hl
+    dsimp only [step, closeConn, Table.erase] at hl
+    rw [Table.lookup_remove_self] at hl
+    exact absurd hl (by simp)
   have hwf : ((r.run ops₁).step (.closeConn fd)).GWF := (h.run ops₁).step _
-  cases hres : (r.run (ops₁ ++ .closeConn fd :: ops₂)).resolve fd g with
-  | none => rfl
-  | some st =>
-    exfalso
-    obtain ⟨c, hl, hcg, _⟩ := resolve_some hres
-    rw [run_append, run] at hl
-    cases run_incarnation hwf ops₂ fd hl with
-    | inl hsame =>
-      obtain ⟨c₀, hl₀, _⟩ := hsame
-      rw [hclosed] at hl₀
-      exact absurd hl₀ (by simp)
-    | inr hge =>
-      rw [hnext] at hge
-      omega
+  have hforever := (recycling σ).never_resolves_again hwf hend ops₂
+  simp only [run_eq] at hforever
+  rw [run_append, run]
+  exact hforever
+
+/-- Witness: the discipline's well-formedness premise is satisfiable where it has
+content — this instance asks for `GWF`, and a reactor that accepted a connection
+has it. -/
+theorem recycling_wf_witness : (recycling Nat).Wf ((Reactor.empty (σ := Nat)).openConn 7 100) :=
+  GWF.empty.openConn 7 100
+
+/-- Witness: the capture premise is satisfiable — the token recorded against a
+connection this reactor accepted really is captured. -/
+theorem Captured_witness : Captured ((Reactor.empty (σ := Nat)).openConn 7 100) 7 1 :=
+  ⟨⟨100, 1⟩, rfl, rfl⟩
 
 /-- The premises are satisfiable: a reactor that accepted a connection on `fd`
 is well-formed, the token captured against it is `Captured`, and the theorem
@@ -516,6 +566,13 @@ theorem counter_passes_31_bits (st : σ) (fd : Nat) :
   rw [NoWrap, nextGen_replicate_open]
   refine ⟨?_, by omega⟩
   show 2 ^ 31 + 1 < 2 ^ 64
+  omega
+
+/-- Witness: the no-wrap premise is satisfiable — a reactor that has accepted a
+connection is far below the counter's bound. -/
+theorem NoWrap_witness : NoWrap ((Reactor.empty (σ := Nat)).openConn 7 100) := by
+  show 2 < genBound
+  unfold genBound
   omega
 
 end Reactor

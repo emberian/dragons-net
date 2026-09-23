@@ -316,6 +316,33 @@ def demoState (ffi : σ) : PancakeState σ :=
     memaddrs := fun a => decide (a.toNat % 8 = 0 ∧ a.toNat < 128),
     be := false, clock := 8, ffi := ffi, baseAddr := 0 }
 
+/-- The entry state of a four-byte copy from address 64 to address 8: the loop's
+working locals are bound and nothing has been written yet. -/
+private def copyEntry : PancakeState Unit :=
+  { demoState () with
+    locals := fun k => if k = "dst" then some 8#64
+                else if k = "src" then some 64#64
+                else if k = "i" then some 0#64
+                else if k = "len" then some 4#64 else none }
+
+/-- Witness: the copy invariant is satisfiable. It holds at the entry state of
+that copy, with no byte written yet — so the theorems that assume it are about a
+state the program really reaches, not about a condition nothing meets. -/
+theorem copyInvB_witness :
+    copyInvB (demoState ()).memaddrs (demoState ()).be copyEntry.memory 8#64 64#64
+      (fun j => BitVec.ofNat 8 j) 4 4 copyEntry := by
+  refine ⟨0, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
+  · intro j hj
+    have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+    rcases this with rfl | rfl | rfl | rfl <;> decide
+  · intro j hj
+    have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+    rcases this with rfl | rfl | rfl | rfl <;> decide
+  · intro j hj
+    exact absurd hj (by omega)
+  · intro a _
+    rfl
+
 /-- **The premises of `copySeg_landsB` are satisfiable.** On `demoState`, copying
 four bytes from address 64 to address 8 runs to completion, and the destination
 bytes read back as the source bytes `0, 1, 2, 3`. -/

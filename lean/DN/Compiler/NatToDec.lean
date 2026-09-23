@@ -943,4 +943,11 @@ def regression_531 : Bool :=
 def regression_532 : Bool := decide (renderFuel 2147483647 = 9 && renderFuel 0 = 0)
 def regression_533 : Bool := decide ((natToDec 18446744073709551615).length = 20)
 
+/-- Witness: the render's frame is satisfiable — the run of 404 above leaves it,
+with the oracle fixed so that the statement is closed. -/
+theorem RenderPostFrame_witness :
+    ∃ s', RenderPostFrame [] 404 4096 (window () 4096 3 404) s' :=
+  let h := render_404 ⟨fun st _ _ array => .ret st array⟩
+  ⟨h.choose, h.choose_spec.2⟩
+
 end DN.Compiler.NatToDec

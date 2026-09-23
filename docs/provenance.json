@@ -164,14 +164,6 @@
     {
       "source_repository": "breadstuffs",
       "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
-      "source_path": "orb/Flow/Deadline.lean",
-      "source_sha256": "4dcb5c2787cccb1968a46124dad2c869f3c2741dea082cb802a98b846efa2e3c",
-      "destination": "lean/DN/Dataplane/Flow/Deadline.lean",
-      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed."
-    },
-    {
-      "source_repository": "breadstuffs",
-      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
       "source_path": "orb/Flow/Token.lean",
       "source_sha256": "f307c87da67d607353d2848a57d35b3ad0045e1e156c6210a790c1310a854cb0",
       "destination": "lean/DN/Dataplane/Flow/Token.lean",
@@ -1546,6 +1538,14 @@
       "source_sha256": "89e428bfca976b35077c9dbcb2ee0d6c56ce8a87b3444763e55fec18f29a16ee",
       "destination": "lean/DN/Compiler/StructModel.lean",
       "changes": "Namespace migration; full compiler workload preserved; named executable regression checks; build-time evaluation removed."
+    },
+    {
+      "source_repository": "breadstuffs",
+      "source_revision": "bf953115da6ff82b980fd32a42385d7b1313ac2c",
+      "source_path": "orb/Flow/Deadline.lean",
+      "source_sha256": "4dcb5c2787cccb1968a46124dad2c869f3c2741dea082cb802a98b846efa2e3c",
+      "destination": "lean/DN/Dataplane/Flow/Deadline.lean",
+      "changes": "Namespace migration; named executable regression checks; build-time evaluation removed. Removed: the queue it modelled is now one model, in lean/DN/Dataplane/Io/Deadline.lean, which carries the heap as well; its invariant, firing semantics and regressions were restated there, and its token theorems moved to lean/DN/Dataplane/Flow/Token.lean."
     }
   ]
 }

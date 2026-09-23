@@ -37,6 +37,7 @@ gen_keywords = script("gen_keywords")
 upstream_sources = script("check_upstream_sources")
 bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
+state_check = script("state_check")
 check_holmake = script("check_holmake")
 CHECK = (ROOT / "scripts/check.sh").read_text()
 AUDIT = re.search(r"--run scripts/Audit\.lean --regressions (\d+)", CHECK)
@@ -73,6 +74,11 @@ AUDIT_PROBES = {
     "DN.Probe.Extern": '@[extern "dn_probe_ext"] opaque DN.Probe.ext : Nat → Nat\n',
     "DN.Probe.Partial": "partial def DN.Probe.spin (n : Nat) : Nat := DN.Probe.spin n\n",
     "DN.Probe.Unsafe": "unsafe def DN.Probe.raw : Nat := 0\n",
+    # A condition of one's own making, assumed by a theorem and satisfied by
+    # nothing: the theorem may be true only because its premise is empty.
+    "DN.Probe.NoWitness": (
+        "namespace DN.Probe\ndef Impossible (n : Nat) : Prop := n < n\n"
+        "theorem fromImpossible (n : Nat) (h : Impossible n) : n = n := rfl\nend DN.Probe\n"),
     "DN.Probe.Initializers": "initialize DN.Probe.counter : Nat ← pure 1\ninitialize pure ()\n",
     "DN.Probe.CompilerHooks": (
         "namespace DN.Probe\ndef slowId (n : Nat) : Nat := n\ndef fastId (n : Nat) : Nat := n\n"
@@ -146,6 +152,7 @@ UNSOUND = [
     "implemented_by DN.Probe.fast: DN.Probe.slow",
     "extern declaration: DN.Probe.ext",
     "partial definition: DN.Probe.spin",
+    "premise without a witness: DN.Probe.Impossible",
     "unsafe declaration: DN.Probe.raw",
     "csimp theorem: DN.Probe.slowId_eq",
     "initializer: DN.Probe.counter",
@@ -723,7 +730,8 @@ class Pipeline(unittest.TestCase):
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
-                          "cargo clippy", "cargo test", "python3 scripts/check_models.py"],
+                          "cargo clippy", "cargo test", "python3 scripts/check_models.py",
+                          "python3 scripts/state_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -1022,6 +1030,74 @@ class Pipeline(unittest.TestCase):
                     self.assertEqual(refused, not ok, result.stderr)
                     if not ok:
                         self.assertEqual(result.returncode, 2)
+
+    def test_state_check_reads_the_whole_state(self) -> None:
+        """The lane compares every printed field, not only the value a run computes."""
+        lines = ["CASE ok", "PROG (seq (assign x (const 1)) (ret (var x)))", "LOCALS x=5",
+                 "MEM 0=0", "DOM 0", "BE 0", "CLOCK 4", "BASE 0", "ANSWERS", "NAMES x",
+                 "RESULT return:1", "FLOCALS x=", "FMEM 0=0", "FCALLS 0", "FTRACE",
+                 "FCLOCK 4", "FBASE 0", "END"]
+        agreeing = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temp:
+            dump = Path(temp) / "dump"
+
+            def check(text: str) -> subprocess.CompletedProcess[str]:
+                dump.write_text(text)
+                return subprocess.run(
+                    ["python3", "-P", str(ROOT / "scripts/state_check.py"), "--dump", str(dump),
+                     "--out", str(Path(temp) / "out")],
+                    capture_output=True, text=True, check=False)
+
+            first = check(agreeing)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            # Each field carries something no value comparison would see: a return
+            # empties the locals, a clock is spent, an external call is recorded.
+            # Every field the lane compares is perturbed here, and the list of
+            # them is pinned: dropping one from `FIELDS` would go unnoticed.
+            self.assertEqual(set(state_check.FIELDS),
+                             {"RESULT", "FLOCALS", "FMEM", "FCALLS", "FTRACE", "FCLOCK", "FBASE"})
+            wrong = {"RESULT return:1": "RESULT return:2",
+                     "FLOCALS x=": "FLOCALS x=5",
+                     "FCLOCK 4": "FCLOCK 3",
+                     "FCALLS 0": "FCALLS 1",
+                     "FMEM 0=0": "FMEM 0=7",
+                     "FTRACE": "FTRACE read:-:00",
+                     "FBASE 0": "FBASE 8"}
+            for field, replacement in wrong.items():
+                with self.subTest(field=field):
+                    result = check(agreeing.replace(field, replacement))
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertIn("ok disagrees", result.stderr)
+                    self.assertIn(field.split(" ")[0], result.stderr)
+
+    def test_state_corpus_reaches_the_stopping_branches(self) -> None:
+        """A corpus of successful runs would prove nothing about the other half."""
+        dump = run([str(ROOT / ".lake/build/bin/dn-compiler"), "dump-states"]).stdout
+        results = [line.partition(" ")[2] for line in dump.splitlines()
+                   if line.startswith("RESULT ")]
+        self.assertGreaterEqual(len(results), 40)
+        for expected in ("error", "timeout"):
+            self.assertGreaterEqual(results.count(expected), 2, expected)
+        self.assertGreaterEqual(sum(1 for r in results if r.startswith("return:")), 5)
+        self.assertGreaterEqual(sum(1 for r in results if r.startswith("final:")), 2)
+        # Every construct of the subset is exercised, so a clause cannot drift
+        # unseen for want of a case.
+        programs = [line for line in dump.splitlines() if line.startswith("PROG ")]
+        for construct in ("(skip)", "(dec ", "(assign ", "(store ", "(storeb ", "(extcall ",
+                          "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ",
+                          "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless "):
+            with self.subTest(construct=construct):
+                self.assertTrue(any(construct in p for p in programs), construct)
+        # The write-back clause an external call cannot reach has its own cases.
+        self.assertGreaterEqual(sum(1 for line in dump.splitlines() if line.startswith("WRITE ")), 3)
+        # What the documents claim about the corpus is what the corpus is.
+        stopping = sum(1 for r in results if r != "none")
+        for name in ("docs/assurance.md", "docs/baseline.md"):
+            with self.subTest(document=name):
+                text = (ROOT / name).read_text()
+                self.assertIn(f"{len(results)} cases", text)
+        self.assertIn(f"{len(results)} cases, {stopping} of which stop",
+                      (ROOT / "docs/baseline.md").read_text())
 
     def test_no_script_shadows_a_standard_library_module(self) -> None:
         """`unittest discover` puts tests/ first on the path, which PYTHONSAFEPATH does not undo."""

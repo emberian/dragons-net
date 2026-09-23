@@ -44,4 +44,16 @@ theorem increment_result (o : Oracle Unit) (value : Word) (s : PancakeState Unit
   rw [ht]
   simp [setLocal]
 
+/-- A concrete oracle: it answers every call with the bytes it was given, which is
+what an external call that changes nothing looks like. -/
+def idleOracle : Oracle Unit := ⟨fun st _ _ array => .ret st array⟩
+
+/-- Witness: the refinement premise is satisfiable, on the certificate above and
+the state its own witness field exhibits — not schematically in `P` and `Q`. -/
+theorem RefinesClk_witness :
+    RefinesClk idleOracle (increment idleOracle 7).code
+      (fun s => s.locals "x" = some 7)
+      (fun s t => t = { s with locals := setLocal s.locals "x" (7 + 1) }) :=
+  (increment idleOracle 7).correct
+
 end DN.Compiler

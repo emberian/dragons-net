@@ -111,7 +111,8 @@ def compilerModules : Array Name :=
   #[`DN.Compiler.Abi, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy, `DN.Compiler.Bytes,
     `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Decimal, `DN.Compiler.Div10,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
-    `DN.Compiler.NatToDec, `DN.Compiler.Region, `DN.Compiler.Semantics, `DN.Compiler.Syntax]
+    `DN.Compiler.NatToDec, `DN.Compiler.Region, `DN.Compiler.Semantics,
+    `DN.Compiler.StateCorpus, `DN.Compiler.Syntax]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
@@ -175,6 +176,110 @@ def printExportList (env : Environment) (modules : Array Name) (decls : Array (N
   | .error e, _ | _, .error e => errors := errors.push e
   for e in errors do IO.eprintln s!"proof audit: {e}"
   return 1
+
+
+/-! ## Premises with no witness
+
+A theorem may be true because nothing satisfies its premise. Lean cannot rule
+that out in general, so the convention here is the one Why3 builds into its
+language and Isabelle documents as an idiom: a condition this project defines and
+then assumes has to be shown to hold of something concrete, somewhere in the
+library. The check below is that convention, enforced: it collects the predicates
+of `lean/DN` that appear as hypotheses of theorems, and requires each to be the
+conclusion of a *closed* declaration — one whose only binders are the type
+parameters it is polymorphic in and their instances, so that it is an example and
+not a statement schematic in a hypothesis, a value or a predicate the caller
+picks. The conclusion may be stated directly, or inside an existential, a
+conjunction, or an abbreviation of it. Two things it cannot see: which *instance*
+of a structure field a witness belongs to, so one witness for a projection
+satisfies it for every instance of that structure; and whether the example is
+degenerate, so a closed witness about an empty queue counts. Both are for review
+to judge — what the check removes is the case where nobody looked at all.
+-/
+
+/-- Peel `∀` binders, returning them with how they were bound, and the conclusion. -/
+partial def telescope (e : Expr) (acc : Array (BinderInfo × Expr) := #[]) :
+    Array (BinderInfo × Expr) × Expr :=
+  match e with
+  | .forallE _ t b bi => telescope b (acc.push (bi, t))
+  | _ => (acc, e)
+
+/-- The head constant of an application spine. -/
+partial def headConst : Expr → Option Name
+  | .const n _ => some n
+  | .app f _ => headConst f
+  | .mdata _ e => headConst e
+  | _ => none
+
+/-- A constant whose own type ends in `Prop`: something that can be assumed. -/
+def isPredicate (env : Environment) (n : Name) : Bool :=
+  match env.find? n with
+  | some info => ((telescope info.type).2).isProp
+  | none => false
+
+/-- The predicates a statement establishes: its conclusion's head, looking
+through `∃`, `∧` and definitions that abbreviate one (`RenderPost` is
+`RenderPostFrame []`). -/
+partial def establishes (env : Environment) (wanted : NameSet) (e : Expr) : Nat → Array Name
+  | 0 => #[]
+  | fuel + 1 =>
+    match headConst e with
+    | some ``Exists =>
+      match e.getAppArgs[1]? with
+      | some arg =>
+        match arg with
+        | .lam _ _ body _ => establishes env wanted body fuel
+        | _ => #[]
+      | none => #[]
+    | some ``And =>
+      let args := e.getAppArgs
+      (match args[0]? with | some a => establishes env wanted a fuel | none => #[]) ++
+      (match args[1]? with | some b => establishes env wanted b fuel | none => #[])
+    | some h =>
+      if wanted.contains h then #[h]
+      else
+        match env.find? h with
+        | some (.defnInfo v) =>
+          let rec peel : Expr → Expr
+            | .lam _ _ b _ => peel b
+            | e => e
+          establishes env wanted (peel v.value) fuel
+        | _ => #[h]
+    | none => #[]
+
+/-- Predicates of this library that theorems assume and nothing is shown to
+satisfy, each with the number of theorems that assume it. -/
+def unwitnessed (env : Environment) (decls : Array (Name × ConstantInfo))
+    (inOurs : Name → Bool) : Array (Name × Nat) := Id.run do
+  let mut premises : Std.HashMap Name Nat := {}
+  for (_, info) in decls do
+    if info matches .thmInfo _ then
+      let mut seen : NameSet := {}
+      -- A premise is what a theorem assumes: the conclusion of a binder, so that
+      -- `h : P x` and `h : ∀ y, P y` are both counted.
+      for (_, b) in (telescope info.type).1 do
+        if let some h := headConst (telescope b).2 then
+          if inOurs h && isPredicate env h && !seen.contains h then
+            seen := seen.insert h
+            premises := premises.insert h (premises.getD h 0 + 1)
+  let wanted : NameSet := premises.fold (fun acc p _ => acc.insert p) {}
+  let mut witnessed : NameSet := {}
+  for (name, info) in decls do
+    let (binders, concl) := telescope info.type
+    -- A witness has to be closed: the only binders it may carry are the type
+    -- parameters its statement is polymorphic in and the instances they need.
+    -- Anything else — a hypothesis, a value, a predicate to be chosen by the
+    -- caller — makes the statement schematic rather than an example.
+    let assumes := binders.any fun (info, binder) =>
+      !(info == .instImplicit || (telescope binder).2.isSort)
+    unless assumes do
+      for h in establishes env wanted concl 8 do
+        if name != h then witnessed := witnessed.insert h
+  let mut missing : Array (Name × Nat) := #[]
+  for (p, n) in premises do
+    unless witnessed.contains p do
+      missing := missing.push (p, n)
+  return missing.qsort (fun a b => a.1.lt b.1)
 
 structure Args where
   roots : Array System.FilePath := #[]
@@ -276,6 +381,9 @@ unsafe def main (args : List String) : IO UInt32 := do
         else errors := errors.push s!"regression is not a Bool definition: {name}"
       | _ => errors := errors.push s!"regression is not a Bool definition: {name}"
   if theorems == 0 then errors := errors.push "no theorems found"
+  for (premise, users) in unwitnessed env decls inOurs do
+    errors := errors.push s!"premise without a witness: {premise}, assumed by {users} theorem(s); \
+      state that it holds of concrete arguments"
   -- Regressions execute library code, so they run only once the static checks pass.
   if errors.isEmpty then
     IO.println s!"proof audit: {modules.size} modules, {decls.size} declarations, \

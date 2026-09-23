@@ -295,4 +295,58 @@ theorem sweep_20_aliases_deadlineMain :
 
 end TimeoutToken
 
+/-! ## The token seam — timer against fd, by reuse
+
+Timer completions and fd-bound completions share one 64-bit token word. The
+theorems below instantiate the partition above for the deadline queue, which is
+where the question arises: a fired timer must never dispatch as a socket
+operation.
+-/
+
+/-- **A timer completion is unambiguous.** Any well-formed token whose encoding
+equals a well-formed timer token's encoding *is* that timer token. Immediate from
+`Token.encode_inj` — the bit-63 namespace does the work. -/
+theorem timer_token_unambiguous {t : Token} {job : Nat}
+    (ht : t.Wf) (hj : (Token.timer job).Wf)
+    (h : t.encode = (Token.timer job).encode) : t = .timer job :=
+  Token.encode_inj ht hj h
+
+/-- A timer token never collides with a pending-operation slab key: a timer
+firing can never dispatch as (and complete) a socket operation. -/
+theorem timer_never_slab (job index gen : Nat)
+    (hj : (Token.timer job).Wf) (hs : (Token.slab index gen).Wf) :
+    (Token.timer job).encode ≠ (Token.slab index gen).encode := by
+  intro h
+  cases Token.encode_inj hj hs h
+
+/-- A timer token never collides with a multishot-recv tag: a timer firing can
+never dispatch as inbound socket data. -/
+theorem timer_never_recv (job fd : Nat)
+    (hj : (Token.timer job).Wf) (hr : (Token.recvMulti fd).Wf) :
+    (Token.timer job).encode ≠ (Token.recvMulti fd).encode := by
+  intro h
+  cases Token.encode_inj hj hr h
+
+/-- **The deadline queue's distinguished timeout token is unambiguous** in the
+timeout-token sub-space: any well-formed timeout token encoding to it *is* it.
+The queue's timeout dispatch (matched exactly, before the sweep test) can
+therefore never steal another timer's completion. -/
+theorem deadline_token_unambiguous {t : TimeoutToken} (ht : t.Wf)
+    (h : t.encode = TimeoutToken.deadlineMain.encode) : t = .deadlineMain :=
+  TimeoutToken.encode_inj ht trivial h
+
+/-! ### Non-vacuity: both well-formedness conditions are satisfiable
+
+Every theorem above assumes a well-formed token. These are the witnesses that the
+assumption is not empty — the convention this project follows for a premise of its
+own making, so that no theorem can be true only because nothing satisfies it.
+-/
+
+/-- Witness: a slab token with a live index and a small generation is well-formed. -/
+theorem Token.Wf_witness : (Token.slab 1 0).Wf := by decide
+
+/-- Witness: a sweep token inside its field, and outside the reserved id, is
+well-formed — a branch of `Wf` with content, not the one that is `True`. -/
+theorem TimeoutToken.Wf_witness : (TimeoutToken.sweep 21).Wf := by decide
+
 end DN.Dataplane.Flow

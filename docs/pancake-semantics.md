@@ -5,6 +5,8 @@ semantics that lives in HOL4, in the CakeML sources. This document says exactly
 what it was compared against, clause by clause, what it leaves out, and which
 parts are checked by machine rather than by reading.
 
+The states a run stops in are compared against an independent implementation of these clauses on every run of the checks: `DN.Compiler.StateCorpus` prints a bounded corpus with what the model makes of each case, and `scripts/state_check.py` recomputes it and compares the result constructor, the locals, the memory, the external trace, the base address and the clock; the write-back clause is compared on its own, because an external call reads the region before it writes and so never reaches a failing write-back. That is a guard against drift in the half of the semantics no differential lane over computed values can reach; it is not a connection to the HOL source, which remains the open obligation below.
+
 ## What it was compared against
 
 The clauses live in the CakeML sources, the byte and alignment definitions they

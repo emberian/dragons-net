@@ -385,4 +385,24 @@ theorem memBytes_of_write (base len : Word) (bs : List UInt8) (s : PancakeState 
   rw [hcore]
   simp
 
+/-! ### Non-vacuity: the byte-region relation is satisfiable -/
+
+/-- A closed state whose first word holds the bytes `0..7` at address 0, with the
+memory domain the compiler theorem gives (word-aligned and bounded). -/
+private def byteState : PancakeState Unit :=
+  { locals := fun _ => none,
+    memory := fun k => if k = 0#64 then 0x0706050403020100#64 else 0,
+    memaddrs := fun a => decide (a.toNat % 8 = 0 ∧ a.toNat < 128),
+    be := false, clock := 8, ffi := (), baseAddr := 0 }
+
+/-- Witness: four bytes really do sit at address 0 of a state whose memory domain
+has the shape the compiler theorem gives. -/
+theorem memBytes_witness :
+    memBytes 0#64 4#64 [0, 1, 2, 3] byteState := by
+  refine ⟨by decide, ?_⟩
+  intro i hi
+  have hi4 : i < 4 := by simpa using hi
+  have : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 := by omega
+  rcases this with rfl | rfl | rfl | rfl <;> rfl
+
 end DN.Compiler.Bytes

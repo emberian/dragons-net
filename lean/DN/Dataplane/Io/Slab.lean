@@ -1,4 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
+import DN.Dataplane.Recycling
+
 /-!
 # DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, verified
 
@@ -528,20 +530,66 @@ theorem Slab.genAt_run (s : Slab α) (ops : List (SlabOp α)) (i : Nat) :
   | cons op rest ih =>
       exact Nat.le_trans (s.genAt_step op i) (ih (s.stepOp op))
 
+/-! ### The shared recycling discipline
+
+A key that has been freed never selects anything again — the property this slab
+shares with the connection table of `DN.Dataplane.Slab.Reactor`, which keys by
+descriptor and counts generations globally instead. It is stated and proven once,
+in `DN.Dataplane.Recycling`; what belongs here is the evidence this slab gives
+it: a slot's generation never decreases, and a key below it resolves to nothing.
+-/
+
+/-- The slab as an instance of the recycling discipline. A key has ended once its
+slot has moved past its generation, which is what a successful `remove` does. -/
+def recycling (α : Type) : Recycling (Slab α) (SlabOp α) Key α where
+  step := Slab.stepOp
+  resolve := Slab.get
+  Wf _ := True
+  Ended s k := k.gen < s.genAt k.idx
+  wf_step _ _ _ := trivial
+  ended_step s op k _ h := Nat.lt_of_lt_of_le h (s.genAt_step op k.idx)
+  resolve_ended s k _ h := by
+    cases hget : s.get k with
+    | none => rfl
+    | some v =>
+      exfalso
+      have := Slab.get_some_gen hget
+      omega
+
+/-- Running the operations is running them under the discipline. -/
+theorem Slab.runOps_eq_run (s : Slab α) (ops : List (SlabOp α)) :
+    s.runOps ops = Recycling.run (recycling α) s ops := by
+  induction ops generalizing s with
+  | nil => rfl
+  | cons op rest ih => exact ih (s.stepOp op)
+
 /-- **A removed key stays rejected.** After the slot behind `k` is freed, no
 continuation of the trace — including one that reuses the slot — ever resolves
-`k` again. -/
+`k` again. The "forever" part is the discipline's theorem; a successful remove
+supplies its premise. -/
 theorem slab_stale_key_rejected_forever {s s' : Slab α} {k : Key} {v : α}
     (h : s.remove k = some (v, s')) (ops : List (SlabOp α)) :
     (s'.runOps ops).get k = none := by
-  have hbump := Slab.remove_bumps h
-  cases hget : (s'.runOps ops).get k with
-  | none => rfl
-  | some w =>
-      exfalso
-      have heq := Slab.get_some_gen hget
-      have hmono := s'.genAt_run ops k.idx
-      omega
+  rw [Slab.runOps_eq_run]
+  exact (recycling α).never_resolves_again trivial (Slab.remove_bumps h) ops
+
+/-- Witness: the reserved-index premise is satisfiable at a concrete slab. -/
+theorem Slab.Reserved_witness : (Slab.empty Nat 4).Reserved := Slab.empty_reserved Nat 4
+
+/-- The slab a real trace leaves behind: one insert, then the removal of that
+key. Its slot has moved on, which is what makes the stale key stale. -/
+private def reusedSlab : Slab Nat :=
+  match ((Slab.empty Nat 4).insert 7).2.remove ((Slab.empty Nat 4).insert 7).1 with
+  | some (_, s') => s'
+  | none => Slab.empty Nat 4
+
+/-- Witness: the discipline's ended premise is satisfiable on a state the
+operations really reach — the slot of the removed key has moved past it. -/
+theorem recycling_ended_witness :
+    (recycling Nat).Ended reusedSlab ((Slab.empty Nat 4).insert 7).1 := by
+  show ((Slab.empty Nat 4).insert 7).1.gen < Slab.genAt reusedSlab
+    ((Slab.empty Nat 4).insert 7).1.idx
+  decide
 
 -- A trace where the slot is reused twice: the first key stays rejected, and the
 -- key of the current occupant still works.

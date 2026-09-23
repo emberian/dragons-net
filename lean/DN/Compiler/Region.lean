@@ -530,4 +530,38 @@ theorem region_scan_correct {a : List (BitVec 8)} {buf : Word} {off len : Nat} {
   -- read `result` through the two scope-restores (result ∉ {acc,i})
   simp only [resVar, dr1, dr2, if_false, hsV, setLocal, if_true]
 
+/-! ### Non-vacuity: the premises of the theorems above are satisfiable
+
+Both relations are conditions this project states about a model state, so each
+one comes with a state that satisfies it. Without that, a theorem assuming them
+could hold because nothing does.
+-/
+
+/-- A closed state whose first word holds the bytes `0..7` at address 0, with the
+memory domain the compiler theorem gives (word-aligned and bounded). -/
+private def byteState : PancakeState Unit :=
+  { locals := fun _ => none,
+    memory := fun k => if k = 0#64 then 0x0706050403020100#64 else 0,
+    memaddrs := fun a => decide (a.toNat % 8 = 0 ∧ a.toNat < 128),
+    be := false, clock := 8, ffi := (), baseAddr := 0 }
+
+/-- Witness: the state relation holds of a concrete state — four bytes, a window
+of two at offset one, and a declared result slot. -/
+theorem stRel_witness :
+    stRel [0#8, 1#8, 2#8, 3#8] 1 2 0#64
+      { byteState with
+        locals := fun k => if k = "alen" then some 4#64
+                    else if k = "off" then some 1#64
+                    else if k = "len" then some 2#64
+                    else if k = "result" then some 0#64 else none } := by
+  refine ⟨rfl, rfl, rfl, rfl, by decide, by decide⟩
+
+/-- Witness: the byte view holds of that state — the two bytes of the window are
+in memory where the relation says they are, and they are not both zero. -/
+theorem ViewBytes_witness :
+    ViewBytes byteState [0#8, 1#8, 2#8, 3#8] 0#64 1 2 := by
+  intro i hi
+  have : i = 0 ∨ i = 1 := by omega
+  rcases this with rfl | rfl <;> decide
+
 end DN.Compiler.Region

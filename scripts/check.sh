@@ -95,7 +95,7 @@ proofs() {
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 79
+  "$lean" --run scripts/Audit.lean --regressions 91
 }
 
 # Tests that run the built code, and the Rust crates.
@@ -113,6 +113,9 @@ tests() {
   RUSTFLAGS='--cfg loom' cargo clippy --locked --workspace --all-targets -- -D warnings
   cargo test --locked --workspace
   python3 scripts/check_models.py
+  # The states a run stops in, against an independent implementation of the same
+  # clauses: the differential lanes compare computed values and never reach them.
+  python3 scripts/state_check.py
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2
     exit 1
