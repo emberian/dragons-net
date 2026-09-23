@@ -26,7 +26,7 @@ fn limit_of_one_is_never_exceeded() {
     loom::model(|| {
         let gate = Arc::new(ConnectionLimit::new(1));
         // Live holders, counted outside the gate. The gate's own `used()` is
-        // what we are testing, so it cannot be the witness.
+        // what this exercises, so it cannot be the witness.
         let live = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
 

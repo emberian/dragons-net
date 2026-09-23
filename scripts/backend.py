@@ -22,8 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "backend/lock.json").read_text())
 # What the prover records about its own build. `smart-configure` writes the compiler it was
 # given and the directory it was built for into this file, which HOL's own ignores cover, so
-# `verify` tolerates it. Asking the prover beats keeping a note of our own beside it: a note
-# says what we believed, this says what the build used.
+# `verify` tolerates it. Asking the prover beats a note kept beside it: a note records an
+# intention, this records what the build used.
 RECORD = ROOT / ".deps/hol/tools/Holmake/Systeml.sml"
 CONFIGURED = re.compile(r'^val (POLY|HOLDIR) = "(.*)"\s*;?$', re.MULTILINE)
 
@@ -143,7 +143,7 @@ def build(name: str) -> None:
 
     `smart-configure` works out where poly and its library are from the command line it was
     invoked with, so the override file states both instead: a poly found on PATH would build a
-    prover nobody pinned. What the build used is then the prover's own record, not ours.
+    prover nobody pinned. What the build then used is recorded by the prover itself.
     """
     if name != "hol":
         raise SystemExit("only the prover is built here; Holmake builds the proofs themselves")
