@@ -1,6 +1,6 @@
 # Emission and integration review
 
-Review findings describe the inspected baseline. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
+Review findings describe the inspected baseline, read at revision `94785d2`; line numbers are from that revision and the files have moved since. CakeML references are to the revision pinned in `backend/lock.json`. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
 
 Scope: `Syntax`, `Checked`, `Lower`, `Abi`, `Kernels`, and `Baseline`, with selective review of the inherited structure, serialization, stage, and serve modules. This review was read-only except for this report. I did not run a shared Lake build. A scratch `lake env lean` evaluation was used for the first reproducer. The parser analysis is based on the pinned source in `.deps/cakeml/pancake/parser`; the lead reviewer independently confirmed that the generated `ld8 ld8 p` source is rejected by the pinned CakeML executable on the Linux native host.
 

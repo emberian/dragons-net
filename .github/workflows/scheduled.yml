@@ -67,8 +67,8 @@ jobs:
             --manifest-path models/Cargo.toml -p dn-ring-model
 
   # The upstream files the semantics was transcribed from and the keyword table was
-  # generated from must still be those files; this needs network, so it is not in the
-  # offline build.
+  # generated from must still be those files, and the stored RFCs must still be what
+  # their urls serve; this needs network, so it is not in the offline build.
   upstream-sources:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

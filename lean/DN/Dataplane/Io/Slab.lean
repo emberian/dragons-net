@@ -2,7 +2,7 @@
 import DN.Dataplane.Recycling
 
 /-!
-# DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, verified
+# DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, as a model
 
 This file models the generation-tagged lookup used by a completion reactor. The
 danger is **ABA**: a slot freed and reused between submit and completion would

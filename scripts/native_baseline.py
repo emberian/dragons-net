@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Differential compiler baseline and a real generated-code TCP echo smoke test."""
 from __future__ import annotations
 

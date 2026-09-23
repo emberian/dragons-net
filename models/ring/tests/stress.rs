@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Non-loom smoke lane: the same source, real threads, big item counts.
 //! This does not explore interleavings systematically (that is loom's job);
 //! it exists so the twin also runs as ordinary code on real hardware.

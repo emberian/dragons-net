@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Kernels
 import DN.Compiler.Baseline
 import DN.Compiler.StateCorpus

@@ -101,7 +101,7 @@ theorem eval_bounds_expr {a off len r0} {s : PancakeState σ}
     unfold boundScan; split <;> simp_all <;> omega
   by_cases hb : a.length < off + len <;> simp [this, hb]
 
-/-- LINK A end-to-end for the bounds fragment = C1's `evaluate_boundsChk`:
+/-- LINK A through the model for the bounds fragment = C1's `evaluate_boundsChk`:
 running the model `PancakeSem` on the bounds `If` writes `c0Encode none` into
 `result` exactly on the out-of-bounds inputs, and leaves the state untouched
 otherwise. RHS `ofNat (c0Encode (boundScan …))` is the SPEC's own encoded word. -/
@@ -445,7 +445,7 @@ theorem region_scan_premises_hold (ffi : σ) :
       = some (([0] : List (BitVec 8))[0 + 0]!)
   decide
 
-/-! ## 4. Composition: the region's in-bounds (digest) branch, end to end -/
+/-! ## 4. Composition: the region's in-bounds (digest) branch, through the model -/
 
 /-- `Dec`: run the continuation on the extended scope, then restore the shadowed
 binding (`res_var`). -/
@@ -463,7 +463,7 @@ def scanElse : PancakeProg :=
     (.dec "i" (.const (BitVec.ofNat 64 0))
       (.seq scanWhile (.assign "result" (.var "acc"))))
 
-/-- END-TO-END for the digest branch: from a state with the arena view loaded
+/-- Through the model for the digest branch: from a state with the arena view loaded
 (`ViewBytes` = the load_vec FFI postcondition A0) and the control decoded, running
 the emitted `scanElse` publishes `result = scanFrom a off len 0` — the SPEC
 digest. Composes `sem_dec` (scope), `scan_loop` (the fuel induction), and

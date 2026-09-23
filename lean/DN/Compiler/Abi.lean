@@ -1,8 +1,17 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Checked
 
 /-! The pinned x86-64 Cake export trampoline returns a 32-bit C result
 (`mov %edi, %eax`). Carry a full machine word through a caller-owned output
-slot instead. The caller must provide an aligned, writable, disjoint slot. -/
+slot instead. The caller must provide an aligned, writable, disjoint slot.
+
+One condition of that slot is not a C convention but the compiler's own: the
+correctness theorem for Pancake fixes the memory domain to the CakeML heap, and
+a store through a pointer outside it has no value in the semantics. A slot the
+host allocates on its own is outside that domain, so the theorem says nothing
+about a run that writes to it. Until the buffers live inside the heap, or are
+reached through the shared-memory operations, the slot is an assumption the host
+makes, not something the chain establishes. -/
 namespace DN.Compiler.Abi
 open Syntax
 

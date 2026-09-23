@@ -36,7 +36,20 @@ diagnostic, folding or masking them. `Checked.emit` is what keeps the emitted su
 the modelled behaviour: it takes only a literal distance below 64.
 5. **Native ABI and memory.** The pinned export trampoline returns 32 bits to C; full-word results now use output slots via `Abi.wordResult`. See [the baseline findings](baseline.md). The C adapter, heap/stack sizing, generated machine code, and memory model need an explicit contract. The current adapter provisions 1 MiB each for heap and stack; these are tested allocations, not proven minima.
 6. **Host refinement.** The Rust primitives and preserved OS reactors are not connected by a refinement theorem to the Lean dataplane models. FFI and kernel behavior are assumptions to articulate, not erase. The models state what they prove: a stale correlator stays rejected for the rest of a trace, a closed connection's token never resolves again, the deadline heap stays within twice its live content when it sweeps, a drain that clears its wakeup flag before reading its queue never drops a message silently — it either took it or will look again before sleeping — while two of the thirty-five schedules of the opposite order do drop one, and shedding from the middle of a byte stream is replaced by closing the connection. Each is a statement about the model, not about a running reactor.
-7. **Protocol and persistence.** NNTP semantics, article parsing, durable acceptance, and crash recovery are not implemented. The CRLF theorems concern a delimiter counter proven equal to its specification, not a bounded parser: no line boundaries, octet limit, or dot-stuffing.
+7. **Entry points.** The Pancake compiler's correctness theorem
+(`pan_to_target_compile_semantics`) is stated for the `main` entry only. Every native lane here
+calls `export` functions from C after `cml_main` returns, and that re-entry path is not covered by
+the upstream theorem. Whichever way this is closed — a main loop that talks to the host through the
+FFI, or an extension of the upstream proof — no end-to-end statement holds before it is.
+8. **Addresses the theorem admits.** The same theorem fixes the memory domain to the CakeML heap
+(`s.memaddrs = addresses base (heap_len - globals_size)`). A load or store through a pointer the C
+host owns — the result slot, the echo buffers, the control and output regions — is outside that
+domain, where the semantics gives `Error`, so the theorem's premise about the run not failing is
+false. Either those buffers live inside the heap the compiler knows about, or they are reached
+through the shared-memory operations that have their own domain, or the upstream proof is extended.
+The ABI adapter in item 5 states the caller's obligations; this is the one that decides whether
+the chain says anything at all.
+9. **Protocol and persistence.** NNTP semantics, article parsing, durable acceptance, and crash recovery are not implemented. The CRLF theorems concern a delimiter counter proven equal to its specification, not a bounded parser: no line boundaries, octet limit, or dot-stuffing.
 
 The inherited HTTP workloads, whose certificates rested on premises no state satisfies, were removed; `AssuranceChecks.lean` keeps the theorems that record why such universal bound-local and memory-domain premises are contradictory. `Certificate` requires an inhabited precondition. Fuel/clock bounds describe model execution, not elapsed CPU time.
 

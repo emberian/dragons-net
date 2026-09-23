@@ -1,6 +1,6 @@
 # Native dataplane integration review
 
-Review findings describe the inspected baseline. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
+Review findings describe the inspected baseline, read at revision `94785d2`; line numbers are from that revision. References into `migration/` still hold, because those bytes are preserved; references into the active tree have moved. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
 
 Date: 2026-09-18
 

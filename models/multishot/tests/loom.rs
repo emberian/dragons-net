@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! io_uring **multishot-recv re-arm coordination** — a reactor concurrency edge
 //! not covered by any existing twin. When a multishot recv posts its terminal
 //! CQE (the provided-buffer ring is exhausted, `res == -ENOBUFS`, `F_MORE`

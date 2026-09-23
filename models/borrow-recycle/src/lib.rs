@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Executable model of the io_uring provided-buffer **borrow↔recycle
 //! cross-thread handoff**: a worker reads a slice the kernel lent to a
 //! connection, the shard hands that buffer back, and the kernel immediately

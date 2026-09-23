@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Gate tests on disposable copies and probe modules; the working tree is never modified, and only
 pinned tools are added to .deps."""
 from __future__ import annotations
@@ -320,6 +321,15 @@ def source_tree(directory: Path) -> Path:
     for name in ("lean-toolchain", "lakefile.lean"):
         shutil.copy(ROOT / name, directory / name)
     (directory / "lean/DN").mkdir(parents=True)
+    # The snapshot check reads the extraction manifest, so a tree without one is
+    # not the tree the gate runs on.
+    (directory / "docs").mkdir()
+    (directory / "migration").mkdir()
+    kept = directory / "migration/kept.rs"
+    kept.write_text("fn main() {}\n")
+    (directory / "docs/provenance.json").write_text(json.dumps({"files": [
+        {"destination": "migration/kept.rs", "source_sha256": sha256(kept),
+         "changes": "Unmodified migration reference; not an active dn build target."}]}))
     return directory
 
 
@@ -545,16 +555,23 @@ class SourceGate(unittest.TestCase):
                 (root / name).write_text("")
             (root / "lean/DN/Link").symlink_to(root / "rfcs")
             (root / "lean-toolchain").write_text("leanprover/lean4:v4.31.0\n")
-            rfc = root / "rfcs" / next(iter(json.loads((root / "rfcs/manifest.json").read_text())["documents"]))
+            stored = list(json.loads((root / "rfcs/manifest.json").read_text())["documents"])
+            rfc = root / "rfcs" / stored[0]
             rfc.write_text(rfc.read_text() + "\n")
+            (root / "rfcs" / stored[1]).unlink()
+            (root / "rfcs/rfc9999.txt").write_text("a document nobody recorded\n")
             patch = root / "backend" / json.loads((root / "backend/lock.json").read_text())["patches"][0]["path"]
             patch.write_text(patch.read_text() + "\n")
+            (root / "migration/kept.rs").write_text("fn main() { }\n")
             errors = "\n".join(structure.static_errors(root, pins))
             for expected in ("update its pin", "unexpected file under lean/", "source gate rules were reviewed",
                              "lean/DN/Probe.X.lean: name is not a plain identifier", "lean/DN/Link: symlink",
                              "lean/DN/.Hidden.lean: name is not", "lean/DN/Bad-Name.lean: name is not",
                              "lean/Other.lean: unexpected file",
-                             f"RFC digest mismatch: {rfc.name}", "backend patch digest mismatch"):
+                             f"RFC digest mismatch: {rfc.name}", f"RFC missing: {stored[1]}",
+                             "the RFC collection carries a document the manifest does not record: rfc9999.txt",
+                             "backend patch digest mismatch",
+                             "preserved reference changed: migration/kept.rs"):
                 self.assertIn(expected, errors)
 
     def test_check_reports_static_and_gate_errors(self) -> None:
@@ -1099,6 +1116,83 @@ class Pipeline(unittest.TestCase):
         self.assertIn(f"{len(results)} cases, {stopping} of which stop",
                       (ROOT / "docs/baseline.md").read_text())
 
+    def test_preserved_snapshot_is_unchanged(self) -> None:
+        """The manifest calls part of the tree a preserved reference; that has to be true."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "docs").mkdir(parents=True)
+            (root / "migration").mkdir()
+            kept = root / "migration/kept.rs"
+            kept.write_text("fn main() {}\n")
+            entry = {"destination": "migration/kept.rs", "source_sha256": sha256(kept),
+                     "changes": "Unmodified migration reference; not an active dn build target."}
+            manifest = root / "docs/provenance.json"
+            manifest.write_text(json.dumps({"files": [entry]}))
+            self.assertEqual(structure.snapshot_errors(root), [])
+            kept.write_text("fn main() { }\n")
+            self.assertIn("preserved reference changed", " ".join(structure.snapshot_errors(root)))
+            kept.unlink()
+            self.assertIn("preserved reference is missing", " ".join(structure.snapshot_errors(root)))
+            # A manifest that records nothing must not pass as a check that found nothing.
+            manifest.write_text(json.dumps({"files": []}))
+            self.assertIn("covers nothing", " ".join(structure.snapshot_errors(root)))
+            # An edited file is not a preserved reference and is not checked here.
+            kept.write_text("fn main() {}\n")
+            edited = {"destination": "migration/edited.rs", "source_sha256": "0" * 64,
+                      "changes": "Namespace renamed; audits removed."}
+            (root / "migration/edited.rs").write_text("whatever\n")
+            manifest.write_text(json.dumps({"files": [entry, edited]}))
+            self.assertEqual(structure.snapshot_errors(root), [])
+            # A file nobody recorded could change without anyone noticing, so it is refused.
+            (root / "migration/stray.rs").write_text("fn stray() {}\n")
+            self.assertIn("does not record: migration/stray.rs",
+                          " ".join(structure.snapshot_errors(root)))
+            (root / "migration/stray.rs").unlink()
+            # A symlink is not bytes taken from anywhere, on either side of the record.
+            (root / "migration/link.rs").symlink_to(root / "migration/kept.rs")
+            self.assertIn("carries a symlink", " ".join(structure.snapshot_errors(root)))
+            (root / "migration/link.rs").unlink()
+            outside = {"destination": "../outside.rs", "source_sha256": "0" * 64,
+                       "changes": entry["changes"]}
+            manifest.write_text(json.dumps({"files": [entry, outside]}))
+            self.assertIn("outside the tree", " ".join(structure.snapshot_errors(root)))
+            # A manifest that cannot be read is an error with a message, not a traceback.
+            manifest.write_text("{ not json")
+            self.assertIn("not a manifest", " ".join(structure.snapshot_errors(root)))
+            manifest.write_text(json.dumps({"files": [{"destination": "migration/kept.rs"}]}))
+            self.assertIn("not a manifest", " ".join(structure.snapshot_errors(root)))
+            manifest.unlink()
+            self.assertIn("provenance.json is missing", " ".join(structure.snapshot_errors(root)))
+
+    def test_snapshot_check_covers_the_whole_snapshot(self) -> None:
+        """On the real tree: every file of the snapshot is recorded, and the record is used."""
+        recorded = [item for item in json.loads((ROOT / "docs/provenance.json").read_text())["files"]
+                    if item["changes"].startswith(structure.UNMODIFIED)]
+        files = [path for path in (ROOT / structure.SNAPSHOT).rglob("*") if path.is_file()]
+        self.assertGreater(len(recorded), 50)
+        self.assertEqual(len(files) - len(structure.SNAPSHOT_OWN), len(recorded))
+        self.assertEqual(structure.snapshot_errors(ROOT), [])
+
+    def test_rfc_collection_is_what_the_manifest_records(self) -> None:
+        """On the real tree: the stored documents are exactly the recorded ones, byte for byte."""
+        documents = json.loads((ROOT / "rfcs/manifest.json").read_text())["documents"]
+        stored = {path.name for path in (ROOT / "rfcs").iterdir()
+                  if path.is_file() and path.name != "manifest.json"}
+        self.assertEqual(stored, set(documents))
+        self.assertEqual(structure.rfc_errors(ROOT), [])
+
+    def test_every_source_file_declares_its_licence(self) -> None:
+        """`NOTICE` says the sources carry an SPDX identifier; this is what makes that true."""
+        kept = ("migration/",)  # the preserved snapshot keeps the headers it was taken with
+        suffixes = (".lean", ".rs", ".py", ".sh", ".c", ".h")
+        listed = run(["git", "ls-files", *(f"*{suffix}" for suffix in suffixes)]).stdout.split()
+        ours = [name for name in listed if not name.startswith(kept)]
+        self.assertGreater(len(ours), 50)
+        for name in ours:
+            with self.subTest(source=name):
+                head = "".join((ROOT / name).read_text().splitlines(keepends=True)[:2])
+                self.assertIn("SPDX-License-Identifier: AGPL-3.0-or-later", head)
+
     def test_no_script_shadows_a_standard_library_module(self) -> None:
         """`unittest discover` puts tests/ first on the path, which PYTHONSAFEPATH does not undo."""
         for directory in ("scripts", "tests"):
@@ -1415,6 +1509,22 @@ class Pipeline(unittest.TestCase):
         upstream_sources.compare(recorded, record)
         raw = "https://raw.githubusercontent.com/HOL-Theorem-Prover/HOL"
         self.assertEqual(asked, [f"{raw}/{'a' * 40}/src/n-bit/byteScript.sml"])
+
+    def test_upstream_comparison_covers_the_stored_documents(self) -> None:
+        """A stored RFC is compared against its url, with the recorded normalization applied."""
+        served = b"page one\f\npage two\n"
+        stored = {"rfc0000.txt": {"url": "https://example.invalid/rfc0000.txt",
+                                  "sha256": hashlib.sha256(served.replace(b"\f", b"")).hexdigest(),
+                                  "normalized": "form-feeds-removed"}}
+        self.assertEqual(upstream_sources.compare_documents(stored, lambda _: served), [])
+        # Without the normalization the same bytes no longer match: it is applied, not assumed.
+        plain = {"rfc0000.txt": {k: v for k, v in stored["rfc0000.txt"].items() if k != "normalized"}}
+        self.assertIn("rfc0000.txt", upstream_sources.compare_documents(plain, lambda _: served)[0])
+        unknown = {"rfc0000.txt": {**stored["rfc0000.txt"], "normalized": "reflowed"}}
+        self.assertIn("not one this check knows",
+                      upstream_sources.compare_documents(unknown, lambda _: served)[0])
+        self.assertEqual(upstream_sources.compare_documents({}, lambda _: served),
+                         ["no RFC is recorded"])
 
     def test_emitted_sources_match_the_golden_files(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

@@ -1,5 +1,15 @@
 {
   "format": 2,
+  "about": "Where the code came from when it was taken. The changes field describes the transfer itself; what happened to a file afterwards is in git history, not here. An entry whose changes begin with 'Unmodified migration reference' is a preserved reference: scripts/check_structure.py requires it to still hash to source_sha256.",
+  "sources": {
+    "breadstuffs": {
+      "url": "https://github.com/emberian/dregg",
+      "note": "The local name of the dregg working tree; every recorded source digest was verified against that public repository."
+    },
+    "drorb": {
+      "note": "Private; not publicly verifiable."
+    }
+  },
   "files": [
     {
       "source_repository": "breadstuffs",

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the io_uring **multishot-recv re-arm
 //! coordination** — a reactor concurrency edge not covered by any existing
 //! twin.

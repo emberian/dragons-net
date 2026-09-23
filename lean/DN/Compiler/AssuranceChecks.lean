@@ -2,9 +2,11 @@
 /-
 # DN.Compiler.AssuranceChecks
 
-Kernel-checked containment checks for inherited contracts. They record why
-universal bound-local and memory-domain premises must not be presented as usable
-certificates. See `docs/reviews/compiler-assurance.md`.
+Why a premise stated over every model state cannot be met. The inherited
+certificates that carried such premises were removed with their workloads, so
+these theorems guard no live API; they record the shape and its refutation, so
+that a precondition written that way is refused rather than rediscovered. See
+`docs/reviews/compiler-assurance.md`.
 -/
 
 import DN.Compiler.Semantics

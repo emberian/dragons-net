@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Schedule exploration of the shipped admission gate under loom.
 //!
 //! Run with:

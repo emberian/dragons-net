@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Run the concurrency models, refusing a set that has quietly shrunk.
 
 The models are only evidence while they all run. A crate dropped from the

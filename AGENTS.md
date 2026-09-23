@@ -41,5 +41,6 @@ bytes and hashes; port changes into active modules. Never run its old deployment
 scripts against a user's machines. Source projects are read-only ancestors.
 
 Do not commit `.deps`, `.lake`, target directories, credentials, or generated
-binaries. Keep attribution/provenance when moving source. Prefer small coherent
-commits on main; do not rewrite existing history. Do not contact contributors.
+binaries. Keep attribution/provenance when moving source. Work on a branch and open a
+focused pull request (see CONTRIBUTING.md); keep commits small and coherent and
+do not rewrite published history. Do not contact contributors.

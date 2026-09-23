@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /// Completion identity. Fields are private so callers cannot manufacture tokens.
 /// Tokens belong to one slab; adapters must not route them between shards/slabs.
 ///

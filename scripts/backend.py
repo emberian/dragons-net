@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Fetch exact upstream sources and apply the curated patch in an isolated directory."""
 from __future__ import annotations
 

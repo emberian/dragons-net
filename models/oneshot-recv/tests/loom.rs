@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The **DEPLOYED one-shot buffer-select recv path** (`migration/dataplane/host/src/uring.rs`):
 //! the per-request lease `acquire -> process -> recycle` cycle through the single
 //! `Conn.leased_bid` cell. This IS the real deployed path — the recv is one-shot

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Source gates run before the build: Lean modules, the offline RFC collection and the
 backend patch.
 
@@ -24,6 +25,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "SourceGate.lean"
 LEAN_TOOLCHAIN = "leanprover/lean4:v4.30.0"
+# How the extraction manifest marks a file kept as it was, byte for byte.
+UNMODIFIED = "Unmodified migration reference"
+# The snapshot, and the one file in it this project wrote rather than took.
+SNAPSHOT = "migration"
+SNAPSHOT_OWN = ("migration/dataplane/README.md",)
 # Reviewed files allowed to define syntax, pinned by SHA-256. No module defines syntax today.
 SYNTAX_FILES: dict[str, str] = {}
 IMPORT = re.compile(r"^(?:public\s+|private\s+)?(?:meta\s+)?import\s+(?:all\s+)?(\S+)", re.MULTILINE)
@@ -88,12 +94,83 @@ def static_errors(root: Path, pins: dict[str, str]) -> list[str]:
         path = root / name
         if not path.is_file() or digest(path) != pinned:
             errors.append(f"{name}: changed file with syntax definitions; review it and update its pin")
-    for name, item in json.loads((root / "rfcs/manifest.json").read_text())["documents"].items():
-        if digest(root / "rfcs" / name) != item["sha256"]:
-            errors.append(f"RFC digest mismatch: {name}")
+    errors += rfc_errors(root)
     for item in json.loads((root / "backend/lock.json").read_text())["patches"]:
         if digest(root / "backend" / item["path"]) != item["sha256"]:
             errors.append(f"backend patch digest mismatch: {item['path']}")
+    errors += snapshot_errors(root)
+    return errors
+
+
+def rfc_errors(root: Path) -> list[str]:
+    """The stored RFCs are the ones the manifest names, with the bytes it records.
+
+    The digests answer "did a stored document change"; the walk answers "is a document here that
+    nobody recorded", which the digests cannot see and which would make the collection quietly
+    larger than what has been read.
+    """
+    documents = json.loads((root / "rfcs/manifest.json").read_text())["documents"]
+    errors = []
+    for name, item in documents.items():
+        path = root / "rfcs" / name
+        if not path.is_file():
+            errors.append(f"RFC missing: {name}")
+        elif digest(path) != item["sha256"]:
+            errors.append(f"RFC digest mismatch: {name}")
+    for path in sorted((root / "rfcs").iterdir()):
+        name = path.name
+        if path.is_symlink():
+            errors.append(f"the RFC collection carries a symlink: {name}")
+        elif path.is_file() and name != "manifest.json" and name not in documents:
+            errors.append(f"the RFC collection carries a document the manifest does not record: {name}")
+    return errors
+
+
+def snapshot_errors(root: Path) -> list[str]:
+    """Files the manifest records as preserved references must still be their source bytes.
+
+    The snapshot is a reference for extraction, not a build target: what makes it useful is that
+    it is unchanged, and what makes that claim checkable is the digest the manifest already
+    carries. The digests say the recorded files did not change; the walk below says the record is
+    all of them, because a file nobody recorded could change without anyone noticing.
+    """
+    manifest = root / "docs/provenance.json"
+    if not manifest.is_file():
+        return ["docs/provenance.json is missing; it records where the preserved files came from"]
+    try:
+        entries = json.loads(manifest.read_text())["files"]
+        recorded = [(str(item["destination"]), str(item["changes"]), str(item["source_sha256"]))
+                    for item in entries]
+    except (ValueError, TypeError, KeyError) as error:
+        return [f"docs/provenance.json is not a manifest this check can read: {error}"]
+
+    errors = []
+    preserved: set[str] = set()
+    listed = {destination for destination, _, _ in recorded}
+    for destination, changes, recorded_digest in recorded:
+        if not changes.startswith(UNMODIFIED):
+            continue
+        candidate = Path(destination)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            errors.append(f"preserved reference is outside the tree: {destination}")
+            continue
+        preserved.add(destination)
+        path = root / candidate
+        if path.is_symlink():
+            errors.append(f"preserved reference is a symlink: {destination}")
+        elif not path.is_file():
+            errors.append(f"preserved reference is missing: {destination}")
+        elif digest(path) != recorded_digest:
+            errors.append(f"preserved reference changed: {destination}")
+    if not preserved:
+        errors.append("the manifest records no preserved reference; the snapshot check covers nothing")
+    snapshot = root / SNAPSHOT
+    for path in sorted(snapshot.rglob("*")) if snapshot.is_dir() else []:
+        name = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            errors.append(f"the snapshot carries a symlink: {name}")
+        elif path.is_file() and name not in listed and name not in SNAPSHOT_OWN:
+            errors.append(f"the snapshot carries a file the manifest does not record: {name}")
     return errors
 
 
@@ -189,4 +266,4 @@ if __name__ == "__main__":
     if errors:
         sys.exit("\n".join(errors))
     print("structure: build outputs OK" if outputs_only
-          else "structure: Lean source gate, build outputs, RFC and backend digests OK")
+          else "structure: Lean source gate, build outputs, preserved snapshot, RFC and backend digests OK")

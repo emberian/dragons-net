@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A bounded single-producer/single-consumer ring, written as a small
 //! executable model ("twin") whose entire purpose is to be exhaustively
 //! schedule-checked under [loom].

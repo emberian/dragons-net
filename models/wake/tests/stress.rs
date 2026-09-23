@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Non-loom smoke lane: the same protocol, real threads, real condvar
 //! doorbell, big publish counts. No timeout anywhere — a missed wakeup
 //! hangs this test rather than hiding in a latency spike.

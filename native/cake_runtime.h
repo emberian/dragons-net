@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* Trusted, single-threaded Linux x86-64 adapter. Not a verified allocator. */
 #ifndef DN_CAKE_RUNTIME_H
 #define DN_CAKE_RUNTIME_H

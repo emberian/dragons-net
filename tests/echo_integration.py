@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Real TCP tests for an externally built native echo host; stdlib only."""
 from __future__ import annotations
 

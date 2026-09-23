@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /// A completion larger than the submitted remainder is an adapter error: the
 /// kernel cannot have sent bytes that were never handed to it.
 #[derive(Debug, PartialEq, Eq)]

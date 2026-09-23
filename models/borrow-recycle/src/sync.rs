@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Atomics, switched between `std` and `loom`.
 //!
 //! Under `--cfg loom` the atomics are the loom-instrumented ones, so the model

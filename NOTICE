@@ -1,5 +1,9 @@
+Copyright (C) 2025-2026 the dn contributors.
+
 dn project code is licensed under GNU AGPL version 3 or later, unless an
-individual file or component states otherwise. See LICENSE.
+individual file or component states otherwise. See LICENSE. Source files carry
+an SPDX identifier; the files under migration keep the bytes they were taken
+with, so their headers are whatever the source had.
 
 This repository incorporates compiler and dataplane work extracted from the
 orb-compiler and orb directories of breadstuffs, and from drorb. Source
@@ -12,6 +16,13 @@ revision are recorded in backend/lock.json.
 
 RFC documents in rfcs retain their individual copyright and redistribution
 notices. Their inclusion does not relicense those documents under AGPL.
+
+The preserved snapshot under migration references third-party work that is not
+included here: the shims in its ffi directory call HACL* (F*-verified
+cryptography) and link against artifacts a CakeML build produces, and its
+transport code refers to the WireGuard and Tailscale protocols. Those names and
+projects belong to their owners; nothing of theirs is vendored in this
+repository, and the snapshot is a reference for extraction, not a build target.
 
 Third-party dependencies and downloaded tool artifacts retain their own
 licenses. They are not vendored as project-owned code here.

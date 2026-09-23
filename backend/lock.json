@@ -17,7 +17,8 @@
         "ddd79234be573d9499977733577f9804fc213fa3",
         "c3f5254a32592ac892600674993302970c8afae2"
       ],
-      "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP."
+      "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP.",
+      "source_commits_note": "Private working commits; not resolvable in the public CakeML repository. The patch itself is pinned by sha256 above."
     }
   ],
   "semantics_sources": [

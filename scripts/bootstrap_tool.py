@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Obtain a digest-pinned Linux x86-64 tool from tools.lock.json and print its path.
 
 Archives are stored under .deps/archives by digest and verified on every use, so a cached

@@ -20,7 +20,7 @@ The default native compiler is the digest-pinned release in `tools.lock.json`. S
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,790 declarations, including 2,258 theorems; the kernels skip the 57 `_unsafe_rec` helpers Lean generates | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,790 declarations, including 2,258 theorems — most of them the equations and injectivity lemmas Lean generates for definitions and matches, not statements written in source; the kernels skip the 57 `_unsafe_rec` helpers Lean generates. A gate test compares the declaration, theorem and example counts here with what the audit reports, so those cannot drift apart | Allowed axioms and type-correct statements do not ensure adequate specifications |
 | Executable examples | 91 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 113 expression shapes × 192 input pairs, all seven current operators and the logical right shift at its boundaries, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
@@ -94,7 +94,7 @@ its byte-level postcondition are the ones that were there before.
 
 **Removed inherited workloads:** the `Stage*`, `Serve*`, serializer and structure-emitter modules were removed. Their certificates required premises that no model state satisfies, their "compiler" ignored the program it compiled, and their memory model put one byte in each machine word, which the CakeML compiler theorem never provides. The emitted code is unchanged, byte for byte; `tests/golden` now pins it. The extraction manifest records where they came from, and git history keeps them.
 
-**Preserved source:** `migration/dataplane` is still a reference snapshot. The echo host is new, small, and uses `poll`; it does not activate the old io_uring/kqueue product or prove correspondence to the abstract concurrency models.
+**Preserved source:** `migration/dataplane` is still a reference snapshot, and the source gate holds it to that: every file in it is recorded in the extraction manifest and still hashes to the bytes it arrived with, so a change there fails the checks instead of passing unnoticed. What a port has to redesign before reusing any of it is listed in [porting risks](porting-risks.md). The echo host is new, small, and uses `poll`; it does not activate the old io_uring/kqueue product or prove correspondence to the abstract concurrency models.
 
 ## Next useful contributions
 

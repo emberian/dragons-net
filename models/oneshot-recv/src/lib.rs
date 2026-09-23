@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the **DEPLOYED one-shot buffer-select recv path** —
 //! the per-request lease `acquire -> process -> recycle` cycle through the single
 //! `Conn.leased_bid` cell (`migration/dataplane/host/src/uring.rs`).

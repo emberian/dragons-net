@@ -2,7 +2,7 @@
 import DN.Dataplane.Io.Slab
 
 /-!
-# DN.Dataplane.Io.Reactor — the completion-queue reactor as a verified transition system
+# DN.Dataplane.Io.Reactor — the completion-queue reactor as a transition system, with proofs
 
 This file models the one-shot core of a completion reactor: the client *submits*
 an operation, the environment later supplies a completion carrying the chosen

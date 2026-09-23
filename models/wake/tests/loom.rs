@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Exhaustive schedule exploration of the wakeup protocol under loom.
 //!
 //! Run with:

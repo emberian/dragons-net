@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Clock
 
 /-! Certificates require an inhabited precondition. This avoids packaging a

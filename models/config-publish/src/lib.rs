@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the reactor's hot-reload **publication of the
 //! metered rate-gate config PAIR** — the `(rate_limit, rate_window)` couple the
 //! `429` accept gate reads on every connection.

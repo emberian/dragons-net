@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "cake_runtime.h"

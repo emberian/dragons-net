@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Blocking reactor's SHARED per-source **connection-limit gate**
 //! (`SharedStanding::admit` / `on_close`, `migration/dataplane/host/src/standing.rs`):
 //! the `ConnLimit` check-and-increment must be a SINGLE critical section so

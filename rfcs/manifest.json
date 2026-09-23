@@ -2,44 +2,54 @@
   "format": 1,
   "documents": {
     "rfc2980.txt": {
-      "sha256": "17f7df00e70fcc130813e5eb7fcdd379fcdf6035121267171b989b5dd6830d69",
-      "url": "https://www.rfc-editor.org/rfc/rfc2980.html"
+      "sha256": "37a05f017d22e9cddf271e9c5cee2f53cb76804cc65d2300f3bbf3db920e9997",
+      "url": "https://www.rfc-editor.org/rfc/rfc2980.txt",
+      "normalized": "form-feeds-removed"
     },
     "rfc3977.txt": {
       "sha256": "e9bafe47d8c9b1136f11546162599ee67c233f33955c2972b57a91ecaff1f5f5",
-      "url": "https://www.rfc-editor.org/rfc/rfc3977.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc3977.txt"
+    },
+    "rfc4642.txt": {
+      "sha256": "b6abf6a451078c0958488d5a0e5ef6a29e8dca2c2237e351a582395b320895f6",
+      "url": "https://www.rfc-editor.org/rfc/rfc4642.txt"
     },
     "rfc4643.txt": {
       "sha256": "e68fa965e1b50b154ce807edfabe1a35ea97e2d9371cc4832602be69e5507126",
-      "url": "https://www.rfc-editor.org/rfc/rfc4643.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc4643.txt"
     },
     "rfc4644.txt": {
       "sha256": "452fc4ff0b23d66c66dbaa4433e1ba8564217cac047ec8ce0b765b6f8d4bda2b",
-      "url": "https://www.rfc-editor.org/rfc/rfc4644.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc4644.txt"
     },
     "rfc4707.txt": {
       "sha256": "d4fbdc4acc7000eef920867351757e0e9e6473f1713eb68270036b22a566908a",
-      "url": "https://www.rfc-editor.org/rfc/rfc4707.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc4707.txt"
     },
     "rfc5536.txt": {
       "sha256": "141e122bd171ba414ed5afecec6073aa2db4e9f90119e2cde362c2c94ccb6733",
-      "url": "https://www.rfc-editor.org/rfc/rfc5536.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc5536.txt"
     },
     "rfc5537.txt": {
       "sha256": "d729e7a4e84006d1ada9945e7fa011e3c8f6600700217b7b3230e8d78116683b",
-      "url": "https://www.rfc-editor.org/rfc/rfc5537.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc5537.txt"
     },
     "rfc6048.txt": {
       "sha256": "6e7db9ac0b56c2276b1e1215d6998b406c57a97de31e7a1405223e4ef3f00a6a",
-      "url": "https://www.rfc-editor.org/rfc/rfc6048.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc6048.txt"
     },
     "rfc8054.txt": {
       "sha256": "63f58e6675debaaaa02c7c77ba2907104903ccb9fc9461497fd36ece4a9bdbdb",
-      "url": "https://www.rfc-editor.org/rfc/rfc8054.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc8054.txt"
+    },
+    "rfc8143.txt": {
+      "sha256": "f219e3760fe8de93b448e9fb239ea102115ff18445c00efdb783c523961dbf27",
+      "url": "https://www.rfc-editor.org/rfc/rfc8143.txt"
     },
     "rfc8315.txt": {
       "sha256": "ed4f0d5b3013532270ba83d5106595e26c81a3786c7c0bb2550af2270667192c",
-      "url": "https://www.rfc-editor.org/rfc/rfc8315.html"
+      "url": "https://www.rfc-editor.org/rfc/rfc8315.txt"
     }
-  }
+  },
+  "about": "Each document is stored as the plain text the url serves; sha256 is the digest of the stored bytes. An entry's normalized names the one transformation applied to the fetched bytes before storing, which scripts/check_upstream_sources.py applies again when it compares against the url; without it the bytes are stored exactly as served."
 }

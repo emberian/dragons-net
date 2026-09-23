@@ -2,7 +2,7 @@
 import DN.Dataplane.Io.Reactor
 
 /-!
-# DN.Dataplane.Io.Deadline — the unified deadline min-heap with lazy deletion, verified
+# DN.Dataplane.Io.Deadline — the deadline min-heap with lazy deletion, as a model
 
 A completion reactor must wake *exactly* when the nearest of many pending
 deadlines expires: connection idle timeouts, request body deadlines, handshake

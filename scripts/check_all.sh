@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Complete maintained baseline, including real native execution. No skipped lane
 # may make this command report success.
 set -euo pipefail

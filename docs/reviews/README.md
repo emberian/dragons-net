@@ -15,7 +15,7 @@ The inherited compiler workloads this review examined (`Stage*`, `Serve*`, seria
 | --- | --- | --- |
 | CI logging could mask failed checks | Actual prior run used implicit `bash -e`; a failing command piped into `tee` exited zero | **Fixed:** explicit Bash with pipefail, plus an intentionally failing pipeline probe in both jobs |
 | Checked emission produced unparsable nested loads | `ld8 ld8 p` accepted by our checker, rejected by pinned CakeML | **Fixed:** parenthesize nested loads; compile all four byte/word nesting pairs and execute two valid native pointer cases |
-| Some purported certificates have impossible premises | Lean-checked contradiction from universally bound locals or universally addressable memory | **Contained:** source warnings and permanent contradiction theorems; full precondition-indexed API repair remains open |
+| Some purported certificates have impossible premises | Lean-checked contradiction from universally bound locals or universally addressable memory | **Resolved by removal:** the APIs that carried those premises were deleted with the inherited workloads; `AssuranceChecks.lean` keeps the theorems that say why such a premise cannot be met, so a reviewer can point at the refutation instead of rediscovering it |
 | Slab keys can leave the token partition | Unbounded generation, 64-bit/tagged namespace constraints, concrete receive-tag collision | **Partial repair:** checked `Key.toToken?` with decode/bound proofs; allocator exhaustion policy and native linkage remain open |
 | One-shot completion models are described as native reactor guarantees | No non-final multishot/cancellation product state; inline placeholder identity is not a valid kernel token | **Contained:** corrected model claims; lifecycle and identity redesign required before porting |
 | Deadline/receive proofs are weaker than their prose | Ordering and unbounded sequential conservation do not establish timer delivery, finite memory, or cancellation safety | **Corrected and extended:** the claims were narrowed to what is proven, key uniqueness moved into the invariant, and the deadline heap now has a sweep with a proven size bound along a whole trace. Timer delivery, native scheduling and capacity obligations remain open |
@@ -33,10 +33,13 @@ The inherited compiler workloads this review examined (`Stage*`, `Serve*`, seria
 * [Compiler assurance](compiler-assurance.md): contradictory premises, AST-versus-printed-source claims, FFI writeback, copy composition.
 * [Emission and integration](emission-integration.md): nested-load failure and unchecked inherited HTTP interfaces.
 * [Dataplane models](dataplane-models.md): token partition, operation lifecycles, inline identity, timers, receive capacity, exhaustion.
-* [Native integration](native-integration.md): reviewed lifetime/identity paths, mitigations, migration blockers, and source hashes.
+* [Native integration](native-integration.md): reviewed lifetime/identity paths, mitigations, migration blockers, and source hashes. The current list of what a port must redesign is in [porting risks](../porting-risks.md).
 * [CI failure propagation](ci-failure-propagation.md): the logging-gate reproducer and fix.
 
 ## Recommended next work for Wisper
+
+The acceptance criteria for this work are in the [roadmap](https://github.com/emberian/dragons-net/issues/28)
+and its issues; the sections below say what the review found and why the work is in that order.
 
 ### 1. Choose one identity and ownership contract
 

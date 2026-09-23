@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Judge a finished `checks` run from outside the change it ran on.
 
 For a pull request GitHub takes the workflow file, and everything it starts, from

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Checked
 import DN.Compiler.ByteCopy
 import DN.Compiler.NatToDec

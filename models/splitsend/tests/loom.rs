@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Zero-copy **SplitSend** writev↔recycle handoff (`DRORB_SPAN=15`,
 //! `migration/dataplane/host/src/uring.rs`): the borrowed request body is sent to the
 //! socket as one `writev` gather straight from the still-held buf_ring lease

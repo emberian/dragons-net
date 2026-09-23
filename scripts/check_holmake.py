@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Decide whether a finished Holmake run rebuilt the proof, and rebuilt it honestly.
 
 Holmake does not fail on a theorem proved by `cheat` or carrying an oracle tag,

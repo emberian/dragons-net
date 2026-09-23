@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Rebuild the Pancake proof chain against the locked source and the curated patch.
 #
 # The patch changes `shrink_def`, which the proofs below it use: `crep_to_loopProof`

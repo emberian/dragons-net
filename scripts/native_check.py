@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Compile emitted Pancake and run the real exported kernel on Linux x86-64.
 
 CAKE must name an existing compiler executable. Its digest is recorded, not

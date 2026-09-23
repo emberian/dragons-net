@@ -2,7 +2,7 @@
 import DN.Dataplane.Io.Reactor
 
 /-!
-# DN.Dataplane.Io.CompletionHandler — the inline completion-handler drain, verified
+# DN.Dataplane.Io.CompletionHandler — the inline completion-handler drain, as a model
 
 There are two ways to hand a batch of modeled terminal one-shot completions to a consumer. The
 **buffered** way materializes every completion into an array first — a

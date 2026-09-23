@@ -1,8 +1,8 @@
 # Review of inherited dataplane models
 
-Review findings describe the inspected baseline. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
+Review findings describe the inspected baseline, read at revision `94785d2`; line numbers are from that revision and the files have moved since. CakeML references are to the revision pinned in `backend/lock.json`. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
 
-Scope: read-only review of `/Users/ember/dev/dn/lean/DN/Dataplane`, with the
+Scope: read-only review of `lean/DN/Dataplane`, with the
 active `dn-runtime` slab and the independent Rust concurrency models used as
 comparison points. I did not run a Lake build. The repository-wide assurance
 document correctly says that host refinement remains open; findings below call

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Check that the concurrency tests can fail.
 
 A green loom lane is only evidence if the tests would go red on a broken

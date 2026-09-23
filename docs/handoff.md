@@ -11,9 +11,11 @@ Start with the [inherited-code review and prioritized repairs](reviews/README.md
 2. `Semantics.lean`, `Region.lean`, `Clock.lean`, and `Certificate.lean`: model execution and composition, including a certificate requiring an inhabited precondition.
 3. `ByteCopy.lean`, `ByteLit.lean`, `Decimal.lean`, `Div10.lean`, `NatToDec.lean`, `LowerBridge.lean` and `LowerBridgeSem.lean`: byte-addressed writes, decimal rendering, and the bridge from the lowered program to its execution.
 4. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
-5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection.
+5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection. Read [the porting risks](porting-risks.md) before reusing any of it: the ownership and lifetime decisions in that snapshot are the part that has to be redesigned.
 
 ## First milestones and acceptance criteria
+
+The criteria that bind are in the [roadmap](https://github.com/emberian/dragons-net/issues/28) and the issues it links; what each milestone below calls acceptance is what a reviewer should expect to see, and the issue is what decides.
 
 ### 1. Make the compiler boundary explicit
 

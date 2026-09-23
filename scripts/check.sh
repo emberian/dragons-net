@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
 set -euo pipefail
 # A module in scripts/ with the name of a standard-library one would otherwise
 # shadow it: Python puts the script's directory first on the path. It does the

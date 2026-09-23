@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the reactor's SHARED per-source
 //! **connection-limit gate** — `SharedStanding::admit` / `admit_counted` /
 //! `on_close` in `migration/dataplane/host/src/standing.rs`.

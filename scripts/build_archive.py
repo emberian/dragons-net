@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Pack the Lean build output for the next CI job, or unpack it there.
 
 The build job runs code from the change under test, so unpacking accepts only regular files

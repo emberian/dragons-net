@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Synchronization primitives, switched between `std` and `loom`.
 //!
 //! Under `--cfg loom` every atomic, mutex, `Arc`, and `UnsafeCell` is the

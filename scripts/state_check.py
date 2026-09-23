@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Check the Lean model's stopping states against an independent implementation.
 
 The differential lanes run emitted code and compare the value a program computes.

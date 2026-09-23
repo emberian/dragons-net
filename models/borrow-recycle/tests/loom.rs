@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The cross-thread
 //! borrow↔recycle handoff of the mmap'd provided-buffer slice — the ONE
 //! elevated-severity reactor corner the single-threaded `Uring/*.lean` LTS

@@ -1,6 +1,6 @@
 # Compiler assurance review
 
-Review findings describe the inspected baseline. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
+Review findings describe the inspected baseline, read at revision `94785d2`; line numbers are from that revision and the files have moved since. CakeML references are to the revision pinned in `backend/lock.json`. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
 
 Scope: `Semantics`, `Region`, `Compose`, `Clock`, `Certificate`, `ProofProducing`, `LowerBridgeSem`, and `ByteCopy`, compared where relevant with the pinned CakeML `panSemScript.sml`. No source or build changes were made.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the io_uring zero-copy **SplitSend
 //! writev↔recycle** handoff — the new `DRORB_SPAN=15` reactor path
 //! (`stage_split_response` / `split_send_sqe` / `on_split_send` in
