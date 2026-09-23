@@ -1,0 +1,112 @@
+name: backend
+# The curated optimization is only worth something if its proof still goes through, and the
+# only way to know that is to rebuild it. That is far too slow for the per-commit chain, so it
+# runs weekly, on a change to what it rebuilds, and on request.
+#
+# A hosted runner for a public repository gives four cores and six hours per job. The whole
+# chain, from a clean tree up to `pan_to_target_compile_semantics` and its tag check, took 46
+# minutes on twelve jobs of a fast machine, so the weekly run builds all of it; a change to the
+# lane itself builds the narrow target the patch touches, which took three minutes on two.
+on:
+  schedule:
+    - cron: "23 5 * * 0"
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - scripts/backend.py
+      - scripts/bootstrap_tool.py
+      - scripts/check_backend.sh
+      - scripts/check_holmake.py
+      - tools.lock.json
+      - .github/workflows/backend.yml
+  pull_request:
+    paths:
+      - backend/**
+      - scripts/backend.py
+      - scripts/bootstrap_tool.py
+      - scripts/check_backend.sh
+      - scripts/check_holmake.py
+      - tools.lock.json
+      - .github/workflows/backend.yml
+  workflow_dispatch:
+    inputs:
+      target:
+        description: >-
+          Theory object to build. pan_to_targetProofTheory.uo is the whole chain and the only
+          target whose theorem the tag check reads; loop_liveProofTheory.uo is the narrow one.
+        default: pan_to_targetProofTheory.uo
+
+permissions: {}
+
+# A hosted runner is occupied for as long as this takes, so a superseded pull-request run is
+# cancelled. A run on the default branch is not: it is the one the record rests on.
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: read
+    env:
+      # The weekly run rebuilds the chain the patch can break; a push or a pull request that
+      # touches the lane builds the narrow target, which is enough to show the lane still runs.
+      DN_BACKEND_TARGET: >-
+        ${{ inputs.target || (github.event_name == 'schedule' && 'pan_to_targetProofTheory.uo')
+        || 'loop_liveProofTheory.uo' }}
+      DN_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Built here on every run rather than restored with the prover: this is the compiler the
+      # lane's whole claim rests on, and a few minutes buy its verification against the pin.
+      - name: Build the pinned ML compiler
+        run: python3 -P scripts/bootstrap_tool.py polyml
+      - name: What the prover is built from
+        id: pins
+        run: |
+          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          hol = json.load(open("backend/lock.json"))["hol"]["revision"]
+          poly = json.load(open("tools.lock.json"))["polyml"]["sha256"]
+          print(f"key=prover-ubuntu-24.04-{hol}-{poly}")
+          PY
+      # The prover takes longer to build than the target takes to prove, and it changes only
+      # when its revision or its compiler does, which is what the key says and nothing else.
+      - name: Restore the prover
+        id: prover
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps/hol
+          key: ${{ steps.pins.outputs.key }}
+      - name: Build the prover
+        if: steps.prover.outputs.cache-hit != 'true'
+        run: |
+          python3 -P scripts/backend.py fetch hol
+          python3 -P scripts/backend.py build hol
+      # Saved from its own step, so that a prover whose build broke half way through is not
+      # stored for the next run to trust.
+      - name: Keep the prover
+        if: steps.prover.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps/hol
+          key: ${{ steps.pins.outputs.key }}
+      - name: Fetch the patched compiler source
+        run: python3 -P scripts/backend.py fetch cakeml
+      - name: Rebuild the proof
+        run: bash scripts/check_backend.sh
+      - name: Keep what the run reported
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-logs
+          path: build/backend-*.log

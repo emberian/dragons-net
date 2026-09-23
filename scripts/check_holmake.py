@@ -43,6 +43,13 @@ def read(path: Path) -> str:
     return path.read_text(errors="replace")
 
 
+def located(built: Path) -> Path | None:
+    """Where Holmake left the target. It writes objects to `.hol/objs` beside the sources it
+    built, and older layouts write them into the source directory itself."""
+    return next((path for path in (built.parent / ".hol/objs" / built.name, built)
+                 if path.exists()), None)
+
+
 def problems(output: Path, tree: Path, jobs: int, built: Path | None, since: float) -> list[str]:
     found = hits(read(output), output.name)
     words = [word for word in STATUS if re.search(rf"(?<![A-Z-]){word}(?![A-Z-])", read(output))]
@@ -53,10 +60,12 @@ def problems(output: Path, tree: Path, jobs: int, built: Path | None, since: flo
     for log in logs:
         found += hits(read(log), str(log.relative_to(tree)))
     if built is not None:
-        if not built.exists():
-            found.append(f"{built} was not built")
-        elif built.stat().st_mtime < since:
-            found.append(f"{built} is older than this run; nothing was rebuilt")
+        target = located(built)
+        if target is None:
+            found.append(f"{built.name} is neither in {built.parent}/.hol/objs nor in "
+                         f"{built.parent}, so it was not built")
+        elif target.stat().st_mtime < since:
+            found.append(f"{target} is older than this run; nothing was rebuilt")
     return found
 
 

@@ -40,6 +40,7 @@ bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
 state_check = script("state_check")
 check_holmake = script("check_holmake")
+backend = script("backend")
 CHECK = (ROOT / "scripts/check.sh").read_text()
 AUDIT = re.search(r"--run scripts/Audit\.lean --regressions (\d+)", CHECK)
 
@@ -958,9 +959,14 @@ class Pipeline(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             work = Path(temp)
             tree = work / "cakeml"
-            (tree / "pancake/proofs/.hol/logs").mkdir(parents=True)
-            built = tree / "pancake/proofs/pan_to_targetProofTheory.uo"
-            built.write_text("theory")
+            proofs = tree / "pancake/proofs"
+            (proofs / ".hol/logs").mkdir(parents=True)
+            (proofs / ".hol/objs").mkdir(parents=True)
+            # Holmake writes its objects to `.hol/objs`, not beside the sources, and the lane
+            # names the target as the source directory plus its name.
+            built = proofs / "pan_to_targetProofTheory.uo"
+            obj = proofs / ".hol/objs" / built.name
+            obj.write_text("theory")
             output = work / "holmake.log"
 
             def found(stdout: str, log: str, jobs: int = 2, target: Path | None = built,
@@ -982,12 +988,17 @@ class Pipeline(unittest.TestCase):
             # tagged, so the word alone must not clear the run.
             self.assertTrue(found("pan_to_targetProofTheory OK", "Saved ORACLE thm _"))
             self.assertEqual(found("OK", "clean", jobs=1), [])
-            shutil.rmtree(tree / "pancake/proofs/.hol")
+            self.assertTrue(check_holmake.problems(output, tree, 1, built, obj.stat().st_mtime + 60),
+                            "a target older than the run was accepted")
+            shutil.rmtree(proofs / ".hol")
             self.assertTrue(check_holmake.problems(output, tree, 2, built, 0.0),
                             "a parallel build with no job logs was accepted")
+            # Nothing was built at all: the name alone must not clear the run.
+            self.assertTrue(check_holmake.problems(output, tree, 1, built, 0.0),
+                            "a target that exists nowhere was accepted")
+            # An older Holmake left the object beside the source, which is still accepted.
+            built.write_text("theory")
             self.assertEqual(check_holmake.problems(output, tree, 1, built, 0.0), [])
-            self.assertTrue(check_holmake.problems(output, tree, 1, built, built.stat().st_mtime + 60),
-                            "a target older than the run was accepted")
             self.assertTrue(check_holmake.problems(output, tree, 1, tree / "missing.uo", 0.0))
 
     def test_checkers_cover_what_decides_the_checks(self) -> None:
@@ -1047,6 +1058,75 @@ class Pipeline(unittest.TestCase):
                     self.assertEqual(refused, not ok, result.stderr)
                     if not ok:
                         self.assertEqual(result.returncode, 2)
+
+    def test_backend_refuses_a_prover_built_by_another_compiler(self) -> None:
+        """The prover records what built it; a prover built by anything else is refused."""
+        poly, holdir = Path("/tools/polyml-v5.9.2/bin/poly"), Path("/deps/hol")
+        record = f'val HOLDIR = "{holdir}"\nval MOSMLDIR = ""\nval POLY = "{poly}"\n'
+        self.assertIn("built with the pinned", backend.check_record(record, poly, holdir))
+        for broken in (None, record.replace(str(poly), "/usr/bin/poly"),
+                       record.replace(str(holdir), "/somewhere/else/hol"),
+                       "val MOSMLDIR = \"\"\n"):
+            with self.subTest(record=broken), self.assertRaises(SystemExit) as refusal:
+                backend.check_record(broken, poly, holdir)
+            self.assertRegex(str(refusal.exception), "rebuild|build it")
+        # The lane must ask before it builds, or a prover from anywhere would do.
+        lane = (ROOT / "scripts/check_backend.sh").read_text()
+        self.assertLess(lane.index("backend.py built-with hol"),
+                        lane.index('"$HOLDIR/bin/Holmake" -j'))
+        pin = json.loads((ROOT / "tools.lock.json").read_text())["polyml"]
+        self.assertTrue(pin["url"].startswith("https://github.com/polyml/polyml/archive/"))
+        self.assertIn(pin["revision"], pin["url"])
+        self.assertRegex(pin["sha256"], r"\A[0-9a-f]{64}\Z")
+        # Poly/ML detects GMP unless it is told: the same source would otherwise give a
+        # different arbitrary-precision backend on a machine that has its headers.
+        source = (ROOT / "scripts/bootstrap_tool.py").read_text()
+        self.assertIn("--without-gmp", source)
+        self.assertIn("--enable-intinf-as-int", source)
+
+    def test_tag_check_asks_the_prover_itself(self) -> None:
+        """The theorem's own tag, read from a theory built outside both pinned trees."""
+        source = (ROOT / "backend/tagcheck/dnTagCheckScript.sml").read_text()
+        self.assertIn("open HolKernel boolLib pan_to_targetProofTheory;", source)
+        self.assertIn("pan_to_target_compile_semantics", source)
+        # Upstream's own criterion: a theorem read from disk carries DISK_THM and nothing else.
+        self.assertIn("Tag.isDisk tag", source)
+        self.assertIn("raise Fail", source)
+        includes = (ROOT / "backend/tagcheck/Holmakefile").read_text()
+        self.assertIn("INCLUDES = $(CAKEMLDIR)/pancake/proofs", includes)
+        lane = (ROOT / "scripts/check_backend.sh").read_text()
+        # It runs only for the full chain: the theorem it reads is not built by a smoke run.
+        body = lane.partition('if [[ "$target" == "pan_to_targetProofTheory.uo" ]]; then')[2]
+        self.assertIn("dnTagCheckTheory.uo", body)
+        self.assertIn("check_holmake.py", body)
+        # Holmake recurses into the included directory's own default target unless told not to,
+        # which would build a dozen unrelated proofs after the chain the lane came for.
+        self.assertIn("--no_prereqs", body)
+        # The sentence the lane requires must be the sentence the script prints, or the run
+        # fails at the end of a rebuild that went fine.
+        printed = re.search(r'print "([^"]*)\\n"', source)
+        assert printed is not None, source
+        self.assertIn(f"grep -q '{printed.group(1)}'", body)
+
+    def test_backend_workflow_runs_the_lane_it_names(self) -> None:
+        """Every path that triggers the lane exists, and the job runs the lane's own script."""
+        workflow = (ROOT / ".github/workflows/backend.yml").read_text()
+        blocks = re.findall(r"^  (push|pull_request):\n(?:.*\n)*?    paths:\n((?:      - \S+\n)+)",
+                            workflow, re.MULTILINE)
+        self.assertEqual(len(blocks), 2, workflow)
+        listed = [sorted(block.split()[1::2]) for _, block in blocks]
+        # One of the two lists alone would leave half the lane's triggers behind.
+        self.assertEqual(listed[0], listed[1])
+        self.assertIn("backend/**", listed[0])
+        for path in listed[0]:
+            with self.subTest(path=path):
+                self.assertTrue(list(ROOT.glob(path)), f"{path} matches nothing in the tree")
+        self.assertIn("bash scripts/check_backend.sh", workflow)
+        self.assertIn("scripts/backend.py build hol", workflow)
+        # The compiler is verified against its pin on every run, not restored with the prover.
+        self.assertNotIn(".deps/tools", workflow)
+        cached = re.search(r"path: (\S+)\n\s+key: \$\{\{ steps\.pins\.outputs\.key \}\}", workflow)
+        self.assertIsNotNone(cached)
 
     def test_state_check_reads_the_whole_state(self) -> None:
         """The lane compares every printed field, not only the value a run computes."""
@@ -1184,7 +1264,7 @@ class Pipeline(unittest.TestCase):
     def test_every_source_file_declares_its_licence(self) -> None:
         """`NOTICE` says the sources carry an SPDX identifier; this is what makes that true."""
         kept = ("migration/",)  # the preserved snapshot keeps the headers it was taken with
-        suffixes = (".lean", ".rs", ".py", ".sh", ".c", ".h")
+        suffixes = (".lean", ".rs", ".py", ".sh", ".c", ".h", ".sml")
         listed = run(["git", "ls-files", *(f"*{suffix}" for suffix in suffixes)]).stdout.split()
         ours = [name for name in listed if not name.startswith(kept)]
         self.assertGreater(len(ours), 50)

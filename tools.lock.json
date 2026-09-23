@@ -74,5 +74,13 @@
     "sha256": "06c5e5e96d481b8d01c6e7d5354afd96d3f6d32849122921d0d2815be8641777",
     "binary": "target/release/nanoda_bin",
     "role": "Independent Lean kernel; built from source with the Rust toolchain in rust-toolchain.toml"
+  },
+  "polyml": {
+    "version": "v5.9.2",
+    "revision": "4557554077078decce4ce5f90da00a713cfc32e4",
+    "url": "https://github.com/polyml/polyml/archive/4557554077078decce4ce5f90da00a713cfc32e4.tar.gz",
+    "sha256": "0c3a44210ea6af90492a1fc2c7c1b0499d7ef7c2962ae0feec90bb0d2349c1c2",
+    "binary": "bin/poly",
+    "role": "The ML compiler HOL is built with; the backend proof lane is only reproducible if it is fixed"
   }
 }

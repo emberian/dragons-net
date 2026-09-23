@@ -25,7 +25,22 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 MARKER = "archive.sha256"
 MANIFEST = "tree.sha256"
-BUILT = ("lean4export", "nanoda", "cake")
+BUILT = ("lean4export", "nanoda", "cake", "polyml")
+# Built tools kept as the whole tree their build installs, because the binary alone is not
+# usable: Poly/ML needs its libraries and the basis library it loads at run time.
+INSTALLED = ("polyml",)
+
+
+def jobs() -> int:
+    """How many build jobs to run: `DN_BUILD_JOBS`, or the cores this process may use.
+
+    `os.cpu_count()` reports the machine's cores, not the ones a container or a taskset
+    allows, and a build that ignores the limit competes with itself.
+    """
+    requested = os.environ.get("DN_BUILD_JOBS")
+    if requested and requested.isdigit() and int(requested) > 0:
+        return int(requested)
+    return len(os.sched_getaffinity(0))
 
 
 def digest(path: Path) -> str:
@@ -109,9 +124,9 @@ def unpack(pin: dict[str, str], archive: Path, target: Path) -> None:
 
 
 def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Path) -> None:
-    """Build a tool from its source and keep only the binary. The build runs in the user's cache
-    directory, outside the repository and the shared temporary directory, so that no configuration
-    found there (.cargo, a Cargo workspace) takes part."""
+    """Build a tool from its source and keep the binary, or the installed tree. The build runs in
+    the user's cache directory, outside the repository and the shared temporary directory, so that
+    no configuration found there (.cargo, a Cargo workspace) takes part."""
     pin = lock[name]
     cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache").resolve()
     if cache == ROOT or ROOT in cache.parents:
@@ -120,7 +135,20 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
     with tempfile.TemporaryDirectory(prefix="dn-tool-", dir=cache) as temp:
         unpack(pin, archive, Path(temp) / "source")
         (source,) = [p for p in (Path(temp) / "source").iterdir() if p.is_dir()]
-        if name == "cake":
+        prefix = Path(temp) / "prefix"
+        if name == "polyml":
+            # --prefix is baked into the binary: Poly/ML looks for its basis library below it,
+            # so the tree is configured for where it will finally live, not for the scratch
+            # directory it is built in. The other two flags decide what the pin means: GMP is
+            # detected by default, so the same pinned source would give a different arbitrary
+            # precision backend on a machine that has its headers, and `intinf-as-int` is what
+            # the prover's own CI builds with.
+            configure = ["./configure", f"--prefix={target}", "--without-gmp",
+                         "--enable-intinf-as-int"]
+            subprocess.run(configure, cwd=source, check=True, stdout=sys.stderr)
+            command = ["make", f"-j{jobs()}", "install", f"DESTDIR={prefix}"]
+            env = dict(os.environ)
+        elif name == "cake":
             command = ["make", "-C", str(source), "cake", "LDFLAGS=-Wl,-z,noexecstack"]
             env = dict(os.environ)
         elif name == "lean4export":
@@ -138,11 +166,18 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
             env = {k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"}
             env["CARGO_TARGET_DIR"] = str(source / "target")
         subprocess.run(command, cwd=source, env=env, check=True, stdout=sys.stderr)
+        # The staging directory is beside the tool, so what is sealed is renamed into place on
+        # the same filesystem: a half-installed tool is never left where the next run trusts it.
         with tempfile.TemporaryDirectory(dir=target.parent) as staging:
             content = Path(staging) / "content"
-            content.mkdir()
-            # The pin names the binary inside the source tree; only that file is kept.
-            shutil.copy2(source / pin["binary"], content)
+            if name in INSTALLED:
+                # `make install` wrote the tree under DESTDIR at the prefix it was configured
+                # for, which is where the tool is about to live.
+                shutil.copytree(prefix / target.relative_to(target.anchor), content, symlinks=True)
+            else:
+                content.mkdir()
+                # The pin names the binary inside the source tree; only that file is kept.
+                shutil.copy2(source / pin["binary"], content)
             seal(content, pin)
             os.rename(content, target)
 
@@ -205,7 +240,8 @@ def main() -> None:
         if Path(prefix).resolve() != home.resolve():
             raise SystemExit(f"elan resolves {toolchain} to {prefix}, not the verified {home}")
         print(home)
-    elif args.tool in BUILT:
+    elif args.tool in BUILT and args.tool not in INSTALLED:
+        # Only the binary was kept, so the path it had in its source tree is gone.
         print(target / Path(pin["binary"]).name)
     else:
         print(target / pin["binary"])
