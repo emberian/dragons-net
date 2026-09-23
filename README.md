@@ -84,4 +84,4 @@ The echo service supplies a reference workload for the next milestone: an optimi
 
 ## Provenance and license
 
-Project code is AGPL-3.0-or-later; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The CakeML patch retains its upstream BSD license, and RFC texts retain their own notices. [The extraction manifest](docs/provenance.json) records source revisions, paths, hashes, and transformations. Original projects were copied, not moved or modified.
+Project code is AGPL-3.0-or-later; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The CakeML patch retains its upstream BSD license, and RFC texts retain their own notices. [The extraction manifest](docs/provenance.json) records source revisions, paths, hashes, and transformations, and the scheduled lane refetches every publicly recorded file and compares it with the hash beside it. Original projects were copied, not moved or modified.

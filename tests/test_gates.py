@@ -1590,6 +1590,66 @@ class Pipeline(unittest.TestCase):
         raw = "https://raw.githubusercontent.com/HOL-Theorem-Prover/HOL"
         self.assertEqual(asked, [f"{raw}/{'a' * 40}/src/n-bit/byteScript.sml"])
 
+    def test_upstream_comparison_covers_where_the_code_came_from(self) -> None:
+        """Every recorded source with a public repository is fetched, not only the first one."""
+        manifest = json.loads((ROOT / "docs/provenance.json").read_text())
+        entries = manifest["files"] + manifest["removed"]
+        public = [entry for entry in entries
+                  if "url" in manifest["sources"][entry["source_repository"]]]
+        asked: list[str] = []
+
+        def get(url: str) -> bytes:
+            asked.append(url)
+            return b"not what was recorded"
+
+        errors, checked = upstream_sources.compare_provenance(manifest["sources"], entries, get)
+        # A check that stops early, or counts a skipped entry as checked, fails here.
+        self.assertEqual((checked, len(asked)), (len(public), len(public)))
+        self.assertGreater(checked, 150)
+        self.assertEqual(len(errors), checked, "every wrong digest must be reported")
+
+    def test_upstream_comparison_reports_what_it_cannot_check(self) -> None:
+        """A source it cannot fetch, or cannot read, is a message rather than a silent pass."""
+        taken = b"fn main() {}\n"
+        entry = {"source_repository": "breadstuffs", "source_revision": "a" * 40,
+                 "source_path": "orb/src/lib.rs", "source_sha256": hashlib.sha256(taken).hexdigest(),
+                 "destination": "crates/dn-runtime/src/lib.rs", "changes": "Crate renamed."}
+        other = {**entry, "source_path": "orb/src/ring.rs", "destination": "crates/x.rs"}
+        private = {**entry, "source_repository": "drorb", "destination": "native/x.c"}
+        sources = {"breadstuffs": {"url": "https://github.com/emberian/dregg"},
+                   "drorb": {"note": "Private; not publicly verifiable."}}
+        asked: list[str] = []
+
+        def get(url: str) -> bytes:
+            asked.append(url)
+            return taken
+
+        errors, checked = upstream_sources.compare_provenance(sources, [entry, other, private], get)
+        self.assertEqual((errors, checked), ([], 2))
+        raw = "https://raw.githubusercontent.com/emberian/dregg/" + "a" * 40
+        self.assertEqual(asked, [f"{raw}/orb/src/lib.rs", f"{raw}/orb/src/ring.rs"])
+
+        def refused(*entries: Any, get: Any = get, **changed: Any) -> str:
+            found, _ = upstream_sources.compare_provenance({**sources, **changed},
+                                                           list(entries), get)
+            self.assertTrue(found, "accepted what it cannot check")
+            return " ".join(found)
+
+        def missing(_: str) -> bytes:
+            raise subprocess.CalledProcessError(22, "curl")
+
+        self.assertIn("no longer serves it", refused(entry, get=missing))
+        self.assertIn("is not described", refused({**entry, "source_repository": "elsewhere"}))
+        self.assertIn("no url to check against and no note",
+                      refused(entry, drorb={"changes": "moved"}))
+        self.assertIn("is not a commit", refused({**entry, "source_revision": "main"}))
+        self.assertIn("does not name a file", refused({**entry, "source_path": "../secrets"}))
+        self.assertIn("this check can read",
+                      refused(entry, breadstuffs={"url": "https://gitlab.com/x/y"}))
+        self.assertIn("has no", refused({key: value for key, value in entry.items()
+                                         if key != "source_sha256"}))
+        self.assertIn("no recorded source could be checked", refused(private))
+
     def test_upstream_comparison_covers_the_stored_documents(self) -> None:
         """A stored RFC is compared against its url, with the recorded normalization applied."""
         served = b"page one\f\npage two\n"
