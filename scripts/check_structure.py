@@ -231,10 +231,19 @@ def gate_errors(root: Path, pins: dict[str, str]) -> list[str]:
     pinned = {name for name, value in pins.items()
               if (root / name).is_file() and digest(root / name) == value}
     env = {k: v for k, v in os.environ.items() if k != "LEAN_PATH"}
+    # The gate runs one process per module, and `lean` on the path is the toolchain manager's
+    # shim: it reads its own settings file on every call, which a run this parallel has been
+    # seen to catch mid-write. The manager is asked once, for the binary it stands in for.
+    try:
+        prefix = subprocess.run(["lean", "--print-prefix"], text=True, capture_output=True,
+                                check=True, timeout=120).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        return [f"cannot find the Lean toolchain: {error}"]
+    binary = str(Path(prefix) / "bin" / "lean")
 
     def run(module: str, out: str) -> str:
         rel = files[module].relative_to(root)
-        args = ["lean", "--run", str(GATE), "--out", out, *options,
+        args = [binary, "--run", str(GATE), "--out", out, *options,
                 *(["--syntax"] if str(rel) in pinned else []), str(files[module]), module]
         try:
             result = subprocess.run(args, cwd=ROOT, env=env, text=True, capture_output=True,
