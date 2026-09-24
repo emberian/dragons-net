@@ -51,6 +51,32 @@ int main(void) {
     }
     munmap(pages, page_size * 2);
 
+    /* Overlapping source and destination. The contract asks callers for disjoint buffers, and
+       the copy theorem is stated for that case only — but a caller that ignores it does not get
+       an undefined result: the kernel copies forward, one byte at a time, so a destination above
+       the source reads back bytes it has already written. What that produces is simulated here on
+       a separate array, byte by byte, and compared with what the compiled kernel did. */
+    for (size_t len = 0; len <= 64; ++len) {
+        for (size_t gap = 0; gap <= 8; ++gap) {
+            for (int above = 0; above < 2; ++above) {
+                unsigned char region[256], expected[256];
+                for (size_t i = 0; i < sizeof(region); ++i) region[i] = (unsigned char)(i * 31 + 7);
+                memcpy(expected, region, sizeof(region));
+                size_t src = above ? 64 : 64 + gap;
+                size_t dst = above ? 64 + gap : 64;
+                for (size_t i = 0; i < len; ++i) expected[dst + i] = expected[src + i];
+                if (dn_echo((uintptr_t)(region + src), (uintptr_t)(region + dst), len,
+                            sizeof(region) - dst) != len)
+                    return 1;
+                if (memcmp(region, expected, sizeof(region))) {
+                    fputs("overlap mismatch\n", stderr);
+                    return 1;
+                }
+                ++cases;
+            }
+        }
+    }
+
     /* Rejected lengths must not dereference either pointer. */
     void *guard = mmap(NULL, page_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (guard == MAP_FAILED) return 1;
