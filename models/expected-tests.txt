@@ -41,6 +41,7 @@ plain dn-ring-model::async_conservation_and_close
 plain dn-ring-model::destruction_survives_slot_reuse
 plain dn-ring-model::receiver_close_releases_blocked_sender
 plain dn-ring-model::spin_conservation_and_close
+plain dn-ring-model::the_ring_behaves_like_a_bounded_queue
 plain dn-ring-model::undrained_items_are_destroyed_exactly_once
 plain dn-wake-model::no_missed_wakeup_under_stress
 plain dn-wake-model::tests::coalescing_exactly_one_ring_per_edge

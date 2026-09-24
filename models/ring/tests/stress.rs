@@ -36,6 +36,14 @@ fn block_on<F: Future>(fut: F) -> F::Output {
     }
 }
 
+/// Under Miri every instruction is interpreted, and the lane runs the program under thirty-two
+/// schedules, so the count is what decides whether that fits. Two thousand is two orders of
+/// magnitude past the four- and eight-slot rings used below, which is what the paths here need:
+/// the slot array wraps hundreds of times, the ring is full within the first few pushes, and the
+/// close still lands while the consumer is draining.
+#[cfg(miri)]
+const ITEMS: u64 = 2_000;
+#[cfg(not(miri))]
 const ITEMS: u64 = 100_000;
 
 /// Spin lane: raw try_push/try_pop under real contention, then close.

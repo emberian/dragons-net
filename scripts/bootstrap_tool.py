@@ -71,7 +71,7 @@ def tree_digest(path: Path) -> str:
         if relative == MANIFEST:
             continue
         if item.is_symlink():
-            total.update(f"l {relative} {os.readlink(item)}\n".encode())
+            total.update(f"l {relative} {item.readlink()}\n".encode())
         elif item.is_dir():
             total.update(f"d {relative}\n".encode())
         else:
@@ -120,7 +120,7 @@ def unpack(pin: dict[str, str], archive: Path, target: Path) -> None:
             with tarfile.open(archive) as tar:
                 tar.extractall(content, filter="data")
         seal(content, pin)
-        os.rename(content, target)
+        content.rename(target)
 
 
 def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Path) -> None:
@@ -179,7 +179,7 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
                 # The pin names the binary inside the source tree; only that file is kept.
                 shutil.copy2(source / pin["binary"], content)
             seal(content, pin)
-            os.rename(content, target)
+            content.rename(target)
 
 
 def install(name: str, lock: dict[str, dict[str, str]]) -> Path:

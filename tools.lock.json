@@ -82,5 +82,12 @@
     "sha256": "0c3a44210ea6af90492a1fc2c7c1b0499d7ef7c2962ae0feec90bb0d2349c1c2",
     "binary": "bin/poly",
     "role": "The ML compiler HOL is built with; the backend proof lane is only reproducible if it is fixed"
+  },
+  "cargo-machete": {
+    "version": "v0.9.2",
+    "url": "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9",
+    "binary": "cargo-machete-v0.9.2-x86_64-unknown-linux-musl/cargo-machete",
+    "role": "Unused dependency detection; a dependency nobody uses is a dependency nobody reads"
   }
 }

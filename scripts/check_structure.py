@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "SourceGate.lean"
@@ -83,10 +84,30 @@ def stale_build_errors(root: Path) -> list[str]:
     return errors
 
 
+def recorded(root: Path, name: str, key: str, shape: type) -> tuple[Any, str | None]:
+    """The `key` entry of a manifest, of the shape the caller walks, or a problem to report.
+
+    Every manifest this file reads is a file someone can break, and a checker that dies on one
+    says nothing about what it was guarding, which is the one thing it must never do. The outer
+    shape is checked here; each caller still has to survive an entry of the wrong shape, which
+    is what its own guard is for. The manifests read by other scripts are not covered.
+    """
+    try:
+        entry = json.loads((root / name).read_text())[key]
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return None, f"{name} is not a manifest this check can read: {error}"
+    if not isinstance(entry, shape):
+        return None, f"{name}: {key} is {type(entry).__name__}, not {shape.__name__}"
+    return entry, None
+
+
 def static_errors(root: Path, pins: dict[str, str]) -> list[str]:
     """Checks that need no Lean: toolchain, source tree, pins, digests and build outputs."""
     errors = tree_errors(root) + stale_build_errors(root)
-    toolchain = (root / "lean-toolchain").read_text().strip()
+    try:
+        toolchain = (root / "lean-toolchain").read_text().strip()
+    except OSError as error:
+        return [*errors, f"lean-toolchain cannot be read: {error}"]
     if toolchain != LEAN_TOOLCHAIN:
         errors.append(f"lean-toolchain is {toolchain}; the source gate rules were reviewed for "
                       f"{LEAN_TOOLCHAIN}, review scripts/SourceGate.lean for the new release")
@@ -95,9 +116,16 @@ def static_errors(root: Path, pins: dict[str, str]) -> list[str]:
         if not path.is_file() or digest(path) != pinned:
             errors.append(f"{name}: changed file with syntax definitions; review it and update its pin")
     errors += rfc_errors(root)
-    for item in json.loads((root / "backend/lock.json").read_text())["patches"]:
-        if digest(root / "backend" / item["path"]) != item["sha256"]:
-            errors.append(f"backend patch digest mismatch: {item['path']}")
+    patches, problem = recorded(root, "backend/lock.json", "patches", list)
+    if problem is not None:
+        errors.append(problem)
+    else:
+        try:
+            for item in patches:
+                if digest(root / "backend" / item["path"]) != item["sha256"]:
+                    errors.append(f"backend patch digest mismatch: {item['path']}")
+        except (OSError, TypeError, KeyError) as error:
+            errors.append(f"backend/lock.json: a recorded patch cannot be read: {error}")
     errors += snapshot_errors(root)
     return errors
 
@@ -109,13 +137,20 @@ def rfc_errors(root: Path) -> list[str]:
     nobody recorded", which the digests cannot see and which would make the collection quietly
     larger than what has been read.
     """
-    documents = json.loads((root / "rfcs/manifest.json").read_text())["documents"]
+    documents, problem = recorded(root, "rfcs/manifest.json", "documents", dict)
+    if problem is not None:
+        return [problem]
     errors = []
     for name, item in documents.items():
         path = root / "rfcs" / name
+        try:
+            recorded_digest = item["sha256"]
+        except (TypeError, KeyError) as error:
+            errors.append(f"rfcs/manifest.json: the entry for {name} cannot be read: {error}")
+            continue
         if not path.is_file():
             errors.append(f"RFC missing: {name}")
-        elif digest(path) != item["sha256"]:
+        elif digest(path) != recorded_digest:
             errors.append(f"RFC digest mismatch: {name}")
     for path in sorted((root / "rfcs").iterdir()):
         name = path.name
@@ -134,20 +169,21 @@ def snapshot_errors(root: Path) -> list[str]:
     carries. The digests say the recorded files did not change; the walk below says the record is
     all of them, because a file nobody recorded could change without anyone noticing.
     """
-    manifest = root / "docs/provenance.json"
-    if not manifest.is_file():
+    if not (root / "docs/provenance.json").is_file():
         return ["docs/provenance.json is missing; it records where the preserved files came from"]
+    entries, problem = recorded(root, "docs/provenance.json", "files", list)
+    if problem is not None:
+        return [problem]
     try:
-        entries = json.loads(manifest.read_text())["files"]
-        recorded = [(str(item["destination"]), str(item["changes"]), str(item["source_sha256"]))
-                    for item in entries]
+        listed = [(str(item["destination"]), str(item["changes"]), str(item["source_sha256"]))
+                  for item in entries]
     except (ValueError, TypeError, KeyError) as error:
         return [f"docs/provenance.json is not a manifest this check can read: {error}"]
 
     errors = []
     preserved: set[str] = set()
-    listed = {destination for destination, _, _ in recorded}
-    for destination, changes, recorded_digest in recorded:
+    names = {destination for destination, _, _ in listed}
+    for destination, changes, recorded_digest in listed:
         if not changes.startswith(UNMODIFIED):
             continue
         candidate = Path(destination)
@@ -169,7 +205,7 @@ def snapshot_errors(root: Path) -> list[str]:
         name = path.relative_to(root).as_posix()
         if path.is_symlink():
             errors.append(f"the snapshot carries a symlink: {name}")
-        elif path.is_file() and name not in listed and name not in SNAPSHOT_OWN:
+        elif path.is_file() and name not in names and name not in SNAPSHOT_OWN:
             errors.append(f"the snapshot carries a file the manifest does not record: {name}")
     return errors
 

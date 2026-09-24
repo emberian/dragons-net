@@ -23,6 +23,13 @@ sorry, custom axioms, native_decide, build-time IO, or weaken a theorem to make
 it green.
 An inhabited precondition still needs review for semantic adequacy.
 
+A check earns trust by failing. Before a new gate, test or lane is relied on, break the
+thing it guards and watch it go red; a check nobody has seen fail is a claim. The same
+holds for a finding: it is not accepted without a test that fails on the defect and passes
+without it. When a generated test finds nothing, suspect the generator before the code —
+counts just past a boundary, empty inputs and repeats have to be produced deliberately,
+because a uniform generator almost never reaches them.
+
 The emitted sources are pinned in tests/golden. If a change to the emitter is
 intended, regenerate them with `.lake/build/bin/dn-compiler emit-region`,
 `emit-echo` and `emit-render`, and say in the commit why the output changed.

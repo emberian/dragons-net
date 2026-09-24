@@ -63,7 +63,7 @@ def fetch(name: str) -> None:
                     raise SystemExit("patch checksum mismatch")
                 run("git", "-C", temp, "apply", "--check", str(path))
                 run("git", "-C", temp, "apply", str(path))
-        os.rename(temp, destination)
+        Path(temp).rename(destination)
     print(destination)
 
 

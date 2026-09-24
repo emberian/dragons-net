@@ -71,6 +71,7 @@ build() {
   # --wfail: a warning fails the build. Lake replays a module's stored log, so
   # this holds on a warm cache as well as on a fresh checkout.
   lake build --wfail DN dn-compiler
+  # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(snapshot)" != "$before" ]]; then
     echo 'check: repository files changed during the source gate or the build' >&2
     exit 1
@@ -117,6 +118,7 @@ tests() {
   # The states a run stops in, against an independent implementation of the same
   # clauses: the differential lanes compare computed values and never reach them.
   python3 scripts/state_check.py
+  # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2
     exit 1

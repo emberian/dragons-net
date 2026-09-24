@@ -39,6 +39,10 @@ def server(binary: Path, *options: str,
         yield info["port"], stats
     finally:
         process.terminate()
+        # Bound before the call: this runs in a `finally`, where a checker cannot see that the
+        # handler below always raises, and an unbound name here would be reported as the error
+        # rather than whatever the server said.
+        error = ""
         try:
             _, error = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:

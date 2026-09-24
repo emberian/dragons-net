@@ -1244,6 +1244,26 @@ class Pipeline(unittest.TestCase):
             manifest.unlink()
             self.assertIn("provenance.json is missing", " ".join(structure.snapshot_errors(root)))
 
+    def test_a_broken_manifest_is_reported_not_raised(self) -> None:
+        """Every manifest a gate reads is a file someone can break; none may kill the gate."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = source_tree(Path(temp))
+            for name, key in (("backend/lock.json", "patches"), ("rfcs/manifest.json", "documents"),
+                              ("docs/provenance.json", "files")):
+                # The last two are the right container holding the wrong thing, which is what
+                # an outer shape check alone does not catch.
+                for broken in ("{ not json", '{"other": 1}', f'{{"{key}": "not a list"}}',
+                               f'{{"{key}": [1, 2]}}', f'{{"{key}": {{"a": 1}}}}'):
+                    with self.subTest(manifest=name, content=broken):
+                        kept = (root / name).read_text()
+                        (root / name).write_text(broken)
+                        try:
+                            errors = structure.static_errors(root, {})
+                        finally:
+                            (root / name).write_text(kept)
+                        self.assertTrue(any(name in error for error in errors),
+                                        f"{name} broken as {broken!r} was not reported: {errors}")
+
     def test_snapshot_check_covers_the_whole_snapshot(self) -> None:
         """On the real tree: every file of the snapshot is recorded, and the record is used."""
         recorded = [item for item in json.loads((ROOT / "docs/provenance.json").read_text())["files"]
