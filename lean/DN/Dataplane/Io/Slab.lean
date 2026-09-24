@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import DN.Dataplane.Ring.RecycleOnce
+import DN.Dataplane.Recycling
 
 /-!
-# DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, verified
+# DN.Dataplane.Io.Slab — the generation-tagged pending-operation slab, as a model
 
 This file models the generation-tagged lookup used by a completion reactor. The
 danger is **ABA**: a slot freed and reused between submit and completion would
@@ -29,8 +29,10 @@ Operations:
   generation matches the key's**. `remove` bumps the generation, so every key
   minted before the removal is thereafter stale.
 
-Index 0 is reserved (never allocated): the kernel's wakeup sentinel uses
-correlator 0, so a real operation must never receive key index 0.
+Index 0 is reserved (never allocated): this reactor spends correlator 0 on its
+wakeup sentinel, so a real operation must never receive key index 0. The
+reservation is the application's own convention — a completion's user data is
+opaque to the kernel, which reserves no value.
 
 ## What is proven (0 sorries)
 
@@ -44,7 +46,12 @@ correlator 0, so a real operation must never receive key index 0.
 * `slab_no_double_remove` — a key removes at most once (the slab-level analogue
   of `DN.Dataplane.Ring.recycle_at_most_once`);
 * `slab_insert_idx_ne_zero` / `slab_index0_reserved` — the wakeup-sentinel index
-  0 is never allocated and never names a live operation.
+  0 is never allocated and never names a live operation;
+* `Slab.genAt_run` / `slab_stale_key_rejected_forever` — along a whole trace of
+  inserts and removes a slot's generation never decreases, so a key whose slot
+  has been freed is rejected by every later state, not only by the one right
+  after its removal. A key naming a generation the slot has not reached yet is a
+  different matter: it is rejected now and accepted when the slot gets there.
 
 ## Native correspondence boundary
 
@@ -57,6 +64,8 @@ the checked token bridge rather than treating every `Key.pack` value as a valid
 -/
 
 namespace DN.Dataplane.Io
+
+variable {α : Type}
 
 /-- A slab slot: a generation counter and, when occupied, its payload. Occupancy
 is `payload.isSome` — no separate flag can drift out of sync with the payload. -/
@@ -184,7 +193,7 @@ theorem slab_insert_get (s : Slab α) (v : α) :
       obtain ⟨hlt, _⟩ := s.freeIndex_spec hf
       simp [Slab.get, List.getElem?_set_self hlt]
   | none =>
-      simp [Slab.get, List.getElem?_concat_length]
+      simp [Slab.get]
 
 /-- **Insert never allocates index 0** — the wakeup-sentinel correlator. -/
 theorem slab_insert_idx_ne_zero (s : Slab α) (v : α) (hcap : 1 ≤ s.slots.length) :
@@ -412,6 +421,186 @@ def regression_406 : Bool := decide (abaSlab == some true
 
 -- The wakeup-sentinel key is dead on a fresh slab.
 def regression_409 : Bool := decide ((Slab.empty Nat 4).get ⟨0, 0⟩ == none
+  )
+
+/-! ## Traces: the guard holds for the whole run, not one step -/
+
+/-- Slab operations, as a trace the reactor can run. -/
+inductive SlabOp (α : Type) where
+  | insert (v : α)
+  | remove (k : Key)
+
+/-- One operation; a `remove` that does not match leaves the slab alone. -/
+def Slab.stepOp (s : Slab α) : SlabOp α → Slab α
+  | .insert v => (s.insert v).2
+  | .remove k => match s.remove k with
+                 | some (_, s') => s'
+                 | none => s
+
+/-- A trace of operations, applied in order. -/
+def Slab.runOps (s : Slab α) : List (SlabOp α) → Slab α
+  | [] => s
+  | op :: rest => (s.stepOp op).runOps rest
+
+/-- The generation recorded at an index; absent slots read as generation 0,
+which is what a freshly grown slot carries. -/
+def Slab.genAt (s : Slab α) (i : Nat) : Nat := (s.slots[i]?.map Slot.gen).getD 0
+
+theorem Slab.get_some_gen {s : Slab α} {k : Key} {v : α} (h : s.get k = some v) :
+    s.genAt k.idx = k.gen := by
+  unfold Slab.get at h
+  split at h
+  · rename_i slot hs
+    split at h
+    · rename_i hg
+      simp [Slab.genAt, hs, hg]
+    · exact absurd h (by simp)
+  · exact absurd h (by simp)
+
+/-- A successful remove bumps the slot's generation past the key's. -/
+theorem Slab.remove_bumps {s s' : Slab α} {k : Key} {v : α}
+    (h : s.remove k = some (v, s')) : k.gen < s'.genAt k.idx := by
+  unfold Slab.remove at h
+  split at h
+  · rename_i slot hs
+    obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hs
+    split at h
+    · rename_i hg
+      split at h
+      · rename_i w hp
+        have hs' : s' = ⟨s.slots.set k.idx ⟨slot.gen + 1, none⟩⟩ := by
+          have := Option.some.inj h
+          exact ((Prod.mk.injEq .. ▸ this).2).symm
+        subst hs'
+        simp [Slab.genAt, List.getElem?_set_self hlt, hg]
+      · exact absurd h (by simp)
+    · exact absurd h (by simp)
+  · exact absurd h (by simp)
+
+/-- Generations never move backwards: an insert keeps the slot's generation and
+a remove bumps it. -/
+theorem Slab.genAt_step (s : Slab α) (op : SlabOp α) (i : Nat) :
+    s.genAt i ≤ (s.stepOp op).genAt i := by
+  cases op with
+  | insert v =>
+      show s.genAt i ≤ ((s.insert v).2).genAt i
+      unfold Slab.insert
+      split
+      · rename_i j hf
+        obtain ⟨hlt, _⟩ := s.freeIndex_spec hf
+        by_cases hij : i = j
+        · subst hij
+          simp [Slab.genAt, List.getElem?_set_self hlt]
+        · simp [Slab.genAt, List.getElem?_set_ne (h := fun h => hij h.symm)]
+      · by_cases hi : i < s.slots.length
+        · simp [Slab.genAt, List.getElem?_append_left hi]
+        · have hnone : s.slots[i]? = none := List.getElem?_eq_none (by omega)
+          simp [Slab.genAt, hnone]
+  | remove k =>
+      show s.genAt i ≤ (match s.remove k with | some (_, s') => s' | none => s).genAt i
+      cases hr : s.remove k with
+      | none => simp
+      | some p =>
+          obtain ⟨w, s'⟩ := p
+          show s.genAt i ≤ s'.genAt i
+          unfold Slab.remove at hr
+          split at hr
+          · rename_i slot hs
+            obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hs
+            split at hr
+            · rename_i hg
+              split at hr
+              · rename_i u hp
+                have hs' : s' = ⟨s.slots.set k.idx ⟨slot.gen + 1, none⟩⟩ := by
+                  have := Option.some.inj hr
+                  exact ((Prod.mk.injEq .. ▸ this).2).symm
+                subst hs'
+                by_cases hik : i = k.idx
+                · subst hik
+                  simp [Slab.genAt, List.getElem?_set_self hlt, hs]
+                · simp [Slab.genAt, List.getElem?_set_ne (h := fun h => hik h.symm)]
+              · exact absurd hr (by simp)
+            · exact absurd hr (by simp)
+          · exact absurd hr (by simp)
+
+theorem Slab.genAt_run (s : Slab α) (ops : List (SlabOp α)) (i : Nat) :
+    s.genAt i ≤ (s.runOps ops).genAt i := by
+  induction ops generalizing s with
+  | nil => exact Nat.le_refl _
+  | cons op rest ih =>
+      exact Nat.le_trans (s.genAt_step op i) (ih (s.stepOp op))
+
+/-! ### The shared recycling discipline
+
+A key that has been freed never selects anything again — the property this slab
+shares with the connection table of `DN.Dataplane.Slab.Reactor`, which keys by
+descriptor and counts generations globally instead. It is stated and proven once,
+in `DN.Dataplane.Recycling`; what belongs here is the evidence this slab gives
+it: a slot's generation never decreases, and a key below it resolves to nothing.
+-/
+
+/-- The slab as an instance of the recycling discipline. A key has ended once its
+slot has moved past its generation, which is what a successful `remove` does. -/
+def recycling (α : Type) : Recycling (Slab α) (SlabOp α) Key α where
+  step := Slab.stepOp
+  resolve := Slab.get
+  Wf _ := True
+  Ended s k := k.gen < s.genAt k.idx
+  wf_step _ _ _ := trivial
+  ended_step s op k _ h := Nat.lt_of_lt_of_le h (s.genAt_step op k.idx)
+  resolve_ended s k _ h := by
+    cases hget : s.get k with
+    | none => rfl
+    | some v =>
+      exfalso
+      have := Slab.get_some_gen hget
+      omega
+
+/-- Running the operations is running them under the discipline. -/
+theorem Slab.runOps_eq_run (s : Slab α) (ops : List (SlabOp α)) :
+    s.runOps ops = Recycling.run (recycling α) s ops := by
+  induction ops generalizing s with
+  | nil => rfl
+  | cons op rest ih => exact ih (s.stepOp op)
+
+/-- **A removed key stays rejected.** After the slot behind `k` is freed, no
+continuation of the trace — including one that reuses the slot — ever resolves
+`k` again. The "forever" part is the discipline's theorem; a successful remove
+supplies its premise. -/
+theorem slab_stale_key_rejected_forever {s s' : Slab α} {k : Key} {v : α}
+    (h : s.remove k = some (v, s')) (ops : List (SlabOp α)) :
+    (s'.runOps ops).get k = none := by
+  rw [Slab.runOps_eq_run]
+  exact (recycling α).never_resolves_again trivial (Slab.remove_bumps h) ops
+
+/-- Witness: the reserved-index premise is satisfiable at a concrete slab. -/
+theorem Slab.Reserved_witness : (Slab.empty Nat 4).Reserved := Slab.empty_reserved Nat 4
+
+/-- The slab a real trace leaves behind: one insert, then the removal of that
+key. Its slot has moved on, which is what makes the stale key stale. -/
+private def reusedSlab : Slab Nat :=
+  match ((Slab.empty Nat 4).insert 7).2.remove ((Slab.empty Nat 4).insert 7).1 with
+  | some (_, s') => s'
+  | none => Slab.empty Nat 4
+
+/-- Witness: the discipline's ended premise is satisfiable on a state the
+operations really reach — the slot of the removed key has moved past it. -/
+theorem recycling_ended_witness :
+    (recycling Nat).Ended reusedSlab ((Slab.empty Nat 4).insert 7).1 := by
+  show ((Slab.empty Nat 4).insert 7).1.gen < Slab.genAt reusedSlab
+    ((Slab.empty Nat 4).insert 7).1.idx
+  decide
+
+-- A trace where the slot is reused twice: the first key stays rejected, and the
+-- key of the current occupant still works.
+private def staleTrace : Option Bool :=
+  let s0 := Slab.empty Nat 4
+  let (k1, s1) := s0.insert 7
+  (s1.remove k1).map (fun (_, s2) =>
+    let s3 := s2.runOps [.insert 8, .remove ⟨k1.idx, k1.gen + 1⟩, .insert 9]
+    (s3.get k1 == none) && (s3.get ⟨k1.idx, k1.gen + 2⟩ == some 9))
+
+def regression_410 : Bool := decide (staleTrace == some true
   )
 
 end DN.Dataplane.Io

@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Zero-copy **SplitSend** writev↔recycle handoff (`DRORB_SPAN=15`,
-//! `crates/dataplane/src/uring.rs`): the borrowed request body is sent to the
+//! `migration/dataplane/host/src/uring.rs`): the borrowed request body is sent to the
 //! socket as one `writev` gather straight from the still-held buf_ring lease
 //! slot — never copied into an output buffer. The lease slot must stay leased
 //! until the writev fully settles; a recycle-while-in-flight lets the kernel
@@ -24,26 +25,26 @@
 //! 1. **shard thread**, `on_recv_br`: the kernel delivered conn A's request
 //!    bytes into buffer `bid`; the shard sets `conn.leased_bid = Some(bid)` and
 //!    `conn.req_len = n`, and dispatches the serve WITHOUT recycling the slot
-//!    (uring.rs:2079).
+//!    (uring.rs).
 //! 2. **serve worker**: computes the response HEAD only (no body append); the
 //!    body will be spliced from the held slot.
-//! 3. **shard thread**, `stage_split_response` (uring.rs:1036): keeps the lease
-//!    HELD (`leased_bid` is read, NOT `take`n — uring.rs:1058), stores
+//! 3. **shard thread**, `stage_split_response` (uring.rs): keeps the lease
+//!    HELD (`leased_bid` is read, NOT `take`n — uring.rs), stores
 //!    `conn.split = Some(SplitSend { body_bid, body_len, .. })`, and arms a
-//!    `writev` (`split_send_sqe`, uring.rs:1083) whose second iovec is
+//!    `writev` (`split_send_sqe`, uring.rs) whose second iovec is
 //!    `br.slice(body_bid, body_len)` — a raw pointer into the mmap'd buf_ring
-//!    slot (uring.rs:1094). The lease is the writev's body source.
+//!    slot (uring.rs). The lease is the writev's body source.
 //! 4. **kernel**: the `writev` gathers head ‖ body from the slot onto the
 //!    socket. While it is in flight the slot bytes MUST NOT change.
-//! 5. **shard thread**, `on_split_send` (uring.rs:1140): the writev CQE wakes
+//! 5. **shard thread**, `on_split_send` (uring.rs): the writev CQE wakes
 //!    it; `sp.sent += res`. On a SHORT write (`sent < head+body`) it re-arms
-//!    (`push_split_send`, uring.rs:1157) — another kernel read of the SAME
+//!    (`push_split_send`, uring.rs) — another kernel read of the SAME
 //!    still-held slot — and does NOT recycle. Only once the whole response has
-//!    settled does it `leased_bid.take()` → `br.recycle(bid)` (uring.rs:1160):
+//!    settled does it `leased_bid.take()` → `br.recycle(bid)` (uring.rs):
 //!    a Release store on the buf_ring tail that republishes the slot, after
 //!    which the **kernel may re-lend and overwrite it**.
 //!
-//! The safety claim (uring.rs:1056–1058 / 1092–1093 / 1159, doc-comments,
+//! The safety claim (uring.rs / 1092–1093 / 1159, doc-comments,
 //! machine-checked nowhere before this model): *the kernel's writev read(s) of
 //! the slot happen-before the shard's recycle*, carried by
 //! `writev-gather-read → CQE (Release) → shard reap (Acquire) → recycle`, and
@@ -67,8 +68,8 @@
 //!   begins.
 //! - DOES NOT model: the io_uring SQ/CQ rings themselves (see `ring-twin`), the
 //!   eventfd coalescing (see `wake-twin`), the cross-thread serve mailbox that
-//!   produced the head (see `borrow-recycle-twin`, gap F), the appended/copying
-//!   send fallback (`stage_response_appended`, uring.rs:978), the `res <= 0`
+//!   produced the head (see the `borrow-recycle` model), the appended/copying
+//!   send fallback (`stage_response_appended`, uring.rs), the `res <= 0`
 //!   error close, or the `bufring.rs` tail Release/Acquire against the *kernel*
 //!   (that pairing is the trusted kernel-ABI floor). The writev gather is modeled
 //!   as a single logical read per segment, not the kernel's byte-by-byte copy.
@@ -78,6 +79,7 @@
 
 use std::sync::atomic::{AtomicBool as StdBool, AtomicUsize as StdUsize, Ordering as StdOrd};
 
+use dn_borrow_recycle_model::Lease;
 use loom::cell::UnsafeCell;
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicU32, Ordering};
@@ -107,9 +109,8 @@ struct Handoff {
     /// provides; the real CQE syscall barrier is strictly stronger on top.
     cqe: AtomicU32,
     /// The per-connection lease (`Conn.leased_bid: Option<u16>`). 0 = None,
-    /// nonzero = Some(bid); recycle-once = a single swap-to-0, at the final
-    /// completion only.
-    lease: AtomicU32,
+    /// nonzero = Some(bid); the hand-back happens at the final completion only.
+    lease: Lease,
 }
 
 /// Count of loom schedules explored, per test, for the report.
@@ -123,7 +124,8 @@ static ITERS_REARM: StdUsize = StdUsize::new(0);
 ///   (a) loom's `UnsafeCell` access tracking: the kernel's gather-read and the
 ///       shard's overwrite are never concurrent (ordered by the `cqe` handoff);
 ///   (b) value: the writev always gathers `GEN_A`, never the `GEN_B` re-lend;
-///   (c) recycle-once: `lease.take()` yields `Some(BID)` exactly at the recycle.
+///   (c) recycle-once: two paths race to hand the buffer back and exactly one
+///       of them gets it.
 /// Green over all schedules = the single-segment writev↔recycle handoff is
 /// interleaving-safe for this model.
 #[test]
@@ -136,7 +138,7 @@ fn split_send_recycle_is_interleaving_safe() {
             // the kernel wrote conn A's request bytes into the leased slot.
             buf: UnsafeCell::new(GEN_A),
             cqe: AtomicU32::new(0),
-            lease: AtomicU32::new(BID),
+            lease: Lease::held(BID),
         });
 
         // KERNEL (writev gather engine): read the borrowed slot onto the socket,
@@ -161,9 +163,17 @@ fn split_send_recycle_is_interleaving_safe() {
         while h.cqe.load(Ordering::Acquire) == 0 {
             loom::thread::yield_now();
         }
-        // `sent >= head+body` → `leased_bid.take()` → `br.recycle(bid)`.
-        let taken = h.lease.swap(0, Ordering::AcqRel);
-        assert_eq!(taken, BID, "recycle-once: the lease is taken exactly here");
+        // `sent >= head+body` → `leased_bid.take()` → `br.recycle(bid)`. The
+        // teardown path can reach the same hand-back, so race them.
+        let hr = h.clone();
+        let rival = thread::spawn(move || hr.lease.take());
+        let taken = h.lease.take();
+        let rival_taken = rival.join().unwrap();
+        assert_eq!(
+            usize::from(taken == Some(BID)) + usize::from(rival_taken == Some(BID)),
+            1,
+            "recycle-once: the lease went to {taken:?} and {rival_taken:?}"
+        );
         // The recycle republished the slot (bufring `add`: Release store on the
         // ring tail); the kernel re-lends and overwrites with conn B's bytes NOW.
         h.buf.with_mut(|p| unsafe { *p = GEN_B });
@@ -180,7 +190,7 @@ fn split_send_recycle_is_interleaving_safe() {
 
 /// PRIMARY ASSURANCE (short-write re-arm — the SplitSend-specific corner gap-F
 /// has no analogue for). `on_split_send` on a short write re-arms the writev
-/// (`push_split_send`, uring.rs:1157): a SECOND kernel gather-read of the SAME
+/// (`push_split_send`, uring.rs): a SECOND kernel gather-read of the SAME
 /// still-held slot, and it does NOT recycle. Only once the whole response has
 /// settled does it recycle — exactly once. This model spawns a kernel that does
 /// two gather-reads (a short write then the remainder), each posting its CQE;
@@ -190,8 +200,8 @@ fn split_send_recycle_is_interleaving_safe() {
 ///   (a) `UnsafeCell`: neither gather-read is ever concurrent with the overwrite
 ///       (both are ordered before the final `cqe==2` the recycle waits on);
 ///   (b) value: both gather-reads see `GEN_A` — the re-lend never lands mid-send;
-///   (c) recycle-once-across-re-arm: `lease.swap` yields `BID` exactly once,
-///       reached ONLY at the final completion, never between the two segments.
+///   (c) recycle-once-across-re-arm: the lease is still held at the re-arm, and
+///       when two paths then race for it exactly one gets the buffer.
 #[test]
 fn split_send_recycle_once_across_rearm() {
     loom::model(|| {
@@ -200,7 +210,7 @@ fn split_send_recycle_once_across_rearm() {
         let h = Arc::new(Handoff {
             buf: UnsafeCell::new(GEN_A),
             cqe: AtomicU32::new(0),
-            lease: AtomicU32::new(BID),
+            lease: Lease::held(BID),
         });
 
         // KERNEL: two writev segments (a short write, then the remainder). Each
@@ -230,20 +240,24 @@ fn split_send_recycle_once_across_rearm() {
             loom::thread::yield_now();
         }
         // Re-arm boundary: the lease is STILL held here (no recycle on a short
-        // write). `leased_bid` untouched — assert it, matching uring.rs:1160-only.
-        assert_eq!(
-            h.lease.load(Ordering::Acquire),
-            BID,
+        // write). `leased_bid` untouched — assert it, matching uring.rs.
+        assert!(
+            h.lease.is_held(),
             "recycle-once: the lease is NOT recycled at the short-write re-arm"
         );
         while h.cqe.load(Ordering::Acquire) < 2 {
             loom::thread::yield_now();
         }
-        // Whole response settled: `leased_bid.take()` → `br.recycle(bid)`, once.
-        let taken = h.lease.swap(0, Ordering::AcqRel);
+        // Whole response settled: `leased_bid.take()` → `br.recycle(bid)`, once,
+        // with the teardown path racing for the same buffer.
+        let hr = h.clone();
+        let rival = thread::spawn(move || hr.lease.take());
+        let taken = h.lease.take();
+        let rival_taken = rival.join().unwrap();
         assert_eq!(
-            taken, BID,
-            "recycle-once: taken exactly once, at the final completion"
+            usize::from(taken == Some(BID)) + usize::from(rival_taken == Some(BID)),
+            1,
+            "recycle-once across the re-arm: {taken:?} and {rival_taken:?}"
         );
         h.buf.with_mut(|p| unsafe { *p = GEN_B });
 

@@ -9,7 +9,7 @@ locations a bid can inhabit):
 
 * **with the `nodrop` feature** every step conserves the count of every
   bid exactly — `step_count_eq` — so each bid of the universe inhabits
-  exactly one location in every reachable state (`conservation`): no leak
+  exactly one location in every reachable state (`conservation`): no loss
   and no duplication, under every demonic interleaving;
 * **unconditionally** (with or without `nodrop`) no step ever *increases*
   a bid's count — `step_count_le` — so no reachable state duplicates a
@@ -146,8 +146,8 @@ theorem trace_count_le {cfg : Cfg} {s s' : St} {ls : List Lbl}
   | nil => exact Nat.le_refl _
   | cons h _ ih => exact Nat.le_trans ih (step_count_le h b)
 
-/-- **CONSERVATION** (the no-leak/no-duplication half of
-recycle-exactly-once, with the `nodrop` feature): in every reachable
+/-- **CONSERVATION** (no loss and no duplication, with the `nodrop`
+feature): in every reachable
 state of the product LTS, every buffer id of the universe inhabits
 exactly one location — free, pending, held, or riding an unreaped
 completion — under every demonic interleaving, including exhaustion,
@@ -158,8 +158,9 @@ theorem conservation {cfg : Cfg} {s : St}
   obtain ⟨ls, tr⟩ := hr
   rw [trace_count_eq hn tr b, count_owned_init]
 
-/-- No-leak, membership form: with `nodrop`, a bid of the universe is
-always *somewhere* recoverable. -/
+/-- No-loss, membership form: with `nodrop`, a bid of the universe is
+always *somewhere* recoverable. Where it is recoverable from — free list or a
+client's hands — is not part of the statement. -/
 theorem no_leak {cfg : Cfg} {s : St} {b : Bid}
     (hn : cfg.nodrop = true) (hr : Reachable cfg s) (hb : b < cfg.nbufs) :
     b ∈ owned s := by
@@ -195,7 +196,7 @@ theorem cold_never_recycled {cfg : Cfg} {b : Bid} {s s' : St}
       subst hl
       cases h with
       | recycle hheld =>
-          simp [owned, hheld, List.count_append, List.count_cons] at h0
+          simp [owned, hheld, List.count_append] at h0
             <;> omega
 
 end DN.Dataplane.Ring

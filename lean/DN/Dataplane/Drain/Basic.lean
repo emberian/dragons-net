@@ -1,12 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+
+/-!
 # DN.Dataplane.Drain.Basic
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
-
 
 namespace DN.Dataplane.Drain
 
@@ -104,23 +103,7 @@ def step (s : DState) : Event → DState × List Output
     | .drained => (s, [])
     | .closed => (s, [])
 
-/-! ### Determinism and totality -/
-
-/-- **Determinism.** `step` is a function, so identical inputs give identical
-results. -/
-theorem step_deterministic {s : DState} {e : Event} {r₁ r₂ : DState × List Output}
-    (h₁ : r₁ = step s e) (h₂ : r₂ = step s e) : r₁ = r₂ := by rw [h₁, h₂]
-
-/-- **Totality (mode).** From any state and event `step` lands in one of the
-four modes — there are no stuck states. -/
-theorem mode_total (s : DState) (e : Event) :
-    (step s e).1.mode = .running ∨ (step s e).1.mode = .draining
-      ∨ (step s e).1.mode = .drained ∨ (step s e).1.mode = .closed := by
-  cases (step s e).1.mode
-  · exact Or.inl rfl
-  · exact Or.inr (Or.inl rfl)
-  · exact Or.inr (Or.inr (Or.inl rfl))
-  · exact Or.inr (Or.inr (Or.inr rfl))
+/-! ### Outputs -/
 
 /-- Every step emits at most one output. -/
 theorem output_le_one (s : DState) (e : Event) : (step s e).2.length ≤ 1 := by

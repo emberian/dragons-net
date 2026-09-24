@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 /-! Borrowed byte spans and their list denotation. Model-level equivalence only. -/
 
 
@@ -99,6 +100,12 @@ theorem denote_full (buf : ByteArray) : (full buf).denote = buf.data.toList := b
   unfold denote full
   rw [List.drop_zero, show buf.size = buf.data.toList.length from Array.length_toList.symm,
     List.take_length]
+
+/-- Witness: the window condition is satisfiable on a concrete buffer — four
+bytes with a window of two inside them, not an empty span. -/
+theorem Wf_witness : ({ buf := ⟨#[1, 2, 3, 4]⟩, off := 1, len := 2 } : SpanBytes).Wf := by
+  show 1 + 2 ≤ (⟨#[1, 2, 3, 4]⟩ : ByteArray).size
+  decide
 
 end SpanBytes
 end DN.Dataplane

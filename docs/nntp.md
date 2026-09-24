@@ -1,6 +1,6 @@
 # NNTP implementation plan
 
-There are no NNTP commands implemented yet. `DN.News.Framing` proves a chunk-composition property for CRLF detection; it is the beginning of a specification, not a protocol parser. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
+There are no NNTP commands implemented yet. `DN.News.Framing` states the CRLF delimiter count as a specification and proves the counter equal to it (`feed_counts_crlf`); chunk invariance holds for any left fold and is a consequence, not the specification. It is the beginning of a specification, not a protocol parser: no line boundaries, no 512-octet limit, no dot-stuffing, no error recovery. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
 
 ## Initial profile
 
@@ -41,14 +41,20 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 5536 | Netnews article format | Required for article ingestion/storage |
 | 5537 | Netnews architecture and procedures | Required as injection/relay roles are added |
 | 4643 | Authentication | Add with an explicit access-control and transport-security design |
+| 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |
+| 8143 | TLS update to RFC 4642 | Implicit TLS on port 563 is preferred over STARTTLS |
 | 4644 | Streaming feeds | Add after durable IHAVE ingestion and deduplication work |
 | 6048 | LIST extensions | Add according to actual client/feed needs |
 | 8054 | Compression | Later; include resource and decompression limits |
 | 8315 | Cancel locks | Later; cancellation policy is separate from basic article delivery |
-| 4707 | Response-code registration | Reference for extensions |
+| 4707 | Netnews Administration System (Experimental) | Reference only; not planned |
 | 2980 | Historical extensions | Compatibility reference; not a substitute for RFC 3977 |
 
-TLS design also needs RFC 4642, which is not yet in the local collection. Moderation, control messages, authentication, and relaying have policy consequences beyond recognizing commands. Defer capabilities deliberately and document the role the server actually performs.
+TLS design needs RFC 4642 as updated by RFC 8143, which prefers implicit TLS on port 563 over STARTTLS; both are in the local collection. Moderation, control messages, authentication, and relaying have policy consequences beyond recognizing commands. Defer capabilities deliberately and document the role the server actually performs.
+
+## Source offer for a network service
+
+The licence is AGPL, so anyone who runs a modified dn over the network owes its users the corresponding source (LICENSE, section 13). Meeting that obligation is a protocol decision rather than a legal footnote, and we will carry the offer where a remote user can see it: the cheapest place in NNTP is the `HELP` response, which is free text, plus a line in the capabilities documentation, naming the running version and a URL that serves its source. Whatever the shape, it belongs in the first milestone that answers commands, not after deployment.
 
 ## Offline exchange and filesystem views
 

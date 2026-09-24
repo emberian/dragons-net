@@ -1,0 +1,18 @@
+export fun dn_region(1 ctrl, 1 buf, 1 len, 1 out) {
+  var alen = lds 1 ctrl;
+  var off = lds 1 (ctrl + 8);
+  var result = 0;
+  if (alen < 0) + (off < 0) + (len < 0) + (alen < off) + ((alen - off) < len) {
+    result = 4294967295;
+  } else {
+    var acc = 0;
+    var i = 0;
+    while i < len {
+      acc = ((acc * 31) + (ld8 (buf + off + i))) & 16777215;
+      i = i + 1;
+    }
+    result = acc;
+  }
+  st out, result;
+  return result;
+}

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Real-hardware hammer (NOT loom): a writer flips the rate-gate pair between the
 //! two generations while reader threads pound `observe()`. It witnesses on real
 //! atomics what the loom suite proves over all schedules — the deployed

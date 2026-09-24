@@ -1,8 +1,8 @@
 # Review of inherited dataplane models
 
-Review findings describe the inspected baseline. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
+Review findings describe the inspected baseline, read at revision `94785d2`; line numbers are from that revision and the files have moved since. CakeML references are to the revision pinned in `backend/lock.json`. See [triage and current disposition](README.md) for fixes applied during this review and unresolved obligations.
 
-Scope: read-only review of `/Users/ember/dev/dn/lean/DN/Dataplane`, with the
+Scope: read-only review of `lean/DN/Dataplane`, with the
 active `dn-runtime` slab and the independent Rust concurrency models used as
 comparison points. I did not run a Lake build. The repository-wide assurance
 document correctly says that host refinement remains open; findings below call
@@ -97,7 +97,7 @@ cannot take the wakeup branch.
 ### Medium — deadline safety depends on the caller choosing a generational key, but the interface admits fd-only keys
 
 **Location:** `lean/DN/Dataplane/Io/Deadline.lean:52-57`, `:62-79`, `:211-220`;
-`lean/DN/Dataplane/Flow/Deadline.lean:63-104`.
+`lean/DN/Dataplane/Io/Deadline.lean (the queue moved there)`.
 
 Both deadline queues are polymorphic over an arbitrary key. Their theorems show
 correct list/heap behavior for equality on that key, but establish no ownership
@@ -118,7 +118,7 @@ the old key cannot close the replacement connection.
 
 ### Medium — “cannot sleep through a deadline” is not established by the Flow deadline invariant
 
-**Location:** `lean/DN/Dataplane/Flow/Deadline.lean:74-104`, `:186-192`.
+**Location:** `lean/DN/Dataplane/Io/Deadline.lean (the queue moved there)`, `:186-192`.
 
 `DeadlineQueue.Inv` says only that the model field `armed` contains a number no
 later than each live deadline. `wake_scheduled` merely restates this invariant.

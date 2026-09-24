@@ -26,7 +26,7 @@ theorem getLsbD_lowMask {n j : Nat} (hn : n ≤ 64) (hj : j < 64) :
     have hval : ((1#64 <<< n) - 1#64) = BitVec.ofNat 64 (2 ^ n - 1) := by
       apply BitVec.eq_of_toNat_eq
       simp only [BitVec.toNat_sub, BitVec.toNat_shiftLeft, BitVec.toNat_ofNat, Nat.shiftLeft_eq,
-                 Nat.one_mul]
+                ]
       generalize hp : (2:Nat) ^ n = p at *
       omega
     rw [hval, BitVec.getLsbD_ofNat, Nat.testBit_two_pow_sub_one]
@@ -74,8 +74,8 @@ theorem getByte_setByte_same (a : Word) (b : BitVec 8) (w : Word) (be : Bool) :
       getLsbD_lowMask (show i ≤ 64 by omega) hij64,
       getLsbD_lowMask (show (0:Nat) ≤ 64 by omega) hij64]
   simp only [hsub, hij64, d2, d3, d4, d5, hj, decide_true, decide_false,
-             Bool.true_and, Bool.and_true, Bool.false_and, Bool.and_false,
-             Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or, Bool.or_true]
+             Bool.true_and, Bool.and_true, Bool.and_false,
+             Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or]
 
 /-- GET after SET at a DIFFERENT byte position leaves the read byte unchanged. -/
 theorem getByte_setByte_diff (a a' : Word) (b : BitVec 8) (w : Word) (be : Bool)
@@ -103,14 +103,14 @@ theorem getByte_setByte_diff (a a' : Word) (b : BitVec 8) (w : Word) (be : Bool)
     have c3 : ¬ (i + j < 0) := by omega
     simp only [hij64, c1, c2, c3, hj, decide_true, decide_false,
                Bool.true_and, Bool.and_true, Bool.false_and, Bool.and_false,
-               Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or, Bool.or_true]
+               Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or]
   · have c1 : ¬ (i + j < i') := by omega
     have c2 : ¬ (i + j < i' + 8) := by omega
     have c3 : ¬ (i + j < 0) := by omega
     have hb0 : b.getLsbD (i + j - i') = false := by apply BitVec.getLsbD_of_ge; omega
     simp only [hij64, c1, c2, c3, hb0, hj, decide_true, decide_false,
-               Bool.true_and, Bool.and_true, Bool.false_and, Bool.and_false,
-               Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or, Bool.or_true]
+               Bool.true_and, Bool.and_true, Bool.and_false,
+               Bool.not_false, Bool.or_false]
 
 /-! ## 4. Address injectivity: align + byte-index pin the address -/
 
@@ -147,6 +147,17 @@ theorem addr_eq_of_align_index (w w' : Word) (be : Bool)
   · rw [← getLsbD_byteAlign_high w k h3 hk, ← getLsbD_byteAlign_high w' k h3 hk, ha]
 
 /-! ## 5. The memory-level store/load laws -/
+
+/-- Storing a byte truncates its widened form back to itself. -/
+theorem setWidth64_8 (b : BitVec 8) : (b.setWidth 64).setWidth 8 = b := by
+  apply BitVec.eq_of_toNat_eq
+  simp only [BitVec.toNat_setWidth]
+  omega
+
+/-- `bs` lies at consecutive byte addresses from `base`, read back by `mem_load_byte`. -/
+def memBytesAt (m : Word → Word) (dm : Word → Bool) (be : Bool) (base : Word)
+    (bs : List (BitVec 8)) : Prop :=
+  ∀ i, i < bs.length → memLoadByte m dm be (base + BitVec.ofNat 64 i) = some bs[i]!
 
 /-- The memory after a single byte-store (the `some` branch of `mem_store_byte`). -/
 def putByte (m : Word → Word) (be : Bool) (w : Word) (b : BitVec 8) : Word → Word :=
@@ -287,7 +298,40 @@ theorem writeByteArray_preserves (dm : Word → Bool) (be : Bool) (bs : List (Bi
       · have hnone : memStoreByte (writeByteArray dm be (base + 1) bs m) dm be base b = none := by
           unfold memStoreByte; rw [if_neg hdmb]
         rw [hnone]
+        exact htail.symm
     rw [hstep, htail]
+
+/-- **What the length check buys.** An external call that returns normally writes
+only inside the array it was given: every byte address outside it reads as before.
+The reply has the array's length, because `callFFI` ends the run otherwise. -/
+theorem extCall_frame (oracle : Oracle σ) (s : PancakeState σ) (name : String)
+    {cptr clen aptr alen : PancakeExp} {cp cl ap al : Word}
+    {conf arr : List (BitVec 8)} {s' : PancakeState σ}
+    (hcp : eval s cptr = some cp) (hcl : eval s clen = some cl)
+    (hap : eval s aptr = some ap) (hal : eval s alen = some al)
+    (hconf : readByteArray s.memory s.memaddrs s.be cp cl.toNat = some conf)
+    (harr : readByteArray s.memory s.memaddrs s.be ap al.toNat = some arr)
+    (hrun : PancakeSem oracle (.extCall name cptr clen aptr alen) s = (none, s'))
+    (w : Word) (hout : ∀ j, j < arr.length → w ≠ ap + BitVec.ofNat 64 j) :
+    memLoadByte s'.memory s.memaddrs s.be w = memLoadByte s.memory s.memaddrs s.be w := by
+  simp only [PancakeSem, hcp, hcl, hap, hal, hconf, harr] at hrun
+  cases hcall : callFFI oracle s.ffi name conf arr with
+  | final event => rw [hcall] at hrun; exact absurd hrun (by simp)
+  | ret newffi newBytes =>
+    rw [hcall] at hrun
+    have hlen : newBytes.length = arr.length := by
+      unfold callFFI at hcall
+      split at hcall
+      · injection hcall with _ hb; rw [← hb]
+      · split at hcall
+        · split at hcall
+          · injection hcall with _ hb; rw [← hb]; assumption
+          · exact absurd hcall (by simp)
+        · exact absurd hcall (by simp)
+    injection hrun with _ hstate
+    rw [← hstate]
+    exact writeByteArray_preserves s.memaddrs s.be newBytes w ap s.memory
+      (fun j hj => hout j (by rw [← hlen]; exact hj))
 
 /-- ESTABLISH (over `List (BitVec 8)`): after `write_bytearray`, reading `base + j`
 returns `bs[j]`, provided every written aligned word is in range. -/
@@ -326,7 +370,7 @@ theorem writeByteArray_memBytes (dm : Word → Bool) (be : Bool) (bs : List (Bit
 /-- The memcpy ESTABLISH law in region vocabulary: writing the byte vector `bs`
 (a `List UInt8`, the Lean serve payload) to `base` makes `memBytes` hold there. -/
 theorem memBytes_of_write (base len : Word) (bs : List UInt8) (s : PancakeState σ)
-    (hlenEq : bs.length = len.toNat) (hlen : len.toNat < 2 ^ 64)
+    (hlenEq : bs.length = len.toNat)
     (hdm : ∀ k, k < bs.length → s.memaddrs (byteAlign (base + BitVec.ofNat 64 k)) = true) :
     memBytes base len bs
       { s with memory := writeByteArray s.memaddrs s.be base (bs.map (·.toBitVec)) s.memory } := by
@@ -340,5 +384,25 @@ theorem memBytes_of_write (base len : Word) (bs : List UInt8) (s : PancakeState 
         s.memaddrs s.be (base + BitVec.ofNat 64 j) = _
   rw [hcore]
   simp
+
+/-! ### Non-vacuity: the byte-region relation is satisfiable -/
+
+/-- A closed state whose first word holds the bytes `0..7` at address 0, with the
+memory domain the compiler theorem gives (word-aligned and bounded). -/
+private def byteState : PancakeState Unit :=
+  { locals := fun _ => none,
+    memory := fun k => if k = 0#64 then 0x0706050403020100#64 else 0,
+    memaddrs := fun a => decide (a.toNat % 8 = 0 ∧ a.toNat < 128),
+    be := false, clock := 8, ffi := (), baseAddr := 0 }
+
+/-- Witness: four bytes really do sit at address 0 of a state whose memory domain
+has the shape the compiler theorem gives. -/
+theorem memBytes_witness :
+    memBytes 0#64 4#64 [0, 1, 2, 3] byteState := by
+  refine ⟨by decide, ?_⟩
+  intro i hi
+  have hi4 : i < 4 := by simpa using hi
+  have : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 := by omega
+  rcases this with rfl | rfl | rfl | rfl <;> rfl
 
 end DN.Compiler.Bytes

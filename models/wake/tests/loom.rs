@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Exhaustive schedule exploration of the wakeup protocol under loom.
 //!
 //! Run with:
@@ -12,9 +13,9 @@
 
 #![cfg(loom)]
 
+use dn_wake_model::{Doorbell, WakeProtocol};
 use loom::sync::atomic::{AtomicUsize, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
-use dn_wake_model::{Doorbell, WakeProtocol};
 
 /// Counting-semaphore doorbell (eventfd semantics): `ring` deposits a
 /// persistent token, `wait` blocks until one is present and consumes all.
@@ -62,12 +63,24 @@ impl Doorbell for SemBell {
 /// until `expected` items have been observed, blocking through the protocol
 /// when idle. No timeout anywhere — if a publish can be stranded, this
 /// deadlocks and loom reports it.
-fn consume_until(proto: &WakeProtocol<SemBell>, items: &AtomicUsize, expected: usize) -> usize {
+///
+/// Returns the items observed and the number of `pending` false→true edges
+/// this consumer consumed: every clear that found the flag set is one edge,
+/// and the coalescing guarantee is "at most one ring per edge". Counting the
+/// edges is what gives the ring assertions something they can fail.
+fn consume_until(
+    proto: &WakeProtocol<SemBell>,
+    items: &AtomicUsize,
+    expected: usize,
+) -> (usize, usize) {
     let mut seen = 0;
+    let mut edges = 0;
     while seen < expected {
         // Clear-before-drain: anything published after this swap re-flags
         // `pending` and is the next round's problem.
-        let _ = proto.take_pending();
+        if proto.take_pending() {
+            edges += 1;
+        }
         // "Drain": observe everything published so far.
         seen = items.load(Ordering::Acquire);
         if seen >= expected {
@@ -76,7 +89,7 @@ fn consume_until(proto: &WakeProtocol<SemBell>, items: &AtomicUsize, expected: u
         // Nothing (new) found: announce might_block, re-check, maybe block.
         let _ = proto.park_if_idle();
     }
-    seen
+    (seen, edges)
 }
 
 /// NO MISSED WAKEUP, single producer: the producer publishes twice; the
@@ -101,14 +114,20 @@ fn no_missed_wakeup_single_producer() {
             })
         };
 
-        let seen = consume_until(&proto, &items, 2);
+        let (seen, mut edges) = consume_until(&proto, &items, 2);
         producer.join().unwrap();
+        // One last clear: a publish that landed after the loop's final drain
+        // owns an edge the loop never consumed.
+        if proto.take_pending() {
+            edges += 1;
+        }
 
         assert_eq!(seen, 2, "every publish observed");
-        // Coalescing soundness: never more rings than publishes.
+        // Coalescing: at most one ring per false→true edge of `pending`.
+        // "At most one ring per publish" would hold by construction.
         assert!(
-            proto.bell().rings() <= 2,
-            "wake storm: {} rings for 2 publishes",
+            proto.bell().rings() <= edges,
+            "coalescing: {} rings for {edges} pending edges",
             proto.bell().rings()
         );
     });
@@ -142,14 +161,17 @@ fn no_missed_wakeup_two_producers() {
         let p1 = spawn_producer(&proto, &items);
         let p2 = spawn_producer(&proto, &items);
 
-        let seen = consume_until(&proto, &items, 2);
+        let (seen, mut edges) = consume_until(&proto, &items, 2);
         p1.join().unwrap();
         p2.join().unwrap();
+        if proto.take_pending() {
+            edges += 1;
+        }
 
         assert_eq!(seen, 2, "every publish observed");
         assert!(
-            proto.bell().rings() <= 2,
-            "wake storm: {} rings for 2 publishes",
+            proto.bell().rings() <= edges,
+            "coalescing: {} rings for {edges} pending edges",
             proto.bell().rings()
         );
     });

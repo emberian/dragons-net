@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A two-flag Dekker-style wakeup protocol, written as a small executable
 //! model whose entire purpose is to be exhaustively schedule-checked under
 //! [loom].

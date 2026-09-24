@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the reactor's SHARED per-source
 //! **connection-limit gate** — `SharedStanding::admit` / `admit_counted` /
-//! `on_close` in `crates/dataplane/src/standing.rs`.
+//! `on_close` in `migration/dataplane/host/src/standing.rs`.
 //!
 //! This model used to cover only the thread-per-connection *blocking* reactor,
 //! because that was the only backend whose per-source counters were touched by
@@ -33,7 +34,7 @@
 //! rate gate (one stripe held across age-and-count).
 //!
 //! The model itself lives in `tests/loom.rs`, exercised under `--cfg loom` for
-//! exhaustive schedule exploration. This crate is deliberately zero-dependency
+//! schedule exploration. This crate stands alone
 //! and separate from `dataplane`: the dataplane package's `build.rs` links the
 //! Lean runtime (`libleanshared`) into every target, and that runtime breaks
 //! loom's unwind-based panic capture inside its stackful coroutines — the same

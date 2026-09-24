@@ -1,0 +1,26 @@
+export fun dn_render(1 n, 1 p) {
+  var start = p;
+  var hi = (n) >>> 32;
+  var lo = n & 4294967295;
+  var qh = (hi * 3435973837) >>> 35;
+  var rh = hi - (qh * 10);
+  var t = (rh * 6) + lo;
+  var qt = (t * 3435973837) >>> 35;
+  var q = (qh * 4294967296) + (rh * 429496729) + qt;
+  p = p - 1;
+  st8 p, (n - (q * 10)) + 48;
+  n = q;
+  while n {
+    hi = (n) >>> 32;
+    lo = n & 4294967295;
+    qh = (hi * 3435973837) >>> 35;
+    rh = hi - (qh * 10);
+    t = (rh * 6) + lo;
+    qt = (t * 3435973837) >>> 35;
+    q = (qh * 4294967296) + (rh * 429496729) + qt;
+    p = p - 1;
+    st8 p, (n - (q * 10)) + 48;
+    n = q;
+  }
+  return start - p;
+}

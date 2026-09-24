@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the reactor's hot-reload **publication of the
 //! metered rate-gate config PAIR** — the `(rate_limit, rate_window)` couple the
 //! `429` accept gate reads on every connection.
@@ -8,32 +9,32 @@
 //! separate process-global atomics, `config.rs`:
 //!
 //! ```text
-//! static RATE_LIMIT: AtomicU64      // config.rs:167
-//! static RATE_WINDOW_MS: AtomicU64  // config.rs:173
+//! static RATE_LIMIT: AtomicU64      // config.rs
+//! static RATE_WINDOW_MS: AtomicU64  // config.rs
 //! ```
 //!
 //! Two threads touch them, and they are genuinely concurrent:
 //!
 //! - **Reconfig watcher thread**, on a SIGHUP reload (`config::set_raw`,
-//!   `config.rs:260-270`), re-derives the DoS directives and publishes them as
+//!   `config.rs`), re-derives the DoS directives and publishes them as
 //!   TWO INDEPENDENT stores:
 //!   ```text
-//!   RATE_LIMIT.store(rate as u64, Relaxed);       // config.rs:268
-//!   RATE_WINDOW_MS.store(window_ms, Relaxed);      // config.rs:269
+//!   RATE_LIMIT.store(rate as u64, Relaxed);       // config.rs
+//!   RATE_WINDOW_MS.store(window_ms, Relaxed);      // config.rs
 //!   ```
 //!   The doc-comment there calls the fields "retuned atomically on every
-//!   (re)load" (`config.rs:263-267`) — but *each store* is atomic, the *pair* is
+//!   (re)load" (`config.rs`) — but *each store* is atomic, the *pair* is
 //!   not.
 //! - **Every shard's accept hot path** reads the pair as TWO INDEPENDENT loads,
 //!   in argument-evaluation order, feeding the proven `429` decision
-//!   (`uring.rs:860-863`; `kqueue.rs:488-491`, both reactor families):
+//!   (`uring.rs`; `kqueue.rs`, both reactor families):
 //!   ```text
 //!   sh.standing.rate_note(peer_ip,
 //!       crate::config::rate_limit(),   // RATE_LIMIT.load(Relaxed)     (read #1)
 //!       crate::config::rate_window(),  // RATE_WINDOW_MS.load(Relaxed) (read #2)
 //!       now)
 //!   ```
-//!   (`rate_window()` also drives the per-window prune throttle, `uring.rs:692-698`.)
+//!   (`rate_window()` also drives the per-window prune throttle, `uring.rs`.)
 //!
 //! # The invariant this models
 //!
@@ -133,7 +134,7 @@ impl TornConfig {
         }
     }
 
-    /// Reconfig-thread publish (`config::set_raw`, `config.rs:268-269`): store the
+    /// Reconfig-thread publish (`config::set_raw`, `config.rs`): store the
     /// limit, then store the window. Two separate stores — no pair atomicity.
     pub fn publish(&self, g: Gen) {
         self.limit.store(g.0, self.ord);
@@ -141,7 +142,7 @@ impl TornConfig {
     }
 
     /// Shard-thread read of the pair (`rate_note(_, rate_limit(), rate_window(),
-    /// _)`, `uring.rs:861-862` / `kqueue.rs:490-491`): load the limit, then load
+    /// _)`, `uring.rs` / `kqueue.rs`): load the limit, then load
     /// the window. Two separate loads — the reader can slot both between the
     /// writer's two stores.
     pub fn observe(&self) -> Gen {

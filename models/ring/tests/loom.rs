@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Exhaustive schedule exploration of the SPSC ring under loom.
 //!
 //! Run with:
@@ -14,9 +15,9 @@
 
 #![cfg(loom)]
 
+use dn_ring_model::{PushError, channel};
 use loom::future::block_on;
 use loom::thread;
-use dn_ring_model::{PushError, channel};
 
 /// Bounded model for the multi-item streams: the async send/recv paths run
 /// several waker registrations and `SeqCst` fences per item, and unbounded
@@ -152,6 +153,57 @@ fn close_wakes_receiver_parked_on_empty() {
         });
         tx.close();
         consumer.join().unwrap();
+    });
+}
+
+/// **The close race.** The receiver closes and asks for one value; the
+/// producer pushes concurrently. Once `recv` has answered `None` — "closed and
+/// drained" — no push may still report success: that value would be accepted
+/// and never delivered. Before the close bit moved into the `tail` word,
+/// `try_push` could check `closed`, write its slot and publish it after that
+/// `None` had been handed out.
+#[test]
+fn no_push_succeeds_after_recv_reported_drained() {
+    loom::model(|| {
+        let (tx, mut rx) = channel::<u32>(2);
+        let producer = thread::spawn(move || tx.try_push(7).is_ok());
+        rx.close();
+        let first = block_on(rx.recv());
+        let accepted = producer.join().unwrap();
+        assert!(
+            !(first.is_none() && accepted),
+            "recv said the ring was drained, then try_push accepted a value"
+        );
+    });
+}
+
+/// The same race on the async path: every send that resolved `Ok` is delivered
+/// before `recv` reports the ring drained.
+#[test]
+fn accepted_async_sends_are_all_received() {
+    model_bounded(|| {
+        let (tx, mut rx) = channel::<u32>(2);
+        let producer = thread::spawn(move || {
+            block_on(async move {
+                let mut accepted = 0;
+                for i in 0..2u32 {
+                    if tx.send(i).await.is_ok() {
+                        accepted += 1;
+                    }
+                }
+                accepted
+            })
+        });
+        rx.close();
+        let mut received = 0;
+        while block_on(rx.recv()).is_some() {
+            received += 1;
+        }
+        let accepted = producer.join().unwrap();
+        assert_eq!(
+            accepted, received,
+            "sends the ring accepted must be delivered before it reports drained"
+        );
     });
 }
 

@@ -3,9 +3,10 @@
 # DN.Compiler.Semantics
 
 Adapted from the compiler extraction recorded in docs/provenance.json.
-These definitions and theorems concern the Lean model. Correspondence to the
-HOL4 backend, pretty-printer/parser, ABI and executable is tracked separately
-in docs/assurance.md. The model is a restricted 64-bit Pancake fragment.
+The model is a restricted 64-bit Pancake fragment; docs/pancake-semantics.md
+records, clause by clause, the HOL4 definitions it was compared against and what
+it leaves out. Correspondence to the pretty-printer/parser, ABI and executable is
+tracked in docs/assurance.md.
 -/
 
 namespace DN.Compiler
@@ -58,10 +59,18 @@ def setByte (a : Word) (b : BitVec 8) (w : Word) (be : Bool) : Word :=
 exact). `shape_of` of every such value is `One`. -/
 abbrev Value := Word
 
-/-- A terminal FFI event (`ffi$final_event`), kept opaque — region never inspects
-its contents; it only propagates as `FinalFFI`. -/
+/-- `ffi$ffi_outcome`. -/
+inductive Outcome
+  | failed
+  | diverged
+deriving Repr, DecidableEq
+
+/-- `ffi$final_event`: the call that ended the run, with the bytes it was given. -/
 structure FinalEvent where
-  tag : String
+  name : String
+  conf : List (BitVec 8)
+  array : List (BitVec 8)
+  outcome : Outcome
 deriving Repr, DecidableEq
 
 /-- panSem `result` restricted to the ctors the region subset can produce or
@@ -79,21 +88,33 @@ deriving Repr, DecidableEq
 run (`FFI_final`) or return with a new ffi state + the bytes written back into
 the array region (`FFI_return`). -/
 inductive FFIResult (σ : Type)
-  | final (outcome : FinalEvent)
+  | final (event : FinalEvent)
   | ret   (newState : σ) (newBytes : List (BitVec 8))
 
-/-- The FFI oracle = A0 (the pre-existing FFI boundary, an EXPLICIT trusted
-assumption, NOT a `sorry`). This raw type imposes no relationship between the
-input `array` length and `FFIResult.ret.newBytes`; in particular, an arbitrary
-`Oracle` may return more bytes than the declared `ExtCall` array length. Any
-memory-frame theorem for an external call must add the backend FFI length
-invariant explicitly. See `docs/reviews/compiler-assurance.md`.
+/-- What an oracle answers (`ffi$oracle_result`): new state and bytes, or the
+outcome that ends the run. -/
+inductive OracleResult (σ : Type)
+  | ret   (newState : σ) (newBytes : List (BitVec 8))
+  | final (outcome : Outcome)
 
-`call ffi name conf array` models
-`call_FFI s.ffi (ExtCall name) conf array`. For the region primitive this is the
-`load_vec` / `report_vec` driver: the arena-encoding oracle. -/
+/-- The FFI oracle (`ffi$oracle`): the pre-existing FFI boundary, an explicit
+trusted assumption. It answers with anything, including a reply of the wrong
+length; `callFFI` is what turns such a reply into a failed call. -/
 structure Oracle (σ : Type) where
-  call : σ → String → List (BitVec 8) → List (BitVec 8) → FFIResult σ
+  call : σ → String → List (BitVec 8) → List (BitVec 8) → OracleResult σ
+
+/-- `call_FFI st (ExtCall name) conf array` (ffiScript `call_FFI_def`): the empty
+name never reaches the oracle, and a reply whose length differs from the array
+ends the run instead of being written. -/
+def callFFI {σ : Type} (oracle : Oracle σ) (ffi : σ) (name : String)
+    (conf array : List (BitVec 8)) : FFIResult σ :=
+  if name = "" then .ret ffi array
+  else
+    match oracle.call ffi name conf array with
+    | .ret newffi newBytes =>
+      if newBytes.length = array.length then .ret newffi newBytes
+      else .final ⟨name, conf, array, .failed⟩
+    | .final outcome => .final ⟨name, conf, array, outcome⟩
 
 /-- panSem `('a,'ffi) state`, restricted to the fields the region subset reads.
 `locals` is the partial map `varname |-> v` (region uses only `Local`); `memory`
@@ -146,16 +167,15 @@ def readByteArray (m : Word → Word) (dm : Word → Bool) (be : Bool) :
       | some bs => some (b :: bs)
 
 /-- `write_bytearray a bs m dm be` (panSem `write_bytearray_def`): writes the
-tail at `a+1` first, then `b` at `a` (a right fold), swallowing out-of-range
-stores (`NONE => m`). -/
+tail at `a+1` first, then `b` at `a` (a right fold). A store out of range keeps
+the memory this call was given, so the tail writes are dropped with it. -/
 def writeByteArray (dm : Word → Bool) (be : Bool) :
     Word → List (BitVec 8) → (Word → Word) → (Word → Word)
   | _, [], m => m
   | a, b :: bs, m =>
-    let m' := writeByteArray dm be (a + 1) bs m
-    match memStoreByte m' dm be a b with
-    | some m'' => m''
-    | none => m'
+    match memStoreByte (writeByteArray dm be (a + 1) bs m) dm be a b with
+    | some m' => m'
+    | none => m
 
 /-! ## 3. Expression evaluation `eval : state → exp → Option Value`
 
@@ -195,6 +215,7 @@ inductive PancakeExp
   | cmp      (c : Cmp) (l r : PancakeExp)     -- `Cmp Less/Equal/NotLess l r` (Less/NotLess SIGNED)
   | loadByte (addr : PancakeExp)              -- `LoadByte addr`
   | loadWord (addr : PancakeExp)              -- `Load One addr`
+  | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
 deriving Repr
 
 /-- `word_cmp Less` = HOL `word_lt` = SIGNED comparison. In Lean `BitVec.slt` is
@@ -218,6 +239,14 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
   | .mul l r =>
     match eval s l, eval s r with
     | some a, some b => some (a * b)  -- `pan_op Mul [a;b] = SOME (a*b)` (pan_op_def)
+    | _, _ => none
+  -- `Shift sh e1 e2 = OPTION_MAP ValWord (word_sh sh w1 (w2n w2))`, and `word_sh`
+  -- has no value for a nonzero shift of a whole word or more.
+  | .shiftR l r =>
+    match eval s l, eval s r with
+    | some a, some b =>
+      let places := b.toNat
+      if places ≠ 0 && places ≥ 64 then none else some (a >>> places)
     | _, _ => none
   | .cmp .less l r =>
     match eval s l, eval s r with
@@ -342,10 +371,11 @@ def PancakeSem (oracle : Oracle σ) : PancakeProg → PancakeState σ →
       (r.1, { r.2 with locals := resVar r.2.locals v (s.locals v) })
     | none => (some .error, s)
   | .assign v e, s =>
-    -- `Assign Local v src`: valid-value check is vacuous (`One`); write `set_var`.
-    match eval s e with
-    | some val => (none, { s with locals := setLocal s.locals v val })
-    | none => (some .error, s)
+    -- `Assign Local v src`: `is_valid_value` needs the variable to be bound already
+    -- (the shape part is vacuous: every value is `One`).
+    match eval s e, s.locals v with
+    | some val, some _ => (none, { s with locals := setLocal s.locals v val })
+    | _, _ => (some .error, s)
   | .store dst src, s =>
     -- `Store dst src`: eval both, `mem_stores addr (flatten value)` on one word.
     match eval s dst, eval s src with
@@ -355,18 +385,16 @@ def PancakeSem (oracle : Oracle σ) : PancakeProg → PancakeState σ →
       | none => (some .error, s)
     | _, _ => (some .error, s)
   | .extCall name cptr clen aptr alen, s =>
-    -- `ExtCall`: read conf=[clen bytes @cptr], arr=[alen bytes @aptr], call the
-    -- oracle (A0), write ALL returned bytes back @aptr. The raw Oracle type does
-    -- not guarantee returned length = alen; confinement requires an additional
-    -- FFI contract. (panSem names the four evals
-    -- sz1/ad1/sz2/ad2; read_bytearray sz1 (w2n ad1) = addr cptr, count clen.)
+    -- `ExtCall`: read conf=[clen bytes @cptr] and arr=[alen bytes @aptr], hand them to
+    -- `call_FFI`, and write the bytes it returns back @aptr. (panSem names the four
+    -- evals sz1/ad1/sz2/ad2; `read_bytearray sz1 (w2n ad1)` = addr cptr, count clen.)
     match eval s cptr, eval s clen, eval s aptr, eval s alen with
     | some cp, some cl, some ap, some al =>
       match readByteArray s.memory s.memaddrs s.be cp cl.toNat,
             readByteArray s.memory s.memaddrs s.be ap al.toNat with
       | some conf, some arr =>
-        match oracle.call s.ffi name conf arr with
-        | .final outcome => (some (.finalFFI outcome), emptyLocals s)
+        match callFFI oracle s.ffi name conf arr with
+        | .final event => (some (.finalFFI event), emptyLocals s)
         | .ret newffi newBytes =>
           (none, { s with memory := writeByteArray s.memaddrs s.be ap newBytes s.memory,
                           ffi := newffi })
@@ -455,5 +483,203 @@ theorem evaluate_storeByte_error (oracle : Oracle σ) (s : PancakeState σ)
     (hm : memStoreByte s.memory s.memaddrs s.be adr (w.setWidth 8) = none) :
     PancakeSem oracle (.storeByte dst src) s = (some .error, s) := by
   simp only [PancakeSem, hd, hs, hm]
+
+/-! ### 4.2 The branches where the semantics stops
+
+Each theorem pins a branch a permissive transcription would drop: the model must
+refuse, not carry on. They are concrete instances, so they also witness that the
+general lemmas above (`evaluate_storeByte_error` and its kind) are not vacuous. -/
+
+/-- A state with nothing declared, to exercise the error branches. -/
+def bareState (ffi : σ) : PancakeState σ :=
+  { locals := fun _ => none, memory := fun _ => 0, memaddrs := fun _ => true,
+    be := false, clock := 8, ffi := ffi, baseAddr := 0 }
+
+/-- Reading a variable that was never declared has no value. -/
+theorem eval_unbound_var_is_none (ffi : σ) : eval (bareState ffi) (.var "x") = none := rfl
+
+/-- An operand without a value leaves the operator without one. -/
+theorem eval_op_of_none (ffi : σ) :
+    eval (bareState ffi) (.op .add (.var "x") (.const 1)) = none := rfl
+
+/-- A shift of a whole word or more has no value, as in `word_sh`. The zero case is
+spelled out because `word_sh` states it separately, not because it is special here. -/
+theorem eval_shiftR_whole_word_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 1) (.const 64)) = none := rfl
+
+theorem eval_shiftR_by_zero (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 7) (.const 0)) = some 7 := rfl
+
+/-- The shift goes right and drops the bits it passes, which a left shift would not. -/
+theorem eval_shiftR_value (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 0x1234) (.const 4)) = some 0x123 := rfl
+
+/-- It is the logical shift: the sign bit does not fill in behind it. -/
+theorem eval_shiftR_is_logical (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 0x8000000000000000) (.const 63)) = some 1 := rfl
+
+/-- A distance far beyond the word has no value either. -/
+theorem eval_shiftR_huge_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.const 1) (.const 0xFFFFFFFFFFFFFFFF)) = none := rfl
+
+theorem eval_shiftR_of_none (ffi : σ) :
+    eval (bareState ffi) (.shiftR (.var "x") (.const 1)) = none := rfl
+
+/-- Loading a byte outside the memory domain has no value. -/
+theorem eval_loadByte_outside_domain (ffi : σ) :
+    eval { bareState ffi with memaddrs := fun _ => false } (.loadByte (.const 8)) = none := rfl
+
+/-- Loading a word outside the memory domain has no value. -/
+theorem eval_loadWord_outside_domain (ffi : σ) :
+    eval { bareState ffi with memaddrs := fun _ => false } (.loadWord (.const 8)) = none := rfl
+
+/-- A declaration whose initialiser has no value is an error. -/
+theorem dec_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.dec "x" (.var "y") .skip) (bareState ffi) = (some .error, bareState ffi) := by
+  simp only [PancakeSem, eval, bareState]
+
+/-- Assigning to a variable that was never declared is an error. -/
+theorem assign_unbound_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.assign "x" (.const 7)) (bareState ffi) = (some .error, bareState ffi) := by
+  simp only [PancakeSem, eval, bareState]
+
+/-- A word store outside the memory domain is an error, and the state is kept. -/
+theorem store_outside_domain_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.store (.const 8) (.const 1))
+        { bareState ffi with memaddrs := fun _ => false }
+      = (some .error, { bareState ffi with memaddrs := fun _ => false }) := by
+  simp [PancakeSem, eval, bareState, memStoreWord]
+
+/-- So is a byte store outside the domain. -/
+theorem storeByte_outside_domain_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.storeByte (.const 8) (.const 1))
+        { bareState ffi with memaddrs := fun _ => false }
+      = (some .error, { bareState ffi with memaddrs := fun _ => false }) := by
+  simp [PancakeSem, eval, bareState, memStoreByte]
+
+/-- A condition without a value is an error; neither branch runs. -/
+theorem cond_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.cond (.var "x") .skip .skip) (bareState ffi)
+      = (some .error, bareState ffi) := by
+  simp only [PancakeSem, eval, bareState]
+
+/-- A loop guard without a value is an error. -/
+theorem while_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.while_ (.var "x") .skip) (bareState ffi)
+      = (some .error, bareState ffi) := by
+  simp only [PancakeSem, eval, bareState]
+
+/-- A loop that still has work to do and no clock times out, and the locals go. -/
+theorem while_out_of_clock_is_timeout (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.while_ (.const 1) .skip) { bareState ffi with clock := 0 }
+      = (some .timeout, emptyLocals { bareState ffi with clock := 0 }) := by
+  rw [PancakeSem]
+  simp only [eval, bareState, ne_eq, show ((1 : Word) = 0) = False from by decide,
+             not_false_eq_true, if_pos]
+
+/-- A return without a value is an error. -/
+theorem ret_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.ret (.var "x")) (bareState ffi) = (some .error, bareState ffi) := by
+  simp only [PancakeSem, eval, bareState]
+
+/-- An external call whose array is not readable is an error: the oracle is not reached. -/
+theorem extCall_unreadable_array_is_error (ffi : σ) :
+    PancakeSem ⟨fun st _ _ _ => .ret st []⟩ (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1))
+        { bareState ffi with memaddrs := fun _ => false }
+      = (some .error, { bareState ffi with memaddrs := fun _ => false }) := by
+  simp [PancakeSem, eval, bareState, readByteArray, memLoadByte]
+
+/-- An oracle that ends the run propagates as `FinalFFI`, and the locals go. -/
+theorem extCall_final_propagates (ffi : σ) :
+    PancakeSem ⟨fun _ _ _ _ => .final .diverged⟩
+        (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 0)) (bareState ffi)
+      = (some (.finalFFI ⟨"name", [], [], .diverged⟩), emptyLocals (bareState ffi)) := by
+  simp [PancakeSem, eval, bareState, readByteArray, callFFI, emptyLocals]
+
+/-- An assignment whose right-hand side has no value is an error. -/
+theorem assign_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.assign "x" (.var "y"))
+        { bareState ffi with locals := fun k => if k = "x" then some 0 else none }
+      = (some .error, { bareState ffi with locals := fun k => if k = "x" then some 0 else none }) := by
+  simp [PancakeSem, eval, bareState]
+
+/-- A word store whose address or value has no value is an error. -/
+theorem store_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.store (.var "x") (.const 1)) (bareState ffi)
+      = (some .error, bareState ffi) := by
+  simp [PancakeSem, eval, bareState]
+
+/-- The same for a byte store. -/
+theorem storeByte_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
+    PancakeSem oracle (.storeByte (.var "x") (.const 1)) (bareState ffi)
+      = (some .error, bareState ffi) := by
+  simp [PancakeSem, eval, bareState]
+
+/-- An external call whose pointers or lengths have no value is an error: the oracle
+is not reached. -/
+theorem extCall_without_value_is_error (ffi : σ) :
+    PancakeSem ⟨fun st _ _ _ => .ret st []⟩
+        (.extCall "name" (.var "x") (.const 0) (.const 8) (.const 0)) (bareState ffi)
+      = (some .error, bareState ffi) := by
+  simp [PancakeSem, eval, bareState]
+
+/-- An external call whose configuration bytes cannot be read is an error, before the
+array is touched. -/
+theorem extCall_unreadable_conf_is_error (ffi : σ) :
+    PancakeSem ⟨fun st _ _ _ => .ret st []⟩
+        (.extCall "name" (.const 0) (.const 1) (.const 8) (.const 0))
+        { bareState ffi with memaddrs := fun a => a == 8 }
+      = (some .error, { bareState ffi with memaddrs := fun a => a == 8 }) := by
+  simp [PancakeSem, eval, bareState, readByteArray, memLoadByte, byteAlign]
+
+/-- **The external call itself rejects a reply of the wrong length.** The clause, not
+just `callFFI`: an oracle that answers with more bytes than the array ends the run,
+and no byte is written. -/
+theorem extCall_overlong_reply_is_final (ffi : σ) :
+    PancakeSem ⟨fun st _ _ _ => .ret st [0xEE, 0xEE]⟩
+        (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1)) (bareState ffi)
+      = (some (.finalFFI ⟨"name", [], [0], .failed⟩), emptyLocals (bareState ffi)) := by
+  simp [PancakeSem, eval, bareState, readByteArray, memLoadByte, callFFI, emptyLocals,
+        getByte, byteIndex]
+
+/-- …and a reply of the declared length is written at the array. -/
+theorem extCall_exact_reply_is_written (ffi : σ) :
+    ∃ s', PancakeSem ⟨fun st _ _ _ => .ret st [0xEE]⟩
+        (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1)) (bareState ffi) = (none, s')
+      ∧ memLoadByte s'.memory (bareState ffi).memaddrs (bareState ffi).be 8 = some 0xEE := by
+  have hrun : PancakeSem ⟨fun st _ _ _ => .ret st [0xEE]⟩
+      (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1)) (bareState ffi)
+      = (none, { bareState ffi with
+                 memory := writeByteArray (bareState ffi).memaddrs (bareState ffi).be 8 [0xEE]
+                   (bareState ffi).memory }) := by
+    simp [PancakeSem, eval, bareState, readByteArray, memLoadByte, callFFI,
+          getByte, byteIndex]
+  refine ⟨_, hrun, ?_⟩
+  simp [bareState, writeByteArray, memStoreByte, memLoadByte, byteAlign, byteIndex,
+        getByte, setByte, wordSliceAlt]
+
+/-- A byte store out of range keeps the memory the whole call was given: the
+bytes already written by the tail go with it. -/
+theorem writeByteArray_failed_head_keeps_memory :
+    writeByteArray (fun w => w == 8) false 7 [0xAA, 0xBB] (fun _ => 0) 8 = 0 := by
+  decide
+
+/-- An oracle reply of the wrong length ends the run instead of being written. -/
+theorem overlong_ffi_result_is_final (ffi : σ) :
+    callFFI ⟨fun st _ _ _ => .ret st [0xEE, 0xEE]⟩ ffi "name" [] [0]
+      = .final ⟨"name", [], [0], .failed⟩ := rfl
+
+/-- …and so does a reply that is too short. -/
+theorem short_ffi_result_is_final (ffi : σ) :
+    callFFI ⟨fun st _ _ _ => .ret st []⟩ ffi "name" [] [0, 1]
+      = .final ⟨"name", [], [0, 1], .failed⟩ := rfl
+
+/-- A reply of the declared length is what gets written back. -/
+theorem exact_ffi_result_is_written (ffi : σ) :
+    callFFI ⟨fun st _ _ _ => .ret st [0xEE]⟩ ffi "name" [] [0] = .ret ffi [0xEE] := rfl
+
+/-- The empty name never reaches the oracle, and the array is returned unchanged. -/
+theorem empty_ffi_name_is_identity (ffi : σ) (oracle : Oracle σ) :
+    callFFI oracle ffi "" [] [0, 1] = .ret ffi [0, 1] := rfl
 
 end DN.Compiler

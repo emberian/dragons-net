@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Twin (executable model) of the io_uring zero-copy **SplitSend
 //! writev↔recycle** handoff — the new `DRORB_SPAN=15` reactor path
 //! (`stage_split_response` / `split_send_sqe` / `on_split_send` in
-//! `crates/dataplane/src/uring.rs`).
+//! `migration/dataplane/host/src/uring.rs`).
 //!
 //! The zero-copy body is NEVER copied into an output buffer: the response is a
 //! `writev` gather of the small head plus the borrowed request body, sliced
@@ -13,7 +14,7 @@
 //! data disclosure, the same class as the gap-F borrow↔recycle corner.
 //!
 //! The model itself lives in `tests/loom.rs`, exercised under `--cfg loom` for
-//! exhaustive schedule exploration. This crate is deliberately zero-dependency
+//! schedule exploration. This crate stands alone
 //! and separate from `dataplane`: the dataplane package's `build.rs` links the
 //! Lean runtime (`libleanshared`) into every target, and that runtime breaks
 //! loom's unwind-based panic capture inside its stackful coroutines — the same

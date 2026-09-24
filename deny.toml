@@ -1,0 +1,15 @@
+# Every target is included, so dependencies behind cfg(loom) are checked too.
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["AGPL-3.0-or-later", "Apache-2.0", "MIT"]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

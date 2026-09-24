@@ -19,10 +19,15 @@ Two players act on the state:
   retains completions in an overflow list (`nodrop` feature present) or
   silently drops them (`nodrop` absent).
 
-The verification target is the buffer-lease lifecycle: every buffer id the
-environment lends via a buffer-select completion is recycled exactly once by
-the client — no double recycle, no leak — under every demonic interleaving,
-including exhaustion/re-arm boundaries. See `DN.Dataplane.Ring.Conservation` and
+The verification target is the buffer-lease lifecycle: no lease is recycled
+twice and, with the `nodrop` feature, no buffer id is lost — under every demonic
+interleaving, including exhaustion/re-arm boundaries. That a lent buffer is
+eventually recycled is not proved: a lease may stay held forever. The `nodrop`
+model never drops a completion, while the kernel may still drop one when it
+cannot allocate for the overflow list: the ring's overflow counter grows, and
+`io_uring_enter` reports `-EBADR` once it has no completion left to hand back.
+Not dropping is therefore an assumption of the model, not a kernel guarantee.
+See `DN.Dataplane.Ring.Conservation` and
 `DN.Dataplane.Ring.RecycleOnce` for the theorems and `DN.Dataplane.Ring.Counterexample` for the
 named counterexample when the `nodrop` feature is absent.
 -/
@@ -147,7 +152,8 @@ inhabit from the client+kernel joint perspective: published free entries,
 recycled-unpublished entries, client-held leases, and leases riding
 unreaped completions (queued or kernel-retained overflow). The
 conservation theorem says each bid of the universe occurs exactly once in
-`owned` — which is simultaneously no-leak and no-duplication. -/
+`owned` — no bid is lost from the system and none is duplicated. Whether a bid
+ever returns to the free list is a liveness question this model leaves open. -/
 
 /-- Buffer ids carried by a list of completions. -/
 def cqBids (l : List Cqe) : List Bid :=
@@ -157,7 +163,7 @@ def cqBids (l : List Cqe) : List Bid :=
 
 @[simp] theorem cqBids_cons (c : Cqe) (l : List Cqe) :
     cqBids (c :: l) = c.payload.bid?.toList ++ cqBids l := by
-  cases h : c.payload.bid? <;> simp [cqBids, List.filterMap_cons, h]
+  cases h : c.payload.bid? <;> simp [cqBids, h]
 
 @[simp] theorem cqBids_append (l₁ l₂ : List Cqe) :
     cqBids (l₁ ++ l₂) = cqBids l₁ ++ cqBids l₂ :=
@@ -174,23 +180,8 @@ environment lends it again. -/
 def hot (s : St) (b : Bid) : Nat :=
   (s.held ++ cqBids s.cq ++ cqBids s.ovf).count b
 
-/-- Count of `b` in the whole bid universe. -/
-theorem count_range (n b : Nat) :
-    (List.range n).count b = if b < n then 1 else 0 := by
-  induction n with
-  | zero => simp
-  | succ n ih =>
-    rw [List.range_succ, List.count_append, ih, List.count_singleton]
-    rcases Nat.lt_trichotomy b n with h | h | h
-    · simp [Nat.ne_of_gt h, Nat.lt_succ_of_lt h, h]
-    · subst h; simp
-    · have h1 : ¬ b < n := Nat.not_lt.mpr (Nat.le_of_lt h)
-      have h2 : ¬ b < n + 1 := Nat.not_lt.mpr h
-      have h3 : n ≠ b := Nat.ne_of_lt h
-      simp [h1, h2, h3]
-
 @[simp] theorem count_owned_init (cfg : Cfg) (b : Bid) :
     (owned (init cfg)).count b = if b < cfg.nbufs then 1 else 0 := by
-  simp [owned, init, count_range]
+  simp [owned, init]
 
 end DN.Dataplane.Ring

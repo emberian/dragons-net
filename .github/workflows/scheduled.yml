@@ -1,0 +1,151 @@
+name: scheduled
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # New advisories appear without any change to the repository.
+  advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: RustSec advisories
+        run: |
+          deny=$(python3 -P scripts/bootstrap_tool.py cargo-deny)
+          "$deny" --locked check advisories
+          "$deny" --locked --manifest-path models/Cargo.toml check advisories
+
+  # The concurrency tests are only evidence while they can fail. This replays the
+  # recorded defects against a copy of the tree and requires each one to go red.
+  # It takes minutes, so it runs here rather than in the per-commit chain.
+  rust-mutations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Mutations the concurrency tests must catch
+        run: python3 -P scripts/mutate_rust.py
+
+  # Miri interprets the unsafe code of the ring model (slot writes through
+  # `UnsafeCell` and `MaybeUninit`) and reports undefined behaviour the ordinary
+  # test run cannot see. It needs a nightly toolchain, so it stays out of the
+  # pinned build. It reports on the schedules it runs, one per test, and not on
+  # the interleavings loom explores; the loom tests themselves are compiled out
+  # here, because they need their own cfg and their own runtime. Miri is an
+  # interpreter, so the wall time follows single-core speed, not the core count.
+  miri:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly-2026-09-01 --profile minimal --component miri
+          rustup run nightly-2026-09-01 cargo miri setup
+      # Many seeds: one schedule per run says little about a program whose bugs live in the
+      # schedule. Each seed costs a whole run, so the stress tests carry a smaller item count
+      # under Miri; the symbolic alignment check refuses a pointer that is aligned by luck.
+      - name: Undefined behaviour in the ring model
+        env:
+          MIRIFLAGS: "-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-many-seeds=0..32"
+        run: |
+          rustup run nightly-2026-09-01 cargo miri test --locked \
+            --manifest-path models/Cargo.toml -p dn-ring-model
+
+  # The host C is the part of the running program no theorem covers: the proofs are about the
+  # generated code, not about the loop that calls it. This reads it for the defects that code
+  # is written to avoid by hand — a write past a buffer, a pointer used after free, a format
+  # string from data. It runs here rather than on a pull request because it needs write access
+  # to the security results, and the per-commit chain runs code from the change.
+  codeql-c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
+        with:
+          languages: c-cpp
+          build-mode: manual
+      # Compiling alone is enough for the database: linking needs the generated assembly, and
+      # what is read here is the host's own source.
+      # The same flags the native lane compiles with, minus the link-only ones: a database built
+      # from different flags describes a program nobody runs.
+      - name: Compile the host
+        run: |
+          for source in native/*.c; do
+            cc -O2 -Wall -Wextra -Werror -fPIE -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+              -fstack-clash-protection -fcf-protection=full -Wformat=2 -I native \
+              -c "$source" -o "${RUNNER_TEMP}/$(basename "$source").o"
+          done
+      - uses: github/codeql-action/analyze@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
+
+  # The per-commit lane runs each property over proptest's default number of cases, which is
+  # about finding a defect quickly rather than deeply. This runs the same properties far longer.
+  properties:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Properties over many more cases
+        env:
+          PROPTEST_CASES: "200000"
+        run: |
+          cargo test --locked -p dn-runtime --test properties
+          cargo test --locked --manifest-path models/Cargo.toml -p dn-ring-model --test properties
+      # A counterexample is written beside the test and belongs in the repository; a run that
+      # found one and threw it away has to find it again.
+      - name: Keep any counterexample it found
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proptest-regressions
+          path: "**/*.proptest-regressions"
+          if-no-files-found: ignore
+
+  # The upstream files the semantics was transcribed from and the keyword table was
+  # generated from must still be those files, the stored RFCs must still be what their
+  # urls serve, and every file the extraction manifest records must still hash to what
+  # it says; this needs network, so it is not in the offline build.
+  upstream-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Recorded digests
+        run: python3 -P scripts/check_upstream_sources.py
+      - name: Generated keyword table
+        run: python3 -P scripts/gen_keywords.py --check

@@ -21,7 +21,7 @@ The trace (`cfg₀ = ⟨nbufs := 2, cqCap := 1, nodrop := false⟩`):
 State reached: bid 1 inhabits no location (`leak`). Monotonicity makes
 the loss permanent (`leak_forever`), and since a recycle demands a held
 occurrence, bid 1 is never recycled on any extension of this trace
-(`never_recycled`): recycle-exactly-once fails — one lend, zero recycles.
+(`never_recycled`): the bid is lost — one lend, zero recycles.
 
 The shape is instructive: one armed multishot can produce more
 completions than the queue holds with **no client move able to
@@ -105,7 +105,7 @@ theorem leak_forever {s' : St} {ls : List Lbl}
 
 /-- **COUNTEREXAMPLE, part 3 — never recycled.** No extension of the
 leaking trace ever recycles bid 1: the environment lent it (step 3), the
-client recycles it zero times, forever. Recycle-exactly-once fails. -/
+client recycles it zero times, forever: the bid is lost for good. -/
 theorem never_recycled {s' : St} {ls : List Lbl}
     (tr : Trace cfg₀ s₃ ls s') : Lbl.recycle 1 ∉ ls :=
   cold_never_recycled tr leak

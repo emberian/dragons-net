@@ -7,5 +7,18 @@ license.workspace = true
 description = "Bounded host-side primitives for dragon's news"
 publish = false
 
+# Properties over generated operation sequences; not needed under loom, which explores
+# interleavings of a fixed program instead.
+# Properties over generated operation sequences. Scoped to `cfg(not(loom))` so that the loom
+# and Miri lanes do not build it: the test itself is compiled out there.
+[target.'cfg(not(loom))'.dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
 [lints]
 workspace = true

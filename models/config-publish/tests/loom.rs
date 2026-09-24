@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Exhaustive schedule check of the metered rate-gate **pair publication**
 //! (`config::set_raw`'s `RATE_LIMIT`/`RATE_WINDOW_MS` stores vs the shard accept
-//! gate's `rate_limit()`/`rate_window()` reads — `uring.rs:860-863`,
-//! `kqueue.rs:488-491`).
+//! gate's `rate_limit()`/`rate_window()` reads — `uring.rs`,
+//! `kqueue.rs`).
 //!
 //! Run with:
 //! ```text

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host-side scaffolding, tested but not connected to the Lean proofs.
 //!
 //! No protocol decisions belong here. Native kernel linkage and OS reactors
@@ -6,6 +7,7 @@
 mod limit;
 mod output;
 mod slab;
+mod sync;
 
 pub use limit::{ConnectionLimit, Permit};
 pub use output::{OutputCursor, OverCompletion};

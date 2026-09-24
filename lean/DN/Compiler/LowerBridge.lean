@@ -1,21 +1,22 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+import DN.Compiler.Lower
+
+/-!
 # DN.Compiler.LowerBridge
 
-Retained compiler/dataplane development and regression examples.
-Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+What `lower` makes of a list of byte stores: the address model, the store-list
+model, and the bridge lemma that the lowered program is that model.
 -/
-
-import DN.Compiler.ServeEmit
-import DN.Compiler.Lower
 
 namespace DN.Compiler.LowerBridge
 
 open DN.Compiler.Syntax (PExpr PStmt PFun POp atOff v n eAdd)
 open DN.Compiler
 open DN.Compiler.Lower (lowerExp lowerStmt1 lowerStmtsFold lower)
-open DN.Compiler.ServeEmit (storesInto serveExport)
+
+/-- `st8 dst+i, b;` for each `(i, b)`: a byte string written at consecutive offsets. -/
+def storesInto (dst : String) (bs : List Nat) : List PStmt :=
+  ((List.range bs.length).zip bs).map (fun p => PStmt.storeb (atOff (v dst) p.1) (n p.2))
 
 /-! ## 1. The address model — what `lower` makes of `atOff (v dst) k`
 
@@ -116,7 +117,7 @@ The emitted head is not empty and not a stub: for a non-empty byte list the mode
 is a genuine `.storeByte` chain, and its store count equals the byte count. -/
 
 /-- Count the `.storeByte` nodes of a model program (the emitted head is all
-byte stores; `.store` word stores are counted separately by StructEmit). -/
+byte stores; word stores are not counted). -/
 def storeByteCount : PancakeProg → Nat
   | .storeByte _ _ => 1
   | .seq c1 c2     => storeByteCount c1 + storeByteCount c2
@@ -138,30 +139,5 @@ theorem storesInto_storeByteCount (dst : String) (bs : List Nat) :
     storeByteCount (storesModel dst ((List.range bs.length).zip bs)) = bs.length := by
   rw [storeByteCount_storesModel]
   rw [List.length_zip, List.length_range, Nat.min_self]
-
-/-! ## 4. Discharge on the ACTUAL emitted serve responses
-
-`serveExport` stores `bytesOf (serialize resp200)` on the routed-in branch and
-`bytesOf (serialize resp405)` on the 405 branch (ServeEmit §serveExport). Those are
-the exact byte lists whose `st8` stores the printed `.pnk` carries. The bridge
-fires on them: the emitted response head lowers to a named `.storeByte` model
-program. (`bs200`/`bs405` are left abstract here so the statement is the bridge,
-not a byte-blob recomputation; the `#guard`s in ServeEmit already pin their
-content and non-emptiness.) -/
-
-/-- The routed-branch response head lowers to a named model program. -/
-theorem serve_resp_head_lowers (bs200 : List Nat) :
-    lowerStmtsFold (storesInto "out" bs200)
-      = some (storesModel "out" ((List.range bs200.length).zip bs200)) :=
-  storesInto_lowers "out" bs200
-
-/-- …and it is a genuine per-byte store chain (|bs200| byte stores). -/
-theorem serve_resp_head_nonstub (bs200 : List Nat) :
-    storeByteCount (storesModel "out" ((List.range bs200.length).zip bs200))
-      = bs200.length :=
-  storesInto_storeByteCount "out" bs200
-
-/-! ## 5. Axiom audit — expect ⊆ {propext, Quot.sound, Classical.choice}, 0 sorryAx. -/
-
 
 end DN.Compiler.LowerBridge

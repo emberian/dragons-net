@@ -1,7 +1,8 @@
-//! The **DEPLOYED one-shot buffer-select recv path** (`crates/dataplane/src/uring.rs`):
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The **DEPLOYED one-shot buffer-select recv path** (`migration/dataplane/host/src/uring.rs`):
 //! the per-request lease `acquire -> process -> recycle` cycle through the single
 //! `Conn.leased_bid` cell. This IS the real deployed path — the recv is one-shot
-//! (`recv_br_sqe`, uring.rs:757, has NO multishot flag), so at most one recv is in
+//! (`recv_br_sqe`, uring.rs, has NO multishot flag), so at most one recv is in
 //! flight and at most one lease is held per connection at a time, and the NEXT
 //! recv is armed only after the current request's response recycled its lease.
 //! The invariant: over that cycle the lease is recycled EXACTLY ONCE, the borrowed
@@ -16,24 +17,24 @@
 //!
 //! # What the real one-shot cycle is (uring.rs / serve.rs / bufring.rs, drorb)
 //!
-//! 1. **shard thread**, `arm_recv` (uring.rs:789) -> `recv_br_sqe` (uring.rs:757):
+//! 1. **shard thread**, `arm_recv` (uring.rs) -> `recv_br_sqe` (uring.rs):
 //!    arms ONE buffer-select recv (plain `Recv` + `BUFFER_SELECT`, NO
 //!    `IORING_RECV_MULTISHOT`). Exactly one CQE will land for it.
-//! 2. **shard thread**, `on_recv_br` (uring.rs:1975): the kernel delivered the
+//! 2. **shard thread**, `on_recv_br` (uring.rs): the kernel delivered the
 //!    request into provided buffer `bid` (the model's `deliver`). On the borrow
 //!    fast path the shard ACQUIRES the lease — `conn.leased_bid = Some(bid)`
-//!    (uring.rs:2079) — wraps a raw view of the mmap'd slot (`BorrowedReq::new`,
+//!    (uring.rs) — wraps a raw view of the mmap'd slot (`BorrowedReq::new`,
 //!    `bufring.rs::slice`), and hands it to a serve worker via
 //!    `submit_borrowed_metered(borrowed, meter, reply)` with
 //!    `reply = ServeReply::Shard(mtx, efd, slot)`.
-//! 3. **serve worker thread** (serve.rs:1640-1647): reads the borrowed slice
+//! 3. **serve worker thread** (serve.rs): reads the borrowed slice
 //!    inside `serve_*_into(job.req.bytes(), ...)`, builds the response, then
 //!    `mailbox.send(ShardDone { conn, resp })` **then** `wake(efd)`.
-//! 4. **shard thread**, `on_wakeup` (uring.rs:917) -> `stage_response`
-//!    (uring.rs:949) -> `stage_response_appended` (uring.rs:978): RECYCLES the
-//!    lease — `c.leased_bid.take()` -> `br.recycle(bid)` (uring.rs:981-985) — then
+//! 4. **shard thread**, `on_wakeup` (uring.rs) -> `stage_response`
+//!    (uring.rs) -> `stage_response_appended` (uring.rs): RECYCLES the
+//!    lease — `c.leased_bid.take()` -> `br.recycle(bid)` (uring.rs) — then
 //!    stages and arms the response send.
-//! 5. **shard thread**, `on_send` -> `finish_send` (uring.rs:2448): on keep-alive,
+//! 5. **shard thread**, `on_send` -> `finish_send` (uring.rs): on keep-alive,
 //!    `dispatch_acc` -> `arm_recv` arms the NEXT recv — the next per-request cycle.
 //!    The next recv is armed ONLY here, AFTER step 4 recycled: that is the one-shot
 //!    serialization that keeps the single `leased_bid` cell holding at most one
@@ -41,12 +42,14 @@
 //!
 //! The lease is also recycled-exactly-once on the two OTHER shard-side edges that
 //! terminate a cycle: the submit-failed arm (`leased_bid = None` then
-//! `recycle_bid`, uring.rs:2100/2102, when the serve thread is gone at shutdown)
-//! and `close` (`leased_bid.take()` -> recycle, uring.rs:2461). All three edges run
-//! on the one shard thread and are mutually exclusive for a given lease; the single
-//! `Option::take()` is the recycle-exactly-once mechanism across them.
+//! `recycle_bid`, uring.rs, when the serve thread is gone at shutdown)
+//! and `close` (`leased_bid.take()` -> recycle, uring.rs). In the historical
+//! reactor all three edges ran on the one shard thread, so they could not race;
+//! nothing in the lease itself enforced that, and the single `Option::take()` is
+//! what would have to carry the exclusion if a later path reached the hand-back
+//! from another thread. The model races two hand-backs to hold the take to it.
 //!
-//! The safety claim (uring.rs:2073-2076 / :981-982, doc-comments, machine-checked
+//! The safety claim (uring.rs, doc-comments, machine-checked
 //! nowhere before this model): *the worker's read of the borrowed slot
 //! happens-before the shard's recycle* (carried by `worker-read -> mailbox.send
 //! (Release) -> shard try_recv (Acquire) -> recycle`; the `wake(efd)`/eventfd Read
@@ -58,13 +61,13 @@
 //!
 //! - MODELS the per-request one-shot cycle around the single `leased_bid` cell and
 //!   the buf_ring slot re-lent for the NEXT request:
-//!   (1) NO recycle-before-process — the worker reads its OWN request's bytes, never
-//!       the next request's re-lend of the same slot (a cross-request disclosure),
-//!       carried by the mailbox Release/Acquire handoff (the weakest real link;
-//!       the eventfd syscall is stronger);
-//!   (2) recycle-EXACTLY-once — the single `Option::take()` yields the lease once;
-//!   (3) buffer CONSERVATION — the lent `bid` returns to the ring (`leased_bid` ends
-//!       `None`), so the ring never bleeds buffers.
+//!   (1) NO recycle-before-process — the worker reads its OWN request's bytes,
+//!   never the next request's re-lend of the same slot (a cross-request
+//!   disclosure), carried by the mailbox Release/Acquire handoff (the weakest
+//!   real link; the eventfd syscall is stronger);
+//!   (2) recycle-EXACTLY-once — two paths race for the lease and one wins;
+//!   (3) buffer CONSERVATION — the lent `bid` returns to the ring (`leased_bid`
+//!   ends `None`), so the ring never bleeds buffers.
 //!   The LITMUS (`overlapping_recv_leaks_lease`) removes the one-shot serialization
 //!   — two concurrent deliveries into the single per-connection lease cell, what an
 //!   overlapping / multishot recv would do — and loom finds the interleaving where a
@@ -73,7 +76,7 @@
 //!   one-shot design forbids by keeping one recv in flight per connection.
 //! - DOES NOT model: the io_uring SQ/CQ rings themselves (see `ring-twin`), the
 //!   eventfd coalescing that carries the wake (see `wake-twin`), the plain-recv /
-//!   accumulation fallback (uring.rs:2139-2151, which recycles its slot immediately
+//!   accumulation fallback (uring.rs, which recycles its slot immediately
 //!   before any worker touches it — no cross-thread lease there), the prospective
 //!   multishot re-arm race (see `multishot-twin` — the deploy is one-shot), or the
 //!   `bufring.rs` tail Release/Acquire against the KERNEL (the trusted kernel-ABI
@@ -85,6 +88,7 @@
 
 use std::sync::atomic::{AtomicBool as StdBool, AtomicUsize as StdUsize, Ordering as StdOrd};
 
+use dn_borrow_recycle_model::Lease;
 use loom::cell::UnsafeCell;
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicU32, Ordering};
@@ -113,12 +117,9 @@ struct Conn {
     /// Release/Acquire is the WEAKEST ordering the std mpsc channel already provides;
     /// the eventfd syscall is strictly stronger on top.
     done: AtomicU32,
-    /// The single per-connection lease cell (`Conn.leased_bid: Option<u16>`). 0 = None,
+    /// The single per-connection lease cell (`Conn.leased_bid: Option<u16>`).
     /// nonzero = Some(bid); recycle = a single swap-to-0 (`Option::take`).
-    leased: AtomicU32,
-    /// Count of recycles performed — the conservation witness. One acquire must yield
-    /// exactly one recycle; a leak shows up as recycles < acquires.
-    recycles: AtomicU32,
+    leased: Lease,
 }
 
 /// Count of loom schedules explored, per test, for the report.
@@ -133,9 +134,10 @@ static ITERS_CYCLE: StdUsize = StdUsize::new(0);
 ///   (a) NO recycle-before-process — the worker reads REQ_N, never the REQ_N1 re-lend
 ///       (loom `UnsafeCell` access tracking makes the read and the re-lend overwrite
 ///       never concurrent; value asserted too);
-///   (b) recycle-EXACTLY-once — `leased.take()` yields `Some(BID)` exactly at the recycle;
-///   (c) CONSERVATION — `recycles == 1` and `leased` ends `None`: the lent bid returned
-///       to the ring, no cross-request leak.
+///   (b) recycle-EXACTLY-once — the response path and the teardown path race for
+///       the same lease and exactly one of them gets the buffer;
+///   (c) CONSERVATION — the lease ends empty: the lent bid returned to the ring,
+///       no cross-request leak.
 /// Green over all schedules = the one-shot per-request lease cycle is interleaving-safe
 /// for this model.
 #[test]
@@ -149,8 +151,7 @@ fn oneshot_recv_cycle_recycles_once_and_conserves() {
             // the slot is ordered before the worker starts.
             slot: UnsafeCell::new(REQ_N),
             done: AtomicU32::new(0),
-            leased: AtomicU32::new(BID), // shard ACQUIRED the lease at on_recv_br
-            recycles: AtomicU32::new(0),
+            leased: Lease::held(BID), // shard ACQUIRED the lease at on_recv_br
         });
 
         // WORKER (serve thread): read the borrowed slot for request N, then signal
@@ -173,25 +174,24 @@ fn oneshot_recv_cycle_recycles_once_and_conserves() {
         while c.done.load(Ordering::Acquire) == 0 {
             loom::thread::yield_now();
         }
-        let taken = c.leased.swap(0, Ordering::AcqRel);
+        // Two edges reach the hand-back for one cycle (finish_send and close),
+        // so race them: exactly one may take the buffer.
+        let cr = c.clone();
+        let rival = thread::spawn(move || cr.leased.take());
+        let taken = c.leased.take();
+        let rival_taken = rival.join().unwrap();
+        let recycles = usize::from(taken == Some(BID)) + usize::from(rival_taken == Some(BID));
         assert_eq!(
-            taken, BID,
-            "recycle-exactly-once: the single lease cell is taken here"
+            recycles, 1,
+            "recycle-exactly-once: the lease went to {taken:?} and {rival_taken:?}"
         );
-        c.recycles.fetch_add(1, Ordering::AcqRel);
         // The recycle republished the slot; the next one-shot recv's delivery reuses it.
         c.slot.with_mut(|p| unsafe { *p = REQ_N1 });
 
         worker.join().unwrap();
 
-        assert_eq!(
-            c.recycles.load(Ordering::Acquire),
-            1,
-            "conservation: the acquired lease is recycled exactly once (no leak, no double-recycle)"
-        );
-        assert_eq!(
-            c.leased.load(Ordering::Acquire),
-            0,
+        assert!(
+            !c.leased.is_held(),
             "the single lease cell returned to None — the bid is back in the ring"
         );
     });

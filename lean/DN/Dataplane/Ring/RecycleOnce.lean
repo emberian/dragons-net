@@ -2,11 +2,11 @@
 import DN.Dataplane.Ring.Conservation
 
 /-!
-# Recycle-exactly-once, trace form
+# At-most-once recycling, trace form
 
-`DN.Dataplane.Ring.Conservation` gives the state-invariant half of the property. This
-file gives the trace half, valid for **every** configuration (with or
-without the `nodrop` feature):
+`DN.Dataplane.Ring.Conservation` gives the state-invariant half (no loss, no
+duplication). This file gives the trace half, valid for **every** configuration
+(with or without the `nodrop` feature):
 
 * `recycle_needs_lend` — a recycle of bid `b` can only occur after the
   environment has lent `b` via a buffer-select delivery;
@@ -16,10 +16,11 @@ without the `nodrop` feature):
   re-arm boundaries, bufferless completions, overflow, close-with-in-
   flight, and stale deliveries after close included.
 
-Together with `conservation` (no-leak + no-duplication, `nodrop`) and
+Together with `conservation` (no loss + no duplication, `nodrop`) and
 `recycle_enabled` (a held lease always has its recycle move enabled),
-this is the recycle-exactly-once property: every lent buffer id is
-recycled exactly once per lease, and with `nodrop` no bid is ever lost.
+this gives at-most-once recycling with the recycle move never blocked.
+Eventual recycling is a liveness property and is not proved here: nothing
+forces the client to take the enabled move.
 
 The proof shape: define `hot s b` — the number of client-facing locations
 of `b` (held leases plus leases riding unreaped completions). A recycle
@@ -68,15 +69,13 @@ theorem hot_step_zero {cfg : Cfg} {s s' : St} {l : Lbl} {b : Bid}
       rename_i q fd bd f₁ f₂
       have hbd : bd ≠ b := fun he => hnl fd true (by rw [he])
       refine Nat.le_zero.mp (Nat.le_trans (hot_post_le ..) ?_)
-      simp [hot, Payload.bid?, hbd, List.count_append, List.count_cons,
-        List.count_singleton] at h0 ⊢
+      simp [hot, Payload.bid?, hbd, List.count_append] at h0 ⊢
       first | omega | simp_all
   | deliver_final hin hk hfree =>
       rename_i q fd bd q₁ q₂ f₁ f₂
       have hbd : bd ≠ b := fun he => hnl fd false (by rw [he])
       refine Nat.le_zero.mp (Nat.le_trans (hot_post_le ..) ?_)
-      simp [hot, Payload.bid?, hbd, List.count_append, List.count_cons,
-        List.count_singleton] at h0 ⊢
+      simp [hot, Payload.bid?, hbd, List.count_append] at h0 ⊢
       first | omega | simp_all
   | starve_more hq hk =>
       refine Nat.le_zero.mp (Nat.le_trans (hot_post_le ..) ?_)
@@ -109,7 +108,7 @@ theorem cold_recycle_needs_deliver {cfg : Cfg} {t t' : St} {b : Bid}
       | cons h _ =>
           cases h with
           | recycle hheld =>
-              simp [hot, hheld, List.count_append, List.count_cons] at h0
+              simp [hot, hheld, List.count_append] at h0
   | cons l m' ih =>
       cases tr with
       | cons h tr' =>
@@ -149,7 +148,7 @@ theorem recycle_at_most_once {cfg : Cfg} {sfin : St} {b : Bid}
       | recycle hheld =>
           refine cold_recycle_needs_deliver tr₃ ?_ fun fd mo => hno fd mo
           have hle := reachable_count_le_one ⟨m₁, tr₁⟩ b
-          simp [owned, hheld, List.count_append, List.count_cons] at hle
+          simp [owned, hheld, List.count_append] at hle
           simp [hot, List.count_append]
           omega
 

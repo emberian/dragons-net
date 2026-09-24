@@ -36,7 +36,7 @@ Use a branch and a focused PR. Follow [AGENTS.md](AGENTS.md)'s build and assuran
 rules; they also describe the expectations for human contributions. Do not edit
 the frozen migration source or require access to sibling repositories.
 
-Run `bash scripts/check.sh` for active code changes. Never run concurrent Lake
+Run `bash scripts/lint.sh` and `bash scripts/check.sh` for active code changes. Never run concurrent Lake
 builds in one checkout. Use `python3 scripts/check_models.py --loom` when changing
 concurrency models, and the [native baseline](docs/baseline.md) on Linux x86-64
 when changing emitted code, compiler/FFI boundaries or the host. Backend proof
@@ -44,7 +44,7 @@ changes use the separate [HOL lane](backend/README.md). State which checks ran,
 which did not, and why. For documentation-only changes, check links and diffs;
 do not invent test results.
 
-Add every Lean module to `DN/Audit.lean`. No `sorry`, custom axioms,
+Every module under `lean/DN` is audited automatically. No `sorry`, custom axioms,
 `native_decide`, or weakened claims to make a gate pass. A theorem with an
 impossible premise is not useful assurance: provide witnesses and review what
 the precondition actually means. Distinguish kernel proofs, bounded exploration,
@@ -61,4 +61,7 @@ and environment data, not only a digest microbenchmark.
 
 On completion, update the roadmap and inspect dependent issues. CI protects the
 tested baseline; it does not discharge the open ownership or compiler proof
-obligations recorded in the backlog.
+obligations recorded in the backlog. A pull request that edits the scripts,
+workflows, gate tests or pins is checked by the copy of them it supplies, and the
+`verify` check run says so: read that difference before trusting the result it
+produced.

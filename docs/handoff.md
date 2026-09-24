@@ -9,17 +9,19 @@ Start with the [inherited-code review and prioritized repairs](reviews/README.md
 
 1. `lean/DN/Compiler/Main.lean`, `Syntax.lean`, `Lower.lean`, `Checked.lean`, and `Abi.lean`: the actual emitted example and the supported lowering boundary.
 2. `Semantics.lean`, `Region.lean`, `Clock.lean`, and `Certificate.lean`: model execution and composition, including a certificate requiring an inhabited precondition.
-3. `ByteCopy.lean`, `StructModel.lean`, `StructEmit.lean`, `SerializeCompile.lean`, and `StageCompile.lean`: reusable compiler mechanisms. The larger `Serve*` modules are inherited HTTP workloads, not NNTP implementations.
+3. `ByteCopy.lean`, `ByteLit.lean`, `Decimal.lean`, `Div10.lean`, `NatToDec.lean`, `LowerBridge.lean` and `LowerBridgeSem.lean`: byte-addressed writes, decimal rendering, and the bridge from the lowered program to its execution.
 4. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
-5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection.
+5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection. Read [the porting risks](porting-risks.md) before reusing any of it: the ownership and lifetime decisions in that snapshot are the part that has to be redesigned.
 
 ## First milestones and acceptance criteria
+
+The criteria that bind are in the [roadmap](https://github.com/emberian/dragons-net/issues/28) and the issues it links; what each milestone below calls acceptance is what a reviewer should expect to see, and the issue is what decides.
 
 ### 1. Make the compiler boundary explicit
 
 Write down the accepted source language and the mapping from its syntax through `Lower` to the modeled Pancake semantics. Unsupported forms must fail explicitly. `LowerTests.lean` already covers nonscalar loads, unsupported calls, FFI arity, and comparison lowering.
 
-Extend `Certificate` to a useful memory-reading/writing component with concrete preconditions. Demonstrate a caller state that satisfies the contract, compose two components, and compare emitted execution with an independent reference. Review the inherited `ProofProducing` interfaces before reusing their universal well-formedness conditions; they can demand more than useful memory-dependent programs satisfy.
+Extend `Certificate` to a useful memory-reading/writing component with concrete preconditions. Demonstrate a caller state that satisfies the contract, compose two components, and compare emitted execution with an independent reference. Do not restate a precondition as a condition on every model state: such premises are contradictory, as `AssuranceChecks.lean` records.
 
 Close the printed-source/parser and model/HOL bridges before claiming verified code generation. Keep counterexamples when assumptions fail. The curated backend proof rebuild and subsequent compiler bootstrap are separate milestones; [instructions](../backend/README.md) identify the pins.
 
@@ -43,8 +45,8 @@ Add peering, authenticated access, offline bundles, and a human UI after the sto
 
 ## Working conventions
 
-`AGENTS.md` describes automated-agent expectations; the same assurance discipline applies to all contributors. Add every Lean module to `DN/Audit.lean`. Put kernel theorems and executable examples in their respective lanes. Use `scripts/check.sh` before committing and the native/Loom lanes when touching their boundaries. CI uploads logs and native artifact digests.
+`AGENTS.md` describes automated-agent expectations; the same assurance discipline applies to all contributors. Every module under `lean/DN` is picked up by the proof audit automatically. Put kernel theorems and executable examples in their respective lanes. Use `scripts/check.sh` before committing and the native/Loom lanes when touching their boundaries. CI uploads logs and native artifact digests.
 
 `migration/` preserves original source bytes. Port into active modules rather than editing that snapshot. Retain provenance and update the documentation when a reference component becomes active. Old deployment scripts are historical evidence, not instructions to run against a machine.
 
-Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. A bounded reference `poll` host now drives the generated echo kernel. The backend HOL proof lane is scaffolded but not yet rebuilt here. These are concrete next tasks, not hidden dependencies of the green baseline.
+Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. A bounded reference `poll` host now drives the generated echo kernel. The backend HOL proof lane now builds its prover and rebuilds the chain up to the compiler theorem, weekly in CI and on demand. These are concrete next tasks, not hidden dependencies of the green baseline.

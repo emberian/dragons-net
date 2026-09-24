@@ -1,0 +1,27 @@
+target-version = "py312"
+line-length = 120
+
+[lint]
+extend-select = [
+    "B", "E", "W", "I", "UP", "EXE", "PLE", "PLW", "RUF",
+    # A gate that swallows an error reports a pass it did not earn: BLE forbids catching
+    # everything, RET503 forbids falling off the end of a function that returns problems, TRY
+    # keeps exception handling from hiding its cause, and ARG catches a parameter that stopped
+    # being read. S is the security subset; PTH, ERA, PLC and FURB keep the style one way.
+    "S", "BLE", "RET", "TRY", "ARG", "PTH", "ERA", "PLC", "FURB",
+]
+ignore = [
+    # The messages here name the file and the rule that refused it, which is the point.
+    "TRY003",
+    # Every subprocess call in this repository passes a list, never a shell string. The command
+    # is either a pinned tool resolved through the bootstrap or a program the build already
+    # depends on (git, cc, python3); S602 still forbids the shell.
+    "S603", "S607",
+]
+
+[lint.per-file-ignores]
+# The tests assert, and one table of rejected paths contains a hostile absolute path on purpose.
+"tests/*" = ["S101", "S108"]
+
+[lint.isort]
+force-sort-within-sections = true

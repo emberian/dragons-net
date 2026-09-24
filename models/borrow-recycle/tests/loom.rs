@@ -1,4 +1,5 @@
-//! Gap F (`docs/engine/review/URING-REFINEMENT-SCOPE.md`): the cross-thread
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The cross-thread
 //! borrow↔recycle handoff of the mmap'd provided-buffer slice — the ONE
 //! elevated-severity reactor corner the single-threaded `Uring/*.lean` LTS
 //! cannot express and no other test covers. A use-after-recycle here is a
@@ -12,24 +13,24 @@
 //!
 //! # What the real handoff is (uring.rs / serve.rs / bufring.rs, drorb)
 //!
-//! 1. **shard thread**, `on_recv_br` (uring.rs:1756): the kernel delivered
+//! 1. **shard thread**, `on_recv_br` (uring.rs): the kernel delivered
 //!    conn A's bytes into buffer `bid`; the shard sets `conn.leased_bid =
-//!    Some(bid)` (uring.rs:1859), wraps a raw view `BorrowedReq::new(ptr, len)`
+//!    Some(bid)` (uring.rs), wraps a raw view `BorrowedReq::new(ptr, len)`
 //!    into the mmap'd `bufs` region (`bufring.rs::slice`, :119), and hands it
 //!    to the serve worker via `submit_borrowed_metered(borrowed, meter, reply)`
-//!    with `reply = ServeReply::Shard(mtx, efd, slot)` (uring.rs:1849/1869).
-//! 2. **serve worker thread** (serve.rs:1254–1281): reads the borrowed slice
+//!    with `reply = ServeReply::Shard(mtx, efd, slot)` (uring.rs).
+//! 2. **serve worker thread** (serve.rs): reads the borrowed slice
 //!    inside `serve_*_into(job.req.bytes(), …)`, builds the response, then
 //!    fires the reply: `mailbox.send(ShardDone { conn, resp })` **then**
-//!    `wake(efd)` (serve.rs:1278–1279).
-//! 3. **shard thread**, `on_wakeup` (uring.rs:881): the eventfd Read completion
+//!    `wake(efd)` (serve.rs).
+//! 3. **shard thread**, `on_wakeup` (uring.rs): the eventfd Read completion
 //!    wakes it; it drains `mrx.try_recv()` and calls `stage_response`
-//!    (uring.rs:903), which does `c.leased_bid.take()` → `br.recycle(bid)` →
-//!    `BufRing::add` (bufring.rs:136): a Release store on the ring tail that
+//!    (uring.rs), which does `c.leased_bid.take()` → `br.recycle(bid)` →
+//!    `BufRing::add` (bufring.rs): a Release store on the ring tail that
 //!    republishes the slot, after which the **kernel may re-lend and overwrite
 //!    it**.
 //!
-//! The safety claim (`uring.rs:1862`, a doc-comment, machine-checked nowhere
+//! The safety claim (`uring.rs`, a doc-comment, machine-checked nowhere
 //! before this model): *the worker's read of the slice happens-before the
 //! shard's recycle*, carried by `worker-read → mailbox.send (Release) →
 //! shard try_recv (Acquire) → recycle`. The `wake(efd)`/eventfd Read pair is a
@@ -50,7 +51,7 @@
 //!   the worker starts.
 //! - DOES NOT model: the io_uring SQ/CQ rings themselves (see `ring-twin`), the
 //!   eventfd coalescing (see `wake-twin`), the plain-recv fallback path
-//!   (uring.rs:1914, gap D), multishot re-arm (the deploy is one-shot), or the
+//!   (uring.rs), multishot re-arm (the deploy is one-shot), or the
 //!   `bufring.rs` tail Release/Acquire against the *kernel* (that pairing is the
 //!   trusted kernel-ABI floor). This is loom evidence for ONE invariant on a
 //!   faithful hand-model — NOT a proof that `uring.rs` is verified.
@@ -58,6 +59,7 @@
 
 use std::sync::atomic::{AtomicBool as StdBool, AtomicUsize as StdUsize, Ordering as StdOrd};
 
+use dn_borrow_recycle_model::Lease;
 use loom::cell::UnsafeCell;
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicU32, Ordering};
@@ -82,9 +84,8 @@ struct Handoff {
     /// `wake(efd)`. Release/Acquire is the *weakest* ordering the std mpsc channel
     /// already provides; the eventfd syscall is strictly stronger on top.
     done: AtomicU32,
-    /// The per-connection lease (`Conn.leased_bid: Option<u16>`). 0 = None,
-    /// nonzero = Some(bid); recycle-once = a single swap-to-0.
-    lease: AtomicU32,
+    /// The per-connection lease (`Conn.leased_bid: Option<u16>`).
+    lease: Lease,
 }
 
 /// Count of loom schedules explored, for the report.
@@ -97,7 +98,11 @@ static ITERS: StdUsize = StdUsize::new(0);
 ///   (a) loom's `UnsafeCell` access tracking: the worker's read and the shard's
 ///       overwrite are never concurrent (they are ordered by the `done` handoff);
 ///   (b) value: the worker always reads `GEN_A`, never the `GEN_B` re-lend;
-///   (c) recycle-once: `lease.take()` yields `Some(BID)` exactly at the recycle.
+///   (c) recycle-once: the historical reactor reached the hand-back only from
+///       the shard thread, and nothing in the buffer ring enforces that. The
+///       model therefore races two hand-backs and requires exactly one of them
+///       to get the buffer, so a future path that recycles from a second thread
+///       cannot double-return it.
 /// Green over all schedules = the borrow↔recycle handoff is interleaving-safe
 /// for this model.
 #[test]
@@ -110,7 +115,7 @@ fn borrow_recycle_is_interleaving_safe() {
             // the kernel wrote conn A's bytes into the slot.
             buf: UnsafeCell::new(GEN_A),
             done: AtomicU32::new(0),
-            lease: AtomicU32::new(BID),
+            lease: Lease::held(BID),
         });
 
         // WORKER (serve thread): read the borrowed slice, then signal completion.
@@ -132,9 +137,20 @@ fn borrow_recycle_is_interleaving_safe() {
         while h.done.load(Ordering::Acquire) == 0 {
             loom::thread::yield_now();
         }
-        // stage_response: `leased_bid.take()` → `br.recycle(bid)`. Recycle-once.
-        let taken = h.lease.swap(0, Ordering::AcqRel);
-        assert_eq!(taken, BID, "recycle-once: the lease is taken exactly here");
+        // stage_response: `leased_bid.take()` → `br.recycle(bid)`. Two paths can
+        // reach the hand-back for one connection (staging the response and
+        // tearing the connection down); `Lease::take` must give the buffer to
+        // exactly one of them.
+        let hr = h.clone();
+        let rival = thread::spawn(move || hr.lease.take());
+        let taken = h.lease.take();
+        let rival_taken = rival.join().unwrap();
+        assert_eq!(
+            usize::from(taken == Some(BID)) + usize::from(rival_taken == Some(BID)),
+            1,
+            "recycle-once: the lease went to {taken:?} and {rival_taken:?}"
+        );
+        assert!(!h.lease.is_held(), "the buffer is no longer borrowed");
         // The recycle republished the slot (bufring `add`: Release store on the
         // ring tail); the kernel re-lends and overwrites with conn B's bytes NOW.
         h.buf.with_mut(|p| unsafe { *p = GEN_B });
@@ -165,15 +181,15 @@ fn recycle_without_worker_signal_discloses() {
 
     loom::model(|| {
         let buf = Arc::new(AtomicU32::new(GEN_A));
-        let lease = Arc::new(AtomicU32::new(BID));
+        let lease = Arc::new(Lease::held(BID));
 
         // WORKER: read the borrowed slice.
         let bw = buf.clone();
         let worker = thread::spawn(move || bw.load(Ordering::Relaxed));
 
         // SHARD: recycle + kernel re-lend/overwrite — with NO wait on the worker.
-        let taken = lease.swap(0, Ordering::AcqRel);
-        assert_eq!(taken, BID);
+        let taken = lease.take();
+        assert_eq!(taken, Some(BID));
         buf.store(GEN_B, Ordering::Relaxed);
 
         let seen = worker.join().unwrap();

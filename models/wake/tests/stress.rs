@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Non-loom smoke lane: the same protocol, real threads, real condvar
 //! doorbell, big publish counts. No timeout anywhere — a missed wakeup
 //! hangs this test rather than hiding in a latency spike.
@@ -69,8 +70,11 @@ fn no_missed_wakeup_under_stress() {
     // Consumer: drain until everything published has been observed,
     // blocking through the protocol when idle. Hangs iff a wakeup is lost.
     let mut seen = 0;
+    let mut edges = 0;
     while seen < TOTAL {
-        let _ = proto.take_pending();
+        if proto.take_pending() {
+            edges += 1;
+        }
         seen = items.load(Ordering::Acquire);
         if seen >= TOTAL {
             break;
@@ -81,11 +85,16 @@ fn no_missed_wakeup_under_stress() {
     for h in handles {
         h.join().unwrap();
     }
+    if proto.take_pending() {
+        edges += 1;
+    }
 
     assert_eq!(seen, TOTAL, "every publish observed");
     let rings = proto.bell().rings.load(Ordering::Relaxed);
+    // One ring per false→true edge of `pending` at most. "At most one per
+    // publish" would hold however badly the coalescing were written.
     assert!(
-        rings <= TOTAL,
-        "wake storm: {rings} rings for {TOTAL} publishes"
+        rings <= edges,
+        "coalescing: {rings} rings for {edges} pending edges"
     );
 }

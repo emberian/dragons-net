@@ -3,15 +3,36 @@
 Read README.md, docs/handoff.md, and docs/assurance.md before extending claims.
 `dn` is the compiler/dataplane project. The adjacent `fn` directory is separate.
 
-Run `bash scripts/check.sh` for the portable baseline. Lean is pinned and uses
-only its core libraries. Set LEAN_NUM_THREADS (default 4); never start overlapping
-Lake builds in the same build directory. No Mathlib or sibling checkout is needed.
+Run `bash scripts/check.sh` for the model and host baseline and
+`bash scripts/lint.sh` for static checks (both Linux x86-64; they download or
+build pinned tools). Lean is pinned and uses only its core libraries. Set
+LEAN_NUM_THREADS (default 4); never start overlapping Lake builds in the same
+build directory. No Mathlib or sibling checkout is needed.
 
-Every lean/DN module belongs in DN/Audit.lean. The structure gate checks coverage;
-the Lean command checks transitive axioms in every DN declaration. Add named proofs for general
-facts and executable regression cases for examples. Do not introduce sorry,
-custom axioms, native_decide, build-time IO, or weaken a theorem to make it green.
+Every module under lean/DN is audited by scripts/Audit.lean and re-checked by
+leanchecker and by nanoda, an independent kernel. Code from lean/ must not be
+able to act on the system while it is built: before the build,
+scripts/SourceGate.lean parses each module with Lean and checks every command
+before it is elaborated. It accepts only imports of DN modules and
+Lean.Data.Json, fixed sets of commands, attributes and options, and syntax
+definitions in files pinned by hash in scripts/check_structure.py; it rejects
+unsafe code and terms that run code from the module, including tactic
+configuration values. The gate is a tripwire, not a sandbox. Add named proofs
+for general facts and executable regression cases for examples. Do not introduce
+sorry, custom axioms, native_decide, build-time IO, or weaken a theorem to make
+it green.
 An inhabited precondition still needs review for semantic adequacy.
+
+A check earns trust by failing. Before a new gate, test or lane is relied on, break the
+thing it guards and watch it go red; a check nobody has seen fail is a claim. The same
+holds for a finding: it is not accepted without a test that fails on the defect and passes
+without it. When a generated test finds nothing, suspect the generator before the code —
+counts just past a boundary, empty inputs and repeats have to be produced deliberately,
+because a uniform generator almost never reaches them.
+
+The emitted sources are pinned in tests/golden. If a change to the emitter is
+intended, regenerate them with `.lake/build/bin/dn-compiler emit-region`,
+`emit-echo` and `emit-render`, and say in the commit why the output changed.
 
 Read docs/baseline.md before modifying the maintained compiler subset.
 Read docs/reviews/README.md before reusing inherited compiler or reactor code;
@@ -27,5 +48,6 @@ bytes and hashes; port changes into active modules. Never run its old deployment
 scripts against a user's machines. Source projects are read-only ancestors.
 
 Do not commit `.deps`, `.lake`, target directories, credentials, or generated
-binaries. Keep attribution/provenance when moving source. Prefer small coherent
-commits on main; do not rewrite existing history. Do not contact contributors.
+binaries. Keep attribution/provenance when moving source. Work on a branch and open a
+focused pull request (see CONTRIBUTING.md); keep commits small and coherent and
+do not rewrite published history. Do not contact contributors.

@@ -1,79 +1,170 @@
 name: checks
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 defaults:
   run:
     shell: bash
 
+# Only superseded pull request runs are cancelled; every push to main is checked.
 concurrency:
-  group: checks-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
+env:
+  PYTHONSAFEPATH: "1"
+  LEAN_NUM_THREADS: "4"
+
+# One run, jobs in sequence. The build job runs code from the change without network;
+# the proof checks run on a fresh machine before any built code is executed.
 jobs:
-  model-host-native:
+  lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    env:
-      LEAN_NUM_THREADS: 4
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Verify pipeline failures cannot be hidden by logging
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check that failing pipelines fail the step
         run: |
           if (exit 23) | tee /dev/null; then
-            echo 'CI shell failed to propagate a failing pipeline' >&2
+            echo 'the shell does not propagate a failing pipeline' >&2
             exit 1
           fi
-      - name: Install pinned Lean manager
+      - name: Lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/lint.sh
+
+  build:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Lean manager
         run: |
           python3 scripts/bootstrap_tool.py elan
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: Model, regression, gate, and host checks
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - name: Source gate and build without network
         run: |
           mkdir -p build/evidence
-          bash scripts/check.sh 2>&1 | tee build/evidence/check.log
+          # No network, no supplementary groups (docker) and no way back to root through sudo.
+          sudo --preserve-env unshare --net -- \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs -- \
+            env PATH="$PATH" HOME="$HOME" bash -c \
+            'if curl --silent --max-time 5 https://github.com >/dev/null || sudo -n true 2>/dev/null; then exit 99; fi
+             bash scripts/check.sh build' \
+            2>&1 | tee build/evidence/build.log
+      - name: Pack the build
+        run: python3 scripts/build_archive.py pack build/lean-build.tar
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lean-build
+          path: build/lean-build.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: build-log
+          if-no-files-found: error
+          path: build/evidence/
+
+  proofs:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Lean manager
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        run: python3 scripts/build_archive.py unpack build/lean-build.tar
+      - name: Kernel re-checks and proof audit
+        run: |
+          mkdir -p build/evidence
+          bash scripts/check.sh proofs 2>&1 | tee build/evidence/proofs.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: proofs-log
+          if-no-files-found: error
+          path: build/evidence/
+
+  test:
+    needs: proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Lean manager
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        run: python3 scripts/build_archive.py unpack build/lean-build.tar
+      - name: Gate tests, Rust crates and models
+        run: |
+          mkdir -p build/evidence
+          bash scripts/check.sh tests 2>&1 | tee build/evidence/tests.log
       - name: Native compiler artifact and execution
         run: |
           cake=$(python3 scripts/bootstrap_tool.py cake)
-          python3 scripts/native_check.py --cake "$cake" | tee build/evidence/native.log
-          python3 scripts/native_baseline.py --cake "$cake" | tee build/evidence/baseline.log
-      - name: Upload evidence
+          python3 scripts/native_check.py --cake "$cake" 2>&1 | tee build/evidence/native.log
+          python3 scripts/native_baseline.py --cake "$cake" 2>&1 | tee build/evidence/baseline.log
+      - name: Bounded interleaving exploration
+        run: python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: model-host-native-evidence
+          name: test-evidence
+          if-no-files-found: error
           path: |
             build/evidence/
             build/native/report.json
             build/native/region.pnk
             build/native/region.S
+            build/native/region-check
             build/baseline/report.json
             build/baseline/baseline.json
+            build/baseline/probe_driver.c
             build/baseline/*.pnk
             build/baseline/*.S
-
-  concurrency-models:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Verify pipeline failures cannot be hidden by logging
-        run: |
-          if (exit 23) | tee /dev/null; then
-            echo 'CI shell failed to propagate a failing pipeline' >&2
-            exit 1
-          fi
-      - name: Bounded interleaving exploration
-        run: |
-          mkdir -p build/evidence
-          python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: concurrency-evidence
-          path: build/evidence/
+            build/baseline/dn-echo

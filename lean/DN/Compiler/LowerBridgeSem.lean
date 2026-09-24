@@ -1,177 +1,23 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+import DN.Compiler.Bytes
+import DN.Compiler.LowerBridge
+import DN.Compiler.Region
+
+/-!
 # DN.Compiler.LowerBridgeSem
 
-Retained compiler/dataplane development and regression examples.
-Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+Running the lowered store-list model: the bytes land at their byte addresses and
+every other byte address is preserved.
 -/
 
-import DN.Compiler.LowerBridge
-
 namespace DN.Compiler.LowerBridgeSem
-open DN.Compiler
-open DN.Compiler.LowerBridge (addrModel storesModel)
-open DN.Compiler.ServeEmit (storesInto)
+open DN.Compiler DN.Compiler.Bytes DN.Compiler.Region
+open DN.Compiler.LowerBridge (addrModel storesModel storesInto)
 open DN.Compiler.Lower (lowerStmtsFold)
 
 variable {σ : Type}
 
 
-
-theorem maskLsbD (n k : Nat) (hn : n ≤ 64) (hk : k < 64) :
-    ((1#64 <<< n) - 1#64).getLsbD k = decide (k < n) := by
-  have hmaskEq : (1#64 <<< n) - 1#64 = BitVec.setWidth 64 (BitVec.allOnes n) := by
-    apply BitVec.eq_of_toNat_eq
-    rw [BitVec.toNat_sub, BitVec.toNat_shiftLeft, BitVec.toNat_setWidth, BitVec.toNat_allOnes]
-    simp only [BitVec.toNat_ofNat]
-    have h1 : (1:Nat) % 2^64 = 1 := Nat.mod_eq_of_lt (Nat.one_lt_two_pow (by omega))
-    have hlo : (1:Nat) ≤ 2^n := Nat.one_le_two_pow
-    have hpow : (2:Nat)^n ≤ 2^64 := Nat.pow_le_pow_right (by omega) hn
-    rw [h1, Nat.one_shiftLeft]
-    rcases Nat.lt_or_ge n 64 with h | h
-    · have hlt : (2:Nat)^n < 2^64 := Nat.pow_lt_pow_right (by omega) h
-      rw [Nat.mod_eq_of_lt hlt]; omega
-    · have : n = 64 := by omega
-      subst this; omega
-  rw [hmaskEq, BitVec.getLsbD_setWidth, BitVec.getLsbD_allOnes]
-  simp [hk]
-
-/-- getLsbD of `wordSliceAlt`: keep bits `[lo, hi)` of `w`. -/
-theorem wordSliceAlt_getLsbD (hi lo : Nat) (w : Word) (j : Nat)
-    (hhi : hi ≤ 64) (hlo : lo ≤ 64) (hj : j < 64) :
-    (wordSliceAlt hi lo w).getLsbD j
-      = (w.getLsbD j && decide (j < hi) && !decide (j < lo)) := by
-  unfold wordSliceAlt
-  rw [BitVec.getLsbD_and, BitVec.getLsbD_and, BitVec.getLsbD_not,
-      maskLsbD hi j hhi hj, maskLsbD lo j hlo hj]
-  simp only [hj, decide_true, Bool.true_and, Bool.and_assoc]
-
-/-- Byte at word-bit position `i`. -/
-def getByteAt (i : Nat) (w : Word) : BitVec 8 := (w >>> i).setWidth 8
-
-/-- Overwrite the 8 bits at word-bit position `i` with `b`. -/
-def setByteAt (i : Nat) (b : BitVec 8) (w : Word) : Word :=
-  wordSliceAlt 64 (i + 8) w ||| ((b.setWidth 64) <<< i) ||| wordSliceAlt i 0 w
-
-/-- getLsbD of a byte read: bit `k` of the byte = bit `i+k` of the word. -/
-theorem getByteAt_getLsbD (i k : Nat) (hi : i + 8 ≤ 64) (hk : k < 8) (w : Word) :
-    (getByteAt i w).getLsbD k = w.getLsbD (i + k) := by
-  unfold getByteAt
-  rw [BitVec.getLsbD_setWidth, BitVec.getLsbD_ushiftRight]
-  rw [Nat.add_comm i k]
-  simp [hk]
-
-
-
-
-theorem getByteAt_setByteAt_same (i : Nat) (hi : i + 8 ≤ 64) (b : BitVec 8) (w : Word) :
-    getByteAt i (setByteAt i b w) = b := by
-  rw [BitVec.eq_of_getLsbD_eq_iff]
-  intro k hk
-  rw [getByteAt_getLsbD i k hi hk]
-  unfold setByteAt
-  rw [BitVec.getLsbD_or, BitVec.getLsbD_or,
-      wordSliceAlt_getLsbD 64 (i+8) w (i+k) (by omega) (by omega) (by omega),
-      wordSliceAlt_getLsbD i 0 w (i+k) (by omega) (by omega) (by omega),
-      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_setWidth]
-  have e2 : (i + k < i + 8) := by omega
-  have e1 : ¬ (i + k < i) := by omega
-  have e3 : (i + k < 64) := by omega
-  have e4 : (k < 64) := by omega
-  have e5 : i + k - i = k := by omega
-  simp [e1, e2, e3, e4, e5]
-
-theorem getByteAt_setByteAt_ne (i i' : Nat) (hi : i + 8 ≤ 64) (hi' : i' + 8 ≤ 64)
-    (hi8 : i % 8 = 0) (hi'8 : i' % 8 = 0) (hne : i ≠ i') (b : BitVec 8) (w : Word) :
-    getByteAt i (setByteAt i' b w) = getByteAt i w := by
-  rw [BitVec.eq_of_getLsbD_eq_iff]
-  intro k hk
-  rw [getByteAt_getLsbD i k hi hk, getByteAt_getLsbD i k hi hk]
-  unfold setByteAt
-  rw [BitVec.getLsbD_or, BitVec.getLsbD_or,
-      wordSliceAlt_getLsbD 64 (i'+8) w (i+k) (by omega) (by omega) (by omega),
-      wordSliceAlt_getLsbD i' 0 w (i+k) (by omega) (by omega) (by omega),
-      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_setWidth]
-  -- i, i' are distinct multiples of 8 ⇒ |i - i'| ≥ 8
-  rcases Nat.lt_or_gt_of_ne hne with h | h
-  · -- i < i' ⇒ i + 8 ≤ i' ⇒ i+k < i'
-    have e1 : (i + k < i' + 8) := by omega
-    have e2 : (i + k < i') := by omega
-    simp [e1, e2]
-  · -- i > i' ⇒ i ≥ i' + 8 ⇒ i+k ≥ i'+8
-    have e1 : ¬ (i + k < i' + 8) := by omega
-    have e2 : ¬ (i + k < i') := by omega
-    have e3 : (i + k < 64) := by omega
-    have eb : b.getLsbD (i + k - i') = false := BitVec.getLsbD_of_ge b (i + k - i') (by omega)
-    simp [e1, e2, e3, eb]
-
-
-
-
-/-- `getLsbD` of any `Word` whose `toNat` is `7` (the low-3-bit mask), form-agnostic
-so it matches both the `7#64` and `(7 : Word)` numeral spellings. -/
-theorem getLsbD_toNat7 (w7 : Word) (h : w7.toNat = 7) (j : Nat) :
-    w7.getLsbD j = decide (j < 3) := by
-  show w7.toNat.testBit j = decide (j < 3)
-  rw [h, show (7:Nat) = 2^3 - 1 from rfl, Nat.testBit_two_pow_sub_one]
-
-theorem byteIndex_lt (a : Word) (be : Bool) : byteIndex a be + 8 ≤ 64 := by
-  have h : a.toNat % 8 < 8 := Nat.mod_lt _ (by omega)
-  cases be <;> simp only [byteIndex, Bool.false_eq_true, if_false, if_true] <;> omega
-
-theorem byteIndex_mod8 (a : Word) (be : Bool) : byteIndex a be % 8 = 0 := by
-  cases be <;> simp only [byteIndex, Bool.false_eq_true, if_false, if_true] <;> omega
-
-theorem mod8_eq_and (a : Word) : a.toNat % 8 = (a &&& 7#64).toNat := by
-  rw [BitVec.toNat_and]
-  have h7 : (7#64).toNat = 2^3 - 1 := by decide
-  rw [h7, Nat.and_two_pow_sub_one_eq_mod]
-
-theorem byteAlign_byteIndex_inj (a a' : Word) (be : Bool)
-    (hal : byteAlign a = byteAlign a') (hidx : byteIndex a be = byteIndex a' be) : a = a' := by
-  have hlow : a &&& 7#64 = a' &&& 7#64 := by
-    apply BitVec.eq_of_toNat_eq
-    rw [← mod8_eq_and, ← mod8_eq_and]
-    have ha : a.toNat % 8 < 8 := Nat.mod_lt _ (by omega)
-    have ha' : a'.toNat % 8 < 8 := Nat.mod_lt _ (by omega)
-    cases be <;>
-      simp only [byteIndex, Bool.false_eq_true, if_false, if_true] at hidx <;> omega
-  unfold byteAlign at hal
-  rw [BitVec.eq_of_getLsbD_eq_iff]
-  intro j hj
-  by_cases hj3 : j < 3
-  · have hsev : (7#64).getLsbD j = true := by
-      rw [getLsbD_toNat7 (7#64) (by decide) j]; simp [hj3]
-    have hb := congrArg (fun x => x.getLsbD j) hlow
-    simp only [BitVec.getLsbD_and, hsev, Bool.and_true] at hb
-    exact hb
-  · have hnot : (~~~(7 : Word)).getLsbD j = true := by
-      rw [BitVec.getLsbD_not, getLsbD_toNat7 (7 : Word) (by decide) j]; simp [hj, hj3]
-    have hb := congrArg (fun x => x.getLsbD j) hal
-    simp only [BitVec.getLsbD_and, hnot, Bool.and_true] at hb
-    exact hb
-
-theorem byteIndex_ne (a a' : Word) (be : Bool)
-    (hal : byteAlign a = byteAlign a') (hne : a ≠ a') :
-    byteIndex a be ≠ byteIndex a' be :=
-  fun hidx => hne (byteAlign_byteIndex_inj a a' be hal hidx)
-
-
-
-
-/-! ## getByte/setByte bridge (from the byte-slice At-lemmas) -/
-
-theorem getByte_setByte_same (a : Word) (b : BitVec 8) (w : Word) (be : Bool) :
-    getByte a (setByte a b w be) be = b :=
-  getByteAt_setByteAt_same (byteIndex a be) (byteIndex_lt a be) b w
-
-theorem getByte_setByte_ne (a a' : Word) (b : BitVec 8) (w : Word) (be : Bool)
-    (hal : byteAlign a = byteAlign a') (hne : a ≠ a') :
-    getByte a (setByte a' b w be) be = getByte a w be :=
-  getByteAt_setByteAt_ne (byteIndex a be) (byteIndex a' be)
-    (byteIndex_lt a be) (byteIndex_lt a' be) (byteIndex_mod8 a be) (byteIndex_mod8 a' be)
-    (byteIndex_ne a a' be hal hne) b w
 
 /-! ## eval of the emitted store address -/
 
@@ -192,10 +38,9 @@ theorem eval_addrModel {σ : Type} (s : PancakeState σ) (dst : String) (base : 
 /-! ## the byte-store post-state and its read-back -/
 
 
-/-- The memory after one `st8 adr := bt`: overwrite byte at `adr`, keep the rest. -/
+/-- The state after one `st8 adr := bt`: the memory of `putByte`, everything else kept. -/
 def afterStore (s : PancakeState σ) (adr : Word) (bt : BitVec 8) : PancakeState σ :=
-  { s with memory := fun k =>
-      if k = byteAlign adr then setByte adr bt (s.memory (byteAlign adr)) s.be else s.memory k }
+  { s with memory := putByte s.memory s.be adr bt }
 
 /-- Running one emitted byte store from a state whose `dst` holds `base` lands `afterStore`. -/
 theorem run_headStore (o : Oracle σ) (s : PancakeState σ) (dst : String) (base : Word)
@@ -208,9 +53,8 @@ theorem run_headStore (o : Oracle σ) (s : PancakeState σ) (dst : String) (base
   have hs : eval s (.const (BitVec.ofNat 64 b)) = some (BitVec.ofNat 64 b) := rfl
   have hm : memStoreByte s.memory s.memaddrs s.be (base + BitVec.ofNat 64 k)
               ((BitVec.ofNat 64 b).setWidth 8)
-            = some (afterStore s (base + BitVec.ofNat 64 k) ((BitVec.ofNat 64 b).setWidth 8)).memory := by
-    unfold memStoreByte afterStore
-    rw [if_pos haddr]
+            = some (afterStore s (base + BitVec.ofNat 64 k) ((BitVec.ofNat 64 b).setWidth 8)).memory :=
+    memStore_eq s.memory s.memaddrs s.be _ _ haddr
   rw [evaluate_storeByte o s hd hs hm]
   rfl
 
@@ -218,25 +62,14 @@ theorem run_headStore (o : Oracle σ) (s : PancakeState σ) (dst : String) (base
 
 theorem load_afterStore_same (s : PancakeState σ) (adr : Word) (bt : BitVec 8)
     (haddr : s.memaddrs (byteAlign adr) = true) :
-    memLoadByte (afterStore s adr bt).memory s.memaddrs s.be adr = some bt := by
-  unfold memLoadByte afterStore
-  rw [if_pos haddr]
-  simp only [if_true]
-  rw [getByte_setByte_same]
+    memLoadByte (afterStore s adr bt).memory s.memaddrs s.be adr = some bt :=
+  load_putByte_same s.memory s.memaddrs s.be adr bt haddr
 
 theorem load_afterStore_ne (s : PancakeState σ) (adr adr' : Word) (bt : BitVec 8)
     (hne : adr' ≠ adr) :
     memLoadByte (afterStore s adr bt).memory s.memaddrs s.be adr'
-      = memLoadByte s.memory s.memaddrs s.be adr' := by
-  unfold memLoadByte afterStore
-  by_cases hcell : byteAlign adr' = byteAlign adr
-  · rw [hcell]
-    simp only [if_true]
-    by_cases hdm : s.memaddrs (byteAlign adr) = true
-    · rw [if_pos hdm, if_pos hdm]
-      rw [getByte_setByte_ne adr' adr bt _ s.be hcell hne]
-    · rw [if_neg hdm, if_neg hdm]
-  · simp only [if_neg hcell]
+      = memLoadByte s.memory s.memaddrs s.be adr' :=
+  load_putByte_diff s.memory s.memaddrs s.be adr bt adr' hne
 
 
 
@@ -246,11 +79,7 @@ theorem sem_seq_none' (o : Oracle σ) {c1 c2 : PancakeProg} {s s1 s' : PancakeSt
     (h1 : PancakeSem o c1 s = (none, s1)) (hclk : s1.clock = s.clock)
     (h2 : PancakeSem o c2 s1 = (none, s')) :
     PancakeSem o (.seq c1 c2) s = (none, s') := by
-  have hcl : ({ s1 with clock := min s.clock s1.clock } : PancakeState σ) = s1 := by
-    rw [hclk, Nat.min_self, ← hclk]
-  rw [PancakeSem]
-  simp only [h1, clampClock]
-  rw [hcl]; exact h2
+  rw [seq_step o h1 (Nat.le_of_eq hclk)]; exact h2
 
 @[simp] theorem afterStore_locals (s : PancakeState σ) (a : Word) (bt : BitVec 8) :
     (afterStore s a bt).locals = s.locals := rfl
@@ -352,7 +181,7 @@ theorem storesRun (o : Oracle σ) (dst : String) (base : Word) :
 
 /-- **Byte-addressed** region contents: reading byte `i` at consecutive byte address
 `base + i` via the faithful `mem_load_byte` returns byte `bs[i]` (its low-8 image).
-The byte-store analogue of the word-addressed `MemBytesAt`. -/
+The `Nat` spelling of `Bytes.memBytesAt`. -/
 def MemBytesAtB (m : Word → Word) (dm : Word → Bool) (be : Bool)
     (base : Word) (bs : List Nat) : Prop :=
   ∀ i, i < bs.length →
@@ -362,7 +191,7 @@ def MemBytesAtB (m : Word → Word) (dm : Word → Bool) (be : Bool)
 /-- **THE BYTE-STORE LANDING LEMMA.** Running the model `storeByte` program that the
 emitted response head lowers to lands the byte string `bs` byte-addressed at `base`:
 every byte reads back at its own address, even where consecutive bytes pack into one
-64-bit word (the sub-word case `MemBytesAt`/`storeLit` cannot express). -/
+64-bit word (a word-slot frame cannot express that). -/
 theorem storesModel_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : List Nat)
     (s : PancakeState σ)
     (hbase : s.locals dst = some base)
@@ -393,12 +222,12 @@ theorem storesModel_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : Li
   have hh := hland (i, bs[i]!) hmem
   simpa using hh
 
-/-- **INTERNAL AST-TO-MODEL HEAD CORRECTNESS.** The per-byte `st8` AST
+/-- **INTERNAL AST-TO-MODEL CORRECTNESS.** The per-byte `st8` AST
 `storesInto dst bs` lowers through the internal `lowerStmtsFold` function to a
 named model program `P`, and running `P` lands `bs` byte-addressed. This theorem
 does not mention pretty-printed bytes or the CakeML parser and therefore does not
 close the printed-source/parser bridge. See `docs/reviews/compiler-assurance.md`. -/
-theorem serve_head_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : List Nat)
+theorem storesInto_landsB (o : Oracle σ) (dst : String) (base : Word) (bs : List Nat)
     (s : PancakeState σ)
     (hbase : s.locals dst = some base)
     (haddr : ∀ i, i < bs.length →

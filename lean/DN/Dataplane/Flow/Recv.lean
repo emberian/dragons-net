@@ -1,14 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-/-
+
+/-!
 # DN.Dataplane.Flow.Recv
 
-Retained compiler/dataplane development and regression examples.
 Source provenance is in docs/provenance.json; assurance boundaries are in
-docs/assurance.md. HTTP examples are compiler workloads, not dn server features.
+docs/assurance.md.
 -/
 
-
 namespace DN.Dataplane.Flow
+
+universe u
+variable {α : Type u}
 
 /-- Per-socket receive arming in an unbounded sequential stream model. -/
 inductive RecvArming where
@@ -110,21 +112,30 @@ theorem RecvConn.parked_deliver_noop (s : RecvConn α)
     s.step (.deliver n) = s := by
   simp [step, hp]
 
-/-- **Parking loses zero bytes in this unbounded model.** Bytes arriving on a
-parked stream land in the model buffer verbatim — appended in order, nothing
-delivered, nothing dropped. This theorem does not establish bounded native
-buffering or TCP-window behavior. -/
-theorem RecvConn.parked_arrive_accumulates (s : RecvConn α)
+/-- **Arrival appends, whatever the arming state.** Bytes land in the model
+buffer verbatim — appended in order, nothing delivered, nothing dropped — on a
+parked stream as on an armed one. This model is unbounded: the theorem says
+nothing about native buffering or TCP-window behaviour. -/
+theorem RecvConn.arrive_accumulates (s : RecvConn α)
     (data : List α) :
     (s.step (.arrive data)).kernelBuf = s.kernelBuf ++ data ∧
     (s.step (.arrive data)).delivered = s.delivered := by
   simp [step]
 
-/-- **Delivery order.** The delivered stream is always a prefix of the
-arrival stream: no reorder, no invention, across any park/resume pattern. -/
+/-- **Delivery order.** The conservation invariant read as a prefix property:
+what has not been delivered is exactly what is still buffered. It holds in every
+reachable state because every event preserves the invariant (`step_inv`). -/
 theorem RecvConn.delivered_prefix (s : RecvConn α) (h : s.Inv) :
     ∃ rest, s.delivered ++ rest = s.arrived :=
   ⟨s.kernelBuf, h⟩
+
+/-- The same for any trace from a fresh connection: whatever the park/resume
+pattern, what has been delivered is a prefix of what arrived. The caller
+supplies no invariant — `run_init_inv` establishes it. -/
+theorem RecvConn.delivered_prefix_run (es : List (RecvEv α)) :
+    ∃ rest, ((RecvConn.init : RecvConn α).run es).delivered ++ rest
+      = ((RecvConn.init : RecvConn α).run es).arrived :=
+  delivered_prefix _ (run_init_inv es)
 
 /-- **Resume drains exactly the parked bytes.** After a resume, a delivery
 of at least the buffered length hands the handler precisely the bytes that
@@ -142,5 +153,15 @@ theorem RecvConn.park_idem (s : RecvConn α) :
 
 theorem RecvConn.resume_idem (s : RecvConn α) :
     (s.step .resume).step .resume = s.step .resume := rfl
+
+-- A run that parks, takes two arrivals and resumes: the trace forms above are
+-- about a `run` that really moves the state.
+def regression_455 : Bool := decide (((RecvConn.init : RecvConn Nat).run
+    [.park, .arrive [1, 2], .arrive [3], .resume, .deliver 3]).delivered == [1, 2, 3]
+  )
+def regression_456 : Bool := decide (((RecvConn.init : RecvConn Nat).run
+    [.park, .arrive [1, 2]]).delivered == []
+  && ((RecvConn.init : RecvConn Nat).run [.park, .arrive [1, 2]]).arrived == [1, 2]
+  )
 
 end DN.Dataplane.Flow

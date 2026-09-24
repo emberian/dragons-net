@@ -17,7 +17,90 @@
         "ddd79234be573d9499977733577f9804fc213fa3",
         "c3f5254a32592ac892600674993302970c8afae2"
       ],
-      "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP."
+      "description": "Primitive DCE preservation and shared-memory non-elimination counterexamples. No Div/Mod WIP.",
+      "source_commits_note": "Private working commits; not resolvable in the public CakeML repository. The patch itself is pinned by sha256 above."
+    }
+  ],
+  "semantics_sources": [
+    {
+      "component": "cakeml",
+      "path": "semantics/ffi/ffiScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "91ba9834ba7661c0278d7fcf88a22bca174c088a8eac62a72d6d452e4e39229d"
+    },
+    {
+      "component": "cakeml",
+      "path": "semantics/ffi/ffiScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "91ba9834ba7661c0278d7fcf88a22bca174c088a8eac62a72d6d452e4e39229d"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/semantics/panSemScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "a1722d117d066aba4d4b39003fc3c3880df7a3f764a06c2f4c1724e0e8b11a3a"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/semantics/panSemScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "68ab92073b715ecff38fc7f21fe63214d6401d24bb84b5b1e3d863e8bee67865"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/panLangScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "a6c6a1e18059597e7f3766b13a32f46cbbc45759bc239786577207abc22be760"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/panLangScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "743709b9cf3f34decbe2de9a3f9338a02a5e287941bce3daab8501b35b3885d7"
+    },
+    {
+      "component": "cakeml",
+      "path": "misc/miscScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "a2cf2e076954319bdaf1627bc50994c62d009fcba07cd83eddd62af4f8a23286"
+    },
+    {
+      "component": "cakeml",
+      "path": "compiler/backend/wordLangScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "3f5e3faede32583b254e7758c3cae331da3b3cffea283109b76584b70783cb3e"
+    },
+    {
+      "component": "cakeml",
+      "path": "compiler/encoders/asm/asmScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "d445b1dcfe679c20f1429dfec4453b374d525c073abf636cdf9d631593638686"
+    },
+    {
+      "component": "hol",
+      "path": "src/n-bit/byteScript.sml",
+      "revision": "a9846ebe221d7c6617188a6bf66f30d5d8136b84",
+      "sha256": "46706f986e2cfe9516a133ea90911da8ec57bab923cb9d4339903b6c00f85c3d"
+    },
+    {
+      "component": "hol",
+      "path": "src/n-bit/alignmentScript.sml",
+      "revision": "a9846ebe221d7c6617188a6bf66f30d5d8136b84",
+      "sha256": "2a60c8a1873beaee33de7b3eed4fbdf8023f42b44f14d9386f936f5685fad92c"
+    }
+  ],
+  "lexer_sources": [
+    {
+      "component": "cakeml",
+      "path": "pancake/parser/panLexerScript.sml",
+      "revision": "e8eca63affd1653105ca4b9cc2f5ca87a01cd0af",
+      "sha256": "8c94848f936fa43ab6358a94ab866ef3b6e6928c0714f992a1bb44bb853179d8"
+    },
+    {
+      "component": "cakeml",
+      "path": "pancake/parser/panLexerScript.sml",
+      "revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+      "sha256": "32ed840c5ae20b2ac1906f155800a46bc4894e8913a6e44090c254b8d21896d6"
     }
   ]
 }
