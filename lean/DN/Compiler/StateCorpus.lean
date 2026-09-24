@@ -263,6 +263,29 @@ def corpus : List Case :=
         (.ret (.loadWord (.const (word 0)))),
       locals := [], memory := [(word 0, packed)], memaddrs := dom, be := true, clock := 4,
       baseAddr := word 0, answers := [] }
+  , { name := "copy-overlap-forward",
+      -- The copy kernel walks forward, so a destination above the source reads bytes it has
+      -- already written. That is not undefined; it is this state, and the independent
+      -- implementation has to agree about it byte for byte.
+      prog := .seq (.dec "i" (.const (word 0))
+        (.while_ (.cmp .less (.var "i") (.const (word 3)))
+          (.seq (.storeByte (.op .add (.const (word 2)) (.var "i"))
+                  (.loadByte (.op .add (.const (word 0)) (.var "i"))))
+            (.assign "i" (.op .add (.var "i") (.const (word 1)))))))
+        (.ret (.loadWord (.const (word 0)))),
+      locals := [], memory := [(word 0, packed)], memaddrs := dom, be := false, clock := 12,
+      baseAddr := word 0, answers := [] }
+  , { name := "copy-overlap-backward",
+      -- The other direction: a destination below the source copies cleanly, which is the case
+      -- the theorem is stated for, and the two implementations have to agree there as well.
+      prog := .seq (.dec "i" (.const (word 0))
+        (.while_ (.cmp .less (.var "i") (.const (word 3)))
+          (.seq (.storeByte (.op .add (.const (word 0)) (.var "i"))
+                  (.loadByte (.op .add (.const (word 2)) (.var "i"))))
+            (.assign "i" (.op .add (.var "i") (.const (word 1)))))))
+        (.ret (.loadWord (.const (word 0)))),
+      locals := [], memory := [(word 0, packed)], memaddrs := dom, be := false, clock := 12,
+      baseAddr := word 0, answers := [] }
   , { name := "timeout-empties-locals",
       prog := .while_ (.const (word 1)) .skip, locals := [("x", word 5)],
       memory := [], memaddrs := dom, be := false, clock := 0, baseAddr := word 0, answers := [] }
