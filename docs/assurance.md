@@ -41,7 +41,10 @@ the modelled behaviour: it takes only a literal distance below 64.
 (`pan_to_target_compile_semantics`) is stated for the `main` entry only. Every native lane here
 calls `export` functions from C after `cml_main` returns, and that re-entry path is not covered by
 the upstream theorem. Whichever way this is closed — a main loop that talks to the host through the
-FFI, or an extension of the upstream proof — no end-to-end statement holds before it is.
+FFI, or an extension of the upstream proof — no end-to-end statement holds before it is. The
+[decision](decisions/0002-entry-and-memory.md) is the main loop: the server runs inside `main`
+and fetches events in batches through external calls. The exported kernels stay as tests outside
+the theorem, and this item stays open until the server is built that way.
 8. **Addresses the theorem admits.** The same theorem fixes the memory domain to the CakeML heap
 (`s.memaddrs = addresses base (heap_len - globals_size)`). A load or store through a pointer the C
 host owns — the result slot, the echo buffers, the control and output regions — is outside that
@@ -49,7 +52,14 @@ domain, where the semantics gives `Error`, so the theorem's premise about the ru
 false. Either those buffers live inside the heap the compiler knows about, or they are reached
 through the shared-memory operations that have their own domain, or the upstream proof is extended.
 The ABI adapter in item 5 states the caller's obligations; this is the one that decides whether
-the chain says anything at all.
+the chain says anything at all. The [decision](decisions/0002-entry-and-memory.md) puts the
+buffers in the heap: the host fills and drains them only inside the external call that names
+them, and checks that every array it is given lies there. Shared memory is kept for when a copy
+has to go, as with asynchronous completions. The same theorem also fixes the first five words of
+the heap — the addresses of the compiled bitmaps and of the code buffer — which the start-up code
+CakeML emits writes for an ML program and not for a Pancake one. Only the hosts of the entry benchmark
+(`scripts/entry_bench.py`) write them, through `native/cake_header.c`, and check them before the
+program's first external call; for every other run here the premise is false.
 9. **Protocol and persistence.** NNTP semantics, article parsing, durable acceptance, and crash recovery are not implemented. The CRLF theorems concern a delimiter counter proven equal to its specification, not a bounded parser: no line boundaries, octet limit, or dot-stuffing.
 
 The inherited HTTP workloads, whose certificates rested on premises no state satisfies, were removed; `AssuranceChecks.lean` keeps the theorems that record why such universal bound-local and memory-domain premises are contradictory. `Certificate` requires an inhabited precondition. Fuel/clock bounds describe model execution, not elapsed CPU time.

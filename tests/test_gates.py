@@ -36,6 +36,7 @@ structure = script("check_structure")
 build_archive = script("build_archive")
 native_baseline = script("native_baseline")
 gen_keywords = script("gen_keywords")
+entry_bench = script("entry_bench")
 upstream_sources = script("check_upstream_sources")
 bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
@@ -1858,6 +1859,37 @@ class Pipeline(unittest.TestCase):
                 change(copy)
                 with self.assertRaisesRegex(RuntimeError, message):
                     native_baseline.reply_cases(copy)
+
+    def test_entry_decision_quotes_its_measurements(self) -> None:
+        """The table in decision 0002 is the kept run, not numbers typed in."""
+        report = json.loads((ROOT / "docs/decisions/0002-measurements.json").read_text())
+        text = " ".join((ROOT / "docs/decisions/0002-entry-and-memory.md").read_text().split())
+        self.assertEqual(report["status"], "measured")
+        micro = {key: value["median"] for key, value in report["micro"].items()}
+        rate = {key: f"{round(value['median'], -3):,.0f}" for key, value in report["network"].items()}
+        batches = " / ".join(f"{micro[f'loop_reply_batch{k}_ns']:.1f}" for k in (1, 8, 16, 64))
+        quoted = [
+            f"| an empty crossing of the boundary | {micro['export_nop_ns']:.1f} ns | {micro['loop_nop_ns']:.1f} ns |",
+            (f"| one reply, with the host's bookkeeping | {micro['export_reply_ns']:.1f} ns | {batches} ns "
+             "for batches of 1 / 8 / 16 / 64 |"),
+            *(f"| {label} | {rate[f'export_{n}_rps']} | {rate[f'loop_batch64_{n}_rps']} (batch 64), "
+              f"{rate[f'loop_batch1_{n}_rps']} (batch 1) |"
+              for label, n in (("requests per second over loopback, 1 connection", 1), ("32 connections", 32),
+                               ("128 connections", 128))),
+            f"ran at {rate['loop_batch1_repoll_32_rps']} and {rate['loop_batch1_repoll_128_rps']} requests per second",
+            f"a load average of {report['load_average_before'][0]:.2f} at the start",
+        ]
+        for phrase in quoted:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_entry_header_is_read_off_the_assembly(self) -> None:
+        text = ("x:\n\t.quad 1\ncake_bitmaps:\n\t.quad 4,128\n     .globl y\ny:\ncake_main:\n\n"
+                "/* Generated machine code follows */\n\t.byte 0x01,0x02\n\t.byte 0x03\n     .globl z\n")
+        self.assertEqual(entry_bench.listed_values(text, "cake_bitmaps:", ".quad"), 2)
+        self.assertEqual(entry_bench.listed_values(text, "cake_main:", ".byte"), 3)
+        with self.assertRaisesRegex(RuntimeError, "exactly one"):
+            entry_bench.listed_values(text + "cake_main:\n", "cake_main:", ".byte")
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

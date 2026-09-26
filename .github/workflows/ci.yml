@@ -149,6 +149,7 @@ jobs:
           cake=$(python3 scripts/bootstrap_tool.py cake)
           python3 scripts/native_check.py --cake "$cake" 2>&1 | tee build/evidence/native.log
           python3 scripts/native_baseline.py --cake "$cake" 2>&1 | tee build/evidence/baseline.log
+          python3 scripts/entry_bench.py check --cake "$cake" 2>&1 | tee build/evidence/entry.log
       - name: Bounded interleaving exploration
         run: python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -169,3 +170,7 @@ jobs:
             build/baseline/*.pnk
             build/baseline/*.S
             build/baseline/dn-echo
+            build/entry/report.json
+            build/entry/entry_layout.h
+            build/entry/*.pnk
+            build/entry/*.S
