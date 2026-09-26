@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from typing import Any
@@ -74,6 +75,49 @@ def control2(a: int, b: int) -> int:
             return (acc * 2) & MASK
         i += 1
     return acc
+
+
+# What `dn_reply` answers, written from its description rather than from the Lean program.
+BINARY_KEYWORD = bytes([0xC8, 0x80, 0xFF, 0x00])
+REPLY_KEYWORDS = (b"QUIT", b"MODE READER", BINARY_KEYWORD, b"HELP")
+
+
+def reply(data: bytes) -> bytes:
+    if data.startswith(b"QUIT"):
+        return b"205 closing connection\r\n"
+    if data.startswith(b"MODE READER"):
+        return b"201 reader mode, posting prohibited\r\n"
+    if data.startswith(BINARY_KEYWORD):
+        return b"501 not text\r\n"
+    if data.startswith(b"HELP"):
+        return b"100 help text follows\r\n.\r\n"
+    return b"500 unknown command\r\n"
+
+
+def reply_cases(fixture: dict[str, Any]) -> list[tuple[bytes, bytes]]:
+    """The Lean program's replies, checked against `reply`, and the inputs checked for the
+    boundary cases a generator can lose without anyone noticing."""
+    if fixture["function"] != "dn_reply":
+        raise RuntimeError(f"unexpected reply function {fixture['function']}")
+    cases = [(bytes(case["input"]), bytes(case["output"])) for case in fixture["cases"]]
+    for data, answer in cases:
+        if reply(data) != answer:
+            raise RuntimeError(f"Lean/Python disagreement on the reply to {data!r}")
+    if fixture["max_len"] != max(len(reply(keyword)) for keyword in (*REPLY_KEYWORDS, b"")):
+        raise RuntimeError("the reply buffer the program asks for is not its longest reply")
+    inputs = {data for data, _ in cases}
+    wanted = ({keyword[:i] for keyword in REPLY_KEYWORDS for i in range(len(keyword) + 1)} |
+              {keyword + b"\r\n" for keyword in REPLY_KEYWORDS} | {bytes([b]) for b in range(256)})
+    # A kernel that skips one byte of a keyword shows only on an input that differs from the
+    # keyword in that byte alone and is answered differently.
+    changed = all(any(len(data) >= len(keyword) and reply(data) != reply(keyword) and
+                      [j for j in range(len(keyword)) if data[j] != keyword[j]] == [i]
+                      for data in inputs)
+                  for keyword in REPLY_KEYWORDS for i in range(len(keyword)))
+    if (not wanted <= inputs or not changed or
+            len({answer for _, answer in cases}) != len(REPLY_KEYWORDS) + 1):
+        raise RuntimeError("the reply inputs no longer reach every keyword boundary and reply")
+    return cases
 
 
 def digest(p: Path | str) -> str:
@@ -173,7 +217,10 @@ def documented(measured: dict[str, Any]) -> None:
     """The counts the documents quote must be the ones this run measured."""
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "copy_cases": ("README.md", "docs/baseline.md"),
-              "render_cases": ("docs/baseline.md",)}
+              "render_cases": ("docs/baseline.md",),
+              "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
+                              "docs/decisions/0001-embedding.md"),
+              "reply_inputs": ("docs/baseline.md",)}
     for key, files in quoted.items():
         printed = f"{measured[key]:,}"
         for name in files:
@@ -184,7 +231,9 @@ def documented(measured: dict[str, Any]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cake", default=os.environ.get("CAKE"))
-    parser.add_argument("--fixtures", type=Path, help="directory of previously emitted baseline.json and echo.pnk")
+    parser.add_argument("--fixtures", type=Path,
+                        help="directory of previously emitted baseline.json, echo.pnk, render.pnk, "
+                             "reply.pnk and reply-cases.json")
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         parser.error("native baseline requires Linux x86-64")
@@ -197,7 +246,8 @@ def main() -> None:
     report_file.unlink(missing_ok=True)
     compiler = ROOT / ".lake/build/bin/dn-compiler"
     for name, command in [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"),
-                          ("render.pnk", "emit-render")]:
+                          ("render.pnk", "emit-render"), ("reply.pnk", "emit-reply"),
+                          ("reply-cases.json", "emit-reply-cases")]:
         data = ((args.fixtures / name).read_bytes() if args.fixtures else
                 loud([str(compiler), command], timeout=60, what=f"emitting {name}").encode())
         (out / name).write_bytes(data)
@@ -304,6 +354,60 @@ int main(void) {
     link("render-check", ROOT / "native/render_check.c", out / "render.S")
     measured.update(json.loads(loud([str(out / "render-check")], timeout=60,
                                     what="the decimal render check")))
+    reply_fixture = json.loads((out / "reply-cases.json").read_text())
+    replies = reply_cases(reply_fixture)
+    reply_input = "".join(f"{data.hex() or '-'} {answer.hex() or '-'}\n" for data, answer in replies)
+    # The room the program asks for, which the kernel compares against; not the longest reply seen.
+    max_len: int = reply_fixture["max_len"]
+
+    def run_reply(name: str) -> subprocess.CompletedProcess[str]:
+        compile_source(name)
+        link(f"{name}-check", ROOT / "native/reply_check.c", out / f"{name}.S")
+        return subprocess.run([str(out / f"{name}-check"), str(max_len)], input=reply_input,
+                              text=True, capture_output=True, timeout=120, check=False)
+
+    checked = run_reply("reply")
+    if checked.returncode:
+        raise RuntimeError(f"the reply check failed with status {checked.returncode}:\n"
+                           f"{checked.stdout}{checked.stderr}")
+    measured.update(json.loads(checked.stdout))
+    measured["reply_inputs"] = len(replies)
+    if measured["reply_cases"] != 10 * len(replies):
+        raise RuntimeError("incomplete native reply execution")
+    # Sensitivity: each property the check claims has a kernel that breaks that property alone,
+    # and the check has to refuse every one of them.
+    text = (out / "reply.pnk").read_text()
+    lines = text.splitlines(keepends=True)
+    store = next(i for i, line in enumerate(lines) if line.lstrip().startswith("st8 "))
+    advance = next(i for i, line in enumerate(lines) if re.fullmatch(r"\s*pos = pos \+ \d+;\n", line))
+    step = lines[advance].split("+")[-1].strip().rstrip(";")
+    guard = f"if {len(REPLY_KEYWORDS[0])} <= inlen {{"
+    room = f"if cap < {max_len} {{"
+    if guard not in text or text.count(room) != 1:
+        raise RuntimeError("the reply mutations no longer find the lines they change")
+    before, after = lines[:advance + 1], lines[advance + 1:]
+    lengthened = lines[advance].replace(f"+ {step};", f"+ {int(step) + 1};")
+    mutants = {
+        # a byte of the reply not written
+        "reply-short": ("".join(lines[:store] + lines[store + 1:]), 1),
+        # the reply's bytes with the wrong length
+        "reply-length": ("".join([*lines[:advance], lengthened, *after]), 1),
+        # a byte written past the reply, inside the buffer
+        "reply-past": ("".join([*before, "st8 out + pos, 0;\n", *after]), 1),
+        # a byte written into the input, which the host may hold read-only
+        "reply-input": ("".join([*before, "st8 inp, 0;\n", *after]), -signal.SIGSEGV),
+        # a buffer one byte too small accepted
+        "reply-room": (text.replace(room, f"if cap < {max_len - 1} {{"), 1),
+        # a keyword compared without the length guard reads past the input
+        "reply-unguarded": (text.replace(guard, "if 0 <= inlen {", 1), -signal.SIGSEGV),
+    }
+    for name, (source, status) in mutants.items():
+        (out / f"{name}.pnk").write_text(source)
+        broken = run_reply(name)
+        if broken.returncode != status or (status == 1 and "reply mismatch" not in broken.stderr):
+            raise RuntimeError(f"the reply check did not refuse {name} (status {broken.returncode}):\n"
+                               f"{broken.stderr}")
+    measured["reply_mutants_rejected"] = len(mutants)
     compile_source("echo")
     link("echo-check", ROOT / "native/echo_check.c", out / "echo.S")
     measured.update(json.loads(loud([str(out / "echo-check")], timeout=30,
@@ -359,7 +463,15 @@ int main(void) {
               "fixture_sha256": digest(out / "baseline.json"), "echo_source_sha256": digest(out / "echo.pnk"),
               "echo_assembly_sha256": digest(out / "echo.S"),
               "render_source_sha256": digest(out / "render.pnk"),
-              "render_assembly_sha256": digest(out / "render.S"), "echo_executable_sha256": digest(out / "dn-echo"),
+              "render_assembly_sha256": digest(out / "render.S"),
+              "reply_source_sha256": digest(out / "reply.pnk"),
+              "reply_cases_sha256": digest(out / "reply-cases.json"),
+              "reply_assembly_sha256": digest(out / "reply.S"),
+              "reply_check_sha256": digest(ROOT / "native/reply_check.c"),
+              "reply_executable_sha256": digest(out / "reply-check"),
+              "render_check_sha256": digest(ROOT / "native/render_check.c"),
+              "echo_check_sha256": digest(ROOT / "native/echo_check.c"),
+              "echo_executable_sha256": digest(out / "dn-echo"),
               "host_sha256": digest(ROOT / "native/echo_server.c"),
               "runtime_sha256": digest(ROOT / "native/cake_runtime.c"),
               "runtime_header_sha256": digest(ROOT / "native/cake_runtime.h"),

@@ -10,8 +10,9 @@ Start with the [inherited-code review and prioritized repairs](reviews/README.md
 1. `lean/DN/Compiler/Main.lean`, `Syntax.lean`, `Lower.lean`, `Checked.lean`, and `Abi.lean`: the actual emitted example and the supported lowering boundary.
 2. `Semantics.lean`, `Region.lean`, `Clock.lean`, and `Certificate.lean`: model execution and composition, including a certificate requiring an inhabited precondition.
 3. `ByteCopy.lean`, `ByteLit.lean`, `Decimal.lean`, `Div10.lean`, `NatToDec.lean`, `LowerBridge.lean` and `LowerBridgeSem.lean`: byte-addressed writes, decimal rendering, and the bridge from the lowered program to its execution.
-4. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
-5. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection. Read [the porting risks](porting-risks.md) before reusing any of it: the ownership and lifetime decisions in that snapshot are the part that has to be redesigned.
+4. `lean/DN/Dsl`: the source language, its compilation and the proof that covers every program; [why it is embedded deeply](decisions/0001-embedding.md).
+5. `lean/DN/Dataplane`, `crates/dn-runtime`, and `models`: proof models, usable host primitives, and bounded concurrency exploration respectively.
+6. [Native source migration map](../migration/dataplane/README.md): io_uring/kqueue and FFI source to adapt, with its old coupling explicitly retained for inspection. Read [the porting risks](porting-risks.md) before reusing any of it: the ownership and lifetime decisions in that snapshot are the part that has to be redesigned.
 
 ## First milestones and acceptance criteria
 
@@ -19,7 +20,7 @@ The criteria that bind are in the [roadmap](https://github.com/emberian/dragons-
 
 ### 1. Make the compiler boundary explicit
 
-Write down the accepted source language and the mapping from its syntax through `Lower` to the modeled Pancake semantics. Unsupported forms must fail explicitly. `LowerTests.lean` already covers nonscalar loads, unsupported calls, FFI arity, and comparison lowering.
+Write down the accepted source language and the mapping from its syntax through `Lower` to the modeled Pancake semantics. Unsupported forms must fail explicitly. `lean/DN/Dsl` does this for a first, small language: its mapping to the model is proven for every program, and `emit` refuses what the proof does not cover. `LowerTests.lean` already covers nonscalar loads, unsupported calls, FFI arity, and comparison lowering.
 
 Extend `Certificate` to a useful memory-reading/writing component with concrete preconditions. Demonstrate a caller state that satisfies the contract, compose two components, and compare emitted execution with an independent reference. Do not restate a precondition as a condition on every model state: such premises are contradictory, as `AssuranceChecks.lean` records.
 
