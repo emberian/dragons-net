@@ -13,13 +13,24 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
+import shutil
+import struct
 import subprocess
 import tempfile
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "backend/lock.json").read_text())
+# Where the pinned tree computes the compiler, and where a copy of the result is kept: the tree's
+# build outputs are removed by the next run of either backend lane.
+BOOTSTRAP = ROOT / ".deps/cakeml/compiler/bootstrap/compilation/x64/64"
+BOOTSTRAP_OUT = ROOT / "build/bootstrap"
+# The generated assembly carries no .note.GNU-stack, so without this the linker makes the stack
+# executable. It is the flag the release compiler is linked with.
+LINK_FLAGS = "-Wl,-z,noexecstack"
+PT_GNU_STACK = 0x6474E551
 # What the prover records about its own build. `smart-configure` writes the compiler it was
 # given and the directory it was built for into this file, which HOL's own ignores cover, so
 # `verify` tolerates it. Asking the prover beats a note kept beside it: a note records an
@@ -31,6 +42,10 @@ CONFIGURED = re.compile(r'^val (POLY|HOLDIR) = "(.*)"\s*;?$', re.MULTILINE)
 def sml_string(value: str) -> str:
     """An SML string literal: a path with a quote or a backslash must not end the literal."""
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def jobs() -> int:
@@ -59,7 +74,7 @@ def fetch(name: str) -> None:
         if name == "cakeml":
             for patch in LOCK["patches"]:
                 path = ROOT / "backend" / patch["path"]
-                if hashlib.sha256(path.read_bytes()).hexdigest() != patch["sha256"]:
+                if digest(path) != patch["sha256"]:
                     raise SystemExit("patch checksum mismatch")
                 run("git", "-C", temp, "apply", "--check", str(path))
                 run("git", "-C", temp, "apply", str(path))
@@ -80,7 +95,7 @@ def verify(name: str) -> None:
         if name == "cakeml":
             for patch in LOCK["patches"]:
                 patch_path = ROOT / "backend" / patch["path"]
-                if hashlib.sha256(patch_path.read_bytes()).hexdigest() != patch["sha256"]:
+                if digest(patch_path) != patch["sha256"]:
                     raise SystemExit("patch checksum mismatch")
                 run("git", "apply", "--cached", str(patch_path), cwd=path, env=env)
         run("git", "diff", "--exit-code", cwd=path, env=env)
@@ -92,8 +107,7 @@ def verify(name: str) -> None:
             raise SystemExit(f"{name}: no semantics source recorded for {actual}; redo the comparison "
                              "in docs/pancake-semantics.md and record the digests")
         for source in sources:
-            digest = hashlib.sha256((path / source["path"]).read_bytes()).hexdigest()
-            if digest != source["sha256"]:
+            if digest(path / source["path"]) != source["sha256"]:
                 raise SystemExit(f"{source['path']}: content differs from the recorded semantics source")
         untracked = subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"],
                                             cwd=path, text=True, env=env)
@@ -189,12 +203,89 @@ def built_with_pinned_polyml() -> str:
     return check_record(RECORD.read_text() if RECORD.is_file() else None, polyml(), ROOT / ".deps/hol")
 
 
+def stack_permissions(binary: Path) -> str:
+    """The permissions of an x86-64 ELF executable's stack segment, read from its program headers."""
+    data = binary.read_bytes()
+    if data[:6] != b"\x7fELF\x02\x01":
+        raise SystemExit(f"{binary.name} is not a little-endian 64-bit ELF file")
+    (offset,) = struct.unpack_from("<Q", data, 0x20)
+    size, count = struct.unpack_from("<HH", data, 0x36)
+    headers = [struct.unpack_from("<II", data, offset + i * size) for i in range(count)]
+    flags = [flag for kind, flag in headers if kind == PT_GNU_STACK]
+    if len(flags) != 1:
+        raise SystemExit(f"{binary.name} has {len(flags)} stack segments, not one")
+    return "".join(letter for letter, bit in (("R", 4), ("W", 2), ("E", 1)) if flags[0] & bit)
+
+
+def logged(command: list[str], log: Path, cwd: Path) -> None:
+    """Run a build step with its output kept in a log, and say where to look when it fails."""
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    log.write_text(result.stdout + result.stderr)
+    if result.returncode:
+        raise SystemExit(f"{' '.join(command)} failed; see {log}")
+
+
+def package_bootstrap(seconds: int, jobs: int, target: Path = BOOTSTRAP,
+                      out: Path = BOOTSTRAP_OUT) -> dict[str, Any]:
+    """Link the computed compiler, check what came out, and record it beside a copy of it.
+
+    Called by scripts/bootstrap_cake.sh once the log gate and the tag check have passed; `out`
+    already holds the Holmake log the record names.
+    """
+    logged(["make", "cake", f"LDFLAGS={LINK_FLAGS}"], out / "link.log", target)
+    stack = stack_permissions(target / "cake")
+    if stack != "RW":
+        raise SystemExit(f"the linked compiler's stack is {stack or 'inaccessible'}, not RW")
+    # Upstream's first question of a fresh build: does it compile and run hello world.
+    logged(["make", "test-hello.cake", f"LDFLAGS={LINK_FLAGS}"], out / "hello-build.log", target)
+    hello = subprocess.run([str(target / "test-hello.cake")], cwd=target, capture_output=True,
+                           text=True, timeout=60, check=False)
+    if hello.returncode or hello.stdout != "Hello!\n":
+        raise SystemExit(f"the built compiler's hello world printed {hello.stdout!r} "
+                         f"and exited with {hello.returncode}")
+    for name in ("cake", "cake.S"):
+        shutil.copy2(target / name, out / name)
+    tools = json.loads((ROOT / "tools.lock.json").read_text())
+    compiler = subprocess.run(["cc", "--version"], capture_output=True, text=True, check=True)
+    report = {
+        "what": "the CakeML compiler built from the pinned patched source",
+        "not": "a theorem about this binary; see backend/README.md",
+        "cakeml_revision": LOCK["cakeml"]["revision"],
+        "hol_revision": LOCK["hol"]["revision"],
+        "patches": [{"path": patch["path"], "sha256": patch["sha256"]} for patch in LOCK["patches"]],
+        "polyml": {key: tools["polyml"][key] for key in ("version", "revision", "sha256")},
+        "polyml_runtime_options": os.environ.get("POLY_CLINE_OPTIONS", ""),
+        "jobs": jobs,
+        "holmake_targets": "cake.S x64BootstrapTheory.uo in compiler/bootstrap/compilation/x64/64",
+        "holmake_log_sha256": digest(out / "holmake.log"),
+        "tag_check": "compiler64_compiled carries no oracle",
+        "cake_S_sha256": digest(out / "cake.S"),
+        "basis_ffi_sha256": digest(target / "basis_ffi.c"),
+        "link_flags": LINK_FLAGS,
+        "c_compiler": compiler.stdout.splitlines()[0].strip(),
+        "stack": stack,
+        "hello_world": hello.stdout.strip(),
+        "cake_sha256": digest(out / "cake"),
+        "cake_path": str((out / "cake").relative_to(ROOT)) if out.is_relative_to(ROOT) else str(out / "cake"),
+        "platform": f"{platform.system()} {platform.machine()}",
+        "seconds": seconds,
+    }
+    (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["fetch", "verify", "build", "built-with"])
-    parser.add_argument("component", choices=["cakeml", "hol"])
+    actions = parser.add_subparsers(dest="action", required=True)
+    for action in ("fetch", "verify", "build", "built-with"):
+        actions.add_parser(action).add_argument("component", choices=["cakeml", "hol"])
+    package = actions.add_parser("package-bootstrap", help=package_bootstrap.__doc__)
+    package.add_argument("--seconds", type=int, required=True)
+    package.add_argument("--jobs", type=int, required=True)
     args = parser.parse_args()
-    if args.action == "built-with":
+    if args.action == "package-bootstrap":
+        print(json.dumps(package_bootstrap(args.seconds, args.jobs), indent=2))
+    elif args.action == "built-with":
         if args.component != "hol":
             raise SystemExit("only the prover records what built it")
         print(built_with_pinned_polyml())

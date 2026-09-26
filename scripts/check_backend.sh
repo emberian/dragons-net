@@ -26,6 +26,17 @@ if [[ ! "$target" =~ ^[A-Za-z0-9_]+Theory\.uo$ ]]; then
   echo "DN BACKEND: DN_BACKEND_TARGET must name a theory object, not $target" >&2
   exit 2
 fi
+build_jobs="${DN_BUILD_JOBS:-2}"
+if [[ ! "$build_jobs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DN BACKEND: DN_BUILD_JOBS must be a positive number, not $build_jobs" >&2
+  exit 2
+fi
+# Holmake adds CLINE_OPTIONS to its own options and passes POLY_CLINE_OPTIONS to every theory's
+# prover process, so either could change what is built or run code the checks never see.
+if [[ -n "${CLINE_OPTIONS:-}${POLY_CLINE_OPTIONS:-}" ]]; then
+  echo "DN BACKEND: unset CLINE_OPTIONS and POLY_CLINE_OPTIONS" >&2
+  exit 2
+fi
 python3 scripts/backend.py verify hol
 HOLDIR="$(pwd)/.deps/hol"
 CAKEMLDIR="$(pwd)/.deps/cakeml"
@@ -44,7 +55,6 @@ python3 scripts/backend.py built-with hol
 git -C "$CAKEMLDIR" clean -fdXq
 python3 scripts/backend.py verify cakeml
 
-build_jobs="${DN_BUILD_JOBS:-2}"
 log="$root/build/backend-holmake.log"
 mkdir -p "$(dirname "$log")"
 cd "$CAKEMLDIR/pancake/proofs"
