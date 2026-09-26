@@ -2,8 +2,9 @@
 import DN.Compiler.Kernels
 import DN.Compiler.Baseline
 import DN.Compiler.StateCorpus
+import DN.Dsl.Example
 
-/-! Source emitter for the supported region example. Emission is not a binary
+/-! Source emitter for the checked native examples. Emission is not a binary
 correctness certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler.Syntax DN.Compiler.Lower
@@ -24,6 +25,8 @@ def main (args : List String) : IO UInt32 := do
   | ["emit-render"] =>
     output ((DN.Compiler.Checked.emit DN.Compiler.Kernels.render).mapError
       DN.Compiler.Checked.Reason.message)
+  | ["emit-reply"] => output (DN.Dsl.emit DN.Dsl.Example.name DN.Dsl.Example.replies)
+  | ["emit-reply-cases"] => output (.ok DN.Dsl.Example.cases.compress)
   | ["emit-baseline"] => output (DN.Compiler.Baseline.fixture.map (·.compress))
   | ["dump-states"] =>
     -- The corpus of stopping states, with what the model makes of each case;
@@ -31,8 +34,8 @@ def main (args : List String) : IO UInt32 := do
     IO.println DN.Compiler.StateCorpus.dump
     return 0
   | ["--help"] | [] =>
-    IO.println "dn-compiler {emit-region|emit-echo|emit-render|emit-baseline|dump-states}\nEmit checked native examples, differential fixtures or the state corpus."
+    IO.println "dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|dump-states}\nEmit checked native examples, differential fixtures or the state corpus."
     return 0
   | _ =>
-    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-render|emit-baseline|dump-states}"
+    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|dump-states}"
     return 2

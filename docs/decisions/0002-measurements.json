@@ -1,0 +1,138 @@
+{
+  "status": "measured",
+  "checks": {
+    "reply_runs": 5,
+    "header_words": 5,
+    "hostile_cases": 4,
+    "refused_variants": 7,
+    "network_servers": 4
+  },
+  "compiler_sha256": "db6af0e18a26aba9d481bd4c404853bf22beb6090213eb129bd3451dedc33c3d",
+  "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+  "cpus": 16,
+  "micro": {
+    "export_nop_ns": {
+      "median": 2.44,
+      "min": 2.44,
+      "max": 2.44
+    },
+    "loop_nop_ns": {
+      "median": 4.06,
+      "min": 4.06,
+      "max": 4.07
+    },
+    "export_reply_ns": {
+      "median": 12.09,
+      "min": 12.08,
+      "max": 12.14
+    },
+    "loop_reply_batch1_ns": {
+      "median": 30.77,
+      "min": 30.67,
+      "max": 30.85
+    },
+    "loop_reply_batch8_ns": {
+      "median": 16.78,
+      "min": 16.68,
+      "max": 16.98
+    },
+    "loop_reply_batch16_ns": {
+      "median": 16.12,
+      "min": 15.91,
+      "max": 16.21
+    },
+    "loop_reply_batch64_ns": {
+      "median": 15.58,
+      "min": 15.38,
+      "max": 15.67
+    }
+  },
+  "network": {
+    "export_1_rps": {
+      "median": 86542,
+      "min": 86372,
+      "max": 86767
+    },
+    "loop_batch64_1_rps": {
+      "median": 86322,
+      "min": 86264,
+      "max": 86339
+    },
+    "loop_batch1_1_rps": {
+      "median": 86271,
+      "min": 86257,
+      "max": 86327
+    },
+    "loop_batch1_repoll_1_rps": {
+      "median": 86242,
+      "min": 86235,
+      "max": 86313
+    },
+    "export_32_rps": {
+      "median": 251407,
+      "min": 251288,
+      "max": 251935
+    },
+    "loop_batch64_32_rps": {
+      "median": 256516,
+      "min": 256467,
+      "max": 256718
+    },
+    "loop_batch1_32_rps": {
+      "median": 250335,
+      "min": 250094,
+      "max": 250380
+    },
+    "loop_batch1_repoll_32_rps": {
+      "median": 130849,
+      "min": 130623,
+      "max": 131084
+    },
+    "export_128_rps": {
+      "median": 253205,
+      "min": 253117,
+      "max": 253563
+    },
+    "loop_batch64_128_rps": {
+      "median": 259575,
+      "min": 259562,
+      "max": 259717
+    },
+    "loop_batch1_128_rps": {
+      "median": 251152,
+      "min": 251028,
+      "max": 251250
+    },
+    "loop_batch1_repoll_128_rps": {
+      "median": 66617,
+      "min": 66311,
+      "max": 66706
+    }
+  },
+  "machine": {
+    "processor": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+    "governor": "powersave",
+    "boost": "1",
+    "c_compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "revision": "2c4621eb40bcd819295c6f1e8852d1e1b2bfc716",
+    "uncommitted_changes": true,
+    "pinned_cpus": [
+      1,
+      2
+    ],
+    "core_siblings": [
+      "1,9",
+      "2,10"
+    ]
+  },
+  "load_average_before": [
+    0.271484375,
+    0.2919921875,
+    1.11962890625
+  ],
+  "load_average_after": [
+    1.0888671875,
+    0.51171875,
+    1.15087890625
+  ]
+}

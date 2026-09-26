@@ -3,6 +3,7 @@
 pinned tools are added to .deps."""
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import hashlib
 import importlib.util
@@ -35,6 +36,7 @@ structure = script("check_structure")
 build_archive = script("build_archive")
 native_baseline = script("native_baseline")
 gen_keywords = script("gen_keywords")
+entry_bench = script("entry_bench")
 upstream_sources = script("check_upstream_sources")
 bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
@@ -364,13 +366,15 @@ class Audit(unittest.TestCase):
         env = {**os.environ, "LEAN_PATH": f"{prefix}/lib/lean:{ROOT}/.lake/build/lib/lean"}
         result = run(["lean", "--run", "scripts/Audit.lean", "--regressions", regressions()], env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        counts = re.search(r"(\d+) modules, (\d+) declarations, (\d+) theorems", result.stdout)
+        counts = re.search(r"(\d+) modules, (\d+) declarations, (\d+) theorems checked, "
+                           r"(\d+) recursion helpers", result.stdout)
         assert counts is not None, result.stdout
-        declarations, theorems = (f"{int(counts.group(index)):,}" for index in (2, 3))
+        declarations, theorems, helpers = (f"{int(counts.group(index)):,}" for index in (2, 3, 4))
         documented = {
             "docs/assurance.md": (f"audit covers {declarations} declarations, including {theorems} theorems",
                                   f"| {regressions()} executable examples |"),
             "docs/baseline.md": (f"{declarations} declarations, including {theorems} theorems",
+                                 f"the kernels skip the {helpers} `_unsafe_rec` helpers",
                                  f"| {regressions()} executable cases |"),
         }
         for name, expected in documented.items():
@@ -1108,6 +1112,131 @@ class Pipeline(unittest.TestCase):
         assert printed is not None, source
         self.assertIn(f"grep -q '{printed.group(1)}'", body)
 
+    def test_backend_lanes_refuse_options_from_the_environment(self) -> None:
+        """A job count, a heap size or Holmake's option variables are read before anything runs.
+
+        Each reaches Holmake or the prover's command line, where anything else is an option:
+        `--fast` turns tactics into oracles, and a word naming an object file is loaded and run.
+        """
+        base = {key: value for key, value in os.environ.items()
+                if key not in ("CLINE_OPTIONS", "POLY_CLINE_OPTIONS", "DN_BUILD_JOBS",
+                               "DN_POLY_MINHEAP", "DN_BACKEND_TARGET")}
+        lanes = {
+            "check_backend.sh": ("DN BACKEND:", [
+                {"DN_BUILD_JOBS": "0"}, {"DN_BUILD_JOBS": "--fast"}, {"DN_BUILD_JOBS": "2 --fast"},
+                {"CLINE_OPTIONS": "--fast"}, {"POLY_CLINE_OPTIONS": "--minheap 1G"}]),
+            "bootstrap_cake.sh": ("DN BOOTSTRAP:", [
+                {"DN_BUILD_JOBS": "0"}, {"DN_BUILD_JOBS": "--fast"},
+                {"DN_POLY_MINHEAP": "8G /tmp/evil.uo"}, {"DN_POLY_MINHEAP": "--fast"},
+                {"DN_POLY_MINHEAP": "8T"}, {"CLINE_OPTIONS": "--fast"}]),
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp) / "dn"
+            (tree / "scripts").mkdir(parents=True)
+            for lane, (prefix, refused) in lanes.items():
+                shutil.copy(ROOT / "scripts" / lane, tree / "scripts")
+                for extra, ok in [(env, False) for env in refused] + [({"DN_BUILD_JOBS": "3"}, True)]:
+                    with self.subTest(lane=lane, env=extra):
+                        result = subprocess.run(["bash", f"scripts/{lane}"], cwd=tree,
+                                                env={**base, **extra}, capture_output=True,
+                                                text=True, check=False, timeout=60)
+                        # The accepted run stops later, at the missing checkout, not here.
+                        self.assertEqual(result.returncode == 2 and prefix in result.stderr,
+                                         not ok, result.stderr)
+
+    def test_stack_permissions_are_read_from_the_file(self) -> None:
+        """The stack check reads the program headers, so it cannot be satisfied by a flag."""
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for flag, expected in (("noexecstack", "RW"), ("execstack", "RWE")):
+                binary = Path(temp) / flag
+                subprocess.run(["cc", str(source), "-o", str(binary), f"-Wl,-z,{flag}"],
+                               check=True, capture_output=True, timeout=60)
+                self.assertEqual(backend.stack_permissions(binary), expected)
+            with self.assertRaises(SystemExit):
+                backend.stack_permissions(source)
+
+    def test_bootstrap_packaging_refuses_what_it_would_record_wrongly(self) -> None:
+        """An executable stack or a wrong hello world stops the record; a good build is copied."""
+        makefile = ("cake:\n\t$(CC) main.c -o cake $(LDFLAGS) $(STACK)\n"
+                    "test-hello.cake:\n\t$(CC) hello.c -o test-hello.cake $(LDFLAGS)\n")
+        cases = (("", 'puts("Hello!");', None),
+                 ("STACK = -Wl,-z,execstack\n", 'puts("Hello!");', "stack is RWE"),
+                 ("", 'puts("Hello, world");', "hello world printed"))
+        for stack, hello, refusal in cases:
+            with self.subTest(refusal=refusal), tempfile.TemporaryDirectory() as temp:
+                target, out = Path(temp) / "x64", Path(temp) / "out"
+                target.mkdir()
+                out.mkdir()
+                (target / "Makefile").write_text(stack + makefile)
+                (target / "main.c").write_text("int main(void) { return 0; }\n")
+                (target / "hello.c").write_text(f"#include <stdio.h>\nint main(void) {{ {hello} }}\n")
+                (target / "cake.S").write_text("generated\n")
+                (target / "basis_ffi.c").write_text("ffi\n")
+                (out / "holmake.log").write_text("log\n")
+                if refusal is None:
+                    report = backend.package_bootstrap(12, 3, target, out)
+                    self.assertEqual((report["stack"], report["hello_world"], report["jobs"]),
+                                     ("RW", "Hello!", 3))
+                    self.assertEqual(report["cake_sha256"], backend.digest(target / "cake"))
+                    self.assertEqual((out / "cake.S").read_text(), "generated\n")
+                    self.assertEqual(json.loads((out / "report.json").read_text()), report)
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        backend.package_bootstrap(12, 3, target, out)
+                    self.assertIn(refusal, str(stopped.exception))
+                    self.assertFalse((out / "report.json").exists())
+
+    def test_bootstrap_record_names_the_pinned_inputs(self) -> None:
+        """The recorded bootstrap was made from what is pinned now, so a pin cannot move alone.
+
+        The compiler takes hours to build and runs outside CI, so the evidence is a record of one
+        run; a CakeML, HOL, patch or Poly/ML pin that moves without a new run would leave it
+        describing a compiler that nothing here builds any more.
+        """
+        record = json.loads((ROOT / "backend/bootstrap-record.json").read_text())
+        rerun = "run scripts/bootstrap_cake.sh again and copy build/bootstrap/report.json here"
+        self.assertEqual(record["cakeml_revision"], backend.LOCK["cakeml"]["revision"], rerun)
+        self.assertEqual(record["hol_revision"], backend.LOCK["hol"]["revision"], rerun)
+        self.assertEqual(record["patches"],
+                         [{"path": p["path"], "sha256": p["sha256"]} for p in backend.LOCK["patches"]],
+                         rerun)
+        polyml = json.loads((ROOT / "tools.lock.json").read_text())["polyml"]
+        self.assertEqual(record["polyml"],
+                         {key: polyml[key] for key in ("version", "revision", "sha256")}, rerun)
+        self.assertEqual((record["stack"], record["hello_world"], record["link_flags"]),
+                         ("RW", "Hello!", backend.LINK_FLAGS))
+        for field in ("holmake_log_sha256", "cake_S_sha256", "basis_ffi_sha256", "cake_sha256"):
+            self.assertRegex(record[field], r"\A[0-9a-f]{64}\Z")
+
+    def test_bootstrap_tag_check_asks_the_prover_itself(self) -> None:
+        """The bootstrap reads the tag of the theorem that wrote `cake.S`, as the proof lane does."""
+        source = (ROOT / "backend/bootstrap-tagcheck/dnBootstrapTagCheckScript.sml").read_text()
+        self.assertIn("open HolKernel boolLib x64BootstrapTheory;", source)
+        self.assertIn("Thm.tag compiler64_compiled", source)
+        self.assertIn("Tag.isDisk tag", source)
+        self.assertIn("raise Fail", source)
+        includes = (ROOT / "backend/bootstrap-tagcheck/Holmakefile").read_text()
+        self.assertIn("INCLUDES = $(CAKEMLDIR)/compiler/bootstrap/compilation/x64/64", includes)
+        lane = (ROOT / "scripts/bootstrap_cake.sh").read_text()
+        # Holmake builds the theory object only when asked; without it the check has nothing
+        # to load and, under --no_prereqs, fails without a word.
+        self.assertRegex(lane, r"holmake\[@\]}\" -j \"\$build_jobs\" [^\n]*cake\.S x64BootstrapTheory\.uo")
+        # Holmake is a Poly/ML program too, and the heap limit that ends a theory can end it.
+        self.assertIn('holmake=("$HOLDIR/bin/Holmake" --minheap ', lane)
+        self.assertEqual(lane.count('"$HOLDIR/bin/Holmake"'), 1)
+        self.assertIn("dnBootstrapTagCheckTheory.uo", lane)
+        self.assertIn("--no_prereqs", lane)
+        printed = re.search(r'print "([^"]*)\\n"', source)
+        assert printed is not None, source
+        self.assertIn(f"grep -q '{printed.group(1)}'", lane)
+        # The gate, then the tag check, then the link and the record: nothing is packaged unchecked.
+        order = [lane.index(step) for step in ("check_holmake.py", "dnBootstrapTagCheckTheory.uo",
+                                               "compiler64_compiled carries no oracle",
+                                               "package-bootstrap")]
+        self.assertEqual(order, sorted(order))
+
     def test_backend_workflow_runs_the_lane_it_names(self) -> None:
         """Every path that triggers the lane exists, and the job runs the lane's own script."""
         workflow = (ROOT / ".github/workflows/backend.yml").read_text()
@@ -1693,12 +1822,74 @@ class Pipeline(unittest.TestCase):
             return subprocess.run([str(binary), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render"):
+        for name in ("region", "echo", "render", "reply"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
                          "51082f8e08484077f5ad9bc2cd59f060e23a0e9381a4353353fe569dfee6113a")
+        self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
+                         "dce40483098f58cc6f5279b174e2fba40e3f96c902aa4cd70ddaf24f6009ffb9")
+
+    def test_reply_reference_refuses_a_fixture_it_should(self) -> None:
+        emitted = subprocess.run([str(ROOT / ".lake/build/bin/dn-compiler"), "emit-reply-cases"],
+                                 text=True, capture_output=True, check=True, timeout=600).stdout
+        fixture = json.loads(emitted)
+        self.assertEqual(len(native_baseline.reply_cases(fixture)), 584)
+        short = list(b"MODE READE")
+        quit_ = list(b"QUIT")
+        broken: dict[str, tuple[str, Callable[[dict[str, Any]], None]]] = {
+            "a reply the reference disagrees with": ("Lean/Python disagreement",
+                                                     lambda f: f["cases"][0]["output"].append(0)),
+            "a buffer the longest reply does not need": ("longest reply",
+                                                         lambda f: f.update(max_len=f["max_len"] + 1)),
+            "a keyword boundary the inputs lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if case["input"] != short])),
+            "the keyword itself lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if case["input"] != quit_])),
+            "every change to the last byte of a keyword lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if len(case["input"]) < 4 or
+                       case["input"][:3] != quit_[:3] or case["input"][3] == quit_[3]])),
+            "another function's cases": ("unexpected reply function",
+                                         lambda f: f.update(function="dn_other")),
+        }
+        for name, (message, change) in broken.items():
+            with self.subTest(fixture=name):
+                copy = json.loads(emitted)
+                change(copy)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    native_baseline.reply_cases(copy)
+
+    def test_entry_decision_quotes_its_measurements(self) -> None:
+        """The table in decision 0002 is the kept run, not numbers typed in."""
+        report = json.loads((ROOT / "docs/decisions/0002-measurements.json").read_text())
+        text = " ".join((ROOT / "docs/decisions/0002-entry-and-memory.md").read_text().split())
+        self.assertEqual(report["status"], "measured")
+        micro = {key: value["median"] for key, value in report["micro"].items()}
+        rate = {key: f"{round(value['median'], -3):,.0f}" for key, value in report["network"].items()}
+        batches = " / ".join(f"{micro[f'loop_reply_batch{k}_ns']:.1f}" for k in (1, 8, 16, 64))
+        quoted = [
+            f"| an empty crossing of the boundary | {micro['export_nop_ns']:.1f} ns | {micro['loop_nop_ns']:.1f} ns |",
+            (f"| one reply, with the host's bookkeeping | {micro['export_reply_ns']:.1f} ns | {batches} ns "
+             "for batches of 1 / 8 / 16 / 64 |"),
+            *(f"| {label} | {rate[f'export_{n}_rps']} | {rate[f'loop_batch64_{n}_rps']} (batch 64), "
+              f"{rate[f'loop_batch1_{n}_rps']} (batch 1) |"
+              for label, n in (("requests per second over loopback, 1 connection", 1), ("32 connections", 32),
+                               ("128 connections", 128))),
+            f"ran at {rate['loop_batch1_repoll_32_rps']} and {rate['loop_batch1_repoll_128_rps']} requests per second",
+            f"a load average of {report['load_average_before'][0]:.2f} at the start",
+        ]
+        for phrase in quoted:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_entry_header_is_read_off_the_assembly(self) -> None:
+        text = ("x:\n\t.quad 1\ncake_bitmaps:\n\t.quad 4,128\n     .globl y\ny:\ncake_main:\n\n"
+                "/* Generated machine code follows */\n\t.byte 0x01,0x02\n\t.byte 0x03\n     .globl z\n")
+        self.assertEqual(entry_bench.listed_values(text, "cake_bitmaps:", ".quad"), 2)
+        self.assertEqual(entry_bench.listed_values(text, "cake_main:", ".byte"), 3)
+        with self.assertRaisesRegex(RuntimeError, "exactly one"):
+            entry_bench.listed_values(text + "cake_main:\n", "cake_main:", ".byte")
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

@@ -1,0 +1,32 @@
+{
+  "what": "the CakeML compiler built from the pinned patched source",
+  "not": "a theorem about this binary; see backend/README.md",
+  "cakeml_revision": "ed31510b3b0d0523283b68ef7066882526d77df9",
+  "hol_revision": "a9846ebe221d7c6617188a6bf66f30d5d8136b84",
+  "patches": [
+    {
+      "path": "patches/0001-primitive-dce.patch",
+      "sha256": "13d58ddd80aff16ae33f0901d9a391efd0b80d6abb85ef3b95813aa68171bf75"
+    }
+  ],
+  "polyml": {
+    "version": "v5.9.2",
+    "revision": "4557554077078decce4ce5f90da00a713cfc32e4",
+    "sha256": "0c3a44210ea6af90492a1fc2c7c1b0499d7ef7c2962ae0feec90bb0d2349c1c2"
+  },
+  "polyml_runtime_options": "--minheap 8G",
+  "jobs": 4,
+  "holmake_targets": "cake.S x64BootstrapTheory.uo in compiler/bootstrap/compilation/x64/64",
+  "holmake_log_sha256": "29415d27c322178f483e19d7c13850e5780fb32489bf1e9180e4328c67634821",
+  "tag_check": "compiler64_compiled carries no oracle",
+  "cake_S_sha256": "9d12d4618c1855810c48d990987821cb45352a9c35a520dbf7dc23f7de5f9291",
+  "basis_ffi_sha256": "04da4d58c97ad7ea649bf94c9d6f1af8313913078330442a901b501d5289c735",
+  "link_flags": "-Wl,-z,noexecstack",
+  "c_compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "stack": "RW",
+  "hello_world": "Hello!",
+  "cake_sha256": "93b291b9dd134460978a610b29460a4b5539d7b01c5dca4ec5d312583cc447c2",
+  "cake_path": "build/bootstrap/cake",
+  "platform": "Linux x86_64",
+  "seconds": 16994
+}

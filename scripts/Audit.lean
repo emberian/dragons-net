@@ -113,7 +113,8 @@ def compilerModules : Array Name :=
     `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Decimal, `DN.Compiler.Div10,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
     `DN.Compiler.NatToDec, `DN.Compiler.Region, `DN.Compiler.Semantics,
-    `DN.Compiler.StateCorpus, `DN.Compiler.Syntax]
+    `DN.Compiler.StateCorpus, `DN.Compiler.Syntax, `DN.Dsl.Action, `DN.Dsl.Correct,
+    `DN.Dsl.Example]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
@@ -353,14 +354,15 @@ unsafe def main (args : List String) : IO UInt32 := do
           | .global e | .scoped _ e => e
         errors := errors.push s!"csimp theorem: {e.thmName}"
   let mut theorems := 0
+  let mut helpers := 0
   let mut regressions := 0
   let mut cases : Array Name := #[]
   for (name, info) in decls do
     if info matches .thmInfo _ then theorems := theorems + 1
     if info matches .axiomInfo _ then errors := errors.push s!"axiom declared: {name}"
     if (Compiler.isUnsafeRecName? name).isSome then
-      unless isRecursionHelper env name info do
-        errors := errors.push s!"hand-written recursion helper: {name}"
+      if isRecursionHelper env name info then helpers := helpers + 1
+      else errors := errors.push s!"hand-written recursion helper: {name}"
     else
       if info.isUnsafe then errors := errors.push s!"unsafe declaration: {name}"
       if isPartialDef env name info || info matches .defnInfo { safety := .partial, .. } then
@@ -388,7 +390,8 @@ unsafe def main (args : List String) : IO UInt32 := do
   -- Regressions execute library code, so they run only once the static checks pass.
   if errors.isEmpty then
     IO.println s!"proof audit: {modules.size} modules, {decls.size} declarations, \
-      {theorems} theorems checked; allowed axioms: {", ".intercalate (allowedAxioms.toList.map toString)}"
+      {theorems} theorems checked, {helpers} recursion helpers; \
+      allowed axioms: {", ".intercalate (allowedAxioms.toList.map toString)}"
     for name in cases do
       match env.evalConst Bool {} name (checkMeta := false) with
       | .ok true => regressions := regressions + 1
