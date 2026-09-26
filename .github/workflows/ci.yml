@@ -164,6 +164,7 @@ jobs:
             build/native/region-check
             build/baseline/report.json
             build/baseline/baseline.json
+            build/baseline/reply-cases.json
             build/baseline/probe_driver.c
             build/baseline/*.pnk
             build/baseline/*.S

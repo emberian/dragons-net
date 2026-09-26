@@ -3,6 +3,7 @@
 pinned tools are added to .deps."""
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import hashlib
 import importlib.util
@@ -364,13 +365,15 @@ class Audit(unittest.TestCase):
         env = {**os.environ, "LEAN_PATH": f"{prefix}/lib/lean:{ROOT}/.lake/build/lib/lean"}
         result = run(["lean", "--run", "scripts/Audit.lean", "--regressions", regressions()], env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        counts = re.search(r"(\d+) modules, (\d+) declarations, (\d+) theorems", result.stdout)
+        counts = re.search(r"(\d+) modules, (\d+) declarations, (\d+) theorems checked, "
+                           r"(\d+) recursion helpers", result.stdout)
         assert counts is not None, result.stdout
-        declarations, theorems = (f"{int(counts.group(index)):,}" for index in (2, 3))
+        declarations, theorems, helpers = (f"{int(counts.group(index)):,}" for index in (2, 3, 4))
         documented = {
             "docs/assurance.md": (f"audit covers {declarations} declarations, including {theorems} theorems",
                                   f"| {regressions()} executable examples |"),
             "docs/baseline.md": (f"{declarations} declarations, including {theorems} theorems",
+                                 f"the kernels skip the {helpers} `_unsafe_rec` helpers",
                                  f"| {regressions()} executable cases |"),
         }
         for name, expected in documented.items():
@@ -1818,12 +1821,43 @@ class Pipeline(unittest.TestCase):
             return subprocess.run([str(binary), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render"):
+        for name in ("region", "echo", "render", "reply"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
                          "51082f8e08484077f5ad9bc2cd59f060e23a0e9381a4353353fe569dfee6113a")
+        self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
+                         "dce40483098f58cc6f5279b174e2fba40e3f96c902aa4cd70ddaf24f6009ffb9")
+
+    def test_reply_reference_refuses_a_fixture_it_should(self) -> None:
+        emitted = subprocess.run([str(ROOT / ".lake/build/bin/dn-compiler"), "emit-reply-cases"],
+                                 text=True, capture_output=True, check=True, timeout=600).stdout
+        fixture = json.loads(emitted)
+        self.assertEqual(len(native_baseline.reply_cases(fixture)), 584)
+        short = list(b"MODE READE")
+        quit_ = list(b"QUIT")
+        broken: dict[str, tuple[str, Callable[[dict[str, Any]], None]]] = {
+            "a reply the reference disagrees with": ("Lean/Python disagreement",
+                                                     lambda f: f["cases"][0]["output"].append(0)),
+            "a buffer the longest reply does not need": ("longest reply",
+                                                         lambda f: f.update(max_len=f["max_len"] + 1)),
+            "a keyword boundary the inputs lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if case["input"] != short])),
+            "the keyword itself lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if case["input"] != quit_])),
+            "every change to the last byte of a keyword lost": ("no longer reach", lambda f: f.update(
+                cases=[case for case in f["cases"] if len(case["input"]) < 4 or
+                       case["input"][:3] != quit_[:3] or case["input"][3] == quit_[3]])),
+            "another function's cases": ("unexpected reply function",
+                                         lambda f: f.update(function="dn_other")),
+        }
+        for name, (message, change) in broken.items():
+            with self.subTest(fixture=name):
+                copy = json.loads(emitted)
+                change(copy)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    native_baseline.reply_cases(copy)
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"
