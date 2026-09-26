@@ -33,7 +33,7 @@ The diagram describes the intended path. Today the region-digest, byte-copy, dec
 
 Use bounded buffers and explicit lengths at the native boundary. A buffer identifier needs its generation and ownership state. Submission, completion, cancellation, and recycling are distinct events. Output progress must survive short writes; disconnect and error paths must release exactly the resources they own. Backpressure should stop new work before unbounded buffering becomes necessary.
 
-An OS-specific adapter should translate real completions into a small protocol-neutral event vocabulary. The protocol step consumes a session state and bounded input, and returns output plus explicit storage/transport requests. This event vocabulary is a design target, not an interface already implemented here.
+An OS-specific adapter should translate real completions into a small protocol-neutral event vocabulary. The protocol step consumes a session state and bounded input, and returns output plus explicit storage/transport requests. This event vocabulary is a design target, not an interface already implemented here. Its shape is [decided](decisions/0002-entry-and-memory.md): the generated program's `main` runs the loop and fetches events from the host in batches through external calls, with its buffers in its own heap, because that is the only entry CakeML's compiler theorem covers, and the memory it covers without an event in the trace for every access.
 
 ## Storage and offline exchange
 

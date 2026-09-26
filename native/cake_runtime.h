@@ -17,7 +17,14 @@ void cml_exit(int code);
 /* The adapter provisions this much for each of the heap and the stack. */
 #define DN_RUNTIME_SEGMENT_BYTES (1024u * 1024u)
 
+/* Give the generated code its heap and stack, without entering it. */
+void dn_runtime_setup(void);
+
 /* Give the generated code its heap and stack, then enter it. */
 void dn_runtime_init(void);
+
+/* The five heap words CakeML's compiler theorem requires at entry (cake_header.c). */
+void dn_runtime_header(void);
+int dn_runtime_header_intact(void);
 
 #endif
