@@ -24,7 +24,7 @@ Write down the accepted source language and the mapping from its syntax through 
 
 Extend `Certificate` to a useful memory-reading/writing component with concrete preconditions. Demonstrate a caller state that satisfies the contract, compose two components, and compare emitted execution with an independent reference. Do not restate a precondition as a condition on every model state: such premises are contradictory, as `AssuranceChecks.lean` records.
 
-Close the printed-source/parser and model/HOL bridges before claiming verified code generation. Keep counterexamples when assumptions fail. The curated backend proof rebuild and subsequent compiler bootstrap are separate milestones; [instructions](../backend/README.md) identify the pins.
+Close the printed-source/parser and model/HOL bridges before claiming verified code generation. `scripts/parser_contract.py` holds the printed source against the pinned parsers program by program; a proof that the parser reads every printed program as its lowering is still to be written. Keep counterexamples when assumptions fail. The curated backend proof rebuild and subsequent compiler bootstrap are separate milestones; [instructions](../backend/README.md) identify the pins.
 
 ### 2. Extract a protocol-neutral native reactor
 

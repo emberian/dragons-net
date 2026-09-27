@@ -110,9 +110,10 @@ def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool 
 start depending on another module without that being reviewed. -/
 def compilerModules : Array Name :=
   #[`DN.Compiler.Abi, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy, `DN.Compiler.Bytes,
+    `DN.Compiler.Canon,
     `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Decimal, `DN.Compiler.Div10,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
-    `DN.Compiler.NatToDec, `DN.Compiler.Region, `DN.Compiler.Semantics,
+    `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.StateCorpus, `DN.Compiler.Syntax, `DN.Dsl.Action, `DN.Dsl.Correct,
     `DN.Dsl.Example]
 

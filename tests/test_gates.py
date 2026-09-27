@@ -37,6 +37,7 @@ build_archive = script("build_archive")
 native_baseline = script("native_baseline")
 gen_keywords = script("gen_keywords")
 entry_bench = script("entry_bench")
+parser_contract = script("parser_contract")
 upstream_sources = script("check_upstream_sources")
 bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
@@ -1890,6 +1891,46 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(entry_bench.listed_values(text, "cake_main:", ".byte"), 3)
         with self.assertRaisesRegex(RuntimeError, "exactly one"):
             entry_bench.listed_values(text + "cake_main:\n", "cake_main:", ".byte")
+
+    def test_parser_contract_reads_the_explore_tree(self) -> None:
+        """The parser's tree, brought to the canonical form: chains nested to the right, a shift
+        distance in either pinned form, statements as a list, and an unknown form refused."""
+        section = """
+(func 1 main () (return (Const 0x0)))
+(func 1 dn_f ((a : 1) (b : 1))
+   (seq (annot "location" "(1:2 1:9)")
+      (dec (local 1 x := (Add (Var local a) (Add (Var local b) (Const 0x2)) (Const 0x3)))
+         (seq (seq (annot "location" "x") (local x := (Mul (Mul (Var local a) (Var local b)) (Var local x))))
+              (seq (annot "location" "y") (mem (Var local a) := byte (Lsr (Var local x) 5)))
+              (seq (annot "location" "w") (mem (Var local b) := (Lsr (Var local x) (Const 0x5))))
+              (if (NotLess (Var local b) (Var local a)) (seq (annot "location" "z") skip)
+                  (return (MemLoadByte (Var local a))))))))
+"""
+        trees = dict(parser_contract.function(form) for form in parser_contract.forms(section))
+        add = ["Add", ["Var", "a"], ["Add", ["Var", "b"], ["Add", ["Const", 2], ["Const", 3]]]]
+        mul = ["Mul", ["Var", "a"], ["Mul", ["Var", "b"], ["Var", "x"]]]
+        self.assertEqual(trees["dn_f"], {"params": ["a", "b"], "body": [["dec", "x", add, [
+            ["assign", "x", mul],
+            ["storebyte", ["Var", "a"], ["Lsr", ["Var", "x"], ["Const", 5]]],
+            ["store", ["Var", "b"], ["Lsr", ["Var", "x"], ["Const", 5]]],
+            ["if", ["NotLess", ["Var", "b"], ["Var", "a"]], [], [["return", ["MemLoadByte", ["Var", "a"]]]]],
+        ]]]})
+        for unknown in ("(func 1 g () (return (Xor (Var local a) (Const 1))))",
+                        "(func 1 g () (return (Var global a)))",
+                        "(func 1 g () (tail_call h ()))",
+                        "(func 1 g () (return (Mul (Var local a) (Var local b) (Var local c))))"):
+            with self.subTest(form=unknown), self.assertRaises(parser_contract.ContractError):
+                [parser_contract.function(form) for form in parser_contract.forms(unknown)]
+
+    def test_parser_contract_batches_keep_names_apart(self) -> None:
+        """Programs that share a name go to different compilations, and every program to one."""
+        programs = [{"name": name, "source": str(i)} for i, name in enumerate("abacab")]
+        groups = parser_contract.batches(programs)
+        self.assertEqual(sorted(p["source"] for g in groups for p in g), [str(i) for i in range(6)])
+        for group in groups:
+            names = [p["name"] for p in group]
+            self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(len(groups), 3)
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

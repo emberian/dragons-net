@@ -22,4 +22,5 @@ if [[ -z "$cake" ]]; then cake=$(python3 scripts/bootstrap_tool.py cake); fi
 python3 scripts/native_check.py --cake "$cake"
 python3 scripts/native_baseline.py --cake "$cake"
 python3 scripts/entry_bench.py check --cake "$cake"
-echo 'DN BASELINE: PASS (models, differential native code, both entry designs, concurrency, and TCP echo; see docs/baseline.md for scope)'
+python3 scripts/parser_contract.py --cake "$cake"
+echo 'DN BASELINE: PASS (models, differential native code, both entry designs, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'
