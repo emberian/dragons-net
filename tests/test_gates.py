@@ -38,6 +38,9 @@ native_baseline = script("native_baseline")
 gen_keywords = script("gen_keywords")
 entry_bench = script("entry_bench")
 parser_contract = script("parser_contract")
+fuzz_interp = script("fuzz_interp")
+fuzz_reduce = script("fuzz_reduce")
+native_fuzz = script("native_fuzz")
 upstream_sources = script("check_upstream_sources")
 bootstrap_tool = script("bootstrap_tool")
 verify_run = script("verify_run")
@@ -1931,6 +1934,157 @@ class Pipeline(unittest.TestCase):
             names = [p["name"] for p in group]
             self.assertEqual(len(names), len(set(names)))
         self.assertEqual(len(groups), 3)
+
+    def test_fuzz_splitmix_is_one_function(self) -> None:
+        """The model and the interpreter fill the buffers from the same SplitMix64, and it is the
+        published one: its first output from seed 0."""
+        samples = json.loads(subprocess.run([str(ROOT / ".lake/build/bin/dn-compiler"), "fuzz-samples"],
+                                            check=True, text=True, capture_output=True).stdout)
+        seeds = [0, 1, (1 << 64) - 1]
+        self.assertEqual(samples["splitmix"], [[fuzz_interp.splitmix(s, i) for i in range(4)] for s in seeds])
+        masks = [(1 << 64) - 1, 0x0707070707070707, 0xFF, 0x8080808080808080, 0]
+        self.assertEqual(samples["fill"], [[fuzz_interp.fill_word(7, m, 0, 0), fuzz_interp.fill_word(7, m, 2, 511)]
+                                           for m in masks])
+        self.assertEqual(fuzz_interp.splitmix(0, 0), 0xE220A8397B1DCDAF)
+
+    def test_fuzz_interpreter_reads_the_source(self) -> None:
+        """Signed comparisons, `<=` itself rather than a rewriting of it, little-endian bytes, and
+        a fault wherever the semantics has no value."""
+        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}],
+                "entries": [[1, 16]]}
+
+        def run(body: list[Any], a: int = 5) -> int:
+            program = {"name": "dn_t", "params": ["p", "t", "a"], "body": body}
+            result: int = fuzz_interp.run(program, plan, {"data": {"a": a}, "fill": [3, 0]})[0]
+            return result
+
+        self.assertEqual(run([["return", ["<=", "a", "a"]]]), 1)
+        self.assertEqual(run([["return", ["<", ["-", 0, 1], 0]]]), 1)
+        self.assertEqual(run([["return", ["<=", 0, ["-", 0, 1]]]]), 0)
+        self.assertEqual(run([["st", "p", 0x0807060504030201], ["return", ["ld8", ["+", "p", 1]]]]), 2)
+        self.assertEqual(run([["return", ["lds", 1, "t"]]]), fuzz_interp.buffer_base(1) + 16)
+        self.assertEqual(run([["return", [">>>", "a", 1]]]), 2)
+        for body in ([["return", [">>>", "a", 64]]], [["return", ["lds", 1, ["+", "p", 1]]]],
+                     [["return", ["ld8", ["+", "p", 4096]]]], [["return", ["ld8", ["-", "p", 1]]]],
+                     [["while", 1, []], ["return", 0]], [["st", "t", 0], ["return", 0]]):
+            with self.subTest(body=body), self.assertRaises(fuzz_interp.Fault):
+                run(body)
+
+    def test_fuzz_types_refuse_pointer_leaks(self) -> None:
+        """A pointer used as a value would make the model's addresses and the host's meet."""
+        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}], "entries": [[1, 0]]}
+
+        def check(body: list[Any]) -> Any:
+            return fuzz_interp.check_types({"name": "dn_t", "params": ["p", "t", "a"], "body": body}, plan)
+
+        body = [["var", "r", ["+", "p", ["*", ["&", "a", 7], 8]]], ["st8", "r", "a"], ["st8", "p", 1],
+                ["return", ["lds", 1, ["lds", 1, "t"]]]]
+        check(body)
+        # What the calls reach is counted as they run: the pointer local, the offset computed from
+        # data, and the first byte of the buffer, which `r`, derived from `p`, reaches when `a & 7`
+        # is 0. A local derived from a pointer is that pointer, not a second one.
+        for a, first in ((8, 2), (9, 1)):
+            _, _, reached = fuzz_interp.run({"name": "dn_t", "params": ["p", "t", "a"], "body": body}, plan,
+                                            {"data": {"a": a}, "fill": [0, 0]})
+            self.assertEqual((reached["pointer local"], reached["computed address"], reached["pointer from the table"],
+                              reached["one byte through two pointers, stored to"], reached["first byte of buffer 0"]),
+                             (1, 1, 1, 0, first))
+        # Two pointers into one buffer reach the same byte, and one of them stores to it.
+        both = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                           {"name": "q", "kind": "pointer", "buffer": 0, "offset": 8}], "entries": []}
+        for load, aliased in ((["+", "p", 8], 1), ("p", 0)):
+            _, _, reached = fuzz_interp.run({"name": "dn_t", "params": ["p", "q"],
+                                             "body": [["st8", "q", 1], ["return", ["ld8", load]]]},
+                                            both, {"data": {}, "fill": [0, 0]})
+            self.assertEqual(reached["one byte through two pointers, stored to"], aliased)
+        leaks: list[list[Any]] = [
+            [["return", "p"]], [["st", "p", "p"]], [["return", ["lds", 1, "t"]]], [["return", ["ld8", "t"]]],
+            [["set", "a", "p"]], [["return", ["<", "p", "a"]]], [["var", "r", "t"]],
+            [["return", ["ld8", ["+", "a", 1]]]]]
+        for leak in leaks:
+            with self.subTest(body=leak), self.assertRaises(fuzz_interp.TypeViolation):
+                check(leak)
+
+    def test_fuzz_replay_refuses_addresses_the_checker_distrusts(self) -> None:
+        """A candidate the reducer makes can leave a local in different states on the two sides of a
+        branch; CakeML then warns about an address computed from it, so the model's side refuses the
+        candidate before it reaches the compiler."""
+        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                           {"name": "a", "kind": "data"}], "entries": []}
+        body: list[Any] = [
+            ["var", "x0", 0],
+            ["if", ["<", "a", 5], [["set", "x0", ["lds", 1, "p"]]], [["set", "x0", ["lds", 1, ["+", "p", 8]]]]],
+            ["st8", ["+", "p", ["&", "x0", 7]], 1], ["return", 0]]
+        one_side = [body[0], ["if", body[1][1], [], body[1][3]], *body[2:]]
+        cases = [{"program": {"name": "dn_t", "params": ["p", "a"], "body": b}, "plan": plan,
+                  "vectors": [{"data": {"a": 3}, "fill": [1, 255]}]} for b in (body, one_side)]
+        answers = json.loads(subprocess.run([str(ROOT / ".lake/build/bin/dn-compiler"), "run-fuzz"],
+                                            input=json.dumps(cases), check=True, text=True,
+                                            capture_output=True).stdout)
+        self.assertNotIn("error", answers[0])
+        self.assertIn("static checker does not trust", answers[1]["error"])
+
+    def test_fuzz_reducer_is_deterministic(self) -> None:
+        """The reduction ends at a small case that still fails, the same one every time, and
+        never asks about a case that breaks the pointer discipline."""
+        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                           {"name": "a", "kind": "data"}, {"name": "b", "kind": "data"}], "entries": []}
+        body = [["var", "x", ["+", "a", 7]], ["st8", ["+", "p", 3], "x"],
+                ["if", ["<", "x", 9], [["set", "x", ["<=", ["ld8", "p"], "b"]]], [["return", 4]]],
+                ["while", ["<", "a", 2], [["set", "a", ["+", "a", 1]]]], ["return", ["*", "x", "b"]]]
+        case = {"program": {"name": "dn_t", "params": ["p", "a", "b"], "body": body}, "plan": plan,
+                "vector": {"data": {"a": 3, "b": 12345}, "fill": [99, 255]}}
+        asked: list[Any] = []
+
+        def fails(cases: list[Any]) -> list[bool]:
+            asked.extend(cases)
+            return ["<=" in json.dumps(c["program"]["body"]) for c in cases]
+
+        first, stats = fuzz_reduce.reduce(case, fails)
+        again, _ = fuzz_reduce.reduce(case, fails)
+        self.assertEqual(first, again)
+        self.assertEqual(first["program"]["body"], [["var", "x", 0], ["set", "x", ["<=", 0, 0]]])
+        self.assertEqual(first["program"]["params"], [])
+        self.assertEqual(first["vector"], {"data": {}, "fill": [0, 0]})
+        self.assertGreater(stats["taken"], 5)
+        self.assertTrue(all(fuzz_reduce.well_typed(c) for c in asked))
+
+    def test_fuzz_programs_read_back_as_they_were_emitted(self) -> None:
+        """A program the reducer hands back as data is checked, printed and run exactly as the
+        generator's own: the reading of the data is the inverse of its writing."""
+        binary = str(ROOT / ".lake/build/bin/dn-compiler")
+        emitted = json.loads(subprocess.run([binary, "emit-fuzz", "7", "25", "2"], check=True, text=True,
+                                            capture_output=True).stdout)
+        given = [{"program": r["program"], "plan": r["plan"],
+                  "vectors": [{"data": v["data"], "fill": v["fill"]} for v in r["vectors"]]} for r in emitted]
+        back = json.loads(subprocess.run([binary, "run-fuzz"], input=json.dumps(given), check=True, text=True,
+                                         capture_output=True).stdout)
+        for before, after in zip(emitted, back, strict=True):
+            with self.subTest(program=before["name"]):
+                for key in ("name", "plan", "program", "source", "tree", "vectors"):
+                    self.assertEqual(before[key], after[key])
+        refused = json.loads(subprocess.run([binary, "run-fuzz"], input=json.dumps(
+            [{**given[0], "program": {**given[0]["program"], "body": [["return", "nowhere"]]}}]),
+            check=True, text=True, capture_output=True).stdout)
+        self.assertIn("variable not in scope", refused[0]["error"])
+
+    def test_fuzz_planted_defects_change_what_they_name(self) -> None:
+        source = ("export fun dn_t(1 p, 1 a, 1 dn_result) {\n  if a <= 3 {\n    st8 p, ld8 (p + 1);\n"
+                  "    st dn_result, (a) >>> 63;\n    return 0;\n  } else {\n    st dn_result, (a) >>> 5;\n"
+                  "    return 0;\n  }\n}\n")
+        mutants = native_fuzz.MUTANTS
+        self.assertIn("if a < 3 {", mutants["le-as-lt"](source))
+        self.assertIn("    st p, ld8", mutants["st8-as-st"](source))
+        self.assertIn("st8 p, lds 1 (p + 1)", mutants["ld8-as-lds"](source))
+        self.assertIn("if (a <= 3) == 0 {", mutants["if-negated"](source))
+        self.assertIn(">>> 62;", mutants["shift-off-by-one"](source))
+        self.assertIn(">>> 6;", mutants["shift-off-by-one"](source))
+        for name, mutant in mutants.items():
+            with self.subTest(mutant=name):
+                changed = [a != b for a, b in zip(source.splitlines(), mutant(source).splitlines(), strict=True)]
+                self.assertTrue(any(changed))
 
     def test_emitter_has_no_build_side_effects(self) -> None:
         binary = ROOT / ".lake/build/bin/dn-compiler"

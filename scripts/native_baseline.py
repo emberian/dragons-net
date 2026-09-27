@@ -426,6 +426,30 @@ int main(void) {
     if broken.returncode != 1 or "copy/frame mismatch" not in broken.stderr:
         raise RuntimeError("copy test did not detect the deliberately removed store")
     measured["missing_store_mutant_rejected"] = True
+    # Kernels that break the capacity contract the host relies on: each has to be refused for
+    # the reason it breaks.
+    bound = "if 4096 < cap {"
+    loop = "while i < len {"
+    if text.count(bound) != 1 or text.count(loop) != 1:
+        raise RuntimeError("the capacity mutations no longer find the lines they change")
+    capacity = {
+        # no upper bound on the capacity
+        "echo-unbounded": (text.replace(bound, "if 0 {"), "rejection mismatch"),
+        # the bound one too high
+        "echo-bound": (text.replace(bound, "if 4097 < cap {"), "rejection mismatch"),
+        # the whole capacity copied, the length returned
+        "echo-capacity": (text.replace(loop, "while i < cap {"), "copy/frame mismatch"),
+    }
+    for name, (source, message) in capacity.items():
+        (out / f"{name}.pnk").write_text(source)
+        compile_source(name)
+        link(f"{name}-check", ROOT / "native/echo_check.c", out / f"{name}.S")
+        refused = subprocess.run([str(out / f"{name}-check")], capture_output=True, text=True, timeout=30,
+                                 check=False)
+        if refused.returncode != 1 or message not in refused.stderr:
+            raise RuntimeError(f"the copy test did not refuse {name} (status {refused.returncode}):\n"
+                               f"{refused.stderr}")
+    measured["capacity_mutants_rejected"] = len(capacity)
     # Sensitivity of the two gates around the compiler: a warning must fail the build, and
     # an export outside the project namespace must be refused.
     (out / "warned.pnk").write_text(

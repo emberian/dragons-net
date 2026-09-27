@@ -1,0 +1,123 @@
+{
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   0
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 1
+ },
+ "name": "le-as-lt",
+ "native": {
+  "changed": [],
+  "result": 0,
+  "status": 0
+ },
+ "origin": {
+  "input": 3,
+  "program": "dn_fuzz_109",
+  "seed": 1
+ },
+ "original": {
+  "input": {
+   "data": {
+    "a": 128
+   },
+   "fill": [
+    1950151611642317950,
+    255
+   ]
+  },
+  "plan": {
+   "entries": [
+    [
+     2,
+     4088
+    ],
+    [
+     1,
+     0
+    ]
+   ],
+   "params": [
+    {
+     "buffer": 1,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 2288
+    },
+    {
+     "kind": "table",
+     "name": "t"
+    },
+    {
+     "kind": "data",
+     "name": "a"
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "var",
+     "r2",
+     [
+      "lds",
+      1,
+      "t"
+     ]
+    ],
+    [
+     "return",
+     [
+      "*",
+      [
+       "&",
+       "a",
+       "a"
+      ],
+      [
+       "<=",
+       "a",
+       "a"
+      ]
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_109",
+   "params": [
+    "p",
+    "t",
+    "a"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "params": []
+ },
+ "printed": "export fun dn_min(1 dn_result) {\n  st dn_result, 0 < 0;\n  return 0;\n}\n",
+ "program": {
+  "body": [
+   [
+    "return",
+    [
+     "<=",
+     0,
+     0
+    ]
+   ]
+  ],
+  "name": "dn_min",
+  "params": []
+ },
+ "reduction": {
+  "asked": 155,
+  "taken": 10
+ },
+ "source": "export fun dn_min(1 dn_result) {\n  st dn_result, 0 <= 0;\n  return 0;\n}\n"
+}

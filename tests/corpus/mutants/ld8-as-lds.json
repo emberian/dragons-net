@@ -1,0 +1,128 @@
+{
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   18446744073709551615
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 13
+ },
+ "name": "ld8-as-lds",
+ "native": {
+  "changed": [],
+  "result": 4855229716328800525,
+  "status": 0
+ },
+ "origin": {
+  "input": 2,
+  "program": "dn_fuzz_120",
+  "seed": 1
+ },
+ "original": {
+  "input": {
+   "data": {
+    "a": 4095
+   },
+   "fill": [
+    13901444593366013567,
+    18446744073709551615
+   ]
+  },
+  "plan": {
+   "entries": [],
+   "params": [
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 4000
+    },
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "q",
+     "offset": 856
+    },
+    {
+     "kind": "data",
+     "name": "a"
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "var",
+     "x0",
+     [
+      "ld8",
+      [
+       "-",
+       "p",
+       4000
+      ]
+     ]
+    ],
+    [
+     "return",
+     [
+      ">>>",
+      [
+       "-",
+       "a",
+       "x0"
+      ],
+      8
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_120",
+   "params": [
+    "p",
+    "q",
+    "a"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "params": [
+   {
+    "buffer": 0,
+    "kind": "pointer",
+    "name": "p",
+    "offset": 4000
+   }
+  ]
+ },
+ "printed": "export fun dn_min(1 p, 1 dn_result) {\n  var x0 = lds 1 p;\n  st dn_result, x0;\n  return 0;\n}\n",
+ "program": {
+  "body": [
+   [
+    "var",
+    "x0",
+    [
+     "ld8",
+     "p"
+    ]
+   ],
+   [
+    "return",
+    "x0"
+   ]
+  ],
+  "name": "dn_min",
+  "params": [
+   "p"
+  ]
+ },
+ "reduction": {
+  "asked": 104,
+  "taken": 6
+ },
+ "source": "export fun dn_min(1 p, 1 dn_result) {\n  var x0 = ld8 p;\n  st dn_result, x0;\n  return 0;\n}\n"
+}

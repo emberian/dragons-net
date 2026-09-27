@@ -84,7 +84,10 @@ int main(void) {
                          {0,UINT64_MAX}, {0,1ULL<<63},
                          {0,4097}, {1,4097}, {4096,4097}, {4097,4097}, {0,8192}};
     for (size_t i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
-        if (dn_echo((uintptr_t)guard, (uintptr_t)guard, bad[i][0], bad[i][1]) != UINT32_MAX) return 1;
+        if (dn_echo((uintptr_t)guard, (uintptr_t)guard, bad[i][0], bad[i][1]) != UINT32_MAX) {
+            fputs("rejection mismatch\n", stderr);
+            return 1;
+        }
         ++cases;
     }
     if (dn_echo((uintptr_t)guard, (uintptr_t)guard, 0, 0) != 0) return 1;

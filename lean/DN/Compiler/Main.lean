@@ -5,6 +5,8 @@ import DN.Compiler.StateCorpus
 import DN.Dsl.Example
 import DN.Compiler.Canon
 import DN.Compiler.Precedence
+import DN.Compiler.Gen
+import DN.Compiler.GenCorpus
 
 /-! Source emitter for the checked native examples. Emission is not a binary
 correctness certificate: see docs/assurance.md for the remaining connections. -/
@@ -52,14 +54,27 @@ def main (args : List String) : IO UInt32 := do
   | ["emit-baseline"] => output (DN.Compiler.Baseline.fixture.map (·.compress))
   | ["emit-trees"] => output trees
   | ["emit-cells"] => output (DN.Compiler.Precedence.cells.map (·.compress))
+  | ["emit-fuzz", seed, count, vectors] =>
+    match seed.toNat?, count.toNat?, vectors.toNat? with
+    | some s, some c, some v =>
+      if s < 2 ^ 64 then output ((DN.Compiler.Gen.emit (UInt64.ofNat s) c v).map (·.compress))
+      else IO.eprintln "error: the seed is a 64-bit number" *> pure 2
+    | _, _, _ => IO.eprintln "error: emit-fuzz SEED COUNT VECTORS takes three numbers" *> pure 2
+  | ["run-fuzz"] =>
+    -- Programs given as data on standard input, as the reducer and the corpus give them.
+    let input ← (← IO.getStdin).readToEnd
+    let answer : Except String Lean.Json := do DN.Compiler.Gen.replay (← Lean.Json.parse input)
+    output (answer.map (·.compress))
+  | ["fuzz-samples"] => output (.ok DN.Compiler.Gen.samples.compress)
+  | ["emit-corpus"] => output (DN.Compiler.GenCorpus.json.map (·.compress))
   | ["dump-states"] =>
     -- The corpus of stopping states, with what the model makes of each case;
     -- `scripts/state_check.py` recomputes the same answers independently.
     IO.println DN.Compiler.StateCorpus.dump
     return 0
   | ["--help"] | [] =>
-    IO.println "dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|emit-trees|emit-cells|dump-states}\nEmit checked native examples, differential fixtures or the state corpus."
+    IO.println "dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|emit-trees|emit-cells|emit-fuzz SEED COUNT VECTORS|run-fuzz|fuzz-samples|emit-corpus|dump-states}\nEmit checked native examples, differential fixtures, generated programs or the state corpus."
     return 0
   | _ =>
-    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|emit-trees|emit-cells|dump-states}"
+    IO.eprintln "usage: dn-compiler {emit-region|emit-echo|emit-render|emit-reply|emit-reply-cases|emit-baseline|emit-trees|emit-cells|emit-fuzz SEED COUNT VECTORS|run-fuzz|fuzz-samples|emit-corpus|dump-states}"
     return 2
