@@ -63,21 +63,21 @@ The model used to write back whatever the oracle returned, so a reply longer tha
 
 What remains an assumption is the oracle itself: the model says what a program does with the answer, not what a real host answers. A frame theorem for an external call can now rely on the length, since a reply of another length no longer writes anything.
 
-**Still open:** non-wrapping and addressability premises for every byte written are not stated.
+**Addressability and wrapping** (discharged: they need no premise of their own): the array is read before it is written, so every byte written is addressable (`harr` in `Bytes.extCall_frame`), and the frame speaks of the written addresses as the machine computes them, so an array that wraps around the address space is covered as well.
 
 **Regression:** an adversarial oracle returning one extra byte now ends the run instead of writing (`extCall_overlong_reply_is_final`), a reply of the declared length is written (`extCall_exact_reply_is_written`), and an accepted reply cannot disturb a byte outside the array (`Bytes.extCall_frame`).
 
-## Medium — the strongest byte-copy theorem omits caller-visible state behavior
+## Medium — the strongest byte-copy theorem omits caller-visible state behavior (discharged for locals, `ffi` and `baseAddr`)
 
-**Location:** `lean/DN/Compiler/ByteCopy.lean:228-244` (implementation setup at `:245-261`).
+**Location:** `lean/DN/Compiler/ByteCopy.lean`, `copySeg_landsB`.
 
-`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program declares `dst`, `src`, `i` and `len`, and the theorem now also proves that all four keep the bindings they had, so a caller using those names loses nothing. Still absent from the contract: `ffi`, `baseAddr`, the exact consumed clock, and an explicit normal-result fact beyond the execution equality.
+`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program declares `dst`, `src`, `i` and `len` and restores them, and it assigns nothing else: the theorem now proves that every local reads as it did, and that `ffi` and `baseAddr` are unchanged (`copySeg_keeps_callers_locals` runs it on a caller with a local of its own and with `i` bound). An external call that returns normally changes only the bytes of its array and the external world's state: its locals, memory domain, byte order, clock and base address are unchanged (`Bytes.extCall_keeps`). Still absent from the contract: the exact consumed clock, and an explicit normal-result fact beyond the execution equality; no theorem uses either yet.
 
-The memory frame is phrased through `memLoadByte`; a word-level frame (`s'.memory w = s.memory w` outside destination-aligned words) would make downstream whole-word preservation obligations easier to discharge.
+The memory frame is phrased through `memLoadByte`; a word-level frame (`s'.memory w = s.memory w` outside destination-aligned words) would make downstream whole-word preservation obligations easier to discharge. There are none so far, so it has not been added.
 
-**Fix:** either scope scratch locals with `Dec` and prove restoration, or state the clobber set explicitly. Strengthen the postcondition with unrelated-local preservation, `ffi` and `baseAddr` preservation, exact/founded clock consumption, and a word-level memory frame outside `{ byteAlign (dst+i) }`. A result-slot wrapper should specify its return/result behavior separately.
+**Fix** (discharged except the clock and the word-level frame, for the reason above): either scope scratch locals with `Dec` and prove restoration, or state the clobber set explicitly. Strengthen the postcondition with unrelated-local preservation, `ffi` and `baseAddr` preservation, exact/founded clock consumption, and a word-level memory frame outside `{ byteAlign (dst+i) }`. A result-slot wrapper should specify its return/result behavior separately.
 
-**Regression:** start with sentinel values in all four scratch locals plus one unrelated local, run lengths 0 and 1, and assert the chosen contract. Add a same-word test showing only the selected destination byte changes and a cross-word test showing all other words are identical.
+**Regression** (discharged for the locals: `copySeg_keeps_callers_locals` binds `i` and an unrelated local; the theorem covers every length): start with sentinel values in all four scratch locals plus one unrelated local, run lengths 0 and 1, and assert the chosen contract. Add a same-word test showing only the selected destination byte changes and a cross-word test showing all other words are identical.
 
 ## Low — inherited HOL fidelity is asserted by comments, not checked at the boundary
 

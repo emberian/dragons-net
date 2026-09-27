@@ -52,6 +52,16 @@ def copyInvB (dm : Word → Bool) (be : Bool) (m0 : Word → Word)
     (∀ a, (∀ j, j < k → a ≠ dst + BitVec.ofNat 64 j) →
         memLoadByte s.memory dm be a = memLoadByte m0 dm be a)
 
+/-- What a copy leaves alone between an earlier state `t0` and a later one `t`: every local but
+the index, the external world's state and the base address. A step gives it against the state
+the step started in, and `copyKeeps_trans` carries it back to the loop's start. -/
+def copyKeeps (t0 t : PancakeState σ) : Prop :=
+  (∀ x, x ≠ "i" → t.locals x = t0.locals x) ∧ t.ffi = t0.ffi ∧ t.baseAddr = t0.baseAddr
+
+theorem copyKeeps_trans {t0 t1 t2 : PancakeState σ} (h01 : copyKeeps t0 t1) (h12 : copyKeeps t1 t2) :
+    copyKeeps t0 t2 :=
+  ⟨fun x hx => (h12.1 x hx).trans (h01.1 x hx), h12.2.1.trans h01.2.1, h12.2.2.trans h01.2.2⟩
+
 /-- The copy guard `i < len` evaluates to `0` exactly when the budget is spent. -/
 theorem copyByte_guard (dm : Word → Bool) (be : Bool) (m0 : Word → Word)
     (dst src : Word) (val : Nat → BitVec 8) (len : Nat) (hlen63 : len < 2 ^ 63)
@@ -85,7 +95,7 @@ theorem copyByte_step (o : Oracle σ) (dm : Word → Bool) (be : Bool) (m0 : Wor
       dst + BitVec.ofNat 64 i ≠ dst + BitVec.ofNat 64 j)
     (n : Nat) (s : PancakeState σ) (hI : copyInvB dm be m0 dst src val len (n + 1) s) :
     ∃ s2, PancakeSem o copyByteBody (decClock s) = (none, s2) ∧
-      copyInvB dm be m0 dst src val len n s2 ∧ s2.clock = s.clock - 1 := by
+      copyInvB dm be m0 dst src val len n s2 ∧ s2.clock = s.clock - 1 ∧ copyKeeps s s2 := by
   obtain ⟨k, hkn, hma, hbe, hdst, hsrc, hi, hlen, hsrcR, hdstA, hprog, hfr⟩ := hI
   have hklt : k < len := by omega
   have hdl : (decClock s).locals = s.locals := rfl
@@ -192,8 +202,14 @@ theorem copyByte_step (o : Oracle σ) (dm : Word → Bool) (be : Bool) (m0 : Wor
     rw [load_putByte_diff s.memory dm be (dst + BitVec.ofNat 64 k) (val k) a
           (ha k (by omega))]
     exact hfr a (fun j hj => ha j (by omega))
+  -- everything but the index and the memory is as it was
+  have hBkeeps : copyKeeps s sB := by
+    refine ⟨fun x hx => ?_, ?_, ?_⟩
+    · rw [hsBdef]; simp only [setLocal, hx, if_false]; rw [hsSdef]; rfl
+    · rw [hsBdef]; show sS.ffi = s.ffi; rw [hsSdef]; rfl
+    · rw [hsBdef]; show sS.baseAddr = s.baseAddr; rw [hsSdef]; rfl
   refine ⟨sB, hbody, ⟨k + 1, by omega, hBma, hBbe, hBdst, hBsrc, hBi, hBlen,
-    hBsrcR, ?_, hBprog, hBfr⟩, hBclk⟩
+    hBsrcR, ?_, hBprog, hBfr⟩, hBclk, hBkeeps⟩
   intro j hj; exact hdstA j hj
 
 /-! ## 2. `copySeg` — set the frame, run the loop, land the bytes. -/
@@ -215,11 +231,10 @@ region survives) and `memaddrs`/`be`. This is the packed-byte body copy, the las
 word-slot residual of the serialize chain, reproved in the faithful model.
 
 `copySeg` declares its scratch variables, so their previous bindings are restored
-on exit. The stated postcondition does not expose preservation of unrelated
-locals, `ffi`, or `baseAddr`, does not state exact clock consumption, and gives a
-byte-observation frame rather than word-level memory equality. Those properties may follow from
-the implementation but are deliberately not part of this theorem's contract.
-See `docs/reviews/compiler-assurance.md`. -/
+on exit, and it assigns nothing else: every local reads as before, and the external
+world's state and the base address are unchanged. The contract does not state the exact
+clock consumed, and its memory frame is byte by byte rather than word by word; see
+`docs/reviews/compiler-assurance.md`. -/
 theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8) (len : Nat)
     (hlen63 : len < 2 ^ 63)
     (hdisj : ∀ i j, i < len → j < len →
@@ -237,8 +252,7 @@ theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8)
       ∧ (∀ a, (∀ j, j < len → a ≠ dst + BitVec.ofNat 64 j) →
           memLoadByte s'.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a)
       ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be
-      ∧ s'.locals "dst" = s.locals "dst" ∧ s'.locals "src" = s.locals "src"
-      ∧ s'.locals "i" = s.locals "i" ∧ s'.locals "len" = s.locals "len" := by
+      ∧ s'.locals = s.locals ∧ s'.ffi = s.ffi ∧ s'.baseAddr = s.baseAddr := by
   -- the state inside the four declarations
   let s1 : PancakeState σ := { s with locals := setLocal s.locals "dst" dst }
   let s2 : PancakeState σ := { s1 with locals := setLocal s1.locals "src" src }
@@ -274,30 +288,45 @@ theorem copySeg_landsB (o : Oracle σ) (dst src : Word) (val : Nat → BitVec 8)
     · intro j hj; rw [hmem4, hma4, hbe4]; exact hsrcR j hj
     · intro j hj; rw [hma4]; exact hdstA j hj
     · intro a _; rw [hmem4, hma4, hbe4]
-  -- run the loop
-  obtain ⟨s', hs'eq, hs'I, _hs'clk⟩ :=
+  -- run the loop, with the rest of the state held against its entry
+  obtain ⟨s', hs'eq, ⟨hs'I, hs'keeps⟩, _hs'clk⟩ :=
     while_inv_cond_clk o (.cmp .less (.var "i") (.var "len")) copyByteBody
-      (copyInvB s.memaddrs s.be s.memory dst src val len)
-      (copyByte_guard s.memaddrs s.be s.memory dst src val len hlen63)
-      (copyByte_step o s.memaddrs s.be s.memory dst src val len hlen63 hdisj hinj)
-      len s4 hEntry (by rw [hclk4]; exact hclk)
+      (fun n t => copyInvB s.memaddrs s.be s.memory dst src val len n t ∧ copyKeeps s4 t)
+      (fun n t hJ => copyByte_guard s.memaddrs s.be s.memory dst src val len hlen63 n t hJ.1)
+      (fun n t hJ => by
+        obtain ⟨t2, ht2, hI2, hclk2, hk2⟩ :=
+          copyByte_step o s.memaddrs s.be s.memory dst src val len hlen63 hdisj hinj n t hJ.1
+        exact ⟨t2, ht2, ⟨hI2, copyKeeps_trans hJ.2 hk2⟩, hclk2⟩)
+      len s4 ⟨hEntry, ⟨fun _ _ => rfl, rfl, rfl⟩⟩ (by rw [hclk4]; exact hclk)
   obtain ⟨k, hk0, hma', hbe', _, _, _, _, _, _, hprog', hfr'⟩ := hs'I
+  obtain ⟨hloc', hffi', hbase'⟩ := hs'keeps
   have hkl : k = len := by omega
   rw [hkl] at hprog' hfr'
   -- assemble copySeg's run
   have hrun : PancakeSem o (copySeg dst src len) s = (none, _) :=
     sem_dec (oracle := o) rfl
       (sem_dec (oracle := o) rfl (sem_dec (oracle := o) rfl (sem_dec (oracle := o) rfl hs'eq)))
-  refine ⟨_, hrun, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨_, hrun, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro j hj; exact hprog' j hj
   · intro a ha; exact hfr' a ha
   · exact hma'
   · exact hbe'
-  -- the four declarations restore what they shadowed
-  · simp [resVar]
-  · simp [resVar, setLocal]
-  · simp [resVar, setLocal]
-  · simp [resVar, setLocal]
+  -- the four declarations restore what they shadowed; the loop touched no other local
+  · funext x
+    simp only [resVar]
+    by_cases hd : x = "dst"
+    · simp [hd]
+    by_cases hs : x = "src"
+    · simp [hs, setLocal]
+    by_cases hi : x = "i"
+    · simp [hi, setLocal]
+    by_cases hl : x = "len"
+    · simp [hl, setLocal]
+    simp only [hd, hs, hi, hl, if_false]
+    rw [hloc' x hi]
+    simp [s4, s3, s2, s1, setLocal, hd, hs, hi, hl]
+  · exact hffi'
+  · exact hbase'
 
 /-! ## 3. Non-vacuity: the loop is `len` byte stores, and a concrete 4-byte copy. -/
 
@@ -327,7 +356,9 @@ private def copyEntry : PancakeState Unit :=
 
 /-- Witness: the copy invariant is satisfiable. It holds at the entry state of
 that copy, with no byte written yet — so the theorems that assume it are about a
-state the program really reaches, not about a condition nothing meets. -/
+state the program really reaches, not about a condition nothing meets. At this
+state its written prefix is empty and its frame compares the memory with itself;
+`copyInvB_after_one_step` is the witness where neither is so. -/
 theorem copyInvB_witness :
     copyInvB (demoState ()).memaddrs (demoState ()).be copyEntry.memory 8#64 64#64
       (fun j => BitVec.ofNat 8 j) 4 4 copyEntry := by
@@ -343,6 +374,82 @@ theorem copyInvB_witness :
   · intro a _
     rfl
 
+/-- Small sums are different words when they are different numbers. -/
+private theorem small_sums_ne : ∀ (a b c d : Nat), a < 128 → b < 128 → c < 128 → d < 128 →
+    a + b ≠ c + d →
+      (BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word) ≠ BitVec.ofNat 64 c + BitVec.ofNat 64 d := by
+  have hsmall : ∀ (a b : Nat), a < 128 → b < 128 →
+      ((BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word)).toNat = a + b := by
+    intro a b ha hb
+    simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
+    omega
+  intro a b c d ha hb hc hd hsum heq
+  exact hsum (by rw [← hsmall a b ha hb, ← hsmall c d hc hd, heq])
+
+/-- The four-byte copy from 64 to 8 writes no source byte and no destination byte twice. -/
+private theorem demo_apart :
+    (∀ i j, i < 4 → j < 4 →
+      (8#64 : Word) + BitVec.ofNat 64 i ≠ 64#64 + BitVec.ofNat 64 j) ∧
+    (∀ i j, i < 4 → j < 4 → i ≠ j →
+      (8#64 : Word) + BitVec.ofNat 64 i ≠ 8#64 + BitVec.ofNat 64 j) :=
+  ⟨fun i j _ _ => small_sums_ne 8 i 64 j (by omega) (by omega) (by omega) (by omega) (by omega),
+   fun i j _ _ hij =>
+     small_sums_ne 8 i 8 j (by omega) (by omega) (by omega) (by omega) (by omega)⟩
+
+/-- A state like `demoState` whose caller has locals of its own: `x`, which the copy never names,
+and `i`, which the copy uses for its index. -/
+private def callerState (ffi : σ) : PancakeState σ :=
+  { demoState ffi with
+    locals := fun k => if k = "x" then some 42#64 else if k = "i" then some 7#64 else none }
+
+/-- The premises of `copySeg_landsB` on any state with `demoState`'s memory and clock. -/
+private theorem demo_copy (o : Oracle σ) (s : PancakeState σ)
+    (hmem : s.memory = (demoState ()).memory) (hma : s.memaddrs = (demoState ()).memaddrs)
+    (hbe : s.be = false) (hclk : s.clock = 8) :
+    ∃ s', PancakeSem o (copySeg 8#64 64#64 4) s = (none, s')
+      ∧ (∀ j, j < 4 →
+          memLoadByte s'.memory s.memaddrs s.be (8#64 + BitVec.ofNat 64 j)
+            = some (BitVec.ofNat 8 j))
+      ∧ (∀ a, (∀ j, j < 4 → a ≠ 8#64 + BitVec.ofNat 64 j) →
+          memLoadByte s'.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a)
+      ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be
+      ∧ s'.locals = s.locals ∧ s'.ffi = s.ffi ∧ s'.baseAddr = s.baseAddr :=
+  copySeg_landsB (o := o) 8#64 64#64 (fun j => BitVec.ofNat 8 j) 4 (by decide)
+    demo_apart.1 demo_apart.2 s (by rw [hclk]; decide)
+    (fun j hj => by
+      have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+      rw [hmem, hma, hbe]
+      rcases this with rfl | rfl | rfl | rfl <;> decide)
+    (fun j hj => by
+      have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
+      rw [hma]
+      rcases this with rfl | rfl | rfl | rfl <;> decide)
+
+/-- An oracle that ends every external call; the copy makes none. -/
+private def refusing : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
+
+/-- The invariant also holds where it claims something: after one step of the same copy, the
+written prefix holds the first byte, and the memory its frame compares against the entry memory
+differs from that memory at the byte written; and the step left every local but the index, the
+external world's state and the base address as they were. -/
+theorem copyInvB_after_one_step :
+    ∃ s2, PancakeSem refusing copyByteBody (decClock copyEntry) = (none, s2)
+      ∧ copyInvB (demoState ()).memaddrs (demoState ()).be copyEntry.memory 8#64 64#64
+          (fun j => BitVec.ofNat 8 j) 4 3 s2
+      ∧ copyKeeps copyEntry s2
+      ∧ memLoadByte s2.memory (demoState ()).memaddrs (demoState ()).be (8#64 + BitVec.ofNat 64 0)
+          ≠ memLoadByte copyEntry.memory (demoState ()).memaddrs (demoState ()).be
+              (8#64 + BitVec.ofNat 64 0) := by
+  obtain ⟨s2, hrun, hI, -, hkeeps⟩ :=
+    copyByte_step refusing (demoState ()).memaddrs (demoState ()).be copyEntry.memory 8#64 64#64
+      (fun j => BitVec.ofNat 8 j) 4 (by decide) demo_apart.1 demo_apart.2 3 copyEntry
+      copyInvB_witness
+  refine ⟨s2, hrun, hI, hkeeps, ?_⟩
+  obtain ⟨k, hk, -, -, -, -, -, -, -, -, hprog, -⟩ := hI
+  rw [hprog 0 (by omega)]
+  show some (BitVec.ofNat 8 0) ≠ _
+  decide
+
 /-- **The premises of `copySeg_landsB` are satisfiable.** On `demoState`, copying
 four bytes from address 64 to address 8 runs to completion, and the destination
 bytes read back as the source bytes `0, 1, 2, 3`. -/
@@ -352,29 +459,16 @@ theorem copySeg_four_bytes (o : Oracle σ) (ffi : σ) :
           memLoadByte s'.memory (demoState ffi).memaddrs (demoState ffi).be
               (8#64 + BitVec.ofNat 64 j)
             = some (BitVec.ofNat 8 j) := by
-  have hsmall : ∀ (a b : Nat), a < 128 → b < 128 →
-      ((BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word)).toNat = a + b := by
-    intro a b ha hb
-    simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
-    omega
-  have hne : ∀ (a b c d : Nat), a < 128 → b < 128 → c < 128 → d < 128 → a + b ≠ c + d →
-      (BitVec.ofNat 64 a + BitVec.ofNat 64 b : Word) ≠ BitVec.ofNat 64 c + BitVec.ofNat 64 d := by
-    intro a b c d ha hb hc hd hsum heq
-    exact hsum (by rw [← hsmall a b ha hb, ← hsmall c d hc hd, heq])
-  obtain ⟨s', hrun, hland, -, -, -⟩ :=
-    copySeg_landsB (o := o) 8#64 64#64 (fun j => BitVec.ofNat 8 j) 4 (by decide)
-      (fun i j hi hj => hne 8 i 64 j (by omega) (by omega) (by omega) (by omega) (by omega))
-      (fun i j hi hj hij => hne 8 i 8 j (by omega) (by omega) (by omega) (by omega) (by omega))
-      (demoState ffi) (by simp only [demoState]; decide)
-      (fun j hj => by
-        have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
-        simp only [demoState]
-        rcases this with rfl | rfl | rfl | rfl <;> decide)
-      (fun j hj => by
-        have : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 := by omega
-        simp only [demoState]
-        rcases this with rfl | rfl | rfl | rfl <;> decide)
+  obtain ⟨s', hrun, hland, -⟩ := demo_copy o (demoState ffi) rfl rfl rfl rfl
   exact ⟨s', hrun, hland⟩
+
+/-- **A caller's locals survive the copy**: `x`, which the copy never names, and `i`, which it
+declares for its own index and restores. -/
+theorem copySeg_keeps_callers_locals (o : Oracle σ) (ffi : σ) :
+    ∃ s', PancakeSem o (copySeg 8#64 64#64 4) (callerState ffi) = (none, s')
+      ∧ s'.locals "x" = some 42#64 ∧ s'.locals "i" = some 7#64 := by
+  obtain ⟨s', hrun, -, -, -, -, hloc, -⟩ := demo_copy o (callerState ffi) rfl rfl rfl rfl
+  refine ⟨s', hrun, ?_, ?_⟩ <;> rw [hloc] <;> rfl
 
 /-- …and the copy is what makes that true: before it runs, the destination holds
 other bytes. -/

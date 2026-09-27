@@ -333,6 +333,24 @@ theorem extCall_frame (oracle : Oracle σ) (s : PancakeState σ) (name : String)
     exact writeByteArray_preserves s.memaddrs s.be newBytes w ap s.memory
       (fun j hj => hout j (by rw [← hlen]; exact hj))
 
+/-- …and it leaves everything else the program sees as it was: its locals, its memory domain,
+byte order, clock and base address. Only the memory and the external world's state change. -/
+theorem extCall_keeps (oracle : Oracle σ) (s : PancakeState σ) (name : String)
+    {cptr clen aptr alen : PancakeExp} {s' : PancakeState σ}
+    (hrun : PancakeSem oracle (.extCall name cptr clen aptr alen) s = (none, s')) :
+    s'.locals = s.locals ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.clock = s.clock ∧
+      s'.baseAddr = s.baseAddr := by
+  simp only [PancakeSem] at hrun
+  split at hrun
+  · split at hrun
+    · split at hrun
+      · simp at hrun
+      · injection hrun with _ hstate
+        subst hstate
+        exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+    · simp at hrun
+  · simp at hrun
+
 /-- ESTABLISH (over `List (BitVec 8)`): after `write_bytearray`, reading `base + j`
 returns `bs[j]`, provided every written aligned word is in range. -/
 theorem writeByteArray_memBytes (dm : Word → Bool) (be : Bool) (bs : List (BitVec 8)) :
