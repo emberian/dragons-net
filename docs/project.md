@@ -29,10 +29,9 @@ extensions can be implemented in six tasks.
 ## Good starting points
 
 For compiler assurance, start with [inhabited contracts (#1)](https://github.com/emberian/dragons-net/issues/1),
-[FFI and frame conditions (#2)](https://github.com/emberian/dragons-net/issues/2),
-or [generated native regressions (#3)](https://github.com/emberian/dragons-net/issues/3).
-The [HOL rebuild (#5)](https://github.com/emberian/dragons-net/issues/5) is an
-independent infrastructure task.
+[the Lean-to-HOL semantic boundary (#6)](https://github.com/emberian/dragons-net/issues/6),
+which the rest of [the printer/parser contract (#4)](https://github.com/emberian/dragons-net/issues/4)
+waits on, or [a bounded source input for the compiler (#8)](https://github.com/emberian/dragons-net/issues/8).
 
 For the optimized dataplane, agree [identities (#9)](https://github.com/emberian/dragons-net/issues/9),
 [operation terminality (#10)](https://github.com/emberian/dragons-net/issues/10),
