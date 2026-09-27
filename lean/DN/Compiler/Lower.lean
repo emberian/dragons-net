@@ -111,6 +111,17 @@ end
 elaborated in the module that defines it. -/
 theorem lowerStmtsFold_nil : lowerStmtsFold [] = some .skip := by simp [lowerStmtsFold]
 
+/-- A statement that is not a declaration, in front of statements that lower, lowers too. -/
+theorem lowers_cons {x : PStmt} {cx : PancakeProg} (hx : lowerStmt1 x = some cx)
+    (hnd : x.isDec = false) {rest : List PStmt} {crest : PancakeProg}
+    (hrest : lowerStmtsFold rest = some crest) : ∃ c, lowerStmtsFold (x :: rest) = some c := by
+  cases rest with
+  | nil => exact ⟨cx, by simp [lowerStmtsFold, hx]⟩
+  | cons y ys =>
+    cases x with
+    | dec nm e => simp [PStmt.isDec] at hnd
+    | _ => exact ⟨.seq cx crest, by simp [lowerStmtsFold, hx, hrest]⟩
+
 /-- Lower a whole emitter function (partial: `none` if any construct is outside
 the modelled DN.Compiler fragment). -/
 def lower (f : PFun) : Option PancakeProg := lowerStmtsFold f.body

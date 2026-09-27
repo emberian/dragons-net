@@ -3,8 +3,7 @@ import Lake
 open Lake DSL
 
 package dn where
-  leanOptions := #[⟨`autoImplicit, false⟩, ⟨`maxRecDepth, 16384⟩,
-                   ⟨`maxHeartbeats, 4000000⟩]
+  leanOptions := #[⟨`autoImplicit, false⟩]
 
 @[default_target]
 lean_lib DN where

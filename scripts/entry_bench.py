@@ -5,8 +5,9 @@
 The exported design is what the native lanes do: C runs the loop and calls `dn_reply`. The loop
 design is what docs/decisions/0002-entry-and-memory.md chose: the program's `main` runs the loop
 and fetches requests through external calls into its own heap. `check` builds both and runs the
-correctness cases, including two variants that have to fail; `measure` checks first, then
-measures and writes build/entry/report.json, where the decision's numbers come from.
+correctness cases, including seven variants that have to be refused; `measure` checks first, then
+measures, and build/entry/report.json, where the decision's numbers come from, records the digests
+of the sources that ran.
 
 The loop is Pancake written here rather than emitted: the emitter does not yet take calls or
 external calls. It is built with `--main_return` so that `main` returning hands control back to
@@ -26,12 +27,15 @@ import subprocess
 import sys
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import native_baseline as baseline  # noqa: E402 - the path above is what makes it importable
+# The path above is what makes these importable.
+import lanes
+from lanes import NATIVE, ROOT, LaneError, Report
+import native_baseline as baseline
 
 OUT = ROOT / "build/entry"
-NATIVE = ROOT / "native"
+ENTRY = NATIVE / "entry"
+HOSTS = [*sorted(ENTRY.iterdir()), NATIVE / "cake_header.c", *lanes.RUNTIME]
 # The batch areas in the program's heap, from @base: one count word, then slots of a connection
 # word, a length word and the data. The Pancake program and the C header are both written from
 # these, so they cannot disagree.
@@ -116,7 +120,7 @@ def layout_header() -> str:
     replies = [baseline.reply(command) for command in COMMANDS]
     for i, (command, answer) in enumerate(zip(COMMANDS, replies, strict=True)):
         if len(command) > DATA or len(answer) > DATA:
-            raise RuntimeError(f"command {i} or its reply does not fit a slot")
+            raise LaneError(f"command {i} or its reply does not fit a slot")
         lines += [array(f"dn_entry_command_{i}", command), array(f"dn_entry_reply_{i}", answer)]
     count = range(len(COMMANDS))
     lines.append("static const unsigned char *const dn_entry_commands[] = {"
@@ -134,39 +138,29 @@ def layout_header() -> str:
 def compile_program(cake: str, name: str, source: str) -> Path:
     """Compile a Pancake program; any diagnostic fails, and `cake_bitmaps` is made global so that
     the host can write the heap header (native/cake_header.c)."""
-    pnk, asm = OUT / f"{name}.pnk", OUT / f"{name}.S"
+    pnk = OUT / f"{name}.pnk"
     pnk.write_text(source)
-    with pnk.open("rb") as inp, asm.open("wb") as output:
-        done = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=output,
-                              stderr=subprocess.PIPE, timeout=300, check=False)
-    if done.returncode or done.stderr:
-        raise RuntimeError(f"{name}.pnk compiled with diagnostics:\n{done.stderr.decode(errors='replace')}")
     # The namespace check reads the assembly as the compiler wrote it; the one symbol added after
     # it is the bitmaps label, which changes no instruction.
-    baseline.check_symbols(asm, OUT / f"{name}.o")
+    asm = lanes.assemble(cake, pnk)
     text = asm.read_text()
     if text.count("\ncake_bitmaps:\n") != 1:
-        raise RuntimeError(f"{name}.S: the bitmaps label is not where the host expects it")
+        raise LaneError(f"{name}.S: the bitmaps label is not where the host expects it")
     asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
     return asm
 
 
 def link(name: str, sources: list[Path]) -> Path:
-    binary = OUT / name
-    baseline.loud([os.environ.get("CC", "cc"), *baseline.HARDENING, "-I", str(NATIVE), "-I", str(NATIVE / "entry"),
-                   "-I", str(OUT), *map(str, sources), "-o", str(binary)], timeout=120, what=f"linking {name}")
-    baseline.hardened(binary)
-    return binary
+    return lanes.link(OUT / name, sources, includes=[ENTRY, OUT])
 
 
 def build(cake: str) -> dict[str, Path]:
     """Compile every program and link every host; returns the assembly of each program."""
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "entry_layout.h").write_text(layout_header())
-    compiler = ROOT / ".lake/build/bin/dn-compiler"
-    reply = baseline.loud([str(compiler), "emit-reply"], timeout=60, what="emitting dn_reply")
+    reply = lanes.emit("emit-reply", timeout=60)
     if reply.count("export fun dn_reply") != 1 or reply.count("st8 out + pos + 0, 50;") < 1:
-        raise RuntimeError("the emitted reply table is not the one this benchmark was written against")
+        raise LaneError("the emitted reply table is not the one this benchmark was written against")
     internal = reply.replace("export fun dn_reply", "fun dn_reply")
     nop = "\nexport fun dn_nop(1 a) {\n  return a + 1;\n}\n"
     programs = {
@@ -181,14 +175,14 @@ def build(cake: str) -> dict[str, Path]:
     }
     asm = {name: compile_program(cake, name, source) for name, source in programs.items()}
     runtime = [NATIVE / "cake_runtime.c", NATIVE / "cake_header.c"]
-    entry = NATIVE / "entry"
-    link("micro-export", [entry / "entry_micro_export.c", *runtime, asm["export"]])
+    server = [ENTRY / "entry_net.c", *runtime]
+    link("micro-export", [ENTRY / "entry_micro_export.c", *runtime, asm["export"]])
     for name in ("loop", "loop-misplaced", "loop-nop", *(f"loop-without-{n}" for n in HOST_CHECKS)):
-        link(f"micro-{name}", [entry / "entry_micro_loop.c", *runtime, asm[name]])
-    link("server-export", [entry / "entry_server_export.c", *runtime, asm["export"]])
-    link("server-export-wrong", [entry / "entry_server_export.c", *runtime, asm["export-wrong"]])
-    link("server-loop", [entry / "entry_server_loop.c", *runtime, asm["loop"]])
-    link("client", [entry / "entry_client.c"])
+        link(f"micro-{name}", [ENTRY / "entry_micro_loop.c", *runtime, asm[name]])
+    link("server-export", [ENTRY / "entry_server_export.c", *server, asm["export"]])
+    link("server-export-wrong", [ENTRY / "entry_server_export.c", *server, asm["export-wrong"]])
+    link("server-loop", [ENTRY / "entry_server_loop.c", *server, asm["loop"]])
+    link("client", [ENTRY / "entry_client.c"])
     return asm
 
 
@@ -196,7 +190,7 @@ def listed_values(text: str, label: str, directive: str) -> int:
     """How many values the `directive` lines right after `label` list, up to the next other line."""
     lines = text.splitlines()
     if lines.count(label) != 1:
-        raise RuntimeError(f"the assembly does not have exactly one {label}")
+        raise LaneError(f"the assembly does not have exactly one {label}")
     count = 0
     for line in lines[lines.index(label) + 1:]:
         stripped = line.strip()
@@ -214,7 +208,7 @@ def expected_header(asm: Path, binary: Path) -> list[int]:
     followed by a data buffer, and the machine code by a code buffer; both buffers are whatever
     lies between their labels, which the theorem leaves free."""
     text = asm.read_text()
-    listing = baseline.loud(["nm", str(binary)], timeout=60, what=f"reading symbols of {binary.name}")
+    listing = lanes.loud(["nm", str(binary)], timeout=60, what=f"reading symbols of {binary.name}")
     symbols = {parts[2]: int(parts[0], 16) for line in listing.splitlines() if len(parts := line.split()) == 3}
     at = {name: symbols[name] - symbols["cake_text_begin"] for name in
           ("cake_bitmaps", "cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end", "cake_main",
@@ -223,9 +217,9 @@ def expected_header(asm: Path, binary: Path) -> list[int]:
     code = at["cake_main"] + listed_values(text, "cake_main:", ".byte")
     data_end, code_end = at["cake_bitmaps_buffer_end"], at["cake_codebuffer_end"]
     if data != at["cake_bitmaps_buffer_begin"] or code != at["cake_codebuffer_begin"]:
-        raise RuntimeError("the buffers do not begin where the bitmaps and the machine code end")
+        raise LaneError("the buffers do not begin where the bitmaps and the machine code end")
     if data_end < data or (data_end - data) % 8 or code_end < code:
-        raise RuntimeError("a buffer ends before it begins")
+        raise LaneError("a buffer ends before it begins")
     return [at["cake_bitmaps"], data, data_end, code, code_end]
 
 
@@ -237,7 +231,7 @@ def run(args: list[str], cpu: int | None = None, timeout: int = 120) -> dict[str
     done = subprocess.run([*pinned(cpu), str(OUT / args[0]), *args[1:]], capture_output=True, text=True,
                           timeout=timeout, check=False)
     if done.returncode:
-        raise RuntimeError(f"{' '.join(args)} failed with status {done.returncode}:\n{done.stderr}")
+        raise LaneError(f"{' '.join(args)} failed with status {done.returncode}:\n{done.stderr}")
     result: dict[str, Any] = json.loads(done.stdout)
     return result
 
@@ -246,8 +240,8 @@ def refused(args: list[str], status: int | None, message: str) -> None:
     """A variant that breaks one property has to fail on it: the check is seen red."""
     done = subprocess.run([str(OUT / args[0]), *args[1:]], capture_output=True, text=True, timeout=120, check=False)
     if done.returncode == 0 or (status is not None and done.returncode != status) or message not in done.stderr:
-        raise RuntimeError(f"{' '.join(args)} was not refused as it should be (status {done.returncode}):\n"
-                           f"{done.stdout}{done.stderr}")
+        raise LaneError(f"{' '.join(args)} was not refused as it should be (status {done.returncode}):\n"
+                        f"{done.stdout}{done.stderr}")
 
 
 def serve(server: list[str], connections: int, each: int, cpus: tuple[int | None, int | None],
@@ -260,7 +254,7 @@ def serve(server: list[str], connections: int, each: int, cpus: tuple[int | None
         ready, _, _ = select.select([process.stdout], [], [], 30) if process.stdout else ([], [], [])
         port = process.stdout.readline().strip() if ready and process.stdout else ""
         if not port:
-            raise RuntimeError(f"{server[0]} did not say which port it listens on")
+            raise LaneError(f"{server[0]} did not say which port it listens on")
         client = subprocess.run([*pinned(cpus[1]), str(OUT / "client"), port, str(connections), str(each)],
                                 capture_output=True, text=True, timeout=timeout, check=False)
         try:
@@ -278,8 +272,8 @@ def network(server: list[str], connections: int, each: int, cpus: tuple[int | No
             timeout: int = 120) -> float:
     client, status, errors = serve(server, connections, each, cpus, timeout)
     if client.returncode or status:
-        raise RuntimeError(f"{' '.join(server)} with {connections} connections: client {client.returncode} "
-                           f"{client.stderr} server {status} {errors}")
+        raise LaneError(f"{' '.join(server)} with {connections} connections: client {client.returncode} "
+                        f"{client.stderr} server {status} {errors}")
     rate: float = json.loads(client.stdout)["requests_per_second"]
     return rate
 
@@ -301,10 +295,10 @@ def check(asm: dict[str, Path]) -> dict[str, int]:
         run(args)
     written = run(["micro-loop", "header"])["header"]
     if written != expected_header(asm["loop"], OUT / "micro-loop"):
-        raise RuntimeError(f"the heap header written is not the one pan_installed requires: {written}")
+        raise LaneError(f"the heap header written is not the one pan_installed requires: {written}")
     for name, (_, case) in HOST_CHECKS.items():
         if run(["micro-loop", "hostile", case])["stopped"] is not True:
-            raise RuntimeError(f"hostile case {case} was not stopped")
+            raise LaneError(f"hostile case {case} was not stopped")
         message = "outside its batch areas" if name == "count_max" else "answered a hostile batch"
         refused([f"micro-loop-without-{name}", "hostile", case], 1, message)
     variants = [(["micro-loop-misplaced", "reply", "100", "8"], "outside the heap"),
@@ -315,14 +309,14 @@ def check(asm: dict[str, Path]) -> dict[str, int]:
         network(server, 8, 500, (None, None))
     client, _, _ = serve(["server-export-wrong"], 1, 10, (None, None), 60)
     if client.returncode == 0 or "not the one the reference gives" not in client.stderr:
-        raise RuntimeError(f"the client took a wrong reply:\n{client.stdout}{client.stderr}")
+        raise LaneError(f"the client took a wrong reply:\n{client.stdout}{client.stderr}")
     return {"reply_runs": len(replies), "header_words": len(written), "hostile_cases": len(HOST_CHECKS),
             "refused_variants": len(HOST_CHECKS) + len(variants) + 1, "network_servers": len(SERVERS)}
 
 
 def spread(samples: list[float]) -> dict[str, float]:
     if not samples or min(samples) <= 0:
-        raise RuntimeError(f"a measurement came out empty or non-positive: {samples}")
+        raise LaneError(f"a measurement came out empty or non-positive: {samples}")
     return {"median": statistics.median(samples), "min": min(samples), "max": max(samples)}
 
 
@@ -370,7 +364,7 @@ def read(path: Path) -> str | None:
 def machine(cpus: tuple[int | None, int | None]) -> dict[str, Any]:
     """What the numbers depend on beyond the code: the processor, its frequency policy, the C
     compiler, the revision measured, and which threads share a core with the pinned ones."""
-    compiler = baseline.loud([os.environ.get("CC", "cc"), "--version"], timeout=30, what="asking the C compiler")
+    compiler = lanes.loud([lanes.cc(), "--version"], timeout=30, what="asking the C compiler")
     revision = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
                               timeout=30, check=False).stdout.strip()
     changed = subprocess.run(["git", "--no-optional-locks", "-C", str(ROOT), "status", "--porcelain"],
@@ -408,6 +402,13 @@ def measure() -> dict[str, Any]:
             "load_average_before": list(load_before), "load_average_after": list(os.getloadavg())}
 
 
+def sources() -> dict[str, str]:
+    """What ran, by digest, apart from the revision: the scripts that write the programs and the
+    reference, and the programs themselves; the hosts are in the report's header."""
+    files = [ROOT / "scripts/entry_bench.py", ROOT / "scripts/native_baseline.py", *sorted(OUT.glob("*.pnk"))]
+    return {str(f.relative_to(ROOT)): lanes.digest(f) for f in files}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("check", "measure"))
@@ -415,25 +416,22 @@ def main() -> None:
     parser.add_argument("--busy", action="store_true",
                         help="measure even while other work loads the machine; the report records the load")
     args = parser.parse_args()
-    if platform.system() != "Linux" or platform.machine() != "x86_64":
-        parser.error("the entry benchmark runs on Linux x86-64")
-    cake = shutil.which(args.cake or "")
-    if not cake:
-        parser.error("provide --cake or CAKE")
+    lanes.require_platform(parser)
+    cake = lanes.given_cake(parser, args.cake)
     # Other work on the machine moves every number here, so a measurement starts only on a quiet
     # machine unless asked otherwise, and the report says how loaded it was either way.
     load = os.getloadavg()[0]
     if args.mode == "measure" and not args.busy and load > (os.cpu_count() or 1) / 8:
         parser.error(f"the one-minute load average is {load:.1f}; measure on a quiet machine or pass --busy")
-    report_path = OUT / "report.json"
-    report_path.unlink(missing_ok=True)
-    asm = build(cake)
-    report: dict[str, Any] = {"status": "checked", "checks": check(asm), "compiler_sha256": baseline.digest(cake),
-                              "platform": platform.platform(), "cpus": os.cpu_count()}
-    if args.mode == "measure":
-        report.update(status="measured", **measure())
-    report_path.write_text(json.dumps(report, indent=2) + "\n")
-    print(report_path.read_text(), end="")
+
+    def run() -> Report:
+        asm = build(cake)
+        body: dict[str, Any] = {"checks": check(asm), "cpus": os.cpu_count(), "sources_sha256": sources()}
+        if args.mode == "check":
+            return Report("checked", cake, [*HOSTS, OUT / "entry_layout.h"], body)
+        return Report("measured", cake, [*HOSTS, OUT / "entry_layout.h"], {**body, **measure()})
+
+    lanes.lane_main("ENTRY", OUT, run)
 
 
 if __name__ == "__main__":

@@ -5,29 +5,12 @@
  * access, once after them and once before them, and the input is read-only during the call. */
 #define _GNU_SOURCE
 #include "cake_runtime.h"
+#include "host.h"
 #include <inttypes.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
 extern uint32_t dn_reply(uint64_t, uint64_t, uint64_t, uint64_t);
 
 enum { LIMIT = 4096 };
 static size_t page_size;
-
-static void protect(unsigned char *page, int access) {
-    if (mprotect(page, page_size, access)) {
-        perror("mprotect");
-        exit(1);
-    }
-}
-
-/* The middle one of three pages; the outer two have no access. */
-static unsigned char *guarded(void) {
-    unsigned char *pages = mmap(NULL, page_size * 3, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (pages == MAP_FAILED) return NULL;
-    protect(pages + page_size, PROT_READ | PROT_WRITE);
-    return pages + page_size;
-}
 
 static int nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -74,23 +57,22 @@ static int call(unsigned char *in_page, const unsigned char *input, uint64_t in_
     memcpy(in, input, placed);
     memset(out_page, out_fill, page_size);
     unsigned char *out = at_start ? out_page : out_page + page_size - room;
-    protect(in_page, PROT_READ);
+    dn_protect(in_page, PROT_READ);
     uint32_t got = dn_reply((uintptr_t)in, in_len, (uintptr_t)out, cap);
-    protect(in_page, PROT_READ | PROT_WRITE);
+    dn_protect(in_page, PROT_READ | PROT_WRITE);
     if (!page_holds(in_page, in_fill, in, input, placed)) return 0;
     if (refused) return got == UINT32_MAX && page_holds(out_page, out_fill, out, expected, 0);
     return got == expected_len && page_holds(out_page, out_fill, out, expected, expected_len);
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2 || argv[1][0] < '0' || argv[1][0] > '9') return 2;
-    char *end;
-    unsigned long max_len = strtoul(argv[1], &end, 10);
-    if (*end || max_len == 0 || max_len > LIMIT - 9) return 2;
+    if (argc != 2) dn_harness("usage: reply-check MAX_LEN");
+    uint64_t max_len = dn_parse_u64(argv[1], LIMIT - 9);
+    if (max_len == 0) dn_harness("the program asks for no room at all");
+    dn_expect_faults();
     dn_runtime_init();
-    page_size = (size_t)sysconf(_SC_PAGESIZE);
-    unsigned char *in_page = guarded(), *out_page = guarded();
-    if (!in_page || !out_page) return 1;
+    page_size = dn_page_size();
+    unsigned char *in_page = dn_guarded(), *out_page = dn_guarded();
     /* One byte wider than the longest token, so a longer one is refused rather than split. */
     static char in_text[2 * LIMIT + 2], out_text[2 * LIMIT + 2];
     static unsigned char input[LIMIT], expected[LIMIT];
@@ -98,9 +80,9 @@ int main(int argc, char **argv) {
     int read;
     while ((read = scanf("%8193s %8193s", in_text, out_text)) == 2) {
         size_t in_len, expected_len;
-        if (unhex(in_text, input, &in_len) || unhex(out_text, expected, &expected_len) ||
-            expected_len > max_len)
-            return 2;
+        if (unhex(in_text, input, &in_len) || unhex(out_text, expected, &expected_len))
+            dn_harness("bad input: not a case in hex: %s %s", in_text, out_text);
+        if (expected_len > max_len) dn_harness("bad input: a reply longer than the room asked for");
         /* A buffer of exactly what the program asks for, a larger one, one byte too small, and
            the two lengths a signed comparison reads as negative. A negative capacity is also
            below the program's own bound, so no call tells its separate check from that one. */
@@ -110,18 +92,17 @@ int main(int argc, char **argv) {
         for (size_t c = 0; c < sizeof(calls) / sizeof(calls[0]); ++c)
             for (int at_start = 0; at_start < 2; ++at_start) {
                 if (!call(in_page, input, calls[c].in_len, out_page, calls[c].cap, expected,
-                          expected_len, calls[c].refused, at_start)) {
-                    fprintf(stderr, "reply mismatch for input %s, length %" PRIu64 ", room %"
-                            PRIu64 ", at the %s of the page\n", in_text, calls[c].in_len,
-                            calls[c].cap, at_start ? "start" : "end");
-                    return 1;
-                }
+                          expected_len, calls[c].refused, at_start))
+                    dn_violation("reply mismatch for input %s, length %" PRIu64 ", room %" PRIu64
+                                 ", at the %s of the page", in_text, calls[c].in_len, calls[c].cap,
+                                 at_start ? "start" : "end");
                 ++cases;
             }
     }
-    if (read != EOF || cases == 0) return 2;
-    munmap(in_page - page_size, page_size * 3);
-    munmap(out_page - page_size, page_size * 3);
+    if (read != EOF) dn_harness("bad input: unreadable");
+    if (cases == 0) dn_harness("bad input: no cases");
+    dn_unguard(in_page);
+    dn_unguard(out_page);
     printf("{\"reply_cases\":%" PRIu64 "}\n", cases);
     return 0;
 }

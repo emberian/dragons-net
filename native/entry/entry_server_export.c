@@ -7,13 +7,14 @@
 extern uint32_t dn_reply(uint64_t, uint64_t, uint64_t, uint64_t);
 
 int main(int argc, char **argv) {
-    if (argc != 2) dn_fail("usage: entry-server-export TOTAL");
+    if (argc != 2) dn_broken("usage: entry-server-export TOTAL");
     net_total = dn_number(argv[1], 1, 1000000000);
     net_listen();
     dn_runtime_setup();
     dn_runtime_header();
     cml_main();
-    if (!dn_runtime_header_intact()) dn_fail("the heap header is not what the compiler theorem requires");
+    if (!dn_runtime_header_intact())
+        dn_fail("the heap header is not what the compiler theorem requires");
     static unsigned char in[DN_ENTRY_DATA], out[DN_ENTRY_DATA];
     while (net_served < net_total) {
         int n = net_wait();

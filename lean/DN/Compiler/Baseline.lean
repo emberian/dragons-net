@@ -9,11 +9,9 @@ code. These are executable tests, not compiler-correctness theorems. -/
 namespace DN.Compiler.Baseline
 open Syntax Lower Lean
 
-def ops : List POp := [.add, .sub, .mul, .and_, .lt, .le, .eq]
-
 def expressions : List PExpr :=
-  ops.map (fun o => .binop o (v "a") (v "b")) ++
-  ops.flatMap (fun o => ops.flatMap (fun p =>
+  POp.all.map (fun o => .binop o (v "a") (v "b")) ++
+  POp.all.flatMap (fun o => POp.all.flatMap (fun p =>
     [.binop o (.binop p (v "a") (v "b")) (n 3),
      .binop o (v "a") (.binop p (v "b") (n 3))])) ++
   [n (2^64-1), eAdd (v "a") (n (2^64-1)),
@@ -104,11 +102,10 @@ def fixture : Except String Json := do
       let some result := eval (state a b) lowered | throw "fixture evaluation failed"
       pure result.toNat
     pure (Json.mkObj [("expression", exprJson e), ("expected", toJson expected)])
-  let oracle : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
   let run (f : PFun) : Except String (List Nat) := do
     let some prog := lower f | throw "control fixture does not lower"
     values.mapM fun (a,b) => do
-      let (some (.return_ result), _) := PancakeSem oracle prog (state a b)
+      let (some (.return_ result), _) := PancakeSem .failing prog (state a b)
         | throw "control fixture did not return"
       pure result.toNat
   let controls ← run control
@@ -119,12 +116,12 @@ def fixture : Except String Json := do
     for (a,b) in values do
       let original := state a b
       let s := { original with locals := setLocal original.locals "dn_result" 16, memaddrs := fun address => address == 16 }
-      let (result, final) := PancakeSem oracle p s
+      let (result, final) := PancakeSem .failing p s
       let some originalFunction := (functions ++ [control, control2])[index]?
         | throw "original function missing"
       let some originalProg := lower originalFunction
         | throw "original function missing"
-      let (some (.return_ expected), _) := PancakeSem oracle originalProg original
+      let (some (.return_ expected), _) := PancakeSem .failing originalProg original
         | throw "original did not return"
       unless result == some (.return_ 0) && final.memory 16 == expected do
         throw "ABI model output-slot mismatch"

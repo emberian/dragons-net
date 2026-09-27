@@ -78,8 +78,8 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     }
 }
 
-static void usage(void) {
-    dn_fail("usage: entry-micro-loop nop N | reply N K | hostile CASE | header [--no-header]");
+__attribute__((noreturn)) static void usage(void) {
+    dn_broken("usage: entry-micro-loop nop N | reply N K | hostile CASE | header [--no-header]");
 }
 
 int main(int argc, char **argv) {
@@ -108,7 +108,8 @@ int main(int argc, char **argv) {
         cml_main();
         double end = dn_now_ns();
         if (nops != (uint64_t)n) dn_fail("the program made another number of calls");
-        printf("{\"design\":\"loop\",\"work\":\"nop\",\"calls\":%ld,\"ns_per_call\":%.2f}\n", n, (end - start) / (double)n);
+        printf("{\"design\":\"loop\",\"work\":\"nop\",\"calls\":%ld,\"ns_per_call\":%.2f}\n", n,
+               (end - start) / (double)n);
     } else if (strcmp(argv[1], "reply") == 0 && argc == 4) {
         long n = dn_number(argv[2], 1, 1000000000);
         batch = dn_number(argv[3], 1, DN_ENTRY_BATCH_MAX);
@@ -119,7 +120,8 @@ int main(int argc, char **argv) {
         double end = dn_now_ns();
         if (emitted != (uint64_t)n) dn_fail("the program answered another number of commands");
         if (!dn_fill_intact()) dn_fail("the program wrote outside its batch areas");
-        printf("{\"design\":\"loop\",\"work\":\"reply\",\"events\":%ld,\"batch\":%ld,\"ns_per_event\":%.2f}\n", n, batch, (end - start) / (double)n);
+        printf("{\"design\":\"loop\",\"work\":\"reply\",\"events\":%ld,\"batch\":%ld,"
+               "\"ns_per_event\":%.2f}\n", n, batch, (end - start) / (double)n);
     } else {
         usage();
     }

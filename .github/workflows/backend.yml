@@ -16,6 +16,7 @@ on:
       - backend/**
       - scripts/backend.py
       - scripts/bootstrap_tool.py
+      - scripts/backend_lane.sh
       - scripts/check_backend.sh
       - scripts/check_holmake.py
       - tools.lock.json
@@ -25,6 +26,7 @@ on:
       - backend/**
       - scripts/backend.py
       - scripts/bootstrap_tool.py
+      - scripts/backend_lane.sh
       - scripts/check_backend.sh
       - scripts/check_holmake.py
       - tools.lock.json

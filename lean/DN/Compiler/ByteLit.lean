@@ -71,7 +71,7 @@ theorem byteLitFrom_correct (o : Oracle σ) (base : Word) (N : Nat)
   | nil =>
     intro off s _ _
     refine ⟨s, ?_, ?_, fun _ _ => rfl, rfl, rfl, rfl, rfl⟩
-    · show PancakeSem o PancakeProg.skip s = (none, s); rw [PancakeSem]
+    · exact sem_skip o s
     · intro j hj; simp at hj
   | cons b bs ih =>
     intro off s hle haddr

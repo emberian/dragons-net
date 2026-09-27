@@ -25,7 +25,7 @@ from typing import Any
 import fuzz_interp as interp
 
 Case = dict[str, Any]
-Path = tuple[Any, ...]
+TreePath = tuple[Any, ...]
 
 
 def expression_positions(statement: list[Any]) -> list[int]:
@@ -44,13 +44,13 @@ def block_positions(statement: list[Any]) -> list[int]:
     return {"if": [2, 3], "while": [2]}.get(statement[0], [])
 
 
-def get(tree: Any, path: Path) -> Any:
+def get(tree: Any, path: TreePath) -> Any:
     for step in path:
         tree = tree[step]
     return tree
 
 
-def blocks(body: list[Any], path: Path = ("body",)) -> Iterator[Path]:
+def blocks(body: list[Any], path: TreePath = ("body",)) -> Iterator[TreePath]:
     """Every block, outermost first."""
     yield path
     for i, statement in enumerate(body):
@@ -58,7 +58,7 @@ def blocks(body: list[Any], path: Path = ("body",)) -> Iterator[Path]:
             yield from blocks(statement[k], (*path, i, k))
 
 
-def expressions(e: Any, path: Path) -> Iterator[Path]:
+def expressions(e: Any, path: TreePath) -> Iterator[TreePath]:
     """Every expression inside `e`, `e` first."""
     yield path
     if isinstance(e, list):
@@ -67,7 +67,7 @@ def expressions(e: Any, path: Path) -> Iterator[Path]:
             yield from expressions(e[k], (*path, k))
 
 
-def all_expressions(program: dict[str, Any]) -> Iterator[Path]:
+def all_expressions(program: dict[str, Any]) -> Iterator[TreePath]:
     for block_path in blocks(program["body"]):
         for i, statement in enumerate(get(program, block_path)):
             for k in expression_positions(statement):
@@ -117,14 +117,14 @@ def without_param(case: Case, name: str) -> Case:
     return out
 
 
-def replaced(case: Case, path: Path, value: Any) -> Case:
+def replaced(case: Case, path: TreePath, value: Any) -> Case:
     out = copy.deepcopy(case)
     parent = get(out["program"], path[:-1])
     parent[path[-1]] = value
     return out
 
 
-def spliced(case: Case, block_path: Path, start: int, end: int, items: list[Any]) -> Case:
+def spliced(case: Case, block_path: TreePath, start: int, end: int, items: list[Any]) -> Case:
     out = copy.deepcopy(case)
     block = get(out["program"], block_path)
     block[start:end] = copy.deepcopy(items)

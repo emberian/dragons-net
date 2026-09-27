@@ -232,12 +232,14 @@ def package_bootstrap(seconds: int, jobs: int, target: Path = BOOTSTRAP,
     Called by scripts/bootstrap_cake.sh once the log gate and the tag check have passed; `out`
     already holds the Holmake log the record names.
     """
-    logged(["make", "cake", f"LDFLAGS={LINK_FLAGS}"], out / "link.log", target)
+    # The C compiler the record names is the one that links: make gets it rather than choosing.
+    cc = os.environ.get("CC", "cc")
+    logged(["make", "cake", f"LDFLAGS={LINK_FLAGS}", f"CC={cc}"], out / "link.log", target)
     stack = stack_permissions(target / "cake")
     if stack != "RW":
         raise SystemExit(f"the linked compiler's stack is {stack or 'inaccessible'}, not RW")
     # Upstream's first question of a fresh build: does it compile and run hello world.
-    logged(["make", "test-hello.cake", f"LDFLAGS={LINK_FLAGS}"], out / "hello-build.log", target)
+    logged(["make", "test-hello.cake", f"LDFLAGS={LINK_FLAGS}", f"CC={cc}"], out / "hello-build.log", target)
     hello = subprocess.run([str(target / "test-hello.cake")], cwd=target, capture_output=True,
                            text=True, timeout=60, check=False)
     if hello.returncode or hello.stdout != "Hello!\n":
@@ -246,7 +248,7 @@ def package_bootstrap(seconds: int, jobs: int, target: Path = BOOTSTRAP,
     for name in ("cake", "cake.S"):
         shutil.copy2(target / name, out / name)
     tools = json.loads((ROOT / "tools.lock.json").read_text())
-    compiler = subprocess.run(["cc", "--version"], capture_output=True, text=True, check=True)
+    compiler = subprocess.run([cc, "--version"], capture_output=True, text=True, check=True, timeout=60)
     report = {
         "what": "the CakeML compiler built from the pinned patched source",
         "not": "a theorem about this binary; see backend/README.md",

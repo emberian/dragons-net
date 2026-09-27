@@ -52,7 +52,8 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     for (uint64_t j = 0; j < k; ++j) {
         const unsigned char *slot = a + 8 + j * DN_ENTRY_SLOT;
         uint64_t i = dn_word(slot), len = dn_word(slot + 8);
-        if (i >= DN_NET_MAX || len > DN_ENTRY_DATA) dn_fail("emit: a reply names no connection or overruns its slot");
+        if (i >= DN_NET_MAX || len > DN_ENTRY_DATA)
+            dn_fail("emit: a reply names no connection or overruns its slot");
         if (net_conns[i] >= 0) net_send((int)i, slot + 16, (long)len);
         ++net_served;
     }
@@ -60,7 +61,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
 
 int main(int argc, char **argv) {
     repoll = argc == 4 && strcmp(argv[3], "--repoll") == 0;
-    if (argc != 3 + repoll) dn_fail("usage: entry-server-loop TOTAL K [--repoll]");
+    if (argc != 3 + repoll) dn_broken("usage: entry-server-loop TOTAL K [--repoll]");
     net_total = dn_number(argv[1], 1, 1000000000);
     batch = dn_number(argv[2], 1, DN_ENTRY_BATCH_MAX);
     net_listen();

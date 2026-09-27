@@ -24,16 +24,16 @@ address after `lds 1` or `ld8`, an operand of `&`, the left of `>>>`, or an oper
 or `*`. -/
 inductive Slot
   | top | cmp | eq | lds | ld8 | and_ | shiftLeft | add | sub | mul
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 inductive Side
   | left | right
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 /-- The head of a printed expression, as far as the grammar's levels tell them apart. -/
 inductive Kind
   | atom | add | sub | mul | and_ | lt | le | eq | lds | ld8 | shr
-  deriving DecidableEq, Repr
+  deriving DecidableEq
 
 def kind : PExpr → Kind
   | .const _ | .var _ | .base => .atom
@@ -53,8 +53,8 @@ as one operand there. A comparison operand is at `ELoadNT`, so a load may stand 
 second comparison may not; the address after `lds 1` is at `ELoadByteNT` and after `ld8` at
 `ELoad32NT`, so `lds 1 ld8 x` reads and `ld8 ld8 x` does not; `+` and `-` operands are at
 `EMulNT` and `*` operands one level below `EMulNT` (`ENotNT` in the release, `EFieldNT` in the
-patched source), where of the printed heads only atoms stand. A chain of one associative operator reads as that chain, which the
-canonical form nests to the right. -/
+patched source), where of the printed heads only atoms stand. A chain of one associative
+operator reads as that chain, which the canonical form nests to the right. -/
 def reads : Slot → Side → Kind → Bool
   | _, _, .atom => true
   | .top, _, _ => true
@@ -108,8 +108,8 @@ theorem ppExpr_binop (op : POp) (l r : PExpr) :
   simp only [ppExpr, wrapOperand_eq]
 
 theorem ppExpr_loadw (shape : Nat) (a : PExpr) :
-    ppExpr (.loadw shape a) =
-      "lds " ++ toString shape ++ " " ++ (if addressBare a then ppExpr a else "(" ++ ppExpr a ++ ")") := by
+    ppExpr (.loadw shape a) = "lds " ++ toString shape ++ " " ++
+      (if addressBare a then ppExpr a else "(" ++ ppExpr a ++ ")") := by
   simp only [ppExpr, wrapAtom_eq]
 
 theorem ppExpr_loadb (a : PExpr) :
@@ -136,25 +136,21 @@ def PrintedWell : PExpr → Prop
 theorem operand_reads (op : POp) (side : Side) (child : PExpr) :
     operandBare op child = true → reads (slotOf op) side (kind child) = true := by
   cases child with
-  | binop cop _ _ => cases op <;> cases cop <;> cases side <;> simp [operandBare, kind, reads, slotOf, isAssoc]
+  | binop cop _ _ =>
+    cases op <;> cases cop <;> cases side <;> simp [operandBare, kind, reads, slotOf, isAssoc]
   | _ => cases op <;> cases side <;> simp [operandBare, kind, reads, slotOf]
 
 theorem address_reads (slot : Slot) (child : PExpr) :
     addressBare child = true → reads slot .left (kind child) = true := by
   cases child <;> simp [addressBare, kind, reads]
 
-private theorem both_ok {x y : Except Checked.Reason Unit} (h : (do x; y) = .ok ()) :
-    x = .ok () ∧ y = .ok () := by
-  cases x with
-  | error e => simp [bind, Except.bind] at h
-  | ok u => exact ⟨rfl, by simpa [bind, Except.bind] using h⟩
-
 /-- **The printer's parentheses suffice**, for every expression the gate accepts. -/
 theorem printed_well {scope : List String} :
     ∀ e, Checked.expression scope e = .ok () → PrintedWell e
   | .binop op l r, h => by
-    obtain ⟨hl, hr⟩ := both_ok h
-    exact ⟨operand_reads op .left l, operand_reads op .right r, printed_well l hl, printed_well r hr⟩
+    obtain ⟨hl, hr⟩ := Checked.seq_ok h
+    exact ⟨operand_reads op .left l, operand_reads op .right r, printed_well l hl,
+      printed_well r hr⟩
   | .loadw shape a, h => by
     have ha : Checked.expression scope a = .ok () := by
       by_cases hs : shape = 1
@@ -223,7 +219,8 @@ def cells : Except String Json := do
       let (text, intended, bare) := placed slot side child
       let name := s!"dn_cell_{out.size}"
       let f : PFun :=
-        { name := name, exported := true, params := [(1, "a"), (1, "c"), (1, "x"), (1, "y")], body := [.ret intended] }
+        { name := name, exported := true, params := [(1, "a"), (1, "c"), (1, "x"), (1, "y")],
+          body := [.ret intended] }
       let source := "export fun " ++ name ++ "(1 a, 1 c, 1 x, 1 y) {\n  return " ++ text ++ ";\n}\n"
       let tree ← Canon.program f source
       out := out.push (Json.mkObj [("tree", tree), ("reads", toJson (reads slot side (kind child))),

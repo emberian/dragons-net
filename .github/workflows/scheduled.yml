@@ -10,6 +10,12 @@ defaults:
   run:
     shell: bash
 
+# As in the per-commit chain: a module in scripts/ named like a standard-library one cannot
+# shadow it, and Lean runs on four threads.
+env:
+  PYTHONSAFEPATH: "1"
+  LEAN_NUM_THREADS: "4"
+
 jobs:
   # New advisories appear without any change to the repository.
   advisories:
@@ -150,8 +156,8 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
         run: python3 scripts/bootstrap_tool.py lean
-      - name: Build the compiler
-        run: lake build --wfail dn-compiler
+      - name: Source gate and build
+        run: bash scripts/check.sh build
       - name: Programs from a new seed
         run: |
           seed=$(date -u +%Y%m%d)

@@ -3,7 +3,7 @@
 Use the [project backlog](project.md) and [live roadmap](https://github.com/emberian/dragons-net/issues/28)
 to choose scoped work; issues record acceptance criteria and hard dependencies.
 
-Start with the [inherited-code review and prioritized repairs](reviews/README.md), [Wisper’s baseline](baseline.md) and [the runnable echo example](echo.md). Read the root README, [architecture](architecture.md), and [assurance](assurance.md) first. Run `bash scripts/check.sh` and `python3 scripts/check_models.py --loom`. On Linux x86-64, run the native check from the README. All active Lean/Rust dependencies are defined within this repository and its lock files; the old monorepo is not needed for these checks.
+Start with the [inherited-code review and prioritized repairs](reviews/README.md), [the compiler baseline](baseline.md) and [the runnable echo example](echo.md). Read the root README, [architecture](architecture.md), and [assurance](assurance.md) first. Run `bash scripts/check.sh` and `python3 scripts/check_models.py --loom`. On Linux x86-64, run the native check from the README. All active Lean/Rust dependencies are defined within this repository and its lock files; the old monorepo is not needed for these checks.
 
 ## Where to start reading
 
@@ -24,7 +24,7 @@ Write down the accepted source language and the mapping from its syntax through 
 
 Extend `Certificate` to a useful memory-reading/writing component with concrete preconditions. Demonstrate a caller state that satisfies the contract, compose two components, and compare emitted execution with an independent reference. Do not restate a precondition as a condition on every model state: such premises are contradictory, as `AssuranceChecks.lean` records.
 
-Close the printed-source/parser and model/HOL bridges before claiming verified code generation. `scripts/parser_contract.py` holds the printed source against the pinned parsers program by program; a proof that the parser reads every printed program as its lowering is still to be written. Keep counterexamples when assumptions fail: `scripts/native_fuzz.py` reduces a disagreement it finds to a small case in `build/fuzz/minimized/`; once fixed, keep it in `tests/corpus/found/` and in `DN.Compiler.GenCorpus.found`, and every run requires it to agree again. The curated backend proof rebuild and subsequent compiler bootstrap are separate milestones; [instructions](../backend/README.md) identify the pins.
+Close the printed-source/parser and model/HOL bridges before claiming verified code generation. `scripts/parser_contract.py` holds the printed source against the pinned parsers program by program; a proof that the parser reads every printed program as its lowering is still to be written. Keep counterexamples when assumptions fail: `scripts/native_fuzz.py` reduces a disagreement it finds to a small case in `build/fuzz/minimized/`; once fixed, keep it in `tests/corpus/found/` and in `DN.Compiler.GenCorpus.found`, and every run requires it to agree again. The curated backend proof rebuild and the compiler bootstrap have both been run; [instructions](../backend/README.md) identify the pins and what each establishes.
 
 ### 2. Extract a protocol-neutral native reactor
 
@@ -34,7 +34,7 @@ Acceptance: a real loopback connection; input split at arbitrary byte boundaries
 
 ### 3. Deliver the smallest useful NNTP slice
 
-Follow [the NNTP plan](nntp.md). First make greeting, capability discovery, HELP, QUIT, and error handling work over the real adapter, without claiming READER support. Then add mandatory HEAD/STAT access and the durable store; complete the reader/posting profile before advertising its capabilities.
+Follow [the NNTP plan](nntp.md). First make greeting, capability discovery, HELP, QUIT, and error handling work over the real adapter, with the session loop in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)), without claiming READER support. Then add mandatory HEAD/STAT access and the durable store; complete the reader/posting profile before advertising its capabilities.
 
 Acceptance: transcript tests against an independent client, command/article framing under arbitrary chunk splits, dot transparency, bounded input, stable Message-ID deduplication, crosspost indexing, and crash/restart tests around article acceptance. A POST success response needs a specified durability point.
 
@@ -50,4 +50,4 @@ Add peering, authenticated access, offline bundles, and a human UI after the sto
 
 `migration/` preserves original source bytes. Port into active modules rather than editing that snapshot. Retain provenance and update the documentation when a reference component becomes active. Old deployment scripts are historical evidence, not instructions to run against a machine.
 
-Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. A bounded reference `poll` host now drives the generated echo kernel. The backend HOL proof lane now builds its prover and rebuilds the chain up to the compiler theorem, weekly in CI and on demand. These are concrete next tasks, not hidden dependencies of the green baseline.
+Known gaps: there is no general source-language CLI, NNTP daemon, durable spool, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. A bounded reference `poll` host now drives the generated echo kernel. The backend HOL proof lane now builds its prover and rebuilds the chain up to the compiler theorem, weekly in CI and on demand. The compiler has been built once from the patched source and recorded (`backend/bootstrap-record.json`); the native lanes still run the release, and no theorem covers either binary. These are concrete next tasks, not hidden dependencies of the green baseline.

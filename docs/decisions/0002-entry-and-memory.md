@@ -75,7 +75,11 @@ refused.
 
 `measure` writes `build/entry/report.json`; the run the figures below come from is kept as
 [`0002-measurements.json`](0002-measurements.json), which also records the machine, the compiler
-and the load, and a gate test holds this table to it. They are medians of five runs (three for
+and the load, and a gate test holds this table to it. That run was taken on the working tree before
+this decision was committed, and the revision it records is the commit before, by the hash it had
+before the branch was rebased, so it is not in the history; `compiler_sha256` identifies the
+compiler. `measure` now also records the digests of the sources that ran (`sources_sha256`, and
+`host_sha256` for the hosts), which do not depend on the history. They are medians of five runs (three for
 the network) on Linux x86-64, an AMD Ryzen 7 8745HS with 16 hardware threads, with the server and
 the client pinned to two different cores, on a quiet machine (a load average of 0.27 at the
 start; `measure` refuses a busier one unless asked).
@@ -84,16 +88,16 @@ start; `measure` refuses a busier one unless asked).
 | --- | --- | --- |
 | an empty crossing of the boundary | 2.4 ns | 4.1 ns |
 | one reply, with the host's bookkeeping | 12.1 ns | 30.8 / 16.8 / 16.1 / 15.6 ns for batches of 1 / 8 / 16 / 64 |
-| requests per second over loopback, 1 connection | 87,000 | 86,000 (batch 64), 86,000 (batch 1) |
-| 32 connections | 251,000 | 257,000 (batch 64), 250,000 (batch 1) |
-| 128 connections | 253,000 | 260,000 (batch 64), 251,000 (batch 1) |
+| requests per second over loopback, 1 connection | 86,500 | 86,300 (batch 64), 86,300 (batch 1) |
+| 32 connections | 251,400 | 256,500 (batch 64), 250,300 (batch 1) |
+| 128 connections | 253,200 | 259,600 (batch 64), 251,200 (batch 1) |
 
 The crossing costs nanoseconds against system calls that cost microseconds. What does cost is a
 host that asks the kernel again on every call: fetching one event per call that way ran at
-131,000 and 67,000 requests per second with 32 and 128 connections, three quarters lost at the
+130,800 and 66,600 requests per second with 32 and 128 connections, three quarters lost at the
 most. A host that hands out what one `poll` reported before polling again keeps one event per
-call within 1 percent of exported functions, and batches of 64 are 2 to 3 percent faster than
-those, repeatably. The client is one thread on the same machine, and it and the server each keep
+call within 1 percent of exported functions; with 32 or 128 connections batches of 64 are 2 to 3
+percent faster than those, repeatably, and with one connection all three are within 0.3 percent. The client is one thread on the same machine, and it and the server each keep
 a core busy, so these rows compare the designs, not the hardware.
 
 ## Decision

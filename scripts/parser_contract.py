@@ -16,9 +16,10 @@ operand may stand without parentheses and on which the printer's proof rests: ev
 table allows has to read as intended, and every other cell has to be refused by the parser or
 read otherwise. A table with one cell turned either way has to be refused.
 
-The release compiler, which the native lanes use, is checked on every run. `--bootstrapped` adds
-the compiler built from the patched source, whose parser differs, after checking its digest
-against backend/bootstrap-record.json.
+The release compiler, which the native lanes use, is checked on every run: the one --cake or CAKE
+names, or else the pinned release (`scripts/bootstrap_tool.py cake`). `--bootstrapped` adds the
+compiler built from the patched source, whose parser differs, after checking its digest against
+backend/bootstrap-record.json.
 
 The canonical form nests a chain of `+`, `*` or `&` to the right and makes statements a list;
 `DN.Compiler.Canon.canon_eval` proves that this identifies only expressions that evaluate alike.
@@ -30,18 +31,15 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import native_baseline as baseline  # noqa: E402 - the path above is what makes it importable
+import lanes  # the path above is what makes it importable
+from lanes import ROOT, LaneError, Report
 
 OUT = ROOT / "build/parser"
 SECTION = "# initial pancake program"
-RECORD = ROOT / "backend/bootstrap-record.json"
 # The mutants: a subtraction whose parentheses matter, and a nested load the parser refuses bare.
 REGROUPED = ("a - (b - 1)", "a - b - 1")
 BARE_LOAD = ("ld8 (ld8 p)", "ld8 ld8 p")
@@ -60,7 +58,7 @@ EXPRESSIONS = {"Const", "Var", "Add", "And", "Sub", "Mul", "Less", "NotLess", "E
 ADDED_MAIN = {"params": [], "body": [["return", ["Const", 0]]]}
 
 
-class ContractError(Exception):
+class ContractError(LaneError):
     """The parser's tree is not the lowered one, or has a form this check does not know."""
 
 
@@ -183,12 +181,10 @@ def parsed(cake: str, source: str, path: Path, *, warnings: bool = True) -> dict
     compiler still warns about its loads from a literal address, and those warnings are beside
     what the cell asks, so for a cell they are not failures (they are not silenced either)."""
     path.write_text(source)
-    with path.open("rb") as inp:
-        done = subprocess.run([cake, "--pancake", "--explore", "--main_return=true"], stdin=inp,
-                              capture_output=True, timeout=300, check=False)
-    if done.returncode or (warnings and done.stderr):
-        raise ContractError(f"{path.name} does not compile:\n{done.stderr.decode(errors='replace')}")
-    text = done.stdout.decode()
+    try:
+        text = lanes.pancake(cake, path, explore=True, warnings=warnings).decode()
+    except lanes.Diagnostics as error:
+        raise ContractError(f"{path.name} does not compile: {error}") from None
     if text.count(SECTION) != 1:
         raise ContractError(f"{path.name}: the compiler did not print its parsed program once")
     section = text.split(SECTION, 1)[1].split("\n# ", 1)[0]
@@ -265,7 +261,7 @@ def variant(programs: list[dict[str, Any]], old: str, new: str) -> list[dict[str
     for program in programs:
         if program["source"].count(old) == 1:
             return [{**program, "source": program["source"].replace(old, new)}]
-    raise RuntimeError(f"no printed program contains {old!r} once; the variant has nothing to change")
+    raise LaneError(f"no printed program contains {old!r} once; the variant has nothing to change")
 
 
 def refused(cake: str, programs: list[dict[str, Any]], message: str, tag: str) -> None:
@@ -273,9 +269,9 @@ def refused(cake: str, programs: list[dict[str, Any]], message: str, tag: str) -
         compare(cake, programs, tag)
     except ContractError as error:
         if message not in str(error):
-            raise RuntimeError(f"the {tag} variant was refused for another reason: {error}") from error
+            raise LaneError(f"the {tag} variant was refused for another reason: {error}") from error
         return
-    raise RuntimeError(f"the {tag} variant was accepted; the contract compares nothing")
+    raise LaneError(f"the {tag} variant was accepted; the contract compares nothing")
 
 
 def cells_hold(cake: str, cells: list[dict[str, Any]], tag: str) -> int:
@@ -304,19 +300,49 @@ def turned(cake: str, cells: list[dict[str, Any]], tag: str) -> None:
         except ContractError as error:
             if message in str(error):
                 continue
-            raise RuntimeError(f"{label} turned was refused for another reason: {error}") from error
-        raise RuntimeError(f"{label} turned was accepted; the table checks nothing")
+            raise LaneError(f"{label} turned was refused for another reason: {error}") from error
+        raise LaneError(f"{label} turned was accepted; the table checks nothing")
 
 
-def bootstrapped() -> str:
-    """The compiler built from the patched source, if it is the one the record describes."""
-    record = json.loads(RECORD.read_text())
-    cake = ROOT / record["cake_path"]
-    if not cake.is_file():
-        raise RuntimeError(f"{cake} has not been built here; see backend/README.md")
-    if baseline.digest(str(cake)) != record["cake_sha256"]:
-        raise RuntimeError(f"{cake} is not the compiler {RECORD.name} records")
-    return str(cake)
+def contract(compilers: list[tuple[str, str]]) -> Report:
+    programs: list[dict[str, Any]] = json.loads(lanes.emit("emit-trees", timeout=120))
+    cells: list[dict[str, Any]] = json.loads(lanes.emit("emit-cells", timeout=120))
+    names = {p["name"] for p in programs}
+    statements, expressions = forms_used(programs)
+    if (statements, expressions) != (STATEMENTS, EXPRESSIONS):
+        raise LaneError(f"the printed programs do not use exactly the gate's forms: missing "
+                        f"{sorted((STATEMENTS - statements) | (EXPRESSIONS - expressions))}, unknown "
+                        f"{sorted((statements - STATEMENTS) | (expressions - EXPRESSIONS))}")
+    used = [c for c in cells if c["used_by_proof"]]
+    if not all(c["reads"] for c in used):
+        raise LaneError("a cell the proof relies on is one the table says the parser does not read")
+    variants = [(variant(programs, *REGROUPED), MISREAD, "regrouped"),
+                (variant(programs, *BARE_LOAD), PARSE_ERROR, "bare-load"),
+                ([{**programs[0], "source": programs[0]["source"] + EXTRA}], "nobody printed", "extra")]
+    results = []
+    for tag, cake in compilers:
+        matched = compare(cake, programs, tag)
+        for changed, message, name in variants:
+            refused(cake, changed, message, f"{tag}-{name}")
+        held = cells_hold(cake, cells, tag)
+        turned(cake, cells, tag)
+        results.append({"compiler": tag, "compiler_sha256": lanes.digest(cake), "functions": matched,
+                        "table_cells": held})
+    # The counts the documents quote have to be the ones this run held.
+    lanes.require_quoted({
+        "docs/baseline.md": (f"{len(programs)} printed programs",
+                             f"{len(cells)} cells of the precedence table",
+                             f"`printed_well` relies on {len(used)}"),
+        "docs/assurance.md": (f"Each of the {len(programs)} programs", f"{len(programs)} in all",
+                              f"each of the {len(programs)} programs",
+                              f"that table's {len(cells)} cells", f"`printed_well` relies on {len(used)}"),
+    })
+    return Report("matched", compilers[0][1], [], {
+        "programs": len(programs), "distinct_names": len(names),
+        "distinct_sources": len({p["source"] for p in programs}),
+        "table_cells": len(cells), "table_cells_read_bare": sum(1 for c in cells if c["reads"]),
+        "table_cells_used_by_proof": len(used), "compilers": results,
+        "refused_variants": len(variants), "turned_cells": len(TURNED)})
 
 
 def main() -> None:
@@ -326,58 +352,16 @@ def main() -> None:
     parser.add_argument("--bootstrapped", action="store_true",
                         help="also the compiler built from the patched source (backend/bootstrap-record.json)")
     args = parser.parse_args()
-    release = shutil.which(args.cake) if args.cake else None
-    if not release:
-        parser.error("provide --cake or CAKE")
-    compilers = [("release", release)] + ([("bootstrapped", bootstrapped())] if args.bootstrapped else [])
-    OUT.mkdir(parents=True, exist_ok=True)
-    report_path = OUT / "report.json"
-    report_path.unlink(missing_ok=True)
-    emitted = baseline.loud([str(ROOT / ".lake/build/bin/dn-compiler"), "emit-trees"], timeout=120,
-                            what="emitting the printed programs")
-    programs: list[dict[str, Any]] = json.loads(emitted)
-    cells: list[dict[str, Any]] = json.loads(baseline.loud(
-        [str(ROOT / ".lake/build/bin/dn-compiler"), "emit-cells"], timeout=120, what="emitting the table's cells"))
-    names = {p["name"] for p in programs}
-    statements, expressions = forms_used(programs)
-    if (statements, expressions) != (STATEMENTS, EXPRESSIONS):
-        raise RuntimeError(f"the printed programs do not use exactly the gate's forms: missing "
-                           f"{sorted((STATEMENTS - statements) | (EXPRESSIONS - expressions))}, unknown "
-                           f"{sorted((statements - STATEMENTS) | (expressions - EXPRESSIONS))}")
-    used = [c for c in cells if c["used_by_proof"]]
-    if not all(c["reads"] for c in used):
-        raise RuntimeError("a cell the proof relies on is one the table says the parser does not read")
-    results = []
-    for tag, cake in compilers:
-        matched = compare(cake, programs, tag)
-        refused(cake, variant(programs, *REGROUPED), MISREAD, f"{tag}-regrouped")
-        refused(cake, variant(programs, *BARE_LOAD), PARSE_ERROR, f"{tag}-bare-load")
-        refused(cake, [{**programs[0], "source": programs[0]["source"] + EXTRA}], "nobody printed",
-                f"{tag}-extra")
-        held = cells_hold(cake, cells, tag)
-        turned(cake, cells, tag)
-        results.append({"compiler": tag, "compiler_sha256": baseline.digest(cake), "functions": matched,
-                        "table_cells": held})
-    report = {"status": "matched", "programs": len(programs), "distinct_names": len(names),
-              "distinct_sources": len({p["source"] for p in programs}),
-              "table_cells": len(cells), "table_cells_read_bare": sum(1 for c in cells if c["reads"]),
-              "table_cells_used_by_proof": len(used),
-              "compilers": results, "refused_variants": 3, "turned_cells": 2}
-    # The counts the documents quote have to be the ones this run held.
-    quotes = {
-        "docs/baseline.md": (f"{len(programs)} printed programs", f"{len(cells)} cells of the precedence table",
-                             f"`printed_well` relies on {len(used)}"),
-        "docs/assurance.md": (f"Each of the {len(programs)} programs", f"{len(programs)} in all",
-                              f"each of the {len(programs)} programs",
-                              f"that table's {len(cells)} cells", f"`printed_well` relies on {len(used)}"),
-    }
-    for name, phrases in quotes.items():
-        text = (ROOT / name).read_text()
-        for phrase in phrases:
-            if phrase not in text:
-                raise RuntimeError(f"{name} does not say {phrase!r}")
-    report_path.write_text(json.dumps(report, indent=2) + "\n")
-    print(report_path.read_text(), end="")
+    lanes.require_platform(parser)
+    release = lanes.given_cake(parser, args.cake) if args.cake else None
+
+    def run() -> Report:
+        compilers = [("release", release or lanes.release_cake())]
+        if args.bootstrapped:
+            compilers.append(("bootstrapped", lanes.bootstrapped()))
+        return contract(compilers)
+
+    lanes.lane_main("PARSER CONTRACT", OUT, run)
 
 
 if __name__ == "__main__":

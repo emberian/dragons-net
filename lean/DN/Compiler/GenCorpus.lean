@@ -16,7 +16,7 @@ answers fixed on their own.
 
 namespace DN.Compiler.GenCorpus
 
-open Lean DN.Compiler.Syntax DN.Compiler.Gen
+open Lean DN.Compiler.Syntax DN.Compiler.Gen DN.Compiler.SyntaxJson
 
 structure Case where
   name : String
@@ -29,22 +29,26 @@ structure Case where
 private def reduced (params : List String) (body : List PStmt) : PFun :=
   { name := "dn_min", exported := true, params := params.map fun x => (1, x), body }
 
+private def noParams : Plan := { params := [], entries := [] }
+
+private def zeroInput : Vector := { data := [], seed := 0, mask := 0 }
+
 def mutants : List Case :=
   [{ name := "if-negated", f := reduced [] [.ite (n 0) [.ret (n 0)] [.ret (n 1)]],
-     plan := { params := [], entries := [] }, input := { data := [], seed := 0, mask := 0 },
+     plan := noParams, input := zeroInput,
      result := 1, changed := [] },
    { name := "ld8-as-lds", f := reduced ["p"] [.dec "x0" (.loadb (v "p")), .ret (v "x0")],
      plan := { params := [.pointer "p" 0 4000], entries := [] },
      input := { data := [], seed := 0, mask := 0xFFFFFFFFFFFFFFFF }, result := 13, changed := [] },
    { name := "le-as-lt", f := reduced [] [.ret (eLe (n 0) (n 0))],
-     plan := { params := [], entries := [] }, input := { data := [], seed := 0, mask := 0 },
+     plan := noParams, input := zeroInput,
      result := 1, changed := [] },
    { name := "shift-off-by-one", f := reduced [] [.ret (.shr (n 1) (n 0))],
-     plan := { params := [], entries := [] }, input := { data := [], seed := 0, mask := 0 },
+     plan := noParams, input := zeroInput,
      result := 1, changed := [] },
    { name := "st8-as-st", f := reduced ["p"] [.storeb (v "p") (eAdd (n 1) (n 255)), .ret (n 0)],
      plan := { params := [.pointer "p" 0 0], entries := [] },
-     input := { data := [], seed := 0, mask := 0 }, result := 0, changed := [] }]
+     input := zeroInput, result := 0, changed := [] }]
 
 /-- None yet: no run has found a disagreement to keep. -/
 def found : List Case := []
@@ -53,7 +57,7 @@ def found : List Case := []
 def holds (name : String) : Bool :=
   match (mutants ++ found).find? (·.name == name) with
   | some c =>
-    match run c.f c.plan c.input with
+    match runModel c.f c.plan c.input with
     | .ok o => o.result == c.result && o.changed == c.changed
     | .error _ => false
   | none => false
@@ -65,12 +69,9 @@ def regression_804 : Bool := holds "shift-off-by-one"
 def regression_805 : Bool := holds "st8-as-st"
 
 def caseJson (c : Case) : Except String Json := do
-  let o ← run c.f c.plan c.input
+  let o ← runModel c.f c.plan c.input
   return Json.mkObj [("name", toJson c.name), ("plan", planJson c.plan), ("program", funJson c.f),
-    ("input", Json.mkObj [("data", Json.mkObj (c.input.data.map fun (x, k) => (x, toJson k))),
-      ("fill", toJson [c.input.seed.toNat, c.input.mask.toNat])]),
-    ("model", Json.mkObj [("result", toJson o.result),
-      ("changed", toJson (o.changed.map fun (b, off, w) => [b, off, w]))])]
+    ("input", vectorJson c.input), ("model", Json.mkObj (outcomeJson o))]
 
 /-- The cases, as the lane compares them with the recorded files. -/
 def json : Except String Json := do

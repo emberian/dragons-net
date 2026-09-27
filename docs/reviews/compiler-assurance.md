@@ -53,7 +53,7 @@ The result is useful as an AST-to-model theorem, but it is not evidence about pr
 
 **Fix:** rename/reword the claim as internal lowering/model correctness. Reserve “printed `.pnk`” and “end-to-end” for a theorem or independently checked bridge connecting `pp*` output, the pinned parser's accepted AST, and this `PancakeProg`.
 
-**Regression/proof obligation:** for arbitrary supported `storesInto`, establish `parse (print stmts) = stmts` (or a precise corresponding parser AST) and then prove the parser conversion equals `lowerStmtsFold`. Until HOL extraction is available, a differential parser test with minimized counterexamples is evidence, not a proof, and should be labeled that way.
+**Regression/proof obligation:** for arbitrary supported `storesInto`, establish `parse (print stmts) = stmts` (or a precise corresponding parser AST) and then prove the parser conversion equals `lowerStmtsFold`. Until HOL extraction is available, a differential parser test with minimized counterexamples is evidence, not a proof, and should be labeled that way (the differential parser test exists: `scripts/parser_contract.py`, with parser disagreements of generated programs reduced by `scripts/native_fuzz.py`; the theorem is open, [assurance](../assurance.md) item 2).
 
 ## Medium — the FFI model permits writeback beyond the declared array
 
@@ -71,7 +71,7 @@ What remains an assumption is the oracle itself: the model says what a program d
 
 **Location:** `lean/DN/Compiler/ByteCopy.lean`, `copySeg_landsB`.
 
-`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program declares `dst`, `src`, `i` and `len` and restores them, and it assigns nothing else: the theorem now proves that every local reads as it did, and that `ffi` and `baseAddr` are unchanged (`copySeg_keeps_callers_locals` runs it on a caller with a local of its own and with `i` bound). An external call that returns normally changes only the bytes of its array and the external world's state: its locals, memory domain, byte order, clock and base address are unchanged (`Bytes.extCall_keeps`). Still absent from the contract: the exact consumed clock, and an explicit normal-result fact beyond the execution equality; no theorem uses either yet.
+`copySeg_landsB` proves destination contents, a byte-level memory frame, and preservation of `memaddrs`/endianness. The program declares `dst`, `src`, `i` and `len` and restores them, and it assigns nothing else: the theorem now proves that every local reads as it did, and that `ffi` and `baseAddr` are unchanged (`copySeg_keeps_callers_locals` runs it on a caller with a local of its own and with `i` bound). An external call that returns normally changes only the bytes of its array and the external world's state: its locals, memory domain, byte order, clock and base address are unchanged (`Bytes.extCall_keeps`). Both contracts are stated as one structure, `Bytes.Frame`, which the reply table's steps use too, so the three compose without translating between conjunctions. Still absent from the contract: the exact consumed clock, and an explicit normal-result fact beyond the execution equality; no theorem uses either yet.
 
 The memory frame is phrased through `memLoadByte`; a word-level frame (`s'.memory w = s.memory w` outside destination-aligned words) would make downstream whole-word preservation obligations easier to discharge. There are none so far, so it has not been added.
 

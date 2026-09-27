@@ -30,8 +30,9 @@ extensions can be implemented in six tasks.
 
 For compiler assurance, start with [inhabited contracts (#1)](https://github.com/emberian/dragons-net/issues/1),
 [the Lean-to-HOL semantic boundary (#6)](https://github.com/emberian/dragons-net/issues/6),
-which the rest of [the printer/parser contract (#4)](https://github.com/emberian/dragons-net/issues/4)
-waits on, or [a bounded source input for the compiler (#8)](https://github.com/emberian/dragons-net/issues/8).
+on which the way to prove the rest of
+[the printer/parser contract (#4)](https://github.com/emberian/dragons-net/issues/4) depends, or
+[a bounded source input for the compiler (#8)](https://github.com/emberian/dragons-net/issues/8).
 
 For the optimized dataplane, agree [identities (#9)](https://github.com/emberian/dragons-net/issues/9),
 [operation terminality (#10)](https://github.com/emberian/dragons-net/issues/10),
@@ -40,7 +41,10 @@ before accepting the native port. Keep the existing echo workload as its referen
 
 For protocol work, [framing (#16)](https://github.com/emberian/dragons-net/issues/16)
 and [the durable spool (#17)](https://github.com/emberian/dragons-net/issues/17)
-can proceed using the reference host. They do not need to wait for an optimized
+can proceed on the reference host as a test bed, but the service itself is a loop
+in the program's `main` that reaches the host through external calls
+([decision 0002](decisions/0002-entry-and-memory.md)); the echo host's exported
+kernels stay tests outside the theorem. They do not need to wait for an optimized
 reactor or an entire compiler correctness theorem.
 
 See [CONTRIBUTING](../CONTRIBUTING.md) for claiming work, status/priority meanings,

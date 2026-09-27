@@ -45,20 +45,20 @@ import sys
 import time
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The path above is what makes these importable.
-import fuzz_interp as interp  # noqa: E402
-import fuzz_reduce as reducer  # noqa: E402
-import native_baseline as baseline  # noqa: E402
-import parser_contract as contract  # noqa: E402
+import fuzz_interp as interp
+import fuzz_reduce as reducer
+import lanes
+from lanes import NATIVE, ROOT, Diagnostics, LaneError, Report
+import parser_contract as contract
 
 OUT = ROOT / "build/fuzz"
 MUTANT_CASES = ROOT / "tests/corpus/mutants"
 FOUND_CASES = ROOT / "tests/corpus/found"
-COMPILER = ROOT / ".lake/build/bin/dn-compiler"
-# The run on every change: chosen so that it reaches every construct below and takes about a
-# minute; a choice, measured, not a derived bound.
+HOST = NATIVE / "fuzz_driver.c"
+# The run on every change: chosen so that it reaches every construct below; a choice, not a
+# derived bound.
 SEED, COUNT, VECTORS = 1, 300, 4
 # What some call has to reach, as the interpreter counts it.
 REACHED = ("load word", "load byte", "store word", "store byte", "word in word address",
@@ -106,20 +106,8 @@ HOST_CHECKS = [
 ]
 
 
-class LaneError(Exception):
-    """A disagreement, or a check that could not be made."""
-
-
-class Diagnostics(LaneError):
-    """The compiler printed a diagnostic, which the lanes treat as a failure."""
-
-
 def dn(args: list[str], stdin: str | None = None, timeout: int = 600) -> Any:
-    done = subprocess.run([str(COMPILER), *args], input=stdin, capture_output=True, text=True,
-                          timeout=timeout, check=False)
-    if done.returncode:
-        raise LaneError(f"dn-compiler {args[0]} failed:\n{done.stderr}")
-    return json.loads(done.stdout)
+    return json.loads(lanes.emit(*args, stdin=stdin, timeout=timeout))
 
 
 def replay(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -160,21 +148,24 @@ def call_line(index: int, plan: dict[str, Any], vector: dict[str, Any]) -> str:
 
 
 class Native:
-    """Compiles programs into one executable with the host and runs calls through it."""
+    """Compiles programs into one executable with the host and runs calls through it. The host and
+    the runtime are compiled once, and the protections of the linked binary read back once: the
+    flags and the host are the same for every binary of the run."""
 
     def __init__(self, cake: str, out: Path) -> None:
         self.cake, self.out = cake, out
+        self.objects = [lanes.compile_object(source, out / f"{source.stem}.o")
+                        for source in (HOST, NATIVE / "cake_runtime.c")]
+        self.hardened = False
 
-    def build(self, name: str, sources: list[tuple[str, str, int]]) -> Path:
-        """Each source with the function it defines and its parameter count."""
+    def build(self, name: str, sources: list[tuple[str, str, int]], *, symbols: bool = False) -> Path:
+        """Each source with the function it defines and its parameter count. `symbols` checks the
+        names the programs export, for programs whose names the script did not choose."""
         pnk, asm = self.out / f"{name}.pnk", self.out / f"{name}.S"
         pnk.write_text("".join(source for source, _, _ in sources))
-        with pnk.open("rb") as inp, asm.open("wb") as code:
-            compiled = subprocess.run([self.cake, "--pancake", "--main_return=true"], stdin=inp, stdout=code,
-                                      stderr=subprocess.PIPE, timeout=600 + len(sources) // 10, check=False)
-        if compiled.returncode or compiled.stderr:
-            raise Diagnostics(f"{pnk.name} compiled with diagnostics:\n{compiled.stderr.decode(errors='replace')}")
-        baseline.check_symbols(asm, self.out / f"{name}.o")
+        asm.write_bytes(lanes.pancake(self.cake, pnk, timeout=600 + len(sources) // 10))
+        if symbols:
+            lanes.check_symbols(asm)
         calls = ['#include <stddef.h>', '#include <stdint.h>']
         for _, fn, arity in sources:
             calls.append(f"uint32_t {fn}({', '.join(['uint64_t'] * (arity + 1))});")
@@ -187,11 +178,9 @@ class Native:
         calls.append("    default: return -1;\n    }\n}\n")
         dispatch = self.out / f"{name}-calls.c"
         dispatch.write_text("\n".join(calls))
-        binary = self.out / name
-        baseline.loud([os.environ.get("CC", "cc"), *baseline.HARDENING, "-g", "-I", str(ROOT / "native"),
-                       str(ROOT / "native/fuzz_driver.c"), str(dispatch), str(ROOT / "native/cake_runtime.c"),
-                       str(asm), "-o", str(binary)], timeout=120 + len(sources) // 10, what=f"linking {name}")
-        baseline.hardened(binary)
+        binary = lanes.link(self.out / name, [*self.objects, dispatch, asm], timeout=120 + len(sources) // 10,
+                            check=not self.hardened)
+        self.hardened = True
         return binary
 
     def run(self, binary: Path, lines: list[str]) -> list[Any]:
@@ -233,7 +222,7 @@ def native_outcomes(native: Native, name: str, records: list[dict[str, Any]],
     for record in records:
         source = record["source"]
         sources.append((transform(source) if transform else source, record["name"], len(record["plan"]["params"])))
-    binary = native.build(name, sources)
+    binary = native.build(name, sources, symbols=name == "programs")
     lines = [call_line(i, r["plan"], v) for i, r in enumerate(records) for v in r["vectors"]]
     flat = native.run(binary, lines)
     out, at = [], 0
@@ -315,7 +304,7 @@ def parser_failure(cake: str) -> Callable[[list[reducer.Case]], list[bool]]:
 
 def fixture(kind: str, name: str, case: reducer.Case, original: reducer.Case, origin: dict[str, Any],
             stats: dict[str, int], native: Native | None = None, transform: Transform = None,
-            cake: str = "") -> dict[str, Any]:
+            cake: str | None = None) -> dict[str, Any]:
     """A reduced case as it is recorded: the program, its input, what the model says, and what the
     side that disagrees says; with the case it was reduced from."""
     [record] = replay([renamed(case, "dn_min")])
@@ -335,6 +324,8 @@ def fixture(kind: str, name: str, case: reducer.Case, original: reducer.Case, or
         found = disagreement(record)
         out["interpreter"] = found[1] if found else "agrees"
     elif kind == "parser":
+        if cake is None:
+            raise LaneError("a parser disagreement is recorded with the compiler whose parser it is")
         try:
             contract.compare(cake, [record["tree"]], "fixture")
             out["parser"] = "agrees"
@@ -394,6 +385,7 @@ def check_mutant(native: Native, records: list[dict[str, Any]], name: str, seed:
         raise LaneError(f"the lane does not catch the planted defect {name}")
     path = MUTANT_CASES / f"{name}.json"
     fails = native_failure(native, transform)
+    recorded: dict[str, Any] = {} if write else json.loads(path.read_text())
     if write:
         found = smallest_failure(records, outcomes)
         if found is None:
@@ -401,7 +393,6 @@ def check_mutant(native: Native, records: list[dict[str, Any]], name: str, seed:
         i, j = found
         original, origin = case_of(records[i], j), {"seed": seed, "program": records[i]["name"], "input": j}
     else:
-        recorded = json.loads(path.read_text())
         start = recorded["original"]
         original = {"program": start["program"], "plan": start["plan"], "vector": start["input"]}
         origin = recorded["origin"]
@@ -414,7 +405,6 @@ def check_mutant(native: Native, records: list[dict[str, Any]], name: str, seed:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(dumped(result))
     else:
-        recorded = json.loads(path.read_text())
         # How many candidates the reducer asked about is a note, not part of the case.
         if {**recorded, "reduction": None} != {**result, "reduction": None}:
             (OUT / "minimized").mkdir(parents=True, exist_ok=True)
@@ -456,43 +446,10 @@ def check_corpus(native: Native) -> dict[str, int]:
     return {"mutants": len(held["mutants"]), "found": len(held["found"])}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cake", default=os.environ.get("CAKE", ""))
-    parser.add_argument("--bootstrapped", action="store_true",
-                        help="run with the compiler built from the patched source (backend/bootstrap-record.json)")
-    parser.add_argument("--seed", type=int, default=SEED)
-    parser.add_argument("--count", type=int, default=COUNT)
-    parser.add_argument("--vectors", type=int, default=VECTORS)
-    parser.add_argument("--write-corpus", action="store_true",
-                        help="record the planted cases in tests/corpus/mutants instead of comparing")
-    args = parser.parse_args()
-    cake = contract.bootstrapped() if args.bootstrapped else shutil.which(args.cake) if args.cake else None
-    if not cake:
-        parser.error("provide --cake or CAKE, or --bootstrapped")
-    standard = (args.seed, args.count, args.vectors) == (SEED, COUNT, VECTORS)
-    if args.write_corpus and not standard:
-        parser.error("the corpus is recorded from the standard run only")
-    started = time.monotonic()
-    OUT.mkdir(parents=True, exist_ok=True)
-    report_path = OUT / "report.json"
-    report_path.unlink(missing_ok=True)
-    records = dn(["emit-fuzz", str(args.seed), str(args.count), str(args.vectors)],
-                 timeout=600 + args.count * args.vectors // 50)
-    (OUT / "programs.json").write_text(json.dumps(records))
-    origin = {"seed": args.seed, "count": args.count, "vectors": args.vectors}
-    reached: Counter[str] = Counter()
-    used: Counter[str] = Counter()
-    for record in records:
-        try:
-            used.update(interp.check_types(record["program"], record["plan"]))
-        except interp.TypeViolation as violation:
-            raise LaneError(f"{record['name']} lets a pointer into a value: {violation}") from violation
-        found = disagreement(record, reached)
-        if found is not None:
-            j, how = found
-            raise LaneError(f"{record['name']} input {j}: {how}\n" + minimized(
-                "model", case_of(record, j), model_failure, {**origin, "program": record["name"], "input": j}))
+def parsed_as_lowered(cake: str, records: list[dict[str, Any]], origin: dict[str, Any]) -> int:
+    """Every program read by the parser as its lowering: how many functions matched. A program
+    that is not is reduced; a batch that fails with every program in it read right alone is
+    reported as such."""
     # `cake --explore` prints every intermediate program, and on thousands of functions at once
     # it runs out of its own memory, so the contract takes them a few hundred at a time.
     matched = 0
@@ -505,9 +462,31 @@ def main() -> None:
             if record is None:
                 raise LaneError(f"the parser contract fails on programs {k}-{k + len(chunk) - 1} together and "
                                 f"on none alone:\n{error}") from error
-            raise LaneError(f"{record['name']}: {error}\n" + minimized(
+            # The contract's message starts with the function's name already.
+            raise LaneError(f"{error}\n" + minimized(
                 "parser", case_of(record, 0), parser_failure(cake),
                 {**origin, "program": record["name"], "input": 0}, cake=cake)) from error
+    return matched
+
+
+def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, write: bool) -> Report:
+    shutil.rmtree(OUT / "minimized", ignore_errors=True)
+    records = dn(["emit-fuzz", str(seed), str(count), str(vectors)], timeout=600 + count * vectors // 50)
+    (OUT / "programs.json").write_text(json.dumps(records))
+    origin = {"seed": seed, "count": count, "vectors": vectors}
+    reached: Counter[str] = Counter()
+    used: Counter[str] = Counter()
+    for record in records:
+        try:
+            used.update(interp.check_types(record["program"], record["plan"]))
+        except interp.TypeViolation as violation:
+            raise LaneError(f"{record['name']} lets a pointer into a value: {violation}") from violation
+        found = disagreement(record, reached)
+        if found is not None:
+            j, how = found
+            raise LaneError(f"{record['name']} input {j}: {how}\n" + minimized(
+                "model", case_of(record, j), model_failure, {**origin, "program": record["name"], "input": j}))
+    matched = parsed_as_lowered(cake, records, origin)
     native = Native(cake, OUT)
     host = check_host(native)
     outcomes = native_outcomes(native, "programs", records)
@@ -522,26 +501,37 @@ def main() -> None:
         raise LaneError(f"no call reaches {missing}; the generator no longer covers them")
     mutants: dict[str, Any] = {}
     corpus = {"mutants": 0, "found": 0}
-    if standard:
-        mutants = {name: check_mutant(native, records, name, args.seed, args.write_corpus) for name in MUTANTS}
-        corpus = check_corpus(native)
     calls = sum(len(r["vectors"]) for r in records)
-    report = {"status": "matched", "seed": args.seed, "programs": len(records), "calls": calls,
-              "parsed_functions": matched, "host_checks": host, "reached": dict(sorted(reached.items())),
-              "used": dict(sorted(used.items())), "mutants": mutants, "corpus": corpus,
-              "compiler_sha256": baseline.digest(cake), "dn_compiler_sha256": baseline.digest(COMPILER),
-              "seconds": round(time.monotonic() - started, 1)}
     if standard:
-        quoted = {"docs/baseline.md": (f"{len(records)} generated programs", f"{calls:,} calls"),
-                  "docs/assurance.md": (f"{len(records)} generated programs",),
-                  "README.md": (f"{len(records)} generated programs",)}
-        for name, phrases in quoted.items():
-            text = (ROOT / name).read_text()
-            for phrase in phrases:
-                if phrase not in text:
-                    raise LaneError(f"{name} does not say {phrase!r}")
-    report_path.write_text(json.dumps(report, indent=2) + "\n")
-    print(report_path.read_text(), end="")
+        mutants = {name: check_mutant(native, records, name, seed, write) for name in MUTANTS}
+        corpus = check_corpus(native)
+        lanes.require_quoted({"docs/baseline.md": (f"{len(records)} generated programs", f"{calls:,} calls"),
+                              "docs/assurance.md": (f"{len(records)} generated programs",),
+                              "README.md": (f"{len(records)} generated programs",)})
+    return Report("matched", cake, [HOST, *lanes.RUNTIME], {
+        "seed": seed, "programs": len(records), "calls": calls, "parsed_functions": matched,
+        "host_checks": host, "reached": dict(sorted(reached.items())), "used": dict(sorted(used.items())),
+        "mutants": mutants, "corpus": corpus})
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--cake", default=os.environ.get("CAKE", ""))
+    parser.add_argument("--bootstrapped", action="store_true",
+                        help="run with the compiler built from the patched source (backend/bootstrap-record.json)")
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--count", type=int, default=COUNT)
+    parser.add_argument("--vectors", type=int, default=VECTORS)
+    parser.add_argument("--write-corpus", action="store_true",
+                        help="record the planted cases in tests/corpus/mutants instead of comparing")
+    args = parser.parse_args()
+    lanes.require_platform(parser)
+    cake = None if args.bootstrapped else lanes.given_cake(parser, args.cake)
+    standard = (args.seed, args.count, args.vectors) == (SEED, COUNT, VECTORS)
+    if args.write_corpus and not standard:
+        parser.error("the corpus is recorded from the standard run only")
+    lanes.lane_main("GENERATED PROGRAMS", OUT, lambda: generated(
+        cake or lanes.bootstrapped(), args.seed, args.count, args.vectors, standard, args.write_corpus))
 
 
 if __name__ == "__main__":

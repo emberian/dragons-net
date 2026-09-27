@@ -25,18 +25,18 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import subprocess
 import sys
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-MASK = (1 << 64) - 1
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The path above is what makes these importable.
+import lanes
+from lanes import ROOT
+from words import MASK, signed, word_op
+
 FIELDS = ("RESULT", "FLOCALS", "FMEM", "FCALLS", "FTRACE", "FCLOCK", "FBASE")
-
-
-def signed(w: int) -> int:
-    """A machine word as the signed integer `word_lt` compares."""
-    return w - (1 << 64) if w >= (1 << 63) else w
+# The lowered operators, by the source operator that computes them.
+OPERATORS = {"add": "+", "sub": "-", "and": "&", "mul": "*", "less": "<", "equal": "==", "shr": ">>>"}
 
 
 def byte_align(a: int) -> int:
@@ -130,26 +130,14 @@ def evaluate(exp: Any, s: State) -> int | None:
         return s.locals.get(exp[1])
     if head == "base":
         return s.base
-    if head in ("add", "and", "sub", "mul", "less", "equal", "notless", "shr"):
+    if head in (*OPERATORS, "notless"):
         a, b = evaluate(exp[1], s), evaluate(exp[2], s)
         if a is None or b is None:
             return None
-        if head == "add":
-            return (a + b) & MASK
-        if head == "sub":
-            return (a - b) & MASK
-        if head == "and":
-            return a & b
-        if head == "mul":
-            return (a * b) & MASK
-        if head == "less":
-            return 1 if signed(a) < signed(b) else 0
-        if head == "equal":
-            return 1 if a == b else 0
         if head == "notless":
             return 0 if signed(a) < signed(b) else 1
-        # `word_sh` has no value for a nonzero shift of a whole word or more.
-        return None if b != 0 and b >= 64 else a >> b
+        # `word_sh` has no value for a shift of a whole word or more.
+        return word_op(OPERATORS[head], a, b)
     if head == "loadb":
         a = evaluate(exp[1], s)
         return None if a is None else s.load_byte(a)
@@ -398,7 +386,7 @@ def write_answer_of(case: dict[str, str]) -> dict[str, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--compiler", default=str(ROOT / ".lake/build/bin/dn-compiler"),
+    parser.add_argument("--compiler", type=Path, default=lanes.DN_COMPILER,
                         help="the built dn-compiler, which prints the corpus")
     parser.add_argument("--out", type=Path, default=ROOT / "build/states",
                         help="where a disagreeing case is written")
@@ -410,8 +398,10 @@ def main() -> int:
         cases = parse_cases(args.dump.read_text())
         least = 1
     else:
-        cases = parse_cases(subprocess.run([args.compiler, "dump-states"], capture_output=True,
-                                           text=True, check=True).stdout)
+        try:
+            cases = parse_cases(lanes.emit("dump-states", timeout=600, compiler=args.compiler))
+        except lanes.LaneError as error:
+            raise SystemExit(f"state check: {error}") from None
         least = 80
     # The corpus is the point: a dump that lost most of its cases, or all of them,
     # would otherwise pass this lane in silence.

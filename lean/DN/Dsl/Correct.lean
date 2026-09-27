@@ -18,169 +18,95 @@ namespace DN.Dsl
 
 open DN.Compiler DN.Compiler.Syntax DN.Compiler.Lower DN.Compiler.Region DN.Compiler.Bytes
 
-/-! ## Bytes and indicator words -/
-
-theorem ofNat_toNat_setWidth8 (b : BitVec 8) : (BitVec.ofNat 64 b.toNat).setWidth 8 = b := by
-  apply BitVec.eq_of_toNat_eq
-  simp only [BitVec.toNat_setWidth, BitVec.toNat_ofNat]
-  have := b.isLt
-  omega
-
-theorem widen_eq_iff (x b : BitVec 8) : x.setWidth 64 = BitVec.ofNat 64 b.toNat ↔ x = b := by
-  constructor
-  · intro h
-    have := congrArg BitVec.toNat h
-    simp only [BitVec.toNat_setWidth, BitVec.toNat_ofNat] at this
-    apply BitVec.eq_of_toNat_eq
-    have hx := x.isLt
-    have hb := b.isLt
-    omega
-  · rintro rfl
-    apply BitVec.eq_of_toNat_eq
-    simp only [BitVec.toNat_setWidth, BitVec.toNat_ofNat]
-
-theorem indicator_and (p q : Prop) [Decidable p] [Decidable q] :
-    ((if p then 1 else 0 : Word) &&& (if q then 1 else 0 : Word)) = if p ∧ q then 1 else 0 := by
-  by_cases hp : p <;> by_cases hq : q <;> simp [hp, hq]
+/-! ## Prefixes -/
 
 /-- What `List.isPrefixOf` means, by length and by position. -/
-theorem isPrefixOf_iff : ∀ (kw inp : List (BitVec 8)),
-    kw.isPrefixOf inp = true ↔ kw.length ≤ inp.length ∧ ∀ i, i < kw.length → inp[i]! = kw[i]!
-  | [], _ => by simp [List.isPrefixOf]
-  | _ :: _, [] => by simp [List.isPrefixOf]
-  | k :: ks, x :: xs => by
-    rw [List.isPrefixOf, Bool.and_eq_true, beq_iff_eq, isPrefixOf_iff ks xs]
-    constructor
-    · rintro ⟨rfl, hlen, hall⟩
-      refine ⟨by simp; omega, fun i hi => ?_⟩
-      cases i with
-      | zero => rfl
-      | succ j => simpa using hall j (by simp at hi; omega)
-    · rintro ⟨hlen, hall⟩
-      refine ⟨(hall 0 (by simp)).symm, by simp at hlen; omega, fun j hj => ?_⟩
-      simpa using hall (j + 1) (by simp; omega)
+theorem isPrefixOf_iff (kw inp : List (BitVec 8)) :
+    kw.isPrefixOf inp = true ↔ kw.length ≤ inp.length ∧ ∀ i, i < kw.length → inp[i]! = kw[i]! := by
+  rw [List.isPrefixOf_iff_prefix, List.prefix_iff_getElem]
+  refine ⟨fun ⟨hl, h⟩ => ⟨hl, fun i hi => ?_⟩, fun ⟨hl, h⟩ => ⟨hl, fun i hi => ?_⟩⟩
+  · rw [getElem!_pos inp i (by omega), getElem!_pos kw i hi, h i hi]
+  · have := h i hi
+    rwa [getElem!_pos inp i (by omega), getElem!_pos kw i hi, eq_comm] at this
 
 /-! ## The state the generated code works in
 
-`Rep inpA outA inp cap pos written s`: the parameters are bound, the input bytes are at `inpA`,
-the bytes written so far are at `outA`, `pos` holds the cursor, and the whole output buffer is
-addressable and apart from the input. At an action boundary `pos` is `written.length`. -/
+`Call inpA outA inp cap s`: the parameters are bound, the input bytes are at `inpA`, and the
+output buffer of `cap` bytes at `outA` is addressable and apart from the input; no step of the
+generated code changes any of it. `Rep` adds the cursor: `pos` holds it and the bytes written so
+far are at `outA`. At an action boundary the cursor is `written.length`. -/
 
 variable {σ : Type}
 
-structure Rep (inpA outA : Word) (inp : List (BitVec 8)) (cap pos : Nat)
-    (written : List (BitVec 8)) (s : PancakeState σ) : Prop where
+structure Call (inpA outA : Word) (inp : List (BitVec 8)) (cap : Nat) (s : PancakeState σ) :
+    Prop where
   inp_local : s.locals "inp" = some inpA
   inlen_local : s.locals "inlen" = some (BitVec.ofNat 64 inp.length)
   out_local : s.locals "out" = some outA
-  pos_local : s.locals "pos" = some (BitVec.ofNat 64 pos)
-  flag_bound : ∃ w, s.locals "m" = some w
   input : memBytesAt s.memory s.memaddrs s.be inpA inp
-  output : memBytesAt s.memory s.memaddrs s.be outA written
   room : ∀ j, j < cap → s.memaddrs (byteAlign (outA + BitVec.ofNat 64 j)) = true
   apart : ∀ i j, i < inp.length → j < cap →
     inpA + BitVec.ofNat 64 i ≠ outA + BitVec.ofNat 64 j
   inp_small : inp.length < 2 ^ 63
   cap_small : cap < 2 ^ 63
+
+structure Rep (inpA outA : Word) (inp : List (BitVec 8)) (cap pos : Nat)
+    (written : List (BitVec 8)) (s : PancakeState σ) : Prop extends Call inpA outA inp cap s where
+  pos_local : s.locals "pos" = some (BitVec.ofNat 64 pos)
+  flag_bound : ∃ w, s.locals "m" = some w
+  output : memBytesAt s.memory s.memaddrs s.be outA written
   fits : written.length ≤ cap
 
-/-- What a step of the generated code leaves alone: everything but the two working names and
-the first `lim` bytes of the output buffer. -/
-structure Keeps (outA : Word) (lim : Nat) (s t : PancakeState σ) : Prop where
-  memaddrs : t.memaddrs = s.memaddrs
-  be : t.be = s.be
+/-- The locals the generated code changes: the cursor and the keyword flag. -/
+def working (x : String) : Prop := x = "pos" ∨ x = "m"
+
+/-- What a step of the generated code leaves alone: its frame keeps everything but the working
+locals and the first `lim` bytes of the output buffer, and the clock and the external world's
+state are as they were. -/
+structure Keeps (outA : Word) (lim : Nat) (s t : PancakeState σ) : Prop
+    extends Frame working (bytesFrom outA lim) s t where
   clock : t.clock = s.clock
   ffi : t.ffi = s.ffi
-  base : t.baseAddr = s.baseAddr
-  locals : ∀ x, x ≠ "pos" → x ≠ "m" → t.locals x = s.locals x
-  outside : ∀ a, (∀ j, j < lim → a ≠ outA + BitVec.ofNat 64 j) →
-    memLoadByte t.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a
 
 theorem Keeps.refl (outA : Word) (lim : Nat) (s : PancakeState σ) : Keeps outA lim s s :=
-  ⟨rfl, rfl, rfl, rfl, rfl, fun _ _ _ => rfl, fun _ _ => rfl⟩
+  ⟨Frame.refl _ _ s, rfl, rfl⟩
 
 theorem Keeps.mono {outA : Word} {lim lim' : Nat} {s t : PancakeState σ} (hle : lim ≤ lim')
     (h : Keeps outA lim s t) : Keeps outA lim' s t :=
-  ⟨h.memaddrs, h.be, h.clock, h.ffi, h.base, h.locals,
-    fun a ha => h.outside a (fun j hj => ha j (Nat.lt_of_lt_of_le hj hle))⟩
+  ⟨h.toFrame.mono (fun _ hx => hx) (fun _ ⟨j, hj, ha⟩ => ⟨j, Nat.lt_of_lt_of_le hj hle, ha⟩),
+    h.clock, h.ffi⟩
 
 theorem Keeps.trans {outA : Word} {lim : Nat} {s t u : PancakeState σ}
-    (h1 : Keeps outA lim s t) (h2 : Keeps outA lim t u) : Keeps outA lim s u := by
-  refine ⟨h2.memaddrs.trans h1.memaddrs, h2.be.trans h1.be, h2.clock.trans h1.clock,
-    h2.ffi.trans h1.ffi, h2.base.trans h1.base,
-    fun x hp hm => (h2.locals x hp hm).trans (h1.locals x hp hm), fun a ha => ?_⟩
-  have := h2.outside a ha
-  rw [h1.memaddrs, h1.be] at this
-  exact this.trans (h1.outside a ha)
+    (h1 : Keeps outA lim s t) (h2 : Keeps outA lim t u) : Keeps outA lim s u :=
+  ⟨h1.toFrame.trans h2.toFrame, h2.clock.trans h1.clock, h2.ffi.trans h1.ffi⟩
 
-/-! ## One statement in front of the rest
-
-A statement that is not a declaration lowers to a `Seq` in front of the rest, or to itself when
-nothing follows. Either way, running it and then the rest is running the rest from where it
-stopped. -/
-
-theorem run_cons (o : Oracle σ) {x : PStmt} {cx : PancakeProg} (hx : lowerStmt1 x = some cx)
-    (hnd : ∀ nm e, x ≠ .dec nm e) {rest : List PStmt} {crest : PancakeProg}
-    (hrest : lowerStmtsFold rest = some crest) {s t : PancakeState σ}
-    (hrun : PancakeSem o cx s = (none, t)) (hclk : t.clock ≤ s.clock) :
-    ∃ c, lowerStmtsFold (x :: rest) = some c ∧ PancakeSem o c s = PancakeSem o crest t := by
-  cases rest with
-  | nil =>
-    simp only [lowerStmtsFold, Option.some.injEq] at hrest
-    subst hrest
-    refine ⟨cx, by simp [lowerStmtsFold, hx], ?_⟩
-    rw [hrun, PancakeSem]
-  | cons y ys =>
-    refine ⟨.seq cx crest, ?_, seq_step o hrun hclk⟩
-    cases x with
-    | dec nm e => exact absurd rfl (hnd nm e)
-    | _ => simp [lowerStmtsFold, hx, hrest]
-
-/-! ## Writing one byte -/
-
-theorem memBytesAt_putByte_other {m : Word → Word} {dm : Word → Bool} {be : Bool}
-    {base a : Word} {w : List (BitVec 8)} {b : BitVec 8} (hw : memBytesAt m dm be base w)
-    (hne : ∀ i, i < w.length → base + BitVec.ofNat 64 i ≠ a) :
-    memBytesAt (putByte m be a b) dm be base w := by
-  intro i hi
-  rw [load_putByte_diff m dm be a b _ (hne i hi)]
-  exact hw i hi
-
-theorem memBytesAt_snoc {m : Word → Word} {dm : Word → Bool} {be : Bool} {base : Word}
-    {w : List (BitVec 8)} {b : BitVec 8} (hw : memBytesAt m dm be base w)
-    (hdom : dm (byteAlign (base + BitVec.ofNat 64 w.length)) = true) (hlen : w.length < 2 ^ 64) :
-    memBytesAt (putByte m be (base + BitVec.ofNat 64 w.length) b) dm be base (w ++ [b]) := by
-  intro i hi
-  simp only [List.length_append, List.length_singleton] at hi
-  by_cases hlt : i < w.length
-  · rw [load_putByte_diff m dm be _ b _
-      (region_addr_inj base i w.length (by omega) hlen (by omega)), hw i hlt]
-    simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_left hlt]
-  · have hi' : i = w.length := by omega
-    subst hi'
-    rw [load_putByte_same m dm be _ b hdom]
-    simp
+/-- A step that keeps its frame within the output buffer keeps the call. -/
+theorem Call.keep {inpA outA : Word} {inp : List (BitVec 8)} {cap lim : Nat}
+    {s t : PancakeState σ} (h : Call inpA outA inp cap s) (hk : Keeps outA lim s t)
+    (hlim : lim ≤ cap) : Call inpA outA inp cap t where
+  inp_local := by rw [hk.locals "inp" (by simp [working])]; exact h.inp_local
+  inlen_local := by rw [hk.locals "inlen" (by simp [working])]; exact h.inlen_local
+  out_local := by rw [hk.locals "out" (by simp [working])]; exact h.out_local
+  input := by
+    intro i hi
+    rw [hk.memaddrs, hk.be,
+      hk.outside _ (not_bytesFrom.2 fun j hj => h.apart i j hi (Nat.lt_of_lt_of_le hj hlim))]
+    exact h.input i hi
+  room := by rw [hk.memaddrs]; exact h.room
+  apart := h.apart
+  inp_small := h.inp_small
+  cap_small := h.cap_small
 
 /-! ## The code lowers -/
-
-theorem lowers_cons {x : PStmt} {cx : PancakeProg} (hx : lowerStmt1 x = some cx)
-    (hnd : ∀ nm e, x ≠ .dec nm e) {rest : List PStmt} {crest : PancakeProg}
-    (hrest : lowerStmtsFold rest = some crest) : ∃ c, lowerStmtsFold (x :: rest) = some c := by
-  cases rest with
-  | nil => exact ⟨cx, by simp [lowerStmtsFold, hx]⟩
-  | cons y ys =>
-    cases x with
-    | dec nm e => exact absurd rfl (hnd nm e)
-    | _ => exact ⟨.seq cx crest, by simp [lowerStmtsFold, hx, hrest]⟩
 
 theorem litStmts_lowers : ∀ (bs : List (BitVec 8)) (off : Nat) (rest : List PStmt)
     (crest : PancakeProg), lowerStmtsFold rest = some crest →
     ∃ c, lowerStmtsFold (litStmts off bs rest) = some c
-  | [], off, rest, crest, h => lowers_cons (x := .assign "pos" (eAdd (v "pos") (n off)))
-      rfl (by intro _ _ h; cases h) h
+  | [], off, rest, crest, h =>
+    lowers_cons (x := .assign "pos" (eAdd (v "pos") (n off))) rfl rfl h
   | b :: bs, off, rest, crest, h => by
     obtain ⟨c, hc⟩ := litStmts_lowers bs (off + 1) rest crest h
-    exact lowers_cons (x := .storeb (outAt off) (n b.toNat)) rfl (by intro _ _ h; cases h) hc
+    exact lowers_cons (x := .storeb (outAt off) (n b.toNat)) rfl rfl hc
 
 theorem matchExpr_lowers : ∀ (kw : List (BitVec 8)) (off : Nat),
     ∃ e, lowerExp (matchExpr off kw) = some e
@@ -189,6 +115,20 @@ theorem matchExpr_lowers : ∀ (kw : List (BitVec 8)) (off : Nat),
     obtain ⟨e, he⟩ := matchExpr_lowers bs (off + 1)
     exact ⟨_, by simp [matchExpr, eAnd, eEq, inpAt, eAdd, n, v, lowerExp, he]; rfl⟩
 
+/-- The three statements of a keyword test, lowered: clear the flag, test, branch. -/
+theorem ifPrefix_lowers {kw : List (BitVec 8)} {thn els : Act} {ct ce : PancakeProg}
+    {em : PancakeExp} (hct : lowerStmtsFold (thn.compile []) = some ct)
+    (hce : lowerStmtsFold (els.compile []) = some ce)
+    (hem : lowerExp (matchExpr 0 kw) = some em) :
+    lowerStmt1 (.assign "m" (n 0)) = some (.assign "m" (.const (BitVec.ofNat 64 0))) ∧
+      lowerStmt1 (.ite (eLe (n kw.length) (v "inlen")) [.assign "m" (matchExpr 0 kw)] [])
+        = some (.cond (.cmp .notLess (.var "inlen") (.const (BitVec.ofNat 64 kw.length)))
+            (.assign "m" em) .skip) ∧
+      lowerStmt1 (.ite (v "m") (thn.compile []) (els.compile []))
+        = some (.cond (.var "m") ct ce) :=
+  ⟨rfl, by simp [lowerStmt1, lowerStmtsFold, eLe, n, v, lowerExp, hem],
+    by simp [lowerStmt1, v, lowerExp, hct, hce]⟩
+
 theorem Act.compile_lowers : ∀ (a : Act) (rest : List PStmt) (crest : PancakeProg),
     lowerStmtsFold rest = some crest → ∃ c, lowerStmtsFold (a.compile rest) = some c
   | .lit bytes, rest, crest, h => litStmts_lowers bytes 0 rest crest h
@@ -196,18 +136,13 @@ theorem Act.compile_lowers : ∀ (a : Act) (rest : List PStmt) (crest : PancakeP
     obtain ⟨c2, h2⟩ := Act.compile_lowers second rest crest h
     exact Act.compile_lowers first _ c2 h2
   | .ifPrefix keyword thn els, rest, crest, h => by
-    obtain ⟨ct, ht⟩ := Act.compile_lowers thn [] .skip (by simp [lowerStmtsFold])
-    obtain ⟨ce, he⟩ := Act.compile_lowers els [] .skip (by simp [lowerStmtsFold])
+    obtain ⟨ct, ht⟩ := Act.compile_lowers thn [] .skip lowerStmtsFold_nil
+    obtain ⟨ce, he⟩ := Act.compile_lowers els [] .skip lowerStmtsFold_nil
     obtain ⟨em, hem⟩ := matchExpr_lowers keyword 0
-    obtain ⟨c3, h3⟩ := lowers_cons (x := .ite (v "m") (thn.compile []) (els.compile []))
-      (cx := .cond (.var "m") ct ce) (by simp [lowerStmt1, v, lowerExp, ht, he])
-      (by intro _ _ h; cases h) h
-    obtain ⟨c2, h2⟩ := lowers_cons
-      (x := .ite (eLe (n keyword.length) (v "inlen")) [.assign "m" (matchExpr 0 keyword)] [])
-      (cx := .cond (.cmp .notLess (.var "inlen") (.const (BitVec.ofNat 64 keyword.length)))
-        (.assign "m" em) .skip)
-      (by simp [lowerStmt1, lowerStmtsFold, eLe, n, v, lowerExp, hem]) (by intro _ _ h; cases h) h3
-    exact lowers_cons (x := .assign "m" (n 0)) rfl (by intro _ _ h; cases h) h2
+    obtain ⟨h1, h2, h3⟩ := ifPrefix_lowers (kw := keyword) ht he hem
+    obtain ⟨c3, hc3⟩ := lowers_cons h3 rfl h
+    obtain ⟨c2, hc2⟩ := lowers_cons h2 rfl hc3
+    exact lowers_cons h1 rfl hc2
 
 /-! ## How each step changes the state -/
 
@@ -215,70 +150,51 @@ section Steps
 
 variable {inpA outA : Word} {inp : List (BitVec 8)} {cap : Nat}
 
+/-- Setting a working local keeps the frame. -/
+theorem Keeps.set_working {lim : Nat} {x : String} (hx : x = "pos" ∨ x = "m")
+    (s : PancakeState σ) (val : Word) :
+    Keeps outA lim s { s with locals := setLocal s.locals x val } :=
+  ⟨⟨rfl, rfl, rfl, fun y hy => setLocal_ne _ _ _ (fun h => hy (by rw [h]; exact hx)),
+    fun _ _ => rfl⟩, rfl, rfl⟩
+
+/-- Writing a byte inside the first `lim` bytes of the output buffer keeps the frame. -/
+theorem Keeps.store {lim : Nat} {s : PancakeState σ} {j : Nat} (hj : j < lim) (b : BitVec 8) :
+    Keeps outA lim s
+      { s with memory := putByte s.memory s.be (outA + BitVec.ofNat 64 j) b } :=
+  ⟨⟨rfl, rfl, rfl, fun _ _ => rfl, fun a ha =>
+    load_putByte_diff s.memory s.memaddrs s.be _ b a (not_bytesFrom.1 ha j hj)⟩, rfl, rfl⟩
+
 theorem Rep.setPos {L : Nat} {w : List (BitVec 8)} {s : PancakeState σ}
     (h : Rep inpA outA inp cap L w s) (P : Nat) :
     Rep inpA outA inp cap P w { s with locals := setLocal s.locals "pos" (BitVec.ofNat 64 P) } where
-  inp_local := by simp [setLocal, h.inp_local]
-  inlen_local := by simp [setLocal, h.inlen_local]
-  out_local := by simp [setLocal, h.out_local]
+  toCall := h.toCall.keep (Keeps.set_working (lim := 0) (Or.inl rfl) s _) (Nat.zero_le _)
   pos_local := by simp [setLocal]
   flag_bound := by
     obtain ⟨u, hu⟩ := h.flag_bound
     exact ⟨u, by simp [setLocal, hu]⟩
-  input := h.input
   output := h.output
-  room := h.room
-  apart := h.apart
-  inp_small := h.inp_small
-  cap_small := h.cap_small
   fits := h.fits
 
 theorem Rep.setFlag {L : Nat} {w : List (BitVec 8)} {s : PancakeState σ}
     (h : Rep inpA outA inp cap L w s) (val : Word) :
     Rep inpA outA inp cap L w { s with locals := setLocal s.locals "m" val } where
-  inp_local := by simp [setLocal, h.inp_local]
-  inlen_local := by simp [setLocal, h.inlen_local]
-  out_local := by simp [setLocal, h.out_local]
+  toCall := h.toCall.keep (Keeps.set_working (lim := 0) (Or.inr rfl) s _) (Nat.zero_le _)
   pos_local := by simp [setLocal, h.pos_local]
   flag_bound := ⟨val, by simp [setLocal]⟩
-  input := h.input
   output := h.output
-  room := h.room
-  apart := h.apart
-  inp_small := h.inp_small
-  cap_small := h.cap_small
   fits := h.fits
-
-theorem Keeps.setLocal {lim : Nat} {x : String} (hx : x = "pos" ∨ x = "m") (s : PancakeState σ)
-    (val : Word) : Keeps outA lim s { s with locals := setLocal s.locals x val } :=
-  ⟨rfl, rfl, rfl, rfl, rfl, fun y hp hm => by
-    rcases hx with rfl | rfl
-    · exact setLocal_ne _ _ _ hp
-    · exact setLocal_ne _ _ _ hm, fun _ _ => rfl⟩
 
 /-- Writing the next output byte: at `outA + written.length`, inside the buffer. -/
 theorem Rep.store {L : Nat} {w : List (BitVec 8)} {s : PancakeState σ}
     (h : Rep inpA outA inp cap L w s) (b : BitVec 8) (hlt : w.length < cap) :
     Rep inpA outA inp cap L (w ++ [b])
       { s with memory := putByte s.memory s.be (outA + BitVec.ofNat 64 w.length) b } where
-  inp_local := h.inp_local
-  inlen_local := h.inlen_local
-  out_local := h.out_local
+  toCall := h.toCall.keep (Keeps.store (lim := w.length + 1) (Nat.lt_succ_self _) b)
+    (Nat.succ_le_of_lt hlt)
   pos_local := h.pos_local
   flag_bound := h.flag_bound
-  input := memBytesAt_putByte_other h.input (fun i hi => h.apart i w.length hi hlt)
   output := memBytesAt_snoc h.output (h.room w.length hlt) (by have := h.cap_small; omega)
-  room := h.room
-  apart := h.apart
-  inp_small := h.inp_small
-  cap_small := h.cap_small
   fits := by simp; omega
-
-theorem Keeps.store {lim : Nat} {s : PancakeState σ} {j : Nat} (hj : j < lim) (b : BitVec 8) :
-    Keeps outA lim s
-      { s with memory := putByte s.memory s.be (outA + BitVec.ofNat 64 j) b } :=
-  ⟨rfl, rfl, rfl, rfl, rfl, fun _ _ _ => rfl, fun a ha =>
-    load_putByte_diff s.memory s.memaddrs s.be _ b a (ha j hj)⟩
 
 end Steps
 
@@ -299,15 +215,10 @@ theorem lit_run (o : Oracle σ) {inpA outA : Word} {inp : List (BitVec 8)} {cap 
       simp only [eval, hrep.pos_local]
       rw [ofNat_add_small L off (by omega), hw]
     have hrun := sem_assign (oracle := o) hval hrep.pos_local
-    obtain ⟨c', hc', hsem⟩ := run_cons o (x := .assign "pos" (eAdd (v "pos") (n off)))
-      (cx := .assign "pos" (.op .add (.var "pos") (.const (BitVec.ofNat 64 off)))) rfl
-      (by intro _ _ h; cases h) hrest hrun (Nat.le_refl _)
-    have hcc : c = c' := by
-      have h1 : lowerStmtsFold (litStmts off [] rest) = some c' := hc'
-      rw [hc] at h1
-      exact Option.some.inj h1
-    subst hcc
-    refine ⟨_, ?_, Keeps.setLocal (Or.inl rfl) s _, hsem⟩
+    have hsem := run_cons_of o (x := .assign "pos" (eAdd (v "pos") (n off)))
+      (cx := .assign "pos" (.op .add (.var "pos") (.const (BitVec.ofNat 64 off)))) rfl rfl
+      hrest hc hrun (Nat.le_refl _)
+    refine ⟨_, ?_, Keeps.set_working (Or.inl rfl) s _, hsem⟩
     simpa using hrep.setPos w.length
   | b :: bs, off, w, rest, crest, c, s, hrest, hc, hw, hrep, hfit => by
     have hlt : w.length < cap := by simp at hfit; omega
@@ -325,15 +236,10 @@ theorem lit_run (o : Oracle σ) {inpA outA : Word} {inp : List (BitVec 8)} {cap 
     have hsrc : eval s (.const (BitVec.ofNat 64 b.toNat)) = some (BitVec.ofNat 64 b.toNat) := by
       simp [eval]
     have hrun := evaluate_storeByte o s haddr hsrc hstore
-    obtain ⟨c', hc', hsem⟩ := run_cons o (x := .storeb (outAt off) (n b.toNat))
+    have hsem := run_cons_of o (x := .storeb (outAt off) (n b.toNat))
       (cx := .storeByte (.op .add (.op .add (.var "out") (.var "pos"))
         (.const (BitVec.ofNat 64 off))) (.const (BitVec.ofNat 64 b.toNat)))
-      rfl (by intro _ _ h; cases h) hc1 hrun (Nat.le_refl _)
-    have hcc : c = c' := by
-      have h1 : lowerStmtsFold (litStmts off (b :: bs) rest) = some c' := hc'
-      rw [hc] at h1
-      exact Option.some.inj h1
-    subst hcc
+      rfl rfl hc1 hc hrun (Nat.le_refl _)
     obtain ⟨t, hrep', hkeep, hsem'⟩ := lit_run o bs (off + 1) (w ++ [b]) rest crest c1 _ hrest hc1
       (by simp; omega) (hrep.store b hlt) (by simp at hfit ⊢; omega)
     have happ : w ++ [b] ++ bs = w ++ b :: bs := by simp
@@ -393,14 +299,6 @@ theorem eval_match {s : PancakeState σ} {inpA : Word} {inp : List (BitVec 8)}
 
 /-! ## Branching -/
 
-theorem sem_skip (o : Oracle σ) (s : PancakeState σ) : PancakeSem o .skip s = (none, s) := by
-  rw [PancakeSem]
-
-theorem sem_cond (o : Oracle σ) {s : PancakeState σ} {e : PancakeExp} {c1 c2 : PancakeProg}
-    {w : Word} (h : eval s e = some w) :
-    PancakeSem o (.cond e c1 c2) s = PancakeSem o (if w ≠ 0 then c1 else c2) s := by
-  rw [PancakeSem, h]
-
 /-- The flag the keyword test leaves. -/
 def flag (kw inp : List (BitVec 8)) : Word := if kw.isPrefixOf inp then 1 else 0
 
@@ -422,7 +320,8 @@ theorem guard_run (o : Oracle σ) {inpA outA : Word} {inp : List (BitVec 8)} {ca
       · rw [if_pos hall, if_pos ((isPrefixOf_iff kw inp).2 ⟨hlen, hall⟩)]
       · rw [if_neg hall, if_neg (fun hp => hall ((isPrefixOf_iff kw inp).1 hp).2)]
     rw [hval] at hmv
-    refine ⟨_, ?_, h.setFlag (flag kw inp), Keeps.setLocal (Or.inr rfl) s _, by simp [setLocal]⟩
+    refine ⟨_, ?_, h.setFlag (flag kw inp), Keeps.set_working (Or.inr rfl) s _,
+      by simp [setLocal]⟩
     rw [sem_cond o hg, if_pos (by decide)]
     exact sem_assign hmv hm
   · rw [if_neg hlen] at hg
@@ -462,11 +361,12 @@ theorem Act.compile_run (o : Oracle σ) (inpA outA : Word) (inp : List (BitVec 8
     obtain ⟨ct, hct⟩ := Act.compile_lowers thn [] .skip lowerStmtsFold_nil
     obtain ⟨ce, hce⟩ := Act.compile_lowers els [] .skip lowerStmtsFold_nil
     obtain ⟨em, hem⟩ := matchExpr_lowers kw 0
+    obtain ⟨hl1, hl2, hl3⟩ := ifPrefix_lowers (kw := kw) hct hce hem
     obtain ⟨u, hu⟩ := hrep.flag_bound
     have h1 := sem_assign (oracle := o) (x := "m") (e := .const (BitVec.ofNat 64 0))
       (v := BitVec.ofNat 64 0) rfl hu
     have hrep1 := hrep.setFlag (BitVec.ofNat 64 0)
-    have hkeep1 := Keeps.setLocal (outA := outA)
+    have hkeep1 := Keeps.set_working (outA := outA)
       (lim := ((Act.ifPrefix kw thn els).run inp out).length) (Or.inr rfl) s (BitVec.ofNat 64 0)
     obtain ⟨s2, h2, hrep2, hkeep2, hm2⟩ := guard_run o kw hk hem hrep1 (by simp [setLocal])
     have hbr : ∃ t, Rep inpA outA inp cap ((Act.ifPrefix kw thn els).run inp out).length
@@ -487,23 +387,9 @@ theorem Act.compile_run (o : Oracle σ) (inpA outA : Word) (inp : List (BitVec 8
         rw [sem_skip] at hst
         exact ⟨t, by simpa [Act.run, hp] using hrt, by simpa [Act.run, hp] using hkt, hst⟩
     obtain ⟨t, hrt, hkt, hst⟩ := hbr
-    obtain ⟨c3, hc3, hs3⟩ := run_cons o (x := .ite (v "m") (thn.compile []) (els.compile []))
-      (cx := .cond (.var "m") ct ce) (by simp [lowerStmt1, v, lowerExp, hct, hce])
-      (by intro _ _ h; cases h) hrest hst (Nat.le_of_eq hkt.clock)
-    obtain ⟨c2, hc2, hs2⟩ := run_cons o
-      (x := .ite (eLe (n kw.length) (v "inlen")) [.assign "m" (matchExpr 0 kw)] [])
-      (cx := .cond (.cmp .notLess (.var "inlen") (.const (BitVec.ofNat 64 kw.length)))
-        (.assign "m" em) .skip)
-      (by simp [lowerStmt1, lowerStmtsFold, eLe, n, v, lowerExp, hem]) (by intro _ _ h; cases h)
-      hc3 h2 (Nat.le_of_eq hkeep2.clock)
-    obtain ⟨c1, hc1, hs1⟩ := run_cons o (x := .assign "m" (n 0))
-      (cx := .assign "m" (.const (BitVec.ofNat 64 0))) rfl (by intro _ _ h; cases h) hc2 h1
-      (Nat.le_refl _)
-    have hcc : c = c1 := by
-      have e : lowerStmtsFold ((Act.ifPrefix kw thn els).compile rest) = some c1 := hc1
-      rw [hc] at e
-      exact Option.some.inj e
-    subst hcc
+    obtain ⟨c3, hc3, hs3⟩ := run_cons o hl3 rfl hrest hst (Nat.le_of_eq hkt.clock)
+    obtain ⟨c2, hc2, hs2⟩ := run_cons o hl2 rfl hc3 h2 (Nat.le_of_eq hkeep2.clock)
+    have hs1 := run_cons_of o hl1 rfl hc2 hc h1 (Nat.le_refl _)
     exact ⟨t, hrt, hkeep1.trans ((hkeep2.mono (Nat.zero_le _)).trans hkt),
       hs1.trans (hs2.trans hs3)⟩
 
@@ -517,8 +403,10 @@ theorem Act.compile_ne_nil : ∀ (a : Act) (rest : List PStmt), a.compile rest �
 
 /-- The lowered body of `respond name a`, given the lowered code of the action. -/
 def respondProg (a : Act) (cb : PancakeProg) : PancakeProg :=
-  .cond (.cmp .less (.var "inlen") (.const (BitVec.ofNat 64 0))) (.ret (.const (BitVec.ofNat 64 refusal)))
-    (.cond (.cmp .less (.var "cap") (.const (BitVec.ofNat 64 0))) (.ret (.const (BitVec.ofNat 64 refusal)))
+  .cond (.cmp .less (.var "inlen") (.const (BitVec.ofNat 64 0)))
+    (.ret (.const (BitVec.ofNat 64 refusal)))
+    (.cond (.cmp .less (.var "cap") (.const (BitVec.ofNat 64 0)))
+      (.ret (.const (BitVec.ofNat 64 refusal)))
       (.cond (.cmp .less (.var "cap") (.const (BitVec.ofNat 64 a.maxLen)))
         (.ret (.const (BitVec.ofNat 64 refusal)))
         (.dec "pos" (.const (BitVec.ofNat 64 0)) (.dec "m" (.const (BitVec.ofNat 64 0)) cb))))
@@ -541,32 +429,13 @@ def entryState (s : PancakeState σ) : PancakeState σ :=
     locals := setLocal (setLocal s.locals "pos" (BitVec.ofNat 64 0)) "m" (BitVec.ofNat 64 0) }
 
 theorem Rep.entry {inpA outA : Word} {inp : List (BitVec 8)} {cap : Nat} {s : PancakeState σ}
-    (hinp : s.locals "inp" = some inpA)
-    (hinlen : s.locals "inlen" = some (BitVec.ofNat 64 inp.length))
-    (hout : s.locals "out" = some outA)
-    (hin : memBytesAt s.memory s.memaddrs s.be inpA inp)
-    (hroom : ∀ j, j < cap → s.memaddrs (byteAlign (outA + BitVec.ofNat 64 j)) = true)
-    (hapart : ∀ i j, i < inp.length → j < cap →
-      inpA + BitVec.ofNat 64 i ≠ outA + BitVec.ofNat 64 j)
-    (hsmall : inp.length < 2 ^ 63) (hcsmall : cap < 2 ^ 63) :
-    Rep inpA outA inp cap ([] : List (BitVec 8)).length [] (entryState s) where
-  inp_local := by simp [entryState, setLocal, hinp]
-  inlen_local := by simp [entryState, setLocal, hinlen]
-  out_local := by simp [entryState, setLocal, hout]
+    (h : Call inpA outA inp cap s) : Rep inpA outA inp cap 0 [] (entryState s) where
+  toCall := (h.keep (Keeps.set_working (lim := 0) (Or.inl rfl) s _) (Nat.zero_le _)).keep
+    (Keeps.set_working (lim := 0) (Or.inr rfl) _ _) (Nat.zero_le _)
   pos_local := by simp [entryState, setLocal]
   flag_bound := ⟨BitVec.ofNat 64 0, by simp [entryState, setLocal]⟩
-  input := hin
   output := by intro i hi; simp at hi
-  room := hroom
-  apart := hapart
-  inp_small := hsmall
-  cap_small := hcsmall
   fits := by simp
-
-theorem sem_ret_const (o : Oracle σ) (s : PancakeState σ) (w : Word) :
-    PancakeSem o (.ret (.const w)) s = (some (.return_ w), emptyLocals s) := by
-  rw [PancakeSem]
-  rfl
 
 /-- Every call the function refuses, it refuses before writing anything. -/
 theorem respond_refuses (o : Oracle σ) (name : String) (a : Act) {c : PancakeProg}
@@ -605,8 +474,9 @@ theorem respond_refuses (o : Oracle σ) (name : String) (a : Act) {c : PancakePr
 
 /-- **The function, run.** Given an input at `inpA` and room for `cap ≥ maxLen` bytes at `outA`
 apart from it, the function returns the length of what the action produces, below the refusal
-value, with those bytes at `outA`; it changes no memory outside them, and no permission, byte
-order, clock or FFI state. -/
+value, with those bytes at `outA`. Its frame keeps every other byte, the memory domain, the byte
+order and the base address; returning empties the locals, so the frame names all of them. The
+clock and the external world's state are as they were. -/
 theorem respond_correct (o : Oracle σ) (name : String) (a : Act) {c : PancakeProg}
     (hc : lower (respond name a) = some c) (hfits : a.Fits) (hmax : a.maxLen < refusal)
     {inpA outA : Word} {inp : List (BitVec 8)} {cap : Nat} {s : PancakeState σ}
@@ -621,9 +491,8 @@ theorem respond_correct (o : Oracle σ) (name : String) (a : Act) {c : PancakePr
     ∃ t, PancakeSem o c s = (some (.return_ (BitVec.ofNat 64 (a.run inp []).length)), t) ∧
       (a.run inp []).length < refusal ∧
       memBytesAt t.memory t.memaddrs t.be outA (a.run inp []) ∧
-      (∀ addr, (∀ j, j < (a.run inp []).length → addr ≠ outA + BitVec.ofNat 64 j) →
-        memLoadByte t.memory s.memaddrs s.be addr = memLoadByte s.memory s.memaddrs s.be addr) ∧
-      t.memaddrs = s.memaddrs ∧ t.be = s.be ∧ t.ffi = s.ffi ∧ t.clock = s.clock := by
+      Frame (fun _ => True) (bytesFrom outA (a.run inp []).length) s t ∧
+      t.ffi = s.ffi ∧ t.clock = s.clock := by
   obtain ⟨cb, hcb⟩ := Act.compile_lowers a [.ret (v "pos")] (.ret (.var "pos")) rfl
   rw [respond_lower name a hcb] at hc
   cases Option.some.inj hc
@@ -640,7 +509,7 @@ theorem respond_correct (o : Oracle σ) (name : String) (a : Act) {c : PancakePr
   simp only [respondProg]
   rw [sem_cond o g1, if_neg (by decide), sem_cond o g2, if_neg (by decide), sem_cond o g3,
     if_neg (by decide)]
-  have hrep := Rep.entry hinp hinlen hout hin hroom hapart hsmall hcsmall
+  have hrep := Rep.entry (s := s) ⟨hinp, hinlen, hout, hin, hroom, hapart, hsmall, hcsmall⟩
   obtain ⟨t, hrt, hkt, hst⟩ := Act.compile_run o inpA outA inp cap a [.ret (v "pos")]
     (.ret (.var "pos")) cb [] _ hfits rfl hcb hrep (by simpa using hfit)
   have hret : PancakeSem o (.ret (.var "pos")) t
@@ -652,8 +521,9 @@ theorem respond_correct (o : Oracle σ) (name : String) (a : Act) {c : PancakePr
     (sem_dec o (s := { s with locals := setLocal s.locals "pos" (BitVec.ofNat 64 0) }) (v := "m")
       (e := .const (BitVec.ofNat 64 0)) rfl hst)]
   have hlen := Act.run_length_le a inp []
-  refine ⟨_, rfl, by simp at hlen; omega, hrt.output, fun addr ha => hkt.outside addr ha,
-    hkt.memaddrs, hkt.be, hkt.ffi, hkt.clock⟩
+  exact ⟨_, rfl, by simp at hlen; omega, hrt.output,
+    ⟨hkt.memaddrs, hkt.be, hkt.baseAddr, fun _ h => absurd trivial h, hkt.outside⟩, hkt.ffi,
+    hkt.clock⟩
 
 /-- The same statement as a refinement, the form `Certificate` takes. Composing certificates
 builds a `Seq` in the model, which is not how `respond` prints a program. -/

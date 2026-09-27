@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """An independent interpreter of generated programs, written from the source language.
 
-It reads the program as `dn-compiler emit-fuzz` prints it (`DN.Compiler.Gen.funJson`): the
+It reads the program as `dn-compiler emit-fuzz` prints it (`DN.Compiler.SyntaxJson.funJson`): the
 source, before any lowering, with the operators as printed and statements in blocks. It shares
 no code with the Lean model, which runs the lowered program, and computes `<=` and every other
 operator from what the source means rather than from what the lowering turns it into, so a
@@ -14,18 +14,20 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+from pathlib import Path
+import sys
 from typing import Any
 
-MASK = (1 << 64) - 1
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from words import MASK, word_op  # the path above is what makes it importable
+
 PAGE = 4096
 BUFFERS = 3
 WORDS = PAGE // 8
 TABLE_BASE = 0x400000
 GOLDEN = 0x9E3779B97F4A7C15
-# A bound on loop iterations, the model's clock (`DN.Compiler.Gen.clock`).
+# A bound on loop iterations, the model's clock (`DN.Compiler.Gen.modelClock`).
 CLOCK = 10000
-COMPARISONS = {"<", "<=", "=="}
-ARITHMETIC = {"+", "-", "*", "&"}
 
 
 def buffer_base(b: int) -> int:
@@ -45,10 +47,6 @@ def splitmix(seed: int, i: int) -> int:
 
 def fill_word(seed: int, mask: int, b: int, i: int) -> int:
     return splitmix(seed, b * WORDS + i) & mask
-
-
-def signed(w: int) -> int:
-    return w - (1 << 64) if w >> 63 else w
 
 
 class Fault(Exception):
@@ -157,16 +155,13 @@ class Machine:
             return self.load("byte", e[1], env)
         x, y = self.value(e[1], env), self.value(e[2], env)
         self.reached[f"operator {head}"] += 1
-        if head == ">>>":
-            if y >= 64:
-                raise Fault("a shift of a whole word")
-            return x >> y
-        results = {"+": (x + y) & MASK, "-": (x - y) & MASK, "*": (x * y) & MASK, "&": x & y,
-                   "<": int(signed(x) < signed(y)), "<=": int(signed(x) <= signed(y)),
-                   "==": int(x == y)}
-        if head not in results:
-            raise Fault(f"unknown operator {head}")
-        return results[head]
+        try:
+            value = word_op(head, x, y)
+        except ValueError as unknown:
+            raise Fault(str(unknown)) from None
+        if value is None:
+            raise Fault("a shift of a whole word")
+        return value
 
     def block(self, statements: list[Any], env: list[dict[str, int]], kind: str) -> None:
         env.append({})

@@ -62,8 +62,9 @@ would need it.
 - `Correct.lean`: `Act.compile_run`, for every action: the compiled code writes what `Act.run`
   says at the output cursor and changes nothing but its two working locals and the bytes it
   writes. `respond_correct`: the exported function returns the reply's length, below the refusal
-  value, with the reply at the start of the buffer, memory outside the reply unchanged, and the
-  same memory domain, byte order, clock and FFI state. `respond_refuses`: a negative length, or a
+  value, with the reply at the start of the buffer; its frame (`Bytes.Frame`) keeps the memory
+  outside the reply, the memory domain, the byte order and the base address, and the clock and FFI
+  state are as they were. `respond_refuses`: a negative length, or a
   buffer smaller than `Act.maxLen`, the most the action can write, is refused before anything is
   written. All of it is stated about the model of the semantics.
 - `Example.lean`: a reply table emitted as `dn_reply`, a closed instance of `respond_correct`
@@ -75,7 +76,7 @@ beyond the three the audit allows. A new program costs no proof of its own: `qui
 applies the theorem to a concrete call in a dozen lines. That is not a like-for-like comparison
 with the render, which has a loop and arithmetic the language does not have yet; it shows where
 the cost goes. The release compiler and the compiler bootstrapped from the patched source
-compile `dn_reply` to the same assembly, and the native lane checks 5,840 calls of it against
+compile `dn_reply` to the same assembly, and the native lane checks 5,790 calls of it against
 both the Lean denotation and an independent Python reference ([baseline](../baseline.md)).
 
 ## How the proof is built
@@ -85,9 +86,11 @@ both the Lean denotation and an independent Python reference ([baseline](../base
   statement has continuation form: the code of an action followed by `rest` runs as `rest` does
   from the state the action leaves. Statement lists lower right-nested (`x :: rest` becomes
   `Seq x rest`), so this form also needs no lemma about lowering a concatenation.
-- The state the code works in is one invariant, `Rep` (parameters bound, input bytes at `inp`,
-  bytes written so far at `out`, cursor in `pos`, the buffer addressable and apart from the
-  input), and what a step leaves alone is one frame, `Keeps`, bounded by the bytes written.
+- The state the code works in is one invariant, `Rep`: what the call fixes, `Call` (parameters
+  bound, input bytes at `inp`, the buffer addressable and apart from the input), and the cursor
+  (`pos`, and the bytes written so far at `out`). What a step leaves alone is one frame, `Keeps`,
+  bounded by the bytes written: the library's `Bytes.Frame` with the clock and FFI state, and a
+  step that keeps it keeps the call.
 - `Act.compile_refinesClk` restates the theorem as `RefinesClk`, the form `Certificate` takes.
   Composing certificates builds a `Seq` in the model, which is not how `respond` prints a
   program, so this serves reasoning in the model and not yet the emitted code.
@@ -112,6 +115,10 @@ It is a theorem about the model, and each link from the model to the running cod
   (`memaddrs` covers the buffers), so they hold for whichever domain that decision fixes. If the
   buffers have to be reached through the shared-memory operations instead, the lowering of loads
   and stores changes, and the model of the semantics has to gain those operations first.
+
+Decided since: the buffers live in the program's heap ([decision 0002](0002-entry-and-memory.md)),
+and the printed source is held against the parser by `scripts/parser_contract.py`, program by
+program (item 2).
 
 ## Consequences
 

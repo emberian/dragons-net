@@ -13,14 +13,15 @@
 enum { MAX_CONNECTIONS = 256, IDLE_MS = 10000 };
 
 static void send_command(int fd, int command) {
-    ssize_t sent = send(fd, dn_entry_commands[command], (size_t)dn_entry_command_lengths[command], MSG_NOSIGNAL);
-    if (sent < 0) dn_fail_errno("send");
+    ssize_t sent = send(fd, dn_entry_commands[command], (size_t)dn_entry_command_lengths[command],
+                        MSG_NOSIGNAL);
+    if (sent < 0) dn_broken_errno("send");
     /* A command is a few bytes into an empty socket buffer, so it goes out whole or not at all. */
-    if (sent != dn_entry_command_lengths[command]) dn_fail("send: a command went out in part");
+    if (sent != dn_entry_command_lengths[command]) dn_broken("send: a command went out in part");
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) dn_fail("usage: entry-client PORT M R");
+    if (argc != 4) dn_broken("usage: entry-client PORT M R");
     int port = (int)dn_number(argv[1], 1, 65535), m = (int)dn_number(argv[2], 1, MAX_CONNECTIONS);
     long r = dn_number(argv[3], 1, 100000000);
     static int fd[MAX_CONNECTIONS], command[MAX_CONNECTIONS], which[MAX_CONNECTIONS];
@@ -32,9 +33,9 @@ int main(int argc, char **argv) {
     for (int i = 0; i < m; ++i) {
         fd[i] = socket(AF_INET, SOCK_STREAM, 0);
         int one = 1;
-        if (fd[i] < 0) dn_fail_errno("socket");
-        if (setsockopt(fd[i], IPPROTO_TCP, TCP_NODELAY, &one, sizeof one)) dn_fail_errno("TCP_NODELAY");
-        if (connect(fd[i], (struct sockaddr *)&addr, sizeof addr)) dn_fail_errno("connect");
+        if (fd[i] < 0) dn_broken_errno("socket");
+        if (setsockopt(fd[i], IPPROTO_TCP, TCP_NODELAY, &one, sizeof one)) dn_broken_errno("TCP_NODELAY");
+        if (connect(fd[i], (struct sockaddr *)&addr, sizeof addr)) dn_broken_errno("connect");
     }
     double start = dn_now_ns();
     for (int i = 0; i < m; ++i) {
@@ -48,7 +49,7 @@ int main(int argc, char **argv) {
             if (done[i] < r) { p[n] = (struct pollfd){.fd = fd[i], .events = POLLIN}; which[n++] = i; }
         int ready = poll(p, (nfds_t)n, IDLE_MS);
         if (ready < 0 && errno == EINTR) continue;
-        if (ready < 0) dn_fail_errno("poll");
+        if (ready < 0) dn_broken_errno("poll");
         if (ready == 0) dn_fail("no reply for ten seconds");
         for (int j = 0; j < n; ++j) {
             if (!p[j].revents) continue;
@@ -68,7 +69,8 @@ int main(int argc, char **argv) {
         }
     }
     double seconds = (dn_now_ns() - start) / 1e9;
-    printf("{\"connections\":%d,\"requests\":%ld,\"seconds\":%.3f,\"requests_per_second\":%.0f}\n", m, (long)m * r, seconds, (double)m * (double)r / seconds);
+    printf("{\"connections\":%d,\"requests\":%ld,\"seconds\":%.3f,\"requests_per_second\":%.0f}\n", m,
+           (long)m * r, seconds, (double)m * (double)r / seconds);
     for (int i = 0; i < m; ++i) close(fd[i]);
     return 0;
 }

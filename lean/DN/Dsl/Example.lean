@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import Lean.Data.Json
+import DN.Compiler.SplitMix
 import DN.Dsl.Correct
 
 /-!
@@ -14,7 +15,7 @@ with zeros from one that extends the sign.
 
 namespace DN.Dsl.Example
 
-open DN.Compiler DN.Compiler.Syntax DN.Compiler.Lower DN.Compiler.Bytes Lean
+open DN.Compiler DN.Compiler.Syntax DN.Compiler.Lower DN.Compiler.Bytes DN.Compiler.SplitMix Lean
 
 def replies : Act :=
   .ifPrefix (ascii "QUIT") (.lit (ascii "205 closing connection\r\n"))
@@ -29,11 +30,6 @@ def name : String := "dn_reply"
 
 /-! ## The inputs the native check runs -/
 
-def Act.keywords : Act → List (List (BitVec 8))
-  | .lit _ => []
-  | .ifPrefix keyword thn els => keyword :: (Act.keywords thn ++ Act.keywords els)
-  | .seq first second => Act.keywords first ++ Act.keywords second
-
 /-- Around a keyword: every prefix of it, the keyword with more after it and after a space, and
 the keyword with one byte changed — by the ASCII case bit, the high bit or the lowest bit. -/
 def around (keyword : List (BitVec 8)) : List (List (BitVec 8)) :=
@@ -42,17 +38,15 @@ def around (keyword : List (BitVec 8)) : List (List (BitVec 8)) :=
   (List.range keyword.length).flatMap fun i =>
     [0x20, 0x80, 0x01].map fun bit => keyword.set i (keyword[i]! ^^^ bit)
 
-def step (x : Nat) : Nat := (x * 6364136223846793005 + 1442695040888963407) % 2 ^ 64
-
 /-- Pseudo-random inputs of up to sixteen bytes over the keywords' bytes and a few others. -/
 def scattered (count : Nat) : List (List (BitVec 8)) :=
-  let alphabet := (Act.keywords replies).flatten ++ ascii " \r\nq" ++ [0, 0xff]
+  let alphabet := replies.keywords.flatten ++ ascii " \r\nq" ++ [0, 0xff]
   (List.range count).map fun i =>
-    let seed := step (step i)
-    (List.range (seed >>> 40 % 17)).map fun j => alphabet[(step (seed + j) >>> 33) % alphabet.length]!
+    let draw j := (splitmix (UInt64.ofNat i) j).toNat
+    (List.range (draw 0 % 17)).map fun j => alphabet[draw (j + 1) % alphabet.length]!
 
 def inputs : List (List (BitVec 8)) :=
-  ((Act.keywords replies).flatMap around ++ (List.range 256).map (fun b => [BitVec.ofNat 8 b]) ++
+  (replies.keywords.flatMap around ++ (List.range 256).map (fun b => [BitVec.ofNat 8 b]) ++
     scattered 256).eraseDups
 
 /-- What `Act.run` makes of every input, for the native check. -/
@@ -73,7 +67,7 @@ def regression_705 : Bool := replies.run (ascii "MODE READE") [] == ascii "500 u
 def regression_706 : Bool := replies.run (ascii "quit") [] == ascii "500 unknown command\r\n"
 -- The inputs reach every keyword boundary, and the buffer the function asks for is filled.
 def regression_707 : Bool :=
-  (Act.keywords replies).all fun k =>
+  replies.keywords.all fun k =>
     (List.range (k.length + 1)).all (fun i => inputs.contains (k.take i)) &&
       inputs.contains (k ++ ascii "\r\n") &&
       (List.range k.length).all fun i => inputs.contains (k.set i (k[i]! ^^^ 0x01))
@@ -107,8 +101,6 @@ def quitCall : PancakeState Unit :=
     memaddrs := fun a => a == 4088 || (decide (4096 ≤ a.toNat) && decide (a.toNat < 4136)),
     be := false, clock := 0, ffi := (), baseAddr := 0 }
 
-def noCalls : Oracle Unit := ⟨fun st _ _ array => .ret st array⟩
-
 theorem replies_fits : replies.Fits := Act.fits_of_fitsB replies (by decide)
 
 theorem quitCall_input :
@@ -131,23 +123,38 @@ theorem quitCall_apart : ∀ i j, i < (ascii "QUIT").length → j < 37 →
   intro i j hi hj
   exact h i (by simpa [ascii] using hi) j hj
 
+theorem quitCall_call : Call 4092 4096 (ascii "QUIT") 37 quitCall :=
+  ⟨rfl, rfl, rfl, quitCall_input, quitCall_room, quitCall_apart, by decide, by decide⟩
+
 theorem quitCall_rep : Rep 4092 4096 (ascii "QUIT") 37 0 [] (entryState quitCall) :=
-  Rep.entry rfl rfl rfl quitCall_input quitCall_room quitCall_apart (by decide) (by decide)
+  Rep.entry quitCall_call
 
-theorem quitCall_keeps : Keeps 4096 0 quitCall quitCall := Keeps.refl 4096 0 quitCall
+/-- The reply's code, run from the entry state, writes the reply and keeps its frame. -/
+theorem quitCall_keeps :
+    ∃ t, Keeps 4096 (ascii "205 closing connection\r\n").length (entryState quitCall) t ∧
+      memBytesAt t.memory t.memaddrs t.be 4096 (ascii "205 closing connection\r\n") := by
+  obtain ⟨cb, hcb⟩ := Act.compile_lowers replies [.ret (v "pos")] (.ret (.var "pos")) rfl
+  obtain ⟨t, hrt, hkt, -⟩ := Act.compile_run Oracle.idle 4092 4096 (ascii "QUIT") 37 replies
+    [.ret (v "pos")] (.ret (.var "pos")) cb [] (entryState quitCall) replies_fits rfl hcb
+    quitCall_rep (by decide)
+  have hrun : replies.run (ascii "QUIT") [] = ascii "205 closing connection\r\n" := by decide
+  rw [hrun] at hrt hkt
+  exact ⟨t, hkt, hrt.output⟩
 
-/-- The whole call: `dn_reply` on `QUIT` returns 24 with the reply at 4096. -/
+/-- The whole call: `dn_reply` on `QUIT` returns 24 with the reply at 4096, and keeps every
+other byte. -/
 theorem quitCall_reply :
     ∃ c t, lower (respond name replies) = some c ∧
-      PancakeSem noCalls c quitCall = (some (.return_ (BitVec.ofNat 64 24)), t) ∧
-      memBytesAt t.memory t.memaddrs t.be 4096 (ascii "205 closing connection\r\n") := by
+      PancakeSem (Oracle.idle (σ := Unit)) c quitCall = (some (.return_ (BitVec.ofNat 64 24)), t) ∧
+      memBytesAt t.memory t.memaddrs t.be 4096 (ascii "205 closing connection\r\n") ∧
+      Frame (fun _ => True) (bytesFrom 4096 24) quitCall t := by
   obtain ⟨cb, hcb⟩ := Act.compile_lowers replies [.ret (v "pos")] (.ret (.var "pos")) rfl
   have hc := respond_lower name replies hcb
   have hrun : replies.run (ascii "QUIT") [] = ascii "205 closing connection\r\n" := by decide
-  obtain ⟨t, hst, _, hout, _⟩ := respond_correct noCalls name replies hc replies_fits
+  obtain ⟨t, hst, _, hout, hfr, -⟩ := respond_correct Oracle.idle name replies hc replies_fits
     (by decide) (inpA := 4092) (outA := 4096) (inp := ascii "QUIT") (cap := 37) rfl rfl rfl rfl
     quitCall_input quitCall_room quitCall_apart (by decide) (by decide) (by decide)
-  rw [hrun] at hst hout
-  exact ⟨_, t, hc, hst, hout⟩
+  rw [hrun] at hst hout hfr
+  exact ⟨_, t, hc, hst, hout, hfr⟩
 
 end DN.Dsl.Example

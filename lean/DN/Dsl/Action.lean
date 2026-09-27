@@ -40,6 +40,12 @@ def Act.maxLen : Act → Nat
   | .ifPrefix _ thn els => max thn.maxLen els.maxLen
   | .seq first second => first.maxLen + second.maxLen
 
+/-- The keywords an action tests, in order. -/
+def Act.keywords : Act → List (List (BitVec 8))
+  | .lit _ => []
+  | .ifPrefix keyword thn els => keyword :: (thn.keywords ++ els.keywords)
+  | .seq first second => first.keywords ++ second.keywords
+
 /-- Keywords short enough to compare against a length with the signed comparison. -/
 def Act.Fits : Act → Prop
   | .lit _ => True

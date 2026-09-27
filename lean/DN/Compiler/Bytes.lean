@@ -148,11 +148,24 @@ theorem addr_eq_of_align_index (w w' : Word) (be : Bool)
 
 /-! ## 5. The memory-level store/load laws -/
 
+/-- Widening a byte keeps its value. -/
+theorem setWidth8_64 (b : BitVec 8) : b.setWidth 64 = BitVec.ofNat 64 b.toNat := by
+  apply BitVec.eq_of_toNat_eq; simp [BitVec.toNat_setWidth]
+
 /-- Storing a byte truncates its widened form back to itself. -/
 theorem setWidth64_8 (b : BitVec 8) : (b.setWidth 64).setWidth 8 = b := by
   apply BitVec.eq_of_toNat_eq
   simp only [BitVec.toNat_setWidth]
   omega
+
+theorem ofNat_toNat_setWidth8 (b : BitVec 8) : (BitVec.ofNat 64 b.toNat).setWidth 8 = b := by
+  rw [← setWidth8_64, setWidth64_8]
+
+/-- A loaded byte, widened, equals a byte's word exactly when the bytes are equal. -/
+theorem widen_eq_iff (x b : BitVec 8) : x.setWidth 64 = BitVec.ofNat 64 b.toNat ↔ x = b := by
+  rw [← setWidth8_64]
+  exact ⟨fun h => by simpa [setWidth64_8] using congrArg (BitVec.setWidth 8) h,
+    fun h => h ▸ rfl⟩
 
 /-- `bs` lies at consecutive byte addresses from `base`, read back by `mem_load_byte`. -/
 def memBytesAt (m : Word → Word) (dm : Word → Bool) (be : Bool) (base : Word)
@@ -254,7 +267,80 @@ theorem memBytes_store (base len : Word) (bs : List UInt8) (s : PancakeState σ)
     have hbj := hbytes j hjlen
     rw [List.getElem_set_ne (Ne.symm hij), hpres, hbj]
 
-/-! ## 9. A BOUNDED byte copy via `write_bytearray` (the model's bulk byte-store)
+/-- A byte written elsewhere leaves the bytes at `base` as they were. -/
+theorem memBytesAt_putByte_other {m : Word → Word} {dm : Word → Bool} {be : Bool}
+    {base a : Word} {w : List (BitVec 8)} {b : BitVec 8} (hw : memBytesAt m dm be base w)
+    (hne : ∀ i, i < w.length → base + BitVec.ofNat 64 i ≠ a) :
+    memBytesAt (putByte m be a b) dm be base w := by
+  intro i hi
+  rw [load_putByte_diff m dm be a b _ (hne i hi)]
+  exact hw i hi
+
+/-- A byte written right after the bytes at `base` extends them. -/
+theorem memBytesAt_snoc {m : Word → Word} {dm : Word → Bool} {be : Bool} {base : Word}
+    {w : List (BitVec 8)} {b : BitVec 8} (hw : memBytesAt m dm be base w)
+    (hdom : dm (byteAlign (base + BitVec.ofNat 64 w.length)) = true) (hlen : w.length < 2 ^ 64) :
+    memBytesAt (putByte m be (base + BitVec.ofNat 64 w.length) b) dm be base (w ++ [b]) := by
+  intro i hi
+  simp only [List.length_append, List.length_singleton] at hi
+  by_cases hlt : i < w.length
+  · rw [load_putByte_diff m dm be _ b _
+      (region_addr_inj base i w.length (by omega) hlen (by omega)), hw i hlt]
+    simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_left hlt]
+  · have hi' : i = w.length := by omega
+    subst hi'
+    rw [load_putByte_same m dm be _ b hdom]
+    simp
+
+/-! ## 9. Frames: what a run leaves as it was -/
+
+/-- The `len` byte addresses from `base`. -/
+def bytesFrom (base : Word) (len : Nat) (a : Word) : Prop :=
+  ∃ j, j < len ∧ a = base + BitVec.ofNat 64 j
+
+theorem not_bytesFrom {base a : Word} {len : Nat} :
+    ¬ bytesFrom base len a ↔ ∀ j, j < len → a ≠ base + BitVec.ofNat 64 j := by
+  simp [bytesFrom]
+
+/-- What a run from `s` to `t` leaves as it was, given the locals it may change (`names`) and
+the byte addresses it may write (`written`): the memory domain, the byte order, the base
+address, every other local and every other byte. The clock and the external world's state are
+not part of it, since a loop spends the clock and an external call changes the world; a theorem
+states them beside the frame where they hold. -/
+structure Frame (names : String → Prop) (written : Word → Prop) (s t : PancakeState σ) :
+    Prop where
+  memaddrs : t.memaddrs = s.memaddrs
+  be : t.be = s.be
+  baseAddr : t.baseAddr = s.baseAddr
+  locals : ∀ x, ¬ names x → t.locals x = s.locals x
+  outside : ∀ a, ¬ written a →
+    memLoadByte t.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a
+
+namespace Frame
+
+variable {names names' : String → Prop} {written written' : Word → Prop}
+  {s t u : PancakeState σ}
+
+theorem refl (names : String → Prop) (written : Word → Prop) (s : PancakeState σ) :
+    Frame names written s s :=
+  ⟨rfl, rfl, rfl, fun _ _ => rfl, fun _ _ => rfl⟩
+
+theorem trans (h1 : Frame names written s t) (h2 : Frame names written t u) :
+    Frame names written s u := by
+  refine ⟨h2.memaddrs.trans h1.memaddrs, h2.be.trans h1.be, h2.baseAddr.trans h1.baseAddr,
+    fun x hx => (h2.locals x hx).trans (h1.locals x hx), fun a ha => ?_⟩
+  have := h2.outside a ha
+  rw [h1.memaddrs, h1.be] at this
+  exact this.trans (h1.outside a ha)
+
+theorem mono (hn : ∀ x, names x → names' x) (hw : ∀ a, written a → written' a)
+    (h : Frame names written s t) : Frame names' written' s t :=
+  ⟨h.memaddrs, h.be, h.baseAddr, fun x hx => h.locals x (fun h' => hx (hn x h')),
+    fun a ha => h.outside a (fun h' => ha (hw a h'))⟩
+
+end Frame
+
+/-! ## 10. A BOUNDED byte copy via `write_bytearray` (the model's bulk byte-store)
 
 The model's programmatic byte-store surface is `write_bytearray` (panSem
 `write_bytearray_def`), the memory transformer an `ExtCall` uses to write bytes
@@ -314,7 +400,8 @@ theorem extCall_frame (oracle : Oracle σ) (s : PancakeState σ) (name : String)
     (hrun : PancakeSem oracle (.extCall name cptr clen aptr alen) s = (none, s'))
     (w : Word) (hout : ∀ j, j < arr.length → w ≠ ap + BitVec.ofNat 64 j) :
     memLoadByte s'.memory s.memaddrs s.be w = memLoadByte s.memory s.memaddrs s.be w := by
-  simp only [PancakeSem, hcp, hcl, hap, hal, hconf, harr] at hrun
+  rw [PancakeSem] at hrun
+  simp only [hcp, hcl, hap, hal, hconf, harr] at hrun
   cases hcall : callFFI oracle s.ffi name conf arr with
   | final event => rw [hcall] at hrun; exact absurd hrun (by simp)
   | ret newffi newBytes =>
@@ -333,23 +420,26 @@ theorem extCall_frame (oracle : Oracle σ) (s : PancakeState σ) (name : String)
     exact writeByteArray_preserves s.memaddrs s.be newBytes w ap s.memory
       (fun j hj => hout j (by rw [← hlen]; exact hj))
 
-/-- …and it leaves everything else the program sees as it was: its locals, its memory domain,
-byte order, clock and base address. Only the memory and the external world's state change. -/
+/-- …and it leaves the rest of what the program sees as it was: every local, the memory
+domain, the byte order, the base address and the clock. Only the array's bytes and the external
+world's state change. -/
 theorem extCall_keeps (oracle : Oracle σ) (s : PancakeState σ) (name : String)
-    {cptr clen aptr alen : PancakeExp} {s' : PancakeState σ}
+    {cptr clen aptr alen : PancakeExp} {cp cl ap al : Word}
+    {conf arr : List (BitVec 8)} {s' : PancakeState σ}
+    (hcp : eval s cptr = some cp) (hcl : eval s clen = some cl)
+    (hap : eval s aptr = some ap) (hal : eval s alen = some al)
+    (hconf : readByteArray s.memory s.memaddrs s.be cp cl.toNat = some conf)
+    (harr : readByteArray s.memory s.memaddrs s.be ap al.toNat = some arr)
     (hrun : PancakeSem oracle (.extCall name cptr clen aptr alen) s = (none, s')) :
-    s'.locals = s.locals ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧ s'.clock = s.clock ∧
-      s'.baseAddr = s.baseAddr := by
-  simp only [PancakeSem] at hrun
-  split at hrun
-  · split at hrun
-    · split at hrun
-      · simp at hrun
-      · injection hrun with _ hstate
-        subst hstate
-        exact ⟨rfl, rfl, rfl, rfl, rfl⟩
-    · simp at hrun
-  · simp at hrun
+    Frame (fun _ => False) (bytesFrom ap arr.length) s s' ∧ s'.clock = s.clock := by
+  have h : s'.locals = s.locals ∧ s'.memaddrs = s.memaddrs ∧ s'.be = s.be ∧
+      s'.clock = s.clock ∧ s'.baseAddr = s.baseAddr := by
+    rw [PancakeSem] at hrun
+    split at hrun <;> try split at hrun <;> try split at hrun
+    all_goals first | (cases hrun; exact ⟨rfl, rfl, rfl, rfl, rfl⟩) | simp at hrun
+  obtain ⟨hl, hm, hb, hc, hba⟩ := h
+  refine ⟨⟨hm, hb, hba, fun x _ => by rw [hl], fun a ha => ?_⟩, hc⟩
+  exact extCall_frame oracle s name hcp hcl hap hal hconf harr hrun a (not_bytesFrom.1 ha)
 
 /-- ESTABLISH (over `List (BitVec 8)`): after `write_bytearray`, reading `base + j`
 returns `bs[j]`, provided every written aligned word is in range. -/

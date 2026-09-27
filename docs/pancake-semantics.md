@@ -135,9 +135,10 @@ permissive fails the build:
   run, and the empty call name that never reaches the oracle.
 
 Where an external call carries on, `Bytes.extCall_keeps` pins the rest of its
-clause: it changes the bytes of its array and the external world's state, and
-leaves the locals, memory domain, byte order, clock and base address as they
-were.
+clause as a `Bytes.Frame`, the one form every "what a run leaves alone" statement
+here takes: it changes the bytes of its array and the external world's state, and
+leaves every local, the memory domain, the byte order, the base address and the
+clock as they were.
 
 The correspondence itself — that each clause above matches the HOL text — rests
 on reading the recorded files at the recorded digests. It is not machine-checked,

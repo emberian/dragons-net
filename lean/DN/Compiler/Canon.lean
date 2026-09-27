@@ -21,15 +21,10 @@ variable {σ : Type}
 
 /-! ## Chains of an associative operator, nested to the right -/
 
-/-- `x + y` with the chain `x` nested to the right. -/
-def addChain : PancakeExp → PancakeExp → PancakeExp
-  | .op .add a b, y => .op .add a (addChain b y)
-  | x, y => .op .add x y
-
-/-- `x & y` with the chain `x` nested to the right. -/
-def andChain : PancakeExp → PancakeExp → PancakeExp
-  | .op .and_ a b, y => .op .and_ a (andChain b y)
-  | x, y => .op .and_ x y
+/-- `x o y` with the chain of `o` in `x` nested to the right. -/
+def opChain (o : Binop) : PancakeExp → PancakeExp → PancakeExp
+  | .op o' a b, y => if o' = o then .op o a (opChain o b y) else .op o (.op o' a b) y
+  | x, y => .op o x y
 
 /-- `x * y` with the chain `x` nested to the right. -/
 def mulChain : PancakeExp → PancakeExp → PancakeExp
@@ -38,8 +33,8 @@ def mulChain : PancakeExp → PancakeExp → PancakeExp
 
 /-- The canonical form of an expression. -/
 def canon : PancakeExp → PancakeExp
-  | .op .add l r => addChain (canon l) (canon r)
-  | .op .and_ l r => andChain (canon l) (canon r)
+  | .op .add l r => opChain .add (canon l) (canon r)
+  | .op .and_ l r => opChain .and_ (canon l) (canon r)
   | .op .sub l r => .op .sub (canon l) (canon r)
   | .mul l r => mulChain (canon l) (canon r)
   | .cmp c l r => .cmp c (canon l) (canon r)
@@ -52,21 +47,31 @@ def canon : PancakeExp → PancakeExp
 
 /-! ## The canonical form evaluates as the expression does -/
 
-theorem eval_addChain (s : PancakeState σ) :
-    ∀ x y, eval s (addChain x y) = eval s (.op .add x y)
-  | .op .add a b, y => by
-    simp only [addChain, eval, eval_addChain s b y]
-    cases eval s a <;> cases eval s b <;> cases eval s y <;> simp [BitVec.add_assoc]
-  | .op .and_ _ _, _ | .op .sub _ _, _ | .const _, _ | .var _, _ | .base, _ | .mul _ _, _
-  | .cmp _ _ _, _ | .loadByte _, _ | .loadWord _, _ | .shiftR _ _, _ => rfl
+/-- The word an operator makes of two words, as `eval` computes it. -/
+def binopWord : Binop → Word → Word → Word
+  | .add => (· + ·)
+  | .and_ => (· &&& ·)
+  | .sub => (· - ·)
 
-theorem eval_andChain (s : PancakeState σ) :
-    ∀ x y, eval s (andChain x y) = eval s (.op .and_ x y)
-  | .op .and_ a b, y => by
-    simp only [andChain, eval, eval_andChain s b y]
-    cases eval s a <;> cases eval s b <;> cases eval s y <;> simp [BitVec.and_assoc]
-  | .op .add _ _, _ | .op .sub _ _, _ | .const _, _ | .var _, _ | .base, _ | .mul _ _, _
-  | .cmp _ _ _, _ | .loadByte _, _ | .loadWord _, _ | .shiftR _ _, _ => rfl
+theorem eval_op (s : PancakeState σ) (o : Binop) (l r : PancakeExp) :
+    eval s (.op o l r) =
+      match eval s l, eval s r with
+      | some a, some b => some (binopWord o a b)
+      | _, _ => none := by
+  simp only [eval]
+  cases eval s l <;> cases eval s r <;> cases o <;> rfl
+
+theorem eval_opChain (s : PancakeState σ) (o : Binop)
+    (hassoc : ∀ a b c, binopWord o (binopWord o a b) c = binopWord o a (binopWord o b c)) :
+    ∀ x y, eval s (opChain o x y) = eval s (.op o x y)
+  | .op o' a b, y => by
+    by_cases h : o' = o
+    · subst h
+      simp only [opChain, if_pos, eval_op, eval_opChain s o' hassoc b y]
+      cases eval s a <;> cases eval s b <;> cases eval s y <;> simp [hassoc]
+    · simp only [opChain, if_neg h]
+  | .const _, _ | .var _, _ | .base, _ | .mul _ _, _ | .cmp _ _ _, _ | .loadByte _, _
+  | .loadWord _, _ | .shiftR _ _, _ => rfl
 
 theorem eval_mulChain (s : PancakeState σ) :
     ∀ x y, eval s (mulChain x y) = eval s (.mul x y)
@@ -80,10 +85,10 @@ theorem eval_mulChain (s : PancakeState σ) :
 evaluate alike in every state, so equal canonical trees mean equal values. -/
 theorem canon_eval (s : PancakeState σ) : ∀ e, eval s (canon e) = eval s e
   | .op .add l r => by
-    rw [canon, eval_addChain]
+    rw [canon, eval_opChain s .add (fun _ _ _ => BitVec.add_assoc ..)]
     simp only [eval, canon_eval s l, canon_eval s r]
   | .op .and_ l r => by
-    rw [canon, eval_andChain]
+    rw [canon, eval_opChain s .and_ (fun _ _ _ => BitVec.and_assoc ..)]
     simp only [eval, canon_eval s l, canon_eval s r]
   | .op .sub l r => by simp only [canon, eval, canon_eval s l, canon_eval s r]
   | .mul l r => by
@@ -127,7 +132,8 @@ def blockJson : PancakeProg → List Json
   | .store a e => [Json.arr #["store", expJson (canon a), expJson (canon e)]]
   | .storeByte a e => [Json.arr #["storebyte", expJson (canon a), expJson (canon e)]]
   | .cond e c1 c2 =>
-    [Json.arr #["if", expJson (canon e), Json.arr (blockJson c1).toArray, Json.arr (blockJson c2).toArray]]
+    [Json.arr #["if", expJson (canon e), Json.arr (blockJson c1).toArray,
+      Json.arr (blockJson c2).toArray]]
   | .while_ e c => [Json.arr #["while", expJson (canon e), Json.arr (blockJson c).toArray]]
   | .ret e => [Json.arr #["return", expJson (canon e)]]
   | .extCall n a b c d =>
