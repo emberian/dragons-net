@@ -7,7 +7,8 @@ import DN.Compiler.GenCorpus
 import DN.Dsl.Example
 import DN.Printed
 
-/-! `dn-compiler`: prints the checked native examples, the differential fixtures, the programs and
+/-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
+with its host, the differential fixtures, the programs and
 precedence cells the parser contract compares, generated programs and their recorded cases, and
 the corpus of stopping states. Printing is not a correctness certificate: see docs/assurance.md
 for the remaining connections. -/
@@ -15,7 +16,8 @@ for the remaining connections. -/
 open DN.Compiler
 
 private def commands : List String :=
-  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-reply-cases", "emit-baseline",
+  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-layout",
+   "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
 
@@ -34,6 +36,7 @@ def main (args : List String) : IO UInt32 := do
     if let some (_, program) := DN.Printed.named.find? (command == "emit-" ++ ·.1) then
       return ← output (program.map (·.source))
   match args with
+  | ["emit-layout"] => output (.ok DN.Server.Layout.header)
   | ["emit-reply-cases"] => output (.ok DN.Dsl.Example.cases.compress)
   | ["emit-baseline"] => output (Baseline.fixture.map (·.compress))
   | ["emit-trees"] =>

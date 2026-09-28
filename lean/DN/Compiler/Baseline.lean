@@ -127,7 +127,7 @@ def fixture : Except String Json := do
         throw "ABI model output-slot mismatch"
   -- What the gate accepts must also compile without a diagnostic: the native lane runs
   -- every accepted example past the real compiler.
-  let accepted ← ((Checked.catalog.map (·.accepted)).mapM Checked.emit).mapError
+  let accepted ← (Checked.catalog.mapM fun (c : Checked.RuleCase) => c.gate c.accepted).mapError
     Checked.Reason.message
   -- The keyword table is what the validator claims about the real lexers; the native
   -- lane checks it against the compiler it actually runs.

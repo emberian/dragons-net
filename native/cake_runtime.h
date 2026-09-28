@@ -14,6 +14,11 @@ void cml_clear(void);
 void cml_err(int code);
 void cml_exit(int code);
 
+/* Called when the program's run ends through `cml_exit`: with 0 when `main` returns (a program
+   built without `--main_return` passes no value), with another code when the runtime ran out of
+   stack or heap; unset, such an end is unexpected and the adapter aborts. */
+extern void (*dn_runtime_on_exit)(int code);
+
 /* The adapter provisions this much for each of the heap and the stack. */
 #define DN_RUNTIME_SEGMENT_BYTES (1024u * 1024u)
 

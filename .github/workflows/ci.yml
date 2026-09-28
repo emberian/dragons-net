@@ -173,6 +173,11 @@ jobs:
             build/entry/entry_layout.h
             build/entry/*.pnk
             build/entry/*.S
+            build/server/report.json
+            build/server/skeleton.pnk
+            build/server/skeleton.S
+            build/server/dn_layout.h
+            build/server/skeleton
             build/parser/report.json
             build/parser/*.pnk
             build/fuzz/report.json

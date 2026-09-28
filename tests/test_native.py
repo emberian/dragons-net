@@ -53,12 +53,12 @@ class Emitted(unittest.TestCase):
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "reply"):
+        for name in ("region", "echo", "render", "reply", "skeleton"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "51082f8e08484077f5ad9bc2cd59f060e23a0e9381a4353353fe569dfee6113a")
+                         "3ee7436d25b1ffbbc9e441d5978e5e17031f0abf7fda2c5c23739caba2db5f06")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 

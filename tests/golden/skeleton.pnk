@@ -1,0 +1,51 @@
+fun main() {
+  st @base + 64, 1;
+  var going = 1;
+  while going {
+    @dn_next(@base + 64, 8, @base + 128, 8720);
+    var k = lds 1 (@base + 128);
+    if k < 0 {
+      return 1;
+    } else {
+    }
+    if 16 < k {
+      return 1;
+    } else {
+    }
+    var i = 0;
+    var m = 0;
+    while i < k {
+      var ev = @base + 144 + (i * 544);
+      var len = lds 1 (ev + 24);
+      if (lds 1 ev) == 2 {
+        if len < 0 {
+          return 2;
+        } else {
+        }
+        if 512 < len {
+          return 2;
+        } else {
+        }
+        var ac = @base + 8864 + (m * 560);
+        st ac, 1;
+        st ac + 8, lds 1 (ev + 8);
+        st ac + 16, lds 1 (ev + 16);
+        st ac + 24, len;
+        st ac + 32, 1;
+        st ac + 40, 0;
+        var j = 0;
+        while j < len {
+          st8 ac + 48 + j, ld8 (ev + 32 + j);
+          j = j + 1;
+        }
+        m = m + 1;
+      } else {
+      }
+      i = i + 1;
+    }
+    st @base + 8848, m;
+    st @base + 8856, 0;
+    @dn_emit(@base + 64, 8, @base + 8848, 8976);
+  }
+  return 0;
+}

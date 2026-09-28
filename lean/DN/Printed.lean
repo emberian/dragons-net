@@ -3,6 +3,7 @@ import DN.Compiler.Baseline
 import DN.Compiler.Canon
 import DN.Compiler.Kernels
 import DN.Dsl.Example
+import DN.Server.Skeleton
 
 /-!
 # DN.Printed
@@ -23,10 +24,13 @@ structure Program where
   source : String
   tree : Lean.Json
 
-/-- A function as the gate prints it. -/
-def checked (f : PFun) : Except String Program := do
-  let source ← (Checked.emit f).mapError Checked.Reason.message
+/-- A function as the given gate prints it. -/
+def checkedBy (gate : PFun → Except Checked.Reason String) (f : PFun) : Except String Program := do
+  let source ← (gate f).mapError Checked.Reason.message
   return ⟨source, ← Canon.program f source⟩
+
+/-- An exported function as the gate prints it. -/
+def checked (f : PFun) : Except String Program := checkedBy Checked.emit f
 
 /-- A differential fixture, through the output-slot rewrite, as the native lane compiles it. -/
 def word (f : PFun) : Except String Program := do
@@ -41,17 +45,22 @@ def reply : Except String Program := do
   let source ← Dsl.emit Dsl.Example.name Dsl.Example.replies
   return ⟨source, ← Canon.program (Dsl.respond Dsl.Example.name Dsl.Example.replies) source⟩
 
+/-- The server's loop, a whole program that reaches its host through two external calls. -/
+def skeleton : Except String Program :=
+  checkedBy (Checked.emitMain [Server.Layout.nextName, Server.Layout.emitName]) Server.Skeleton.main
+
 /-- The programs `emit-NAME` prints, by name. -/
 def named : List (String × Except String Program) :=
   [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
-   ("reply", reply)]
+   ("reply", reply), ("skeleton", skeleton)]
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/
 def all : Except String (List Program) := do
   let fixtures := Baseline.functions ++ [Baseline.control, Baseline.control2] ++
     Baseline.nestedFunctions
-  return (← named.mapM (·.2)) ++ (← Checked.catalog.mapM (checked ·.accepted)) ++
+  return (← named.mapM (·.2)) ++
+    (← Checked.catalog.mapM fun (c : Checked.RuleCase) => checkedBy c.gate c.accepted) ++
     (← fixtures.mapM word)
 
 end DN.Printed

@@ -144,15 +144,16 @@ theorem address_reads (slot : Slot) (child : PExpr) :
     addressBare child = true → reads slot .left (kind child) = true := by
   cases child <;> simp [addressBare, kind, reads]
 
-/-- **The printer's parentheses suffice**, for every expression the gate accepts. -/
-theorem printed_well {scope : List String} :
-    ∀ e, Checked.expression scope e = .ok () → PrintedWell e
+/-- **The printer's parentheses suffice**, for every expression the gate accepts, in either
+profile. -/
+theorem printed_well {p : Checked.Profile} {scope : List String} :
+    ∀ e, Checked.expression p scope e = .ok () → PrintedWell e
   | .binop op l r, h => by
     obtain ⟨hl, hr⟩ := Checked.seq_ok h
     exact ⟨operand_reads op .left l, operand_reads op .right r, printed_well l hl,
       printed_well r hr⟩
   | .loadw shape a, h => by
-    have ha : Checked.expression scope a = .ok () := by
+    have ha : Checked.expression p scope a = .ok () := by
       by_cases hs : shape = 1
       · simpa [Checked.expression, hs] using h
       · simp [Checked.expression, hs] at h
@@ -161,7 +162,7 @@ theorem printed_well {scope : List String} :
   | .shr l r, h => by
     cases r with
     | const k =>
-      have hl : Checked.expression scope l = .ok () := by
+      have hl : Checked.expression p scope l = .ok () := by
         by_cases hk : k < 64
         · simpa [Checked.expression, hk] using h
         · simp [Checked.expression, hk] at h

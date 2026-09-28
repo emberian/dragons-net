@@ -6,7 +6,13 @@ void cml_clear(void) {}
 
 void cml_err(int code) { fprintf(stderr, "Cake runtime error %d\n", code); abort(); }
 
-void cml_exit(int code) { fprintf(stderr, "unexpected Cake exit %d\n", code); abort(); }
+void (*dn_runtime_on_exit)(int code);
+
+void cml_exit(int code) {
+    if (dn_runtime_on_exit) dn_runtime_on_exit(code);
+    fprintf(stderr, "unexpected Cake exit %d\n", code);
+    abort();
+}
 
 static void *dn_runtime_memory;
 

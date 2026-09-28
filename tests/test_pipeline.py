@@ -207,7 +207,7 @@ class CheckScript(unittest.TestCase):
         lane that fails stops the run with its status; a misspelt name is refused before any lane
         runs, or it would run nothing and pass."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
-                   "parser_contract.py": "parser", "native_fuzz.py": "fuzz"}
+                   "server_check.py": "server", "parser_contract.py": "parser", "native_fuzz.py": "fuzz"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
@@ -225,8 +225,8 @@ class CheckScript(unittest.TestCase):
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
             self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
-                                              "entry check --cake /pinned/cake", "parser --cake /pinned/cake",
-                                              "fuzz --cake /pinned/cake"]))
+                                              "entry check --cake /pinned/cake", "server --cake /pinned/cake",
+                                              "parser --cake /pinned/cake", "fuzz --cake /pinned/cake"]))
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
                 self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")

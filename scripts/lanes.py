@@ -76,13 +76,13 @@ def emit(*args: str, stdin: str | None = None, timeout: int = 600,
 
 
 def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = True,
-            timeout: int = 300) -> bytes:
+            main_return: bool = True, timeout: int = 300) -> bytes:
     """What the Pancake compiler prints for `source`. A warning (a redeclared variable, say) leaves
     the exit status at zero, so any diagnostic fails; with `warnings` off, for a source whose
     warnings are beside what is asked of it, only the status does, and nothing is silenced."""
     options = ["--explore"] if explore else []
     with source.open("rb") as inp:
-        done = subprocess.run([cake, "--pancake", *options, "--main_return=true"], stdin=inp,
+        done = subprocess.run([cake, "--pancake", *options, f"--main_return={str(main_return).lower()}"], stdin=inp,
                               capture_output=True, timeout=timeout, check=False)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
@@ -106,10 +106,11 @@ def check_symbols(assembly: Path) -> None:
         raise LaneError(f"{assembly.name} exports symbols outside the project namespace: {stray}")
 
 
-def assemble(cake: str, source: Path, *, timeout: int = 300) -> Path:
-    """Compile `source` to assembly beside it, with no diagnostic and no stray export."""
+def assemble(cake: str, source: Path, *, main_return: bool = True, timeout: int = 300) -> Path:
+    """Compile `source` to assembly beside it, with no diagnostic and no stray export. Exported
+    functions need `main` to return to the caller; a whole program is built without that."""
     assembly = source.with_suffix(".S")
-    assembly.write_bytes(pancake(cake, source, timeout=timeout))
+    assembly.write_bytes(pancake(cake, source, main_return=main_return, timeout=timeout))
     check_symbols(assembly)
     return assembly
 

@@ -140,8 +140,9 @@ external calls on arrays in its heap. A connection is named by an index below th
 limit and a generation the host increases each time it gives the index to a new connection.
 
 - `@dn_next` returns a batch: the host's monotonic clock in milliseconds, then up to `K` events —
-  opened, bytes received (in the event's own slot, at most one slot's worth), taken (how much of
-  the connection's pending output the kernel has now taken), end of input, closed. The
+  opened, bytes received (in the event's own slot, at most one slot's worth), ready to write, end
+  of input, closed. The host touches the heap only inside a call, so it cannot finish a send on
+  its own between calls. The
   configuration bytes of the call carry the version of the layout; a host that finds another
   version stops the run in that call.
 - `@dn_emit` hands the host a batch of actions and the earliest deadline the program is waiting
@@ -149,8 +150,8 @@ limit and a generation the host increases each time it gives the index to a new 
   connection there is at most one action per batch, so bytes cannot be reordered: send these
   bytes, then say whether to read from the connection; close gracefully (after QUIT); or close at
   once. For a send, the host writes back into the same array how much the kernel took at once.
-  What it did not take stays with the program, which sends it again when a later batch reports it
-  taken or reports the connection writable.
+  What it did not take stays with the program, which sends it again when a later batch reports the
+  connection ready to write.
 - The host knows sockets and the clock and nothing of the protocol. It gives out what one `poll`
   reported before polling again; polls a connection for input only while the program asks for
   input from it; stops polling the listening socket while every index is in use; receives and
@@ -170,7 +171,8 @@ it.
   for every FFI oracle, every amount of fuel (the model's clock) and every content of the heap
   after its header, provided the heap covers the program's layout, the run is not `Fail`. Each
   outcome is then running out of fuel, the end of a run the host chose inside a call
-  (`FinalFFI`), or a return when the host broke the contract. `Fail` in the upstream semantics
+  (`FinalFFI`), or a return, which the loop is written to make only when the host breaks the
+  contract; the theorem does not say which. `Fail` in the upstream semantics
   also covers running off the end of `main`, so the loop is written never to fall through. The
   theorem is assembled from theorems about the pieces the program is built from, as for the byte
   copy and the number printer.

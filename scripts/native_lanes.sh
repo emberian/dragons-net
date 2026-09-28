@@ -6,12 +6,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
-lanes=(native baseline entry parser fuzz)
+lanes=(native baseline entry server parser fuzz)
 script_of() {
   case $1 in
     native) script=(scripts/native_check.py) ;;
     baseline) script=(scripts/native_baseline.py) ;;
     entry) script=(scripts/entry_bench.py check) ;;
+    server) script=(scripts/server_check.py) ;;
     parser) script=(scripts/parser_contract.py) ;;
     fuzz) script=(scripts/native_fuzz.py) ;;
     *)

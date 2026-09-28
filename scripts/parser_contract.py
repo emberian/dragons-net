@@ -49,12 +49,13 @@ PARSE_ERROR = "### ERROR: parse error"
 MISREAD = "is not the lowered one"
 # A cell the parsers read, and one they read otherwise, each with what turning it has to raise.
 TURNED = (("lds/left: lds 1 ld8 x", "and it does"), ("sub/right: a - x - y", MISREAD))
-# Every form the gate lets through, each of which some printed program has to use. The gate
-# refuses `@base`, external calls and calls, so those are covered by the table's cells only.
-STATEMENTS = {"dec", "assign", "store", "storebyte", "if", "while", "return"}
+# Every form the gate lets through, each of which some printed program has to use. `@base` and
+# external calls pass only in a whole program; the gate refuses calls, so those are covered by the
+# table's cells only.
+STATEMENTS = {"dec", "assign", "store", "storebyte", "if", "while", "return", "extcall"}
 EXPRESSIONS = {"Const", "Var", "Add", "And", "Sub", "Mul", "Less", "NotLess", "Equal", "MemLoad",
-               "MemLoadByte", "Lsr"}
-# The function the compiler adds to every program.
+               "MemLoadByte", "Lsr", "BaseAddr"}
+# The function the compiler adds to a program that has no `main` of its own.
 ADDED_MAIN = {"params": [], "body": [["return", ["Const", 0]]]}
 
 
@@ -161,6 +162,8 @@ def block(form: Any) -> list[Any]:
         return [["while", expression(args[0]), block(args[1])]]
     if head == "return" and len(args) == 1:
         return [["return", expression(args[0])]]
+    if head == "ext_call" and len(args) == 5 and isinstance(args[0], str):
+        return [["extcall", args[0], *(expression(arg) for arg in args[1:])]]
     raise ContractError(f"a statement form this check does not know: {head}")
 
 
@@ -242,7 +245,7 @@ def compare(cake: str, programs: list[dict[str, Any]], tag: str, *, out: Path, w
     for index, group in enumerate(batches(programs)):
         trees = parsed(cake, "\n".join(p["source"] for p in group), out / f"{tag}-{index}.pnk",
                        warnings=warnings)
-        if trees.pop("main", None) != ADDED_MAIN:
+        if all(p["name"] != "main" for p in group) and trees.pop("main", None) != ADDED_MAIN:
             raise ContractError(f"{tag}-{index}: the parser's program lacks the `main` the compiler adds")
         extra = set(trees) - {p["name"] for p in group}
         if extra:
