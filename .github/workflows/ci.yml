@@ -178,4 +178,5 @@ jobs:
             build/fuzz/report.json
             build/fuzz/programs.json
             build/fuzz/programs.pnk
+            build/fuzz/parser/*.pnk
             build/fuzz/minimized/

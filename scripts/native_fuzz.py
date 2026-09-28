@@ -10,7 +10,7 @@ and gives the canonical tree for the parser contract. This script
 - runs every program on every input in `fuzz_interp`, which reads the source rather than the
   lowering, and requires the value and every changed word to be the model's;
 - holds every printed program against the tree the pinned parser builds from it
-  (`parser_contract.compare`);
+  (`parser_contract.compare`, with what it compiles in `build/fuzz/parser/`);
 - compiles all programs into one file, links them with `native/fuzz_driver.c`, which maps each
   buffer between pages without access, writes the real addresses into the page of pointers and
   stops a call that runs too long, and requires every call to return the model's value and change
@@ -295,7 +295,7 @@ def parser_failure(cake: str) -> Callable[[list[reducer.Case]], list[bool]]:
         verdict = [False] * len(cases)
         for k, record in valid(cases):
             try:
-                contract.compare(cake, [record["tree"]], "reduce")
+                contract.compare(cake, [record["tree"]], "reduce", out=OUT / "parser")
             except contract.ContractError:
                 verdict[k] = True
         return verdict
@@ -327,7 +327,7 @@ def fixture(kind: str, name: str, case: reducer.Case, original: reducer.Case, or
         if cake is None:
             raise LaneError("a parser disagreement is recorded with the compiler whose parser it is")
         try:
-            contract.compare(cake, [record["tree"]], "fixture")
+            contract.compare(cake, [record["tree"]], "fixture", out=OUT / "parser")
             out["parser"] = "agrees"
         except contract.ContractError as error:
             out["parser"] = str(error)
@@ -456,7 +456,7 @@ def parsed_as_lowered(cake: str, records: list[dict[str, Any]], origin: dict[str
     for k in range(0, len(records), 500):
         chunk = records[k:k + 500]
         try:
-            matched += contract.compare(cake, [r["tree"] for r in chunk], f"fuzz-{k}")
+            matched += contract.compare(cake, [r["tree"] for r in chunk], f"fuzz-{k}", out=OUT / "parser")
         except contract.ContractError as error:
             record = next((r for r in chunk if parser_failure(cake)([case_of(r, 0)])[0]), None)
             if record is None:
