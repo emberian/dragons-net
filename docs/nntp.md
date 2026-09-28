@@ -1,6 +1,6 @@
 # NNTP implementation plan
 
-There are no NNTP commands implemented yet. `DN.News.Framing` states the CRLF delimiter count as a specification and proves the counter equal to it (`feed_counts_crlf`); chunk invariance holds for any left fold and is a consequence, not the specification. It is the beginning of a specification, not a protocol parser: no line boundaries, no 512-octet limit, no dot-stuffing, no error recovery. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
+There are no NNTP commands implemented yet; [decision 0003](decisions/0003-nntp-slice.md) fixes what the first slice answers, how it frames input, its limits and what of it is proved. `DN.News.Framing` states the CRLF delimiter count as a specification and proves the counter equal to it (`feed_counts_crlf`); chunk invariance holds for any left fold and is a consequence, not the specification. It is the beginning of a specification, not a protocol parser: no line boundaries, no 512-octet limit, no dot-stuffing, no error recovery. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
 
 ## Initial profile
 
