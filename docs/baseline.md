@@ -1,4 +1,4 @@
-# Wisper’s compiler baseline
+# Compiler baseline
 
 The compiler has a useful, executable core: real code generation, a documented C ABI, and a small TCP service. The inherited workloads whose names suggested more integration than existed have been removed (see below); what is left is the emitted subset, its proofs and the dataplane models.
 
@@ -12,28 +12,74 @@ On Linux x86-64, install the prerequisites from the root README, then run:
 bash scripts/check_all.sh
 ```
 
-This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the model/host baseline without the native lanes, and `bash scripts/lint.sh` the static checks. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. `build/native/report.json` and `build/baseline/report.json` identify the tested compiler and artifacts; failed native reruns remove stale reports.
+This command fails if any required lane fails. It does not skip native tests on unsupported hosts. `bash scripts/check.sh` remains the model/host baseline without the native lanes, and `bash scripts/lint.sh` the static checks. The native lanes are listed once, in `scripts/native_lanes.sh`, which `check_all.sh` and CI both run. CI runs the same lanes as one sequential chain (lint, build without network, proofs on a fresh machine, tests) and uploads source, assembly, logs, and JSON reports. Each native lane writes `build/<lane>/report.json` (`native`, `baseline`, `entry`, `parser`, `fuzz`) with the same header: the platform, the digests of the Pancake compiler, of `dn-compiler` when it printed what was checked and of the host sources, and how long the run took; a lane removes its last report before it starts, so a failed rerun leaves none, and a lane that refuses says why in one line starting with `DN`.
 
-The default native compiler is the digest-pinned release in `tools.lock.json`. Setting `CAKE` deliberately selects a different compiler, whose digest is recorded. Neither choice silently claims the separate patched HOL backend has been rebuilt.
+The generated lane also runs larger: `python3 scripts/native_fuzz.py --cake "$(python3 scripts/bootstrap_tool.py cake)" --seed N --count C --vectors V` draws `C` programs with `V` inputs each from seed `N`, and leaves out the planted defects and the recorded cases, which belong to the standard run. The nightly run prints its seed; the same command with that seed, `--count 5000 --vectors 8`, reproduces it, and a disagreement it found is reduced to `build/fuzz/minimized/`, which the run keeps as the `generated-programs` artifact. `--bootstrapped` runs the lane with the compiler built from the patched source.
+
+The default native compiler is the digest-pinned release in `tools.lock.json`. Setting `CAKE` deliberately selects a different compiler, whose digest is recorded; the compiler `scripts/bootstrap_cake.sh` builds from the patched source is one ([backend](../backend/README.md#bootstrap-the-compiler)). A run with one compiler says nothing about the other.
 
 ## What is covered
 
 | Check | Current coverage | Important limit |
 | --- | --- | --- |
-| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 4,790 declarations, including 2,258 theorems — most of them the equations and injectivity lemmas Lean generates for definitions and matches, not statements written in source; the kernels skip the 57 `_unsafe_rec` helpers Lean generates. A gate test compares the declaration, theorem and example counts here with what the audit reports, so those cannot drift apart | Allowed axioms and type-correct statements do not ensure adequate specifications |
-| Executable examples | 91 executable cases | Examples, not proofs or a complete workload inventory |
+| Lean build, kernel re-checks (Lean and nanoda) and proof audit | Every declaration defined in `lean/DN` modules, including private, top-level and executable ones; 5,967 declarations, including 2,724 theorems — most of them the equations and injectivity lemmas Lean generates for definitions and matches, not statements written in source; the kernels skip the 87 `_unsafe_rec` helpers Lean generates. A gate test compares the declaration, theorem, helper and example counts here with what the audit reports, so those cannot drift apart | Allowed axioms and type-correct statements do not ensure adequate specifications |
+| Executable examples | 108 executable cases | Examples, not proofs or a complete workload inventory |
 | Arithmetic differential tests | 113 expression shapes × 192 input pairs, all seven current operators and the logical right shift at its boundaries, both nestings of every operator pair, sign-bit boundaries, overflow, large literals | Deterministic bounded sampling, not an arbitrary-program theorem |
 | Nested memory expressions | Four byte/word load nesting pairs checked by the real compiler; two inner-word cases also execute through valid native pointer cells, with independent/model expected values | Inner-byte absolute pointers are parser/model cases only |
 | Control-flow differential tests | 384 cases over two workloads: locals, branches, assignments, loops, early return, and returns in an `else` branch at the top level and inside a loop | Two structured control workloads |
+| Generated programs | 300 generated programs, 1,200 calls from a fixed seed, each held three ways: the model, an independent interpreter of the source and the compiled code; nightly, 5,000 programs from a new seed ([details](#generated-programs)) | Bounded random sampling, not a theorem; no program faults or makes a call |
+| Printed source against the parser | 142 printed programs, each read by the pinned parser as exactly its lowering, and 208 cells of the precedence table ([details](#printed-source-against-the-parser)) | Checked program by program, not proved; the canonical form is proved to keep evaluation (`Canon.canon_eval`) |
 | Three-way comparison | Independent Python arithmetic/control reference, Lean model, actual CakeML-compiled native code; 22,080 cases | Shared assumptions about the intended word semantics still need review |
 | ABI adapter | Full-word output slots checked in the model and native execution, with native guard words | Output pointer alignment, writability, and disjointness are caller obligations |
 | Region kernel | 99,240 native/reference comparisons, including 196 extreme-range cases; invalid inputs receive a protected buffer | Caller must report the real allocation length and supply valid control/output pointers |
 | Decimal render | 976 numbers, including every power-of-two boundary and the whole-word maximum, checked against the C library's own conversion, with the bytes outside the digits required to stay untouched | The digit sequence lowers definitionally to the proven model; the saved start pointer, the returned count, and the host are not covered by that equality |
-| Copy kernel | 24,869 cases: byte offsets, lengths through 4 KiB, four capacities per length (the length itself, one more, halfway to the buffer, and the whole buffer), preserved surrounding bytes, a page with no access right after the destination, protected pointers on rejection | Requires disjoint source/destination; not memmove |
-| Stopping states | 97 cases, 95 of which stop — missing local, address outside the domain, timeout, return, external call ending the run, reply of the wrong length — compared field by field against an independent implementation of the same clauses, plus five write-back cases for the clause an external call cannot reach (`scripts/state_check.py`) | Two transcriptions agreeing is not a proof against the HOL source |
-| Test sensitivity | A separately compiled copy kernel with its store removed must fail the real copy test | One mutation family, not a mutation score for the whole project |
+| Reply table | 5,790 calls of `dn_reply`, ten for each of 579 inputs, against the replies the Lean program computes and an independent reference ([details](#reply-table)) | Proven in the model (`DN.Dsl.Correct`); the printed source, the CakeML compiler and the host are tested, not proven |
+| Entry designs | The reply table built into exported functions and into a loop in the program's `main`: every reply, the heap the program writes, the heap header and hostile hosts, and four servers over loopback ([details](#entry-designs)) | The loop is Pancake written by hand and built with `--main_return`; the servers block. `measure` does not run in CI |
+| Copy kernel | 26,039 cases: byte offsets, lengths through 4 KiB, four capacities per length (the length itself, one more, halfway to the buffer, and the whole buffer), preserved surrounding bytes, a page with no access right after the destination, protected pointers on rejection, and overlapping source and destination in both directions | The copy theorem is stated for disjoint buffers; overlap is not undefined, and the cases above pin what the forward copy produces instead, but no theorem covers it |
+| Stopping states | 99 cases, 97 of which stop — missing local, address outside the domain, timeout, return, external call ending the run, reply of the wrong length, a byte copy over regions that overlap in either direction — compared field by field against an independent implementation of the same clauses, plus five write-back cases for the clause an external call cannot reach (`scripts/state_check.py`) | Two transcriptions agreeing is not a proof against the HOL source |
+| Test sensitivity | Planted defects each check has to catch: four copy kernels, five printer defects, six reply kernels and seven entry variants ([details](#test-sensitivity)) | Defects chosen by hand, not a mutation score for the whole project |
 | TCP integration | Binary bytes, arbitrary application chunks, 4 KiB boundaries, a 512 KiB stream, eight concurrent clients, slow reads, half-close, reset, slot reuse, capacity admission, idle expiry | Reference `poll` adapter; no io_uring, TLS, persistence, or NNTP |
 | Host/concurrency | Runtime unit tests and 30 Loom tests, three of them driving the shipped admission gate itself; a recorded set of defects that the tests must catch (`scripts/mutate_rust.py`) | Loom checks the C11 model it implements, treats `SeqCst` accesses as `AcqRel` and does not model load buffering; the models of the historical reactor are not that reactor |
+
+
+### Generated programs
+
+300 generated programs, 1,200 calls, drawn from a fixed seed by `DN.Compiler.Gen`, each program allowed a different mix of constructs (swarm testing). Among what the calls reach: word and byte loads of data nested in each other's addresses in all four pairings, word and byte stores, branches both ways, loop iterations, declarations in inner blocks, returns from branches and loops, pointers loaded from a page of pointers the host fills with real addresses, pointer locals, addresses computed from data, a byte reached through two pointers and stored to, and the first and last byte and word of each of the three buffers; some program declares a name again in a sibling block, and some takes each of zero to three parameters.
+
+Each program goes through the gate and the printer; on every call the model, an independent interpreter of the source (`scripts/fuzz_interp.py`) and the compiled code must return the same word and change the same words of memory, with each buffer between pages without access, the page of pointers read-only, the rest of the result slot's page untouched and a tenth of a second per call; the host is first shown to report a call that hangs, one that reads past its buffer and one that writes beside the slot; the parser contract holds every program; and the run fails if any construct above is reached by no call.
+
+A disagreement of any of the three is reduced to a small case in `build/fuzz/minimized/`. A nightly run draws 5,000 programs with 8 inputs each from a new seed. The standard run takes well under a minute, the nightly one a few minutes; both sizes are chosen, not derived.
+
+Bounded random sampling, not a theorem. The generator emits only accesses inside the buffers, since the compiler theorem covers no program that faults, and only addresses CakeML's static checker trusts; it emits no calls, which the gate refuses.
+
+### Printed source against the parser
+
+142 printed programs — kernels, the source-language example, the gate's accepted examples and every differential fixture — which together use every statement and expression form the gate accepts, each read by the pinned parser (`cake --explore`) as exactly its lowering in canonical form, with no function besides; and 208 cells of the precedence table, each read by the parser as the table says, both ways, of which `printed_well` relies on 46. A regrouped subtraction, a bare nested load and a function nobody printed are refused, and so is the table with one cell turned either way.
+
+Checked against the release on every run, and against the bootstrapped compiler as well by `scripts/parser_contract.py --bootstrapped`, which first checks its digest against `backend/bootstrap-record.json`.
+
+The correspondence is checked program by program, not proved; the canonical form is proved to keep evaluation (`Canon.canon_eval`).
+
+### Reply table
+
+5,790 calls of `dn_reply`, ten for each of 579 inputs — every prefix of each keyword, each keyword followed by more bytes, each keyword with one byte changed at each position, all 256 single bytes and scattered inputs, with one keyword made of bytes above `0x7f` and a NUL so that a byte load that extends the sign would show — checked against the replies the Lean program computes, which an independent Python reference checks in turn, and the reference checks that the inputs still reach those cases.
+
+Each input is called with a buffer of exactly the room the program asks for, a larger one, one byte too small, and each length negative, where nothing may be written; each call is made with both buffers against a page without access after them and again before them, with the input read-only and the fill changed between the two.
+
+Every program the emitter accepts is proven, in the model, to produce its reply and change nothing else (`DN.Dsl.Correct`); the printed source, the CakeML compiler and the host are tested here, not proven. The pages without access check the machine code the compiler produced, which leaves out loads whose value is never used. A negative capacity is also below the program's own bound, so no call tells its separate check from that one.
+
+### Entry designs
+
+The reply table built into both ways of entering generated code (`scripts/entry_bench.py check`): exported functions called by C, and a loop in the program's `main` that fetches requests through external calls into its own heap. Every reply in both is compared with the independent reference; the program writes nothing in its heap outside its batch areas; the heap header the host writes is the one the compiler theorem requires, recomputed from the assembly and the linked symbols; every array the program hands the host lies in the heap; and a host that sends more events than a batch holds, a negative count, a length past its slot or a negative one, stops the program. Four servers answer eight connections over loopback.
+
+The loop is Pancake written by hand, since the emitter does not take calls or external calls yet, and it is built with `--main_return` so that the benchmark can end, which the server of decision 0002 is not; the servers take one read for one request and send while blocking, which a benchmark client allows and real clients would not. `measure` produces the figures in [decision 0002](decisions/0002-entry-and-memory.md) and does not run in CI.
+
+### Test sensitivity
+
+- A separately compiled copy kernel with its store removed must fail the real copy test, and so must three that break the capacity contract the host relies on, each for its reason: no bound on the capacity, the bound one too high, and the whole capacity copied.
+- Five defects planted in the printer — `<=` printed as `<`, a byte store as a word store, a byte load as a word load, the condition of an `if` negated, a shift distance one off — must each fail the generated lane; the program that shows each is reduced (`scripts/fuzz_reduce.py`) to the case recorded in `tests/corpus/mutants/`, which `DN.Compiler.GenCorpus` holds as a regression too; every run reduces again the program each case was reduced from and must arrive at the same case.
+- Six reply kernels, each breaking one thing the reply check claims, must fail it: a reply byte not written, the right bytes with the wrong length, a byte written past the reply, a byte written into the input (which faults, the input being read-only), a buffer one byte too small accepted, and a keyword compared without the length guard (which faults on the page after the input).
+- The entry check refuses a loop program without each of its four checks on what the host writes, a program that hands the host an array outside the heap, a host that leaves the heap header unwritten, and a server whose reply is wrong.
 
 The Lean build carries no warnings, and `--wfail` makes one fail the build; Lake replays a module's stored log, so this holds on a warm cache as well as on a fresh checkout. A warning-free log is a hygiene property, not a correctness argument. `autoImplicit` is off, so a mistyped name is an error instead of a silent new variable.
 
@@ -49,7 +95,7 @@ The exported function now rejects sign-bit-set sizes/offsets/lengths, requires `
 
 The pinned x86-64 export trampoline uses `mov %edi, %eax` at `cake_return`. Our old C prototype claimed a 64-bit return. The existing digest fits in 24 bits and hid the problem; the new probe `0 + 2^32` returned zero to C despite computing the full word internally.
 
-The native interfaces now declare a 32-bit result. `Abi.wordResult` rewrites value returns, including returns nested in control flow, to write a caller-owned word and return status zero. The model and native baseline check that transformation on all 110 fixture functions. The echo kernel returns only a bounded length (0–4096) or `UINT32_MAX`. This is an explicit adaptation to the backend ABI, not an assembly patch or a claimed upstream compiler fix.
+The native interfaces now declare a 32-bit result. `Abi.wordResult` rewrites value returns, including returns nested in control flow, to write a caller-owned word and return status zero. The model and native baseline check that transformation on all 119 fixture functions: 113 expression shapes, two control workloads and four nested loads. The echo kernel returns only a bounded length (0–4096) or `UINT32_MAX`. This is an explicit adaptation to the backend ABI, not an assembly patch or a claimed upstream compiler fix.
 
 ### The theorem-only audit missed isolated definitions
 
@@ -86,9 +132,9 @@ than proven is the rest of the emitted function — the saved start pointer and 
 byte count — and the native host, as for the other kernels. The rendering specification and
 its byte-level postcondition are the ones that were there before.
 
-## Which parts should Wisper trust enough to build on?
+## Which parts are trustworthy enough to build on?
 
-**Maintained native subset:** `Syntax`, `Lower`, `Checked`, `Abi`, `Kernels`, and the explicit paths in `Main`. Scalar 64-bit arithmetic uses modular add/subtract/multiply, bitwise AND, equality, and signed comparisons. Memory is supplied by the host. Whole-word results cross the C boundary through output slots. Start changes here and extend differential coverage with each new construct.
+**Maintained native subset:** `Syntax`, `Lower`, `Checked`, `Abi`, `Kernels`, the source language in `DN.Dsl`, whose compilation is proven in the model for every program `emit` accepts, and the explicit paths in `Main`. Scalar 64-bit arithmetic uses modular add/subtract/multiply, bitwise AND, equality, and signed comparisons. Memory is supplied by the host. Whole-word results cross the C boundary through output slots. Start changes here and extend differential coverage with each new construct.
 
 **Reusable model results:** `Semantics`, `Region`, `Clock`, `Bytes`, `ByteCopy`, `Certificate`, and the dataplane models. The emitted echo loop lowers definitionally to `ByteCopy.copyByteWhile`, the loop used by the existing copy proof. The wrapper/host/native path still needs a complete refinement argument. Clocks represent model fuel, not CPU time.
 
@@ -98,9 +144,9 @@ its byte-level postcondition are the ones that were there before.
 
 ## Next useful contributions
 
-1. Expand differential fixtures with generated bounded ASTs, scope/shadowing cases, nested memory expressions, and explicit invalid-memory semantics. Keep seeds and minimized failures in the repository.
-2. Turn `Abi.wordResult` and checked lowering into general preservation theorems under explicit, inhabited memory and scope contracts. Connect the Lean transcription to HOL semantics and the printer to the real parser.
+1. Widen the generator (`DN.Compiler.Gen`) to calls, external calls and faulting accesses once the gate accepts them, and keep what it finds in `tests/corpus/found/`.
+2. Turn `Abi.wordResult` and checked lowering into general preservation theorems under explicit, inhabited memory and scope contracts. Connect the Lean transcription to HOL semantics, and prove the parser contract that `scripts/parser_contract.py` checks program by program (assurance item 2).
 3. Port one native reactor behind the same echo workload. Keep the reference host as a differential target; add real completion/cancellation and ownership tests before performance claims.
-4. Replace the copy kernel with a bounded NNTP session step, starting with framing and discovery. Add the durable store before accepting articles.
+4. Build a bounded NNTP session as a loop in the program's `main` that reaches the host through external calls ([decision 0002](decisions/0002-entry-and-memory.md)), starting with framing and discovery. Add the durable store before accepting articles.
 
 The honest baseline claim is: **this maintained subset builds, rejects known unsupported inputs, agrees with independent references on the recorded suite, and drives a tested real TCP service.** There is no evidence yet for “the entire inherited compiler has few bugs”; the two boundary failures above are why this narrower, repeatable claim matters.

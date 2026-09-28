@@ -113,7 +113,7 @@ theorem storesRun (o : Oracle σ) (dst : String) (base : Word) :
   | nil =>
     intro s _ _ _ _
     refine ⟨s, ?_, rfl, rfl, ?_, ?_⟩
-    · show PancakeSem o PancakeProg.skip s = (none, s); rw [PancakeSem]
+    · exact sem_skip o s
     · intro p hp; simp at hp
     · intro adr' _; rfl
   | cons p ps' ih =>

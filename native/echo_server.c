@@ -2,9 +2,10 @@
  * Bounded reference host. Every payload byte goes through generated dn_echo.
  * Single thread: the Cake heap/stack cannot be entered concurrently.
  * poll is a bring-up adapter, not the planned io_uring dataplane. */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include "accept_policy.h"
 #include "cake_runtime.h"
+#include "host.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -23,7 +24,7 @@ static volatile sig_atomic_t stopping;
 static void stop(int signal_number) { (void)signal_number; stopping = 1; }
 static uint64_t millis(void) {
     struct timespec t;
-    if (clock_gettime(CLOCK_MONOTONIC, &t)) abort();
+    if (clock_gettime(CLOCK_MONOTONIC, &t)) dn_harness("clock_gettime: %s", strerror(errno));
     return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
 }
 
@@ -31,15 +32,7 @@ static int nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL);
     return flags < 0 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
-static unsigned number(const char *text, unsigned maximum) {
-    char *end;
-    errno = 0;
-    unsigned long n = strtoul(text, &end, 10);
-    if (errno || !*text || *end || n > maximum) {
-        fputs("invalid numeric option\n", stderr); exit(2);
-    }
-    return (unsigned)n;
-}
+static unsigned number(const char *text, unsigned maximum) { return (unsigned)dn_parse_u64(text, maximum); }
 struct connection {
     int fd;
     unsigned char out[CAPACITY];
@@ -67,13 +60,18 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--send-buffer")) send_buffer = number(argv[i+1], 1 << 20);
         else { fputs("unknown option\n", stderr); return 2; }
     }
-    if (!write_chunk || idle_ms < 50) return 2;
+    if (!write_chunk || idle_ms < 50) {
+        fputs("the write chunk must be positive and the idle time at least 50 ms\n", stderr);
+        return 2;
+    }
     struct sigaction action = {0};
     action.sa_handler = stop;
     sigemptyset(&action.sa_mask);
-    if (sigaction(SIGTERM, &action, NULL) || sigaction(SIGINT, &action, NULL)) return 1;
+    if (sigaction(SIGTERM, &action, NULL) || sigaction(SIGINT, &action, NULL)) {
+        perror("sigaction"); return 1;
+    }
     action.sa_handler = SIG_IGN;
-    if (sigaction(SIGPIPE, &action, NULL)) return 1;
+    if (sigaction(SIGPIPE, &action, NULL)) { perror("sigaction"); return 1; }
     dn_runtime_init();
     int listener = socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) { perror("socket"); return 1; }
@@ -89,7 +87,9 @@ int main(int argc, char **argv) {
     }
     if (listen(listener, SLOTS)) { perror("listen"); close(listener); return 1; }
     socklen_t address_len = sizeof(address);
-    if (getsockname(listener, (struct sockaddr *)&address, &address_len)) return 1;
+    if (getsockname(listener, (struct sockaddr *)&address, &address_len)) {
+        perror("getsockname"); close(listener); return 1;
+    }
     struct rlimit descriptors;
     if (getrlimit(RLIMIT_NOFILE, &descriptors)) { perror("getrlimit"); close(listener); return 1; }
     if (descriptors.rlim_cur < SLOTS + 4) {

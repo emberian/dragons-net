@@ -1,0 +1,108 @@
+{
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   0
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 1
+ },
+ "name": "shift-off-by-one",
+ "native": {
+  "changed": [],
+  "result": 0,
+  "status": 0
+ },
+ "origin": {
+  "input": 2,
+  "program": "dn_fuzz_277",
+  "seed": 1
+ },
+ "original": {
+  "input": {
+   "data": {
+    "a": 570642242485046623
+   },
+   "fill": [
+    2736415286933960421,
+    255
+   ]
+  },
+  "plan": {
+   "entries": [],
+   "params": [
+    {
+     "buffer": 2,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 0
+    },
+    {
+     "buffer": 1,
+     "kind": "pointer",
+     "name": "q",
+     "offset": 0
+    },
+    {
+     "kind": "data",
+     "name": "a"
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "var",
+     "x4",
+     [
+      ">>>",
+      "a",
+      35
+     ]
+    ],
+    [
+     "return",
+     [
+      ">>>",
+      "a",
+      31
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_277",
+   "params": [
+    "p",
+    "q",
+    "a"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "params": []
+ },
+ "printed": "export fun dn_min(1 dn_result) {\n  st dn_result, (1) >>> 1;\n  return 0;\n}\n",
+ "program": {
+  "body": [
+   [
+    "return",
+    [
+     ">>>",
+     1,
+     0
+    ]
+   ]
+  ],
+  "name": "dn_min",
+  "params": []
+ },
+ "reduction": {
+  "asked": 116,
+  "taken": 8
+ },
+ "source": "export fun dn_min(1 dn_result) {\n  st dn_result, (1) >>> 0;\n  return 0;\n}\n"
+}

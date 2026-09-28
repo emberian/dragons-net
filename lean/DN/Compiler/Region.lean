@@ -7,12 +7,12 @@ These definitions and theorems concern the Lean model. Correspondence to the
 HOL4 backend, pretty-printer/parser, ABI and executable is tracked separately
 in docs/assurance.md. The model is a restricted 64-bit Pancake fragment.
 -/
-import DN.Compiler.Semantics
+import DN.Compiler.Bytes
 import DN.Compiler.Lower
 
 namespace DN.Compiler.Region
 
-open DN.Compiler DN.Compiler.Lower
+open DN.Compiler DN.Compiler.Bytes DN.Compiler.Lower
 
 /-! ## 0. The Lean SPEC (byte-identical to C1's HOL re-declaration) -/
 
@@ -60,6 +60,11 @@ theorem ofNat_add_small (a b : Nat) (h : a + b < 2 ^ 64) :
   rw [BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat]
   rw [Nat.mod_eq_of_lt (by omega : a < 2 ^ 64), Nat.mod_eq_of_lt (by omega : b < 2 ^ 64),
       Nat.mod_eq_of_lt h]
+
+/-- The `&` of two indicator words is the indicator of both. -/
+theorem indicator_and (p q : Prop) [Decidable p] [Decidable q] :
+    ((if p then 1 else 0 : Word) &&& (if q then 1 else 0 : Word)) = if p ∧ q then 1 else 0 := by
+  by_cases hp : p <;> by_cases hq : q <;> simp [hp, hq]
 
 /-! ## 2. The bounds `If` fragment (C1 analogue) -/
 
@@ -142,9 +147,6 @@ theorem ofNat_mul_small (a b : Nat) (ha : a < 2 ^ 64) (hb : b < 2 ^ 64) (h : a *
   rw [BitVec.toNat_mul, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
       Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt hb, Nat.mod_eq_of_lt h]
 
-theorem setWidth8_64 (b : BitVec 8) : b.setWidth 64 = BitVec.ofNat 64 b.toNat := by
-  apply BitVec.eq_of_toNat_eq; simp [BitVec.toNat_setWidth]
-
 /-- The `& 16777215` mask is exactly `MOD 16777216` — the digest reduction. -/
 theorem ofNat_and_mask (m : Nat) (h : m < 2 ^ 64) :
     BitVec.ofNat 64 m &&& BitVec.ofNat 64 16777215 = BitVec.ofNat 64 (m % 16777216) := by
@@ -214,6 +216,21 @@ theorem sem_seq_none {oracle : Oracle σ} {c1 c2} {s s1 : PancakeState σ}
       = PancakeSem oracle c2 { s1 with clock := min s.clock s1.clock } := by
   rw [PancakeSem, h]; simp only [clampClock]
 
+/-- `Skip` does nothing. -/
+theorem sem_skip (o : Oracle σ) (s : PancakeState σ) : PancakeSem o .skip s = (none, s) := by
+  rw [PancakeSem]
+
+/-- `If`: the branch the condition's value picks. -/
+theorem sem_cond (o : Oracle σ) {s : PancakeState σ} {e : PancakeExp} {c1 c2 : PancakeProg}
+    {w : Word} (h : eval s e = some w) :
+    PancakeSem o (.cond e c1 c2) s = PancakeSem o (if w ≠ 0 then c1 else c2) s := by
+  rw [PancakeSem, h]
+
+/-- `Return` of a constant: the value, and the locals go. -/
+theorem sem_ret_const (o : Oracle σ) (s : PancakeState σ) (w : Word) :
+    PancakeSem o (.ret (.const w)) s = (some (.return_ w), emptyLocals s) := by
+  rw [PancakeSem]
+  rfl
 
 /-- ONE loop-body iteration: evaluate the digest-update expression to the SPEC's
 next digest word. This isolates all the word-convention algebra (`*`,`+`,`&`,
@@ -424,6 +441,38 @@ theorem seq_step (o : Oracle σ) {c1 c2 : PancakeProg} {s s1 : PancakeState σ}
   rw [sem_seq_none (oracle := o) h]
   have hm : min s.clock s1.clock = s1.clock := by omega
   rw [hm]
+
+/-- A statement that is not a declaration lowers to a `Seq` in front of the rest, or to itself
+when nothing follows. Either way, running it and then the rest is running the rest from where it
+stopped. -/
+theorem run_cons (o : Oracle σ) {x : Syntax.PStmt} {cx : PancakeProg}
+    (hx : lowerStmt1 x = some cx) (hnd : x.isDec = false) {rest : List Syntax.PStmt}
+    {crest : PancakeProg} (hrest : lowerStmtsFold rest = some crest) {s t : PancakeState σ}
+    (hrun : PancakeSem o cx s = (none, t)) (hclk : t.clock ≤ s.clock) :
+    ∃ c, lowerStmtsFold (x :: rest) = some c ∧ PancakeSem o c s = PancakeSem o crest t := by
+  cases rest with
+  | nil =>
+    simp only [lowerStmtsFold, Option.some.injEq] at hrest
+    subst hrest
+    refine ⟨cx, by simp [lowerStmtsFold, hx], ?_⟩
+    rw [hrun, PancakeSem]
+  | cons y ys =>
+    refine ⟨.seq cx crest, ?_, seq_step o hrun hclk⟩
+    cases x with
+    | dec nm e => simp [Syntax.PStmt.isDec] at hnd
+    | _ => simp [lowerStmtsFold, hx, hrest]
+
+/-- `run_cons` against a lowering already in hand. -/
+theorem run_cons_of (o : Oracle σ) {x : Syntax.PStmt} {cx : PancakeProg}
+    (hx : lowerStmt1 x = some cx) (hnd : x.isDec = false) {rest : List Syntax.PStmt}
+    {crest c : PancakeProg} (hrest : lowerStmtsFold rest = some crest)
+    (hc : lowerStmtsFold (x :: rest) = some c) {s t : PancakeState σ}
+    (hrun : PancakeSem o cx s = (none, t)) (hclk : t.clock ≤ s.clock) :
+    PancakeSem o c s = PancakeSem o crest t := by
+  obtain ⟨c', hc', h⟩ := run_cons o hx hnd hrest hrun hclk
+  rw [hc] at hc'
+  cases hc'
+  exact h
 
 /-- The premises of `region_scan_correct` are satisfiable: a state that declares the
 four locals the scan reads and writes, over a one-byte view. -/

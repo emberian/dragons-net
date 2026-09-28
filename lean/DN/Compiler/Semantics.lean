@@ -116,6 +116,13 @@ def callFFI {σ : Type} (oracle : Oracle σ) (ffi : σ) (name : String)
       else .final ⟨name, conf, array, .failed⟩
     | .final outcome => .final ⟨name, conf, array, outcome⟩
 
+/-- The oracle of a world that changes nothing: every call returns the bytes it
+was given. -/
+def Oracle.idle {σ : Type} : Oracle σ := ⟨fun st _ _ array => .ret st array⟩
+
+/-- The oracle that fails every call. -/
+def Oracle.failing {σ : Type} : Oracle σ := ⟨fun _ _ _ _ => .final .failed⟩
+
 /-- panSem `('a,'ffi) state`, restricted to the fields the region subset reads.
 `locals` is the partial map `varname |-> v` (region uses only `Local`); `memory`
 is `α word → α word_lab` (single-ctor `Word`, so `Word → Word`); `memaddrs` is

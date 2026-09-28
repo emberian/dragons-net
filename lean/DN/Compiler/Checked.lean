@@ -205,7 +205,7 @@ private theorem exp_some {scope : List String} {e : PExpr} (h : expression scope
   | none => rw [hv] at this; simp at this
   | some v => exact ⟨v, rfl⟩
 
-private theorem seq_ok {x y : Except Reason Unit} (h : (do x; y) = .ok ()) :
+theorem seq_ok {x y : Except Reason Unit} (h : (do x; y) = .ok ()) :
     x = .ok () ∧ y = .ok () := by
   cases hx : x with
   | error e => rw [hx] at h; simp [bind, Except.bind] at h

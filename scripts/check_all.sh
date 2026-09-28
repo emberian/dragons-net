@@ -17,8 +17,5 @@ fi
 bash scripts/lint.sh
 bash scripts/check.sh
 python3 scripts/check_models.py --loom
-cake="${CAKE:-}"
-if [[ -z "$cake" ]]; then cake=$(python3 scripts/bootstrap_tool.py cake); fi
-python3 scripts/native_check.py --cake "$cake"
-python3 scripts/native_baseline.py --cake "$cake"
-echo 'DN BASELINE: PASS (models, differential native code, concurrency, and TCP echo; see docs/baseline.md for scope)'
+bash scripts/native_lanes.sh
+echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'

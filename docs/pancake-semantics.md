@@ -130,9 +130,15 @@ permissive fails the build:
   bytes cannot be read, or whose array cannot be read;
 - at the external call itself: a reply that is too long ends the run, a reply of
   the declared length is written, and a reply that is accepted cannot disturb a
-  byte outside the array (`Bytes.extCall_frame`);
+  byte outside the array (`Bytes.extCall_frame`, in `Bytes.lean`);
 - in `callFFI`: a reply that is too long or too short, an oracle that ends the
   run, and the empty call name that never reaches the oracle.
+
+Where an external call carries on, `Bytes.extCall_keeps` pins the rest of its
+clause as a `Bytes.Frame`, the one form every "what a run leaves alone" statement
+here takes: it changes the bytes of its array and the external world's state, and
+leaves every local, the memory domain, the byte order, the base address and the
+clock as they were.
 
 The correspondence itself — that each clause above matches the HOL text — rests
 on reading the recorded files at the recorded digests. It is not machine-checked,

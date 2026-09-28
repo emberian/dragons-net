@@ -4,7 +4,6 @@ import DN.Compiler.Kernels
 namespace DN.Compiler.BoundaryTests
 open Syntax Lower
 
-private def oracle : Oracle Unit := ⟨fun _ _ _ _ => .final .failed⟩
 private def state (alen off len : Nat) : PancakeState Unit :=
   { locals := fun x => match x with
       | "ctrl" => some 0 | "buf" => some 4096 | "len" => some (BitVec.ofNat 64 len)
@@ -15,7 +14,7 @@ private def state (alen off len : Nat) : PancakeState Unit :=
 
 def regionResult (alen off len : Nat) : Option Result := do
   let p ← lower (emitExportFun regionC0)
-  (PancakeSem oracle p (state alen off len)).1
+  (PancakeSem .failing p (state alen off len)).1
 
 -- wrapping_offset_is_rejected
 def regression_9001 : Bool := decide (

@@ -10,6 +10,12 @@ defaults:
   run:
     shell: bash
 
+# As in the per-commit chain: a module in scripts/ named like a standard-library one cannot
+# shadow it, and Lean runs on four threads.
+env:
+  PYTHONSAFEPATH: "1"
+  LEAN_NUM_THREADS: "4"
+
 jobs:
   # New advisories appear without any change to the repository.
   advisories:
@@ -130,6 +136,42 @@ jobs:
         with:
           name: proptest-regressions
           path: "**/*.proptest-regressions"
+          if-no-files-found: ignore
+
+  # The per-commit lane draws generated programs from one fixed seed. This draws many more, from
+  # a seed taken from the date, so each night looks somewhere new; the seed is in the log, and a
+  # disagreement it finds is reduced and kept.
+  generated-programs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Lean manager
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - name: Source gate and build
+        run: bash scripts/check.sh build
+      - name: Programs from a new seed
+        run: |
+          seed=$(date -u +%Y%m%d)
+          echo "seed ${seed}"
+          cake=$(python3 scripts/bootstrap_tool.py cake)
+          python3 scripts/native_fuzz.py --cake "${cake}" --seed "${seed}" --count 5000 --vectors 8
+      - name: Keep what it found
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-programs
+          path: |
+            build/fuzz/minimized/
+            build/fuzz/programs.json
           if-no-files-found: ignore
 
   # The upstream files the semantics was transcribed from and the keyword table was

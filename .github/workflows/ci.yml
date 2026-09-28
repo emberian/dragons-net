@@ -77,12 +77,14 @@ jobs:
           name: lean-build
           path: build/lean-build.tar
           if-no-files-found: error
+          # Only the next jobs of this run need the build; the evidence below is kept for review.
           retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: build-log
           if-no-files-found: error
+          retention-days: 90
           path: build/evidence/
 
   proofs:
@@ -145,10 +147,7 @@ jobs:
           mkdir -p build/evidence
           bash scripts/check.sh tests 2>&1 | tee build/evidence/tests.log
       - name: Native compiler artifact and execution
-        run: |
-          cake=$(python3 scripts/bootstrap_tool.py cake)
-          python3 scripts/native_check.py --cake "$cake" 2>&1 | tee build/evidence/native.log
-          python3 scripts/native_baseline.py --cake "$cake" 2>&1 | tee build/evidence/baseline.log
+        run: bash scripts/native_lanes.sh
       - name: Bounded interleaving exploration
         run: python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -156,6 +155,7 @@ jobs:
         with:
           name: test-evidence
           if-no-files-found: error
+          retention-days: 90
           path: |
             build/evidence/
             build/native/report.json
@@ -164,7 +164,18 @@ jobs:
             build/native/region-check
             build/baseline/report.json
             build/baseline/baseline.json
+            build/baseline/reply-cases.json
             build/baseline/probe_driver.c
             build/baseline/*.pnk
             build/baseline/*.S
             build/baseline/dn-echo
+            build/entry/report.json
+            build/entry/entry_layout.h
+            build/entry/*.pnk
+            build/entry/*.S
+            build/parser/report.json
+            build/parser/*.pnk
+            build/fuzz/report.json
+            build/fuzz/programs.json
+            build/fuzz/programs.pnk
+            build/fuzz/minimized/

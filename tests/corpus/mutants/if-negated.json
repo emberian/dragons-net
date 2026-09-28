@@ -1,0 +1,123 @@
+{
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   0
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 1
+ },
+ "name": "if-negated",
+ "native": {
+  "changed": [],
+  "result": 0,
+  "status": 0
+ },
+ "origin": {
+  "input": 1,
+  "program": "dn_fuzz_288",
+  "seed": 1
+ },
+ "original": {
+  "input": {
+   "data": {},
+   "fill": [
+    6953396840849488078,
+    0
+   ]
+  },
+  "plan": {
+   "entries": [],
+   "params": [
+    {
+     "buffer": 2,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 4088
+    },
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "q",
+     "offset": 0
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "if",
+     1596997873575487069,
+     [
+      [
+       "return",
+       [
+        "ld8",
+        [
+         "-",
+         "p",
+         4088
+        ]
+       ]
+      ]
+     ],
+     [
+      [
+       "return",
+       [
+        "<=",
+        1,
+        [
+         "+",
+         4294967296,
+         8757110967664864850
+        ]
+       ]
+      ]
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_288",
+   "params": [
+    "p",
+    "q"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "params": []
+ },
+ "printed": "export fun dn_min(1 dn_result) {\n  if (0) == 0 {\n    st dn_result, 0;\n    return 0;\n  } else {\n    st dn_result, 1;\n    return 0;\n  }\n}\n",
+ "program": {
+  "body": [
+   [
+    "if",
+    0,
+    [
+     [
+      "return",
+      0
+     ]
+    ],
+    [
+     [
+      "return",
+      1
+     ]
+    ]
+   ]
+  ],
+  "name": "dn_min",
+  "params": []
+ },
+ "reduction": {
+  "asked": 119,
+  "taken": 6
+ },
+ "source": "export fun dn_min(1 dn_result) {\n  if 0 {\n    st dn_result, 0;\n    return 0;\n  } else {\n    st dn_result, 1;\n    return 0;\n  }\n}\n"
+}

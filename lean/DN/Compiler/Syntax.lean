@@ -20,6 +20,11 @@ real stages use (parse's `start3 + 5 <= len`, `len - start3`; the folds' `b ==
 inductive POp | add | mul | lt | and_ | eq | le | sub
   deriving DecidableEq, Repr
 
+/-- Every operator once, in the order the generator and the baseline draw them. -/
+def POp.all : List POp := [.add, .sub, .mul, .and_, .lt, .le, .eq]
+
+theorem POp.mem_all (op : POp) : op ∈ POp.all := by cases op <;> decide
+
 /-- DN.Compiler expressions (the emitted subset). -/
 inductive PExpr
   | base                              -- `@base`, the FFI control-block pointer
@@ -139,6 +144,12 @@ def ppFun (f : PFun) : String :=
   let kw := if f.exported then "export fun " else "fun "
   let header := kw ++ f.name ++ "(" ++ ps ++ ") {"
   String.intercalate "\n" (header :: (ppStmts "  " f.body ++ ["}"])) ++ "\n"
+
+/-- Is this statement a declaration? A declaration scopes the statements after it, so it
+lowers unlike the others. -/
+def PStmt.isDec : PStmt → Bool
+  | .dec _ _ => true
+  | _        => false
 
 /-- Is this statement a function call? (used by the footprint check). -/
 def PStmt.isCall : PStmt → Bool

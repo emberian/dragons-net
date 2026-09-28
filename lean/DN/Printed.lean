@@ -1,0 +1,57 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+import DN.Compiler.Baseline
+import DN.Compiler.Canon
+import DN.Compiler.Kernels
+import DN.Dsl.Example
+
+/-!
+# DN.Printed
+
+Every program `dn-compiler` prints, with the canonical tree of its lowering, for
+`scripts/parser_contract.py` to hold against the tree CakeML's parser builds from the source. The
+commands that print one program take it from here, so no program is printed that the contract
+does not see.
+-/
+
+namespace DN.Printed
+
+open DN.Compiler DN.Compiler.Syntax
+
+/-- A printed program: its source, and the canonical tree of its lowering, which carries the
+source too. -/
+structure Program where
+  source : String
+  tree : Lean.Json
+
+/-- A function as the gate prints it. -/
+def checked (f : PFun) : Except String Program := do
+  let source ← (Checked.emit f).mapError Checked.Reason.message
+  return ⟨source, ← Canon.program f source⟩
+
+/-- A differential fixture, through the output-slot rewrite, as the native lane compiles it. -/
+def word (f : PFun) : Except String Program := do
+  let source ← (Abi.emitWord f).mapError Checked.Reason.message
+  return ⟨source, ← Canon.program (Abi.wordResult f) source⟩
+
+/-- The region kernel. -/
+def region : PFun := emitExportFun { regionC0 with name := "dn_region" }
+
+/-- The reply table of the language. -/
+def reply : Except String Program := do
+  let source ← Dsl.emit Dsl.Example.name Dsl.Example.replies
+  return ⟨source, ← Canon.program (Dsl.respond Dsl.Example.name Dsl.Example.replies) source⟩
+
+/-- The programs `emit-NAME` prints, by name. -/
+def named : List (String × Except String Program) :=
+  [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
+   ("reply", reply)]
+
+/-- Every program the compiler prints: the named ones, one accepted function per rule of the
+gate, and the differential fixtures. -/
+def all : Except String (List Program) := do
+  let fixtures := Baseline.functions ++ [Baseline.control, Baseline.control2] ++
+    Baseline.nestedFunctions
+  return (← named.mapM (·.2)) ++ (← Checked.catalog.mapM (checked ·.accepted)) ++
+    (← fixtures.mapM word)
+
+end DN.Printed

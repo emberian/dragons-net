@@ -4,36 +4,26 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
-import platform
 import re
-import shutil
+import signal
 import subprocess
 import sys
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-MASK = (1 << 64) - 1
-# Hardening the linked binaries: position-independent with full RELRO, fortified library
-# calls, stack protection and control-flow protection. The generated assembly is
-# position-independent, so nothing here needs a fixed load address.
-HARDENING = ["-O2", "-Wall", "-Wextra", "-Werror", "-fPIE", "-pie",
-             "-Wl,-z,relro,-z,now", "-Wl,-z,noexecstack",
-             "-D_FORTIFY_SOURCE=3", "-fstack-protector-strong", "-fstack-clash-protection",
-             "-fcf-protection=full", "-Wformat=2"]
-# Global symbols the Cake runtime defines in every generated assembly file.
-RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
-                   "cake_codebuffer_begin", "cake_codebuffer_end", "cake_text_begin",
-                   "cml_heap", "cml_main", "cml_stack", "cml_stackend"}
-# Must stay equal to Checked.exportPrefix; a test holds the two together.
-EXPORT_PREFIX = "dn_"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The path above is what makes these importable.
+import lanes
+from lanes import NATIVE, ROOT, LaneError, Report
+from words import MASK, signed, word_op
 
-
-def signed(n: int) -> int:
-    return n if n < 1 << 63 else n - (1 << 64)
+OUT = ROOT / "build/baseline"
+FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
+            ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
+HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c",
+         NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
 
 def reference(expr: Any, a: int, b: int) -> int:
@@ -42,15 +32,10 @@ def reference(expr: Any, a: int, b: int) -> int:
     if isinstance(expr, str):
         return {"a": a, "b": b}[expr]
     op, lhs, rhs = expr
-    x, y = reference(lhs, a, b), reference(rhs, a, b)
-    if op == ">>>" and y >= 64:
+    value = word_op(op, reference(lhs, a, b), reference(rhs, a, b))
+    if value is None:
         raise ValueError("the model gives a shift of a whole word or more no value")
-    results = {"+": (x + y) & MASK, "-": (x - y) & MASK, "*": (x * y) & MASK, "&": x & y,
-               "<": int(signed(x) < signed(y)), "<=": int(signed(x) <= signed(y)), "==": int(x == y),
-               ">>>": (x >> y) & MASK}
-    if op not in results:
-        raise ValueError(op)
-    return results[op]
+    return value
 
 
 def control(a: int, b: int) -> int:
@@ -76,36 +61,47 @@ def control2(a: int, b: int) -> int:
     return acc
 
 
-def digest(p: Path | str) -> str:
-    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+# What `dn_reply` answers, written from its description rather than from the Lean program.
+BINARY_KEYWORD = bytes([0xC8, 0x80, 0xFF, 0x00])
+REPLY_KEYWORDS = (b"QUIT", b"MODE READER", BINARY_KEYWORD, b"HELP")
 
 
-def loud(command: list[str], *, timeout: int, what: str, stdin: Any = None) -> str:
-    """Run a step and, when it fails, say what it printed rather than only its status."""
-    done = subprocess.run(command, stdin=stdin, capture_output=True, text=True,
-                          timeout=timeout, check=False)
-    if done.returncode:
-        raise RuntimeError(f"{what} failed with status {done.returncode}:\n"
-                           f"{done.stdout}{done.stderr}")
-    return done.stdout
+def reply(data: bytes) -> bytes:
+    if data.startswith(b"QUIT"):
+        return b"205 closing connection\r\n"
+    if data.startswith(b"MODE READER"):
+        return b"201 reader mode, posting prohibited\r\n"
+    if data.startswith(BINARY_KEYWORD):
+        return b"501 not text\r\n"
+    if data.startswith(b"HELP"):
+        return b"100 help text follows\r\n.\r\n"
+    return b"500 unknown command\r\n"
 
 
-def check_symbols(assembly: Path, obj: Path) -> None:
-    """An exported name becomes a global C symbol.
-
-    Anything outside the runtime's own set has to stay in this project's namespace, or it can
-    displace a libc function of the host it is linked into.
-    """
-    subprocess.run([os.environ.get("CC", "cc"), "-c", str(assembly), "-o", str(obj)],
-                   check=True, timeout=60)
-    listing = subprocess.run(["nm", "--defined-only", "--extern-only", str(obj)],
-                             capture_output=True, text=True, check=True, timeout=60)
-    symbols = {line.split()[-1] for line in listing.stdout.splitlines() if line.strip()}
-    if not symbols & RUNTIME_SYMBOLS:
-        raise RuntimeError(f"{obj.name} carries no runtime symbol; the check is looking at nothing")
-    stray = sorted(s for s in symbols - RUNTIME_SYMBOLS if not s.startswith(EXPORT_PREFIX))
-    if stray:
-        raise RuntimeError(f"{assembly.name} exports symbols outside the project namespace: {stray}")
+def reply_cases(fixture: dict[str, Any]) -> list[tuple[bytes, bytes]]:
+    """The Lean program's replies, checked against `reply`, and the inputs checked for the
+    boundary cases a generator can lose without anyone noticing."""
+    if fixture["function"] != "dn_reply":
+        raise LaneError(f"unexpected reply function {fixture['function']}")
+    cases = [(bytes(case["input"]), bytes(case["output"])) for case in fixture["cases"]]
+    for data, answer in cases:
+        if reply(data) != answer:
+            raise LaneError(f"Lean/Python disagreement on the reply to {data!r}")
+    if fixture["max_len"] != max(len(reply(keyword)) for keyword in (*REPLY_KEYWORDS, b"")):
+        raise LaneError("the reply buffer the program asks for is not its longest reply")
+    inputs = {data for data, _ in cases}
+    wanted = ({keyword[:i] for keyword in REPLY_KEYWORDS for i in range(len(keyword) + 1)} |
+              {keyword + b"\r\n" for keyword in REPLY_KEYWORDS} | {bytes([b]) for b in range(256)})
+    # A kernel that skips one byte of a keyword shows only on an input that differs from the
+    # keyword in that byte alone and is answered differently.
+    changed = all(any(len(data) >= len(keyword) and reply(data) != reply(keyword) and
+                      [j for j in range(len(keyword)) if data[j] != keyword[j]] == [i]
+                      for data in inputs)
+                  for keyword in REPLY_KEYWORDS for i in range(len(keyword)))
+    if (not wanted <= inputs or not changed or
+            len({answer for _, answer in cases}) != len(REPLY_KEYWORDS) + 1):
+        raise LaneError("the reply inputs no longer reach every keyword boundary and reply")
+    return cases
 
 
 def compiler_revision(cake: str) -> str:
@@ -114,30 +110,8 @@ def compiler_revision(cake: str) -> str:
                              check=True).stdout
     found = re.search(r"CakeML:\s*([0-9a-f]{40})", printed)
     if not found:
-        raise RuntimeError(f"the compiler does not report a revision:\n{printed}")
+        raise LaneError(f"the compiler does not report a revision:\n{printed}")
     return found.group(1)
-
-
-def hardened(binary: Path) -> None:
-    """The linked binary must carry the protections it was built with, read off the file."""
-    name = binary.name
-    header = loud(["readelf", "-hdl", str(binary)], timeout=60, what=f"reading {name}")
-    symbols = loud(["nm", "-u", str(binary)], timeout=60, what=f"reading symbols of {name}")
-    if "DYN (" not in header:
-        raise RuntimeError(f"{name} is not position-independent")
-    if "BIND_NOW" not in header:
-        raise RuntimeError(f"{name} was linked without BIND_NOW")
-    if "GNU_RELRO" not in header:
-        raise RuntimeError(f"{name} has no read-only-after-relocation segment")
-    if "TEXTREL" in header:
-        raise RuntimeError(f"{name} needs text relocations")
-    stack = [line for line in header.splitlines() if "GNU_STACK" in line]
-    if not stack or "RWE" in stack[0]:
-        raise RuntimeError(f"{name} does not declare a non-executable stack")
-    if "__stack_chk_fail" not in symbols:
-        raise RuntimeError(f"{name} was built without stack protection")
-    if not any(check in symbols for check in ("_chk@", "_chk")):
-        raise RuntimeError(f"{name} was built without fortified library calls")
 
 
 def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
@@ -149,13 +123,13 @@ def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
     revision = compiler_revision(cake)
     listed = {entry["revision"]: entry["keywords"] for entry in table}
     if revision not in listed:
-        raise RuntimeError(f"the fixture carries no keyword list for {revision[:7]}")
+        raise LaneError(f"the fixture carries no keyword list for {revision[:7]}")
     here = listed[revision]
     # With one pinned revision, or two that agree, a word no lexer reserves keeps the check
     # two-sided: the compiler has to accept it.
     elsewhere = sorted({word for words in listed.values() for word in words} - set(here)) or ["base"]
     if not here:
-        raise RuntimeError("the keyword table has no words for the running compiler")
+        raise LaneError("the keyword table has no words for the running compiler")
     source = out / "keyword.pnk"
     for word, is_keyword in [(w, True) for w in here] + [(w, False) for w in elsewhere]:
         source.write_text(f"export fun dn_word(1 a) {{ var {word} = a; return {word}; }}\n")
@@ -163,9 +137,9 @@ def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
             probe = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
                                    capture_output=True, timeout=60, check=False)
         if is_keyword and probe.returncode == 0:
-            raise RuntimeError(f"the compiler accepts {word} as a name; the table calls it a keyword")
+            raise LaneError(f"the compiler accepts {word} as a name; the table calls it a keyword")
         if not is_keyword and probe.returncode != 0:
-            raise RuntimeError(f"the compiler refuses {word} as a name; the table does not list it")
+            raise LaneError(f"the compiler refuses {word} as a name; the table does not list it")
     return len(here) + len(elsewhere)
 
 
@@ -173,52 +147,68 @@ def documented(measured: dict[str, Any]) -> None:
     """The counts the documents quote must be the ones this run measured."""
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "copy_cases": ("README.md", "docs/baseline.md"),
-              "render_cases": ("docs/baseline.md",)}
+              "render_cases": ("docs/baseline.md",),
+              "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
+                              "docs/decisions/0001-embedding.md"),
+              "reply_inputs": ("docs/baseline.md",)}
     for key, files in quoted.items():
-        printed = f"{measured[key]:,}"
-        for name in files:
-            if printed not in (ROOT / name).read_text():
-                raise RuntimeError(f"{name} does not quote {key} as {printed}")
+        try:
+            lanes.require_quoted({name: (f"{measured[key]:,}",) for name in files})
+        except LaneError as error:
+            raise LaneError(f"{error}, the {key.replace('_', ' ')} this run measured") from None
+    lanes.require_quoted({"docs/baseline.md": (f"all {measured['fixture_functions']} fixture functions",)})
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cake", default=os.environ.get("CAKE"))
-    parser.add_argument("--fixtures", type=Path, help="directory of previously emitted baseline.json and echo.pnk")
-    args = parser.parse_args()
-    if platform.system() != "Linux" or platform.machine() != "x86_64":
-        parser.error("native baseline requires Linux x86-64")
-    cake = shutil.which(args.cake or "")
-    if not cake:
-        parser.error("provide --cake or CAKE; no interpreted fallback")
-    out = ROOT / "build/baseline"
-    out.mkdir(parents=True, exist_ok=True)
-    report_file = out / "report.json"
-    report_file.unlink(missing_ok=True)
-    compiler = ROOT / ".lake/build/bin/dn-compiler"
-    for name, command in [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"),
-                          ("render.pnk", "emit-render")]:
-        data = ((args.fixtures / name).read_bytes() if args.fixtures else
-                loud([str(compiler), command], timeout=60, what=f"emitting {name}").encode())
-        (out / name).write_bytes(data)
-    fixture = json.loads((out / "baseline.json").read_text())
+def build(cake: str, name: str, host: Path, binary: str | None = None) -> Path:
+    """Compile `name`.pnk and link it with `host`."""
+    assembly = lanes.assemble(cake, OUT / f"{name}.pnk", timeout=180)
+    return lanes.link(OUT / (binary or f"{name}-check"), [host, NATIVE / "cake_runtime.c", assembly],
+                      timeout=60)
+
+
+def run(binary: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([str(binary), *args], input=stdin, text=True, capture_output=True, timeout=120,
+                          check=False)
+
+
+def measured_by(binary: Path, *args: str, stdin: str | None = None) -> dict[str, Any]:
+    done = run(binary, *args, stdin=stdin)
+    if done.returncode:
+        raise LaneError(f"{binary.name} failed with status {done.returncode}:\n{done.stdout}{done.stderr}")
+    result: dict[str, Any] = json.loads(done.stdout)
+    return result
+
+
+def refuses(cake: str, name: str, source: str, host: Path, status: int, message: str | None,
+            *args: str, stdin: str | None = None) -> None:
+    """A kernel that breaks one property the host checks has to be refused, for that reason."""
+    (OUT / f"{name}.pnk").write_text(source)
+    done = run(build(cake, name, host), *args, stdin=stdin)
+    if done.returncode != status or (message is not None and message not in done.stderr):
+        raise LaneError(f"{host.name} did not refuse {name} (status {done.returncode}):\n{done.stderr}")
+
+
+def differential(cake: str) -> dict[str, Any]:
+    """Every expression and control fixture, run natively on every value pair, against the model's
+    values and against `reference`."""
+    fixture = json.loads((OUT / "baseline.json").read_text())
     cases, values = fixture["cases"], fixture["values"]
     if len(cases) != 113 or len(values) != 192:
-        raise RuntimeError("unexpected differential fixture coverage")
+        raise LaneError("unexpected differential fixture coverage")
     expected = [[reference(case["expression"], a, b) for a, b in values] for case in cases]
     for i, row in enumerate(expected):
         if row != cases[i]["expected"]:
-            raise RuntimeError(f"Lean/Python disagreement in expression {i}: {cases[i]['expression']}")
+            raise LaneError(f"Lean/Python disagreement in expression {i}: {cases[i]['expression']}")
     for name, model in (("control", control), ("control2", control2)):
         expected.append([model(a, b) for a, b in values])
         if expected[-1] != fixture[name]:
-            raise RuntimeError(f"Lean/Python disagreement in {name}")
-    (out / "probes.pnk").write_text(fixture["source"])
+            raise LaneError(f"Lean/Python disagreement in {name}")
+    (OUT / "probes.pnk").write_text(fixture["source"])
     names = [f"dn_probe_{i}" for i in range(len(cases))] + ["dn_control", "dn_control2"]
     nested = fixture["nested_load_expected"]
     if nested != [0xef, 0xef, 0x0123456789abcdef, 0x0123456789abcdef]:
-        raise RuntimeError("nested-load model disagrees with independent memory fixture")
-    driver = '#include "cake_runtime.h"\n#include <inttypes.h>\n'
+        raise LaneError("nested-load model disagrees with independent memory fixture")
+    driver = '#include "cake_runtime.h"\n#include "host.h"\n#include <inttypes.h>\n'
     driver += "\n".join(f"extern uint32_t {name}(uint64_t,uint64_t,uint64_t);" for name in names)
     driver += "\nstatic uint32_t (*functions[])(uint64_t,uint64_t,uint64_t) = {" + ",".join(names) + "};\n"
     driver += "extern uint32_t dn_nested_1(uint64_t,uint64_t), dn_nested_3(uint64_t,uint64_t);\n"
@@ -229,19 +219,18 @@ int main(void) {
     uint64_t a, b, expected;
     int read;
     while ((read = scanf("%zu %" SCNu64 " %" SCNu64 " %" SCNu64, &index, &a, &b, &expected)) == 4) {
-        if (index >= sizeof(functions)/sizeof(functions[0])) return 2;
+        if (index >= sizeof(functions)/sizeof(functions[0])) dn_harness("bad input: no case %zu", index);
         uint64_t output[3] = {0xcafebabefeedfaceULL, 0, 0x0123456789abcdefULL};
         uint32_t status = functions[index](a,b,(uintptr_t)&output[1]);
-        if (status || output[0] != 0xcafebabefeedfaceULL || output[2] != 0x0123456789abcdefULL) return 3;
+        if (status || output[0] != 0xcafebabefeedfaceULL || output[2] != 0x0123456789abcdefULL)
+            dn_violation("case %zu returned %u or wrote beside its output word", index, status);
         uint64_t actual = output[1];
-        if (actual != expected) {
-            fprintf(stderr,"native mismatch case=%zu a=%" PRIu64 " b=%" PRIu64
-                    " expected=%" PRIu64 " actual=%" PRIu64 "\n", index,a,b,expected,actual);
-            return 1;
-        }
+        if (actual != expected)
+            dn_violation("native mismatch case=%zu a=%" PRIu64 " b=%" PRIu64 " expected=%" PRIu64
+                         " actual=%" PRIu64, index, a, b, expected, actual);
         ++cases;
     }
-    if (read != EOF) return 2;
+    if (read != EOF) dn_harness("bad input: unreadable");
     uint64_t cell = 0x0123456789abcdefULL, pointer = (uintptr_t)&cell;
     uint64_t output[3] = {0xcafebabefeedfaceULL, 0, 0x0123456789abcdefULL};
     uint32_t (*nested[])(uint64_t,uint64_t) = {dn_nested_1, dn_nested_3};
@@ -249,124 +238,176 @@ int main(void) {
         uint32_t status = nested[i]((uintptr_t)&pointer, (uintptr_t)&output[1]);
         uint64_t expected = i == 0 ? cell & 255 : cell;
         if (status || output[1] != expected || output[0] != 0xcafebabefeedfaceULL ||
-            output[2] != 0x0123456789abcdefULL) {
-            fputs("native nested-load mismatch\n", stderr); return 1;
-        }
+            output[2] != 0x0123456789abcdefULL)
+            dn_violation("native nested-load mismatch");
     }
     printf("{\"differential_cases\":%zu,\"nested_load_native_cases\":2}\n",cases);
     return 0;
 }
 '''
-    (out / "probe_driver.c").write_text(driver)
-
-    def compile_source(name: str) -> None:
-        # A Pancake warning (a redeclared variable, say) leaves the exit status at zero,
-        # so anything on stderr fails the build.
-        with (out / f"{name}.pnk").open("rb") as inp, (out / f"{name}.S").open("wb") as asm:
-            compiled = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
-                                      stdout=asm, stderr=subprocess.PIPE, timeout=180, check=False)
-        if compiled.returncode or compiled.stderr:
-            raise RuntimeError(f"{name}.pnk compiled with diagnostics:\n"
-                               f"{compiled.stderr.decode(errors='replace')}")
-        check_symbols(out / f"{name}.S", out / f"{name}.o")
-
-
-    def link(name: str, source: Path, assembly: Path) -> None:
-        loud([os.environ.get("CC", "cc"), *HARDENING, "-g", "-I", str(ROOT / "native"),
-              str(source), str(ROOT / "native/cake_runtime.c"), str(assembly),
-              "-o", str(out / name)], timeout=60, what=f"linking {name}")
-        hardened(out / name)
-
-    compile_source("probes")
-    link("probes", out / "probe_driver.c", out / "probes.S")
+    (OUT / "probe_driver.c").write_text(driver)
     vectors = "".join(f"{i} {a} {b} {expected[i][j]}\n"
                       for i in range(len(expected)) for j, (a, b) in enumerate(values))
-    probed = subprocess.run([str(out / "probes")], input=vectors, text=True,
-                            capture_output=True, timeout=60, check=False)
-    if probed.returncode:
-        raise RuntimeError(f"the differential probes failed with status {probed.returncode}:\n"
-                           f"{probed.stdout}{probed.stderr}")
-    measured = json.loads(probed.stdout)
-    if measured["differential_cases"] != len(expected) * len(values) or measured["nested_load_native_cases"] != 2:
-        raise RuntimeError("incomplete native probe execution")
+    measured = measured_by(build(cake, "probes", OUT / "probe_driver.c", "probes"), stdin=vectors)
+    if (measured["differential_cases"] != len(expected) * len(values) or
+            measured["nested_load_native_cases"] != 2):
+        raise LaneError("incomplete native probe execution")
     measured["nested_load_parser_cases"] = len(nested)
+    measured["fixture_functions"] = fixture["source"].count("export fun ")
     for index, source in enumerate(fixture["accepted_examples"]):
-        (out / "accepted.pnk").write_text(source)
-        with (out / "accepted.pnk").open("rb") as inp:
-            accepted = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
-                                      capture_output=True, timeout=60, check=False)
-        if accepted.returncode or accepted.stderr:
-            raise RuntimeError(f"the gate accepts example {index}, the compiler does not:\n"
-                               f"{source}{accepted.stderr.decode(errors='replace')}")
+        (OUT / "accepted.pnk").write_text(source)
+        try:
+            lanes.pancake(cake, OUT / "accepted.pnk", timeout=60)
+        except lanes.Diagnostics as refused:
+            raise LaneError(f"the gate accepts example {index}, the compiler does not:\n{source}{refused}") from None
     measured["accepted_example_cases"] = len(fixture["accepted_examples"])
-    measured["lexer_keyword_cases"] = lexer_keywords(cake, out, fixture["lexer_keywords"])
-    compile_source("render")
-    link("render-check", ROOT / "native/render_check.c", out / "render.S")
-    measured.update(json.loads(loud([str(out / "render-check")], timeout=60,
-                                    what="the decimal render check")))
-    compile_source("echo")
-    link("echo-check", ROOT / "native/echo_check.c", out / "echo.S")
-    measured.update(json.loads(loud([str(out / "echo-check")], timeout=30,
-                                    what="the copy and frame check")))
-    # Sensitivity check: compiling a kernel without its store must fail the same
-    # native contract test. No checked-in source or backend checkout is mutated.
-    text = (out / "echo.pnk").read_text()
+    measured["lexer_keyword_cases"] = lexer_keywords(cake, OUT, fixture["lexer_keywords"])
+    return measured
+
+
+def replies(cake: str) -> dict[str, Any]:
+    """The reply table on every input the Lean program answers, and each property the check claims
+    broken by a kernel of its own, which the check has to refuse."""
+    reply_fixture = json.loads((OUT / "reply-cases.json").read_text())
+    cases = reply_cases(reply_fixture)
+    stdin = "".join(f"{data.hex() or '-'} {answer.hex() or '-'}\n" for data, answer in cases)
+    # The room the program asks for, which the kernel compares against; not the longest reply seen.
+    max_len: int = reply_fixture["max_len"]
+    host = NATIVE / "reply_check.c"
+    measured = measured_by(build(cake, "reply", host), str(max_len), stdin=stdin)
+    measured["reply_inputs"] = len(cases)
+    if measured["reply_cases"] != 10 * len(cases):
+        raise LaneError("incomplete native reply execution")
+    text = (OUT / "reply.pnk").read_text()
+    lines = text.splitlines(keepends=True)
+    store = next(i for i, line in enumerate(lines) if line.lstrip().startswith("st8 "))
+    advance = next(i for i, line in enumerate(lines) if re.fullmatch(r"\s*pos = pos \+ \d+;\n", line))
+    step = lines[advance].split("+")[-1].strip().rstrip(";")
+    guard = f"if {len(REPLY_KEYWORDS[0])} <= inlen {{"
+    room = f"if cap < {max_len} {{"
+    if guard not in text or text.count(room) != 1:
+        raise LaneError("the reply mutations no longer find the lines they change")
+    before, after = lines[:advance + 1], lines[advance + 1:]
+    lengthened = lines[advance].replace(f"+ {step};", f"+ {int(step) + 1};")
+    mutants = {
+        # a byte of the reply not written
+        "reply-short": ("".join(lines[:store] + lines[store + 1:]), 1),
+        # the reply's bytes with the wrong length
+        "reply-length": ("".join([*lines[:advance], lengthened, *after]), 1),
+        # a byte written past the reply, inside the buffer
+        "reply-past": ("".join([*before, "st8 out + pos, 0;\n", *after]), 1),
+        # a byte written into the input, which the host may hold read-only
+        "reply-input": ("".join([*before, "st8 inp, 0;\n", *after]), -signal.SIGSEGV),
+        # a buffer one byte too small accepted
+        "reply-room": (text.replace(room, f"if cap < {max_len - 1} {{"), 1),
+        # a keyword compared without the length guard reads past the input
+        "reply-unguarded": (text.replace(guard, "if 0 <= inlen {", 1), -signal.SIGSEGV),
+    }
+    for name, (source, status) in mutants.items():
+        refuses(cake, name, source, host, status, "reply mismatch" if status == 1 else None, str(max_len),
+                stdin=stdin)
+    measured["reply_mutants_rejected"] = len(mutants)
+    return measured
+
+
+def echo(cake: str) -> dict[str, Any]:
+    """The copy kernel against its contract, and kernels that break the contract, each refused for
+    the reason it breaks."""
+    host = NATIVE / "echo_check.c"
+    measured = measured_by(build(cake, "echo", host))
+    text = (OUT / "echo.pnk").read_text()
     lines = text.splitlines(keepends=True)
     if sum(line.lstrip().startswith("st8 ") for line in lines) != 1:
-        raise RuntimeError("echo mutation no longer targets exactly one store")
-    (out / "broken.pnk").write_text("".join(line for line in lines if not line.lstrip().startswith("st8 ")))
-    compile_source("broken")
-    link("broken-check", ROOT / "native/echo_check.c", out / "broken.S")
-    broken = subprocess.run([str(out / "broken-check")], capture_output=True, text=True, timeout=30,
-                            check=False)
-    if broken.returncode != 1 or "copy/frame mismatch" not in broken.stderr:
-        raise RuntimeError("copy test did not detect the deliberately removed store")
+        raise LaneError("echo mutation no longer targets exactly one store")
+    bound = "if 4096 < cap {"
+    loop = "while i < len {"
+    if text.count(bound) != 1 or text.count(loop) != 1:
+        raise LaneError("the capacity mutations no longer find the lines they change")
+    mutants = {
+        # the store removed
+        "broken": ("".join(line for line in lines if not line.lstrip().startswith("st8 ")),
+                   "copy/frame mismatch"),
+        # no upper bound on the capacity
+        "echo-unbounded": (text.replace(bound, "if 0 {"), "rejection mismatch"),
+        # the bound one too high
+        "echo-bound": (text.replace(bound, "if 4097 < cap {"), "rejection mismatch"),
+        # the whole capacity copied, the length returned
+        "echo-capacity": (text.replace(loop, "while i < cap {"), "copy/frame mismatch"),
+    }
+    for name, (source, message) in mutants.items():
+        refuses(cake, name, source, host, 1, message)
     measured["missing_store_mutant_rejected"] = True
-    # Sensitivity of the two gates around the compiler: a warning must fail the build, and
-    # an export outside the project namespace must be refused.
-    (out / "warned.pnk").write_text(
-        "export fun dn_warned(1 a) { var x = a; var x = a; return x; }\n")
-    try:
-        compile_source("warned")
-    except RuntimeError as refused:
-        if "is redeclared" not in str(refused):
-            raise RuntimeError(f"the warning gate failed for another reason: {refused}") from refused
-    else:
-        raise RuntimeError("a redeclaration warning no longer fails the build")
-    (out / "stray.pnk").write_text("export fun atoi(1 a) { return a; }\n")
-    with (out / "stray.pnk").open("rb") as inp, (out / "stray.S").open("wb") as asm:
-        subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp, stdout=asm,
-                       check=True, timeout=180)
-    try:
-        check_symbols(out / "stray.S", out / "stray.o")
-    except RuntimeError as refused:
-        if "outside the project namespace" not in str(refused):
-            raise RuntimeError(f"the symbol gate failed for another reason: {refused}") from refused
-    else:
-        raise RuntimeError("an export outside the project namespace is no longer refused")
-    measured["gate_sensitivity_cases"] = 2
-    link("dn-echo", ROOT / "native/echo_server.c", out / "echo.S")
-    network = subprocess.run([sys.executable, str(ROOT / "tests/echo_integration.py"),
-                              str(out / "dn-echo")], capture_output=True, text=True, timeout=90, check=False)
-    if network.returncode:
-        raise RuntimeError(f"TCP integration failed:\n{network.stdout}\n{network.stderr}")
-    measured["network"] = json.loads(network.stdout)
-    report = {"status": "native-tested",
-              "sources": "supplied" if args.fixtures else "emitted by dn-compiler",
-              "compiler_digest": digest(compiler) if not args.fixtures else None,
-              "assurance": "bounded differential and integration tests, not a whole compiler proof",
-              "platform": platform.platform(), "compiler_sha256": digest(cake),
-              "fixture_sha256": digest(out / "baseline.json"), "echo_source_sha256": digest(out / "echo.pnk"),
-              "echo_assembly_sha256": digest(out / "echo.S"),
-              "render_source_sha256": digest(out / "render.pnk"),
-              "render_assembly_sha256": digest(out / "render.S"), "echo_executable_sha256": digest(out / "dn-echo"),
-              "host_sha256": digest(ROOT / "native/echo_server.c"),
-              "runtime_sha256": digest(ROOT / "native/cake_runtime.c"),
-              "runtime_header_sha256": digest(ROOT / "native/cake_runtime.h"),
-              "measurements": measured}
+    measured["capacity_mutants_rejected"] = len(mutants) - 1
+    return measured
+
+
+def gates(cake: str) -> int:
+    """The two gates every lane compiles through, seen refusing: a warning fails the build, and an
+    export outside the project namespace is refused."""
+    cases = [("warned", "export fun dn_warned(1 a) { var x = a; var x = a; return x; }\n", "is redeclared"),
+             ("stray", "export fun atoi(1 a) { return a; }\n", "outside the project namespace")]
+    for name, source, message in cases:
+        (OUT / f"{name}.pnk").write_text(source)
+        try:
+            lanes.assemble(cake, OUT / f"{name}.pnk", timeout=180)
+        except LaneError as refused:
+            if message not in str(refused):
+                raise LaneError(f"the {name} gate failed for another reason: {refused}") from refused
+        else:
+            raise LaneError(f"the gates no longer refuse {name}")
+    return len(cases)
+
+
+def network() -> Any:
+    """The echo server, built on the generated copy, over TCP."""
+    server = lanes.link(OUT / "dn-echo", [NATIVE / "echo_server.c", NATIVE / "cake_runtime.c", OUT / "echo.S"],
+                        timeout=60)
+    done = subprocess.run([sys.executable, str(ROOT / "tests/echo_integration.py"), str(server)],
+                          capture_output=True, text=True, timeout=90, check=False)
+    if done.returncode:
+        raise LaneError(f"TCP integration failed:\n{done.stdout}\n{done.stderr}")
+    return json.loads(done.stdout)
+
+
+def baseline(cake: str, supplied: Path | None) -> Report:
+    for name, command in FIXTURES:
+        data = (supplied / name).read_bytes() if supplied else lanes.emit(command, timeout=60).encode()
+        (OUT / name).write_bytes(data)
+    measured = differential(cake)
+    render = build(cake, "render", NATIVE / "render_check.c")
+    measured.update(measured_by(render))
+    measured.update(replies(cake))
+    measured.update(echo(cake))
+    measured["gate_sensitivity_cases"] = gates(cake)
+    measured["network"] = network()
     documented(measured)
-    report_file.write_text(json.dumps(report, indent=2) + "\n")
-    print(report_file.read_text(), end="")
+    return Report("native-tested", cake, HOSTS, {
+        "sources": "supplied" if supplied else "emitted by dn-compiler",
+        "assurance": "bounded differential and integration tests, not a whole compiler proof",
+        "fixture_sha256": lanes.digest(OUT / "baseline.json"),
+        "probe_driver_sha256": lanes.digest(OUT / "probe_driver.c"),
+        "echo_source_sha256": lanes.digest(OUT / "echo.pnk"),
+        "echo_assembly_sha256": lanes.digest(OUT / "echo.S"),
+        "render_source_sha256": lanes.digest(OUT / "render.pnk"),
+        "render_assembly_sha256": lanes.digest(OUT / "render.S"),
+        "reply_source_sha256": lanes.digest(OUT / "reply.pnk"),
+        "reply_cases_sha256": lanes.digest(OUT / "reply-cases.json"),
+        "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),
+        "reply_executable_sha256": lanes.digest(OUT / "reply-check"),
+        "echo_executable_sha256": lanes.digest(OUT / "dn-echo"),
+        "measurements": measured}, printed_by_dn_compiler=supplied is None)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cake", default=os.environ.get("CAKE"))
+    parser.add_argument("--fixtures", type=Path,
+                        help="directory of previously emitted baseline.json, echo.pnk, render.pnk, "
+                             "reply.pnk and reply-cases.json")
+    args = parser.parse_args()
+    lanes.require_platform(parser)
+    cake = lanes.given_cake(parser, args.cake)
+    lanes.lane_main("NATIVE BASELINE", OUT, lambda: baseline(cake, args.fixtures))
 
 
 if __name__ == "__main__":
