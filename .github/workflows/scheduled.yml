@@ -2,7 +2,22 @@ name: scheduled
 on:
   schedule:
     - cron: "17 3 * * *"
+  # A run by hand can repeat a night of the generated lane: the summary of every run names the
+  # values to give here. It runs every job of this workflow, from the head of the default branch.
   workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed of the generated programs, at most 20 digits; empty takes the date
+        type: string
+        default: ""
+      count:
+        description: Generated programs to draw
+        type: string
+        default: "5000"
+      vectors:
+        description: Inputs for each generated program
+        type: string
+        default: "8"
 
 permissions: {}
 
@@ -138,9 +153,38 @@ jobs:
           path: "**/*.proptest-regressions"
           if-no-files-found: ignore
 
+  # CI runs the native lanes one after another in one checkout, so a lane that leans on what an
+  # earlier one left in build/ passes there and fails alone. Here each runs on a machine of its
+  # own, the generated lane at its standard size.
+  lanes-alone:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [native, baseline, entry, parser, fuzz]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Lean manager
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - name: Source gate and build
+        run: bash scripts/check.sh build
+      - name: The lane alone
+        env:
+          LANE: ${{ matrix.lane }}
+        run: bash scripts/native_lanes.sh "${LANE}"
+
   # The per-commit lane draws generated programs from one fixed seed. This draws many more, from
-  # a seed taken from the date, so each night looks somewhere new; the seed is in the log, and a
-  # disagreement it finds is reduced and kept.
+  # a seed taken from the date, so each night looks somewhere new; the run's summary gives the
+  # seed and how to repeat it, and a disagreement it finds is reduced and kept.
   generated-programs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -159,11 +203,28 @@ jobs:
       - name: Source gate and build
         run: bash scripts/check.sh build
       - name: Programs from a new seed
+        env:
+          SEED: ${{ inputs.seed }}
+          COUNT: ${{ inputs.count || '5000' }}
+          VECTORS: ${{ inputs.vectors || '8' }}
         run: |
-          seed=$(date -u +%Y%m%d)
+          seed=${SEED:-$(date -u +%Y%m%d)}
           echo "seed ${seed}"
+          [[ "${seed}" =~ ^[0-9]{1,20}$ ]] || { echo "the seed is up to 20 digits, not '${seed}'" >&2; exit 2; }
+          [[ "${COUNT}" =~ ^[1-9][0-9]{0,5}$ ]] || { echo "count is 1 to 999999, not '${COUNT}'" >&2; exit 2; }
+          [[ "${VECTORS}" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "vectors is 1 to 999, not '${VECTORS}'" >&2; exit 2; }
+          options="--seed ${seed} --count ${COUNT} --vectors ${VECTORS}"
+          {
+            echo "Generated programs from seed ${seed}: ${COUNT} programs, ${VECTORS} inputs each, at ${GITHUB_SHA}."
+            echo
+            echo "Again here, with every nightly job, at the head of the default branch:"
+            echo "\`gh workflow run scheduled.yml -f seed=${seed} -f count=${COUNT} -f vectors=${VECTORS}\`"
+            echo
+            echo "Again locally, at ${GITHUB_SHA}, after \`bash scripts/check.sh build\`:"
+            echo "\`python3 scripts/native_fuzz.py --cake \"\$(python3 scripts/bootstrap_tool.py cake)\" ${options}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
           cake=$(python3 scripts/bootstrap_tool.py cake)
-          python3 scripts/native_fuzz.py --cake "${cake}" --seed "${seed}" --count 5000 --vectors 8
+          python3 scripts/native_fuzz.py --cake "${cake}" --seed "${seed}" --count "${COUNT}" --vectors "${VECTORS}"
       - name: Keep what it found
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -172,7 +233,9 @@ jobs:
           path: |
             build/fuzz/minimized/
             build/fuzz/programs.json
+            build/fuzz/parser/
           if-no-files-found: ignore
+          retention-days: 90
 
   # The upstream files the semantics was transcribed from and the keyword table was
   # generated from must still be those files, the stored RFCs must still be what their

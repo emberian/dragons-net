@@ -583,6 +583,37 @@ class GeneratedOnStandIns(unittest.TestCase):
               self.assertRaisesRegex(lanes.LaneError, "together and on none alone")):
             native_fuzz.parsed_as_lowered("cake", records, {})
 
+    def test_the_contract_is_held_in_the_lanes_own_directory(self) -> None:
+        """The nightly run starts this lane on an empty build/, with no other lane before it: what
+        the parser compiles, for the run, for the reducer and for a kept case, goes under the lane's
+        own directory, made when missing, and the parser lane's directory is not touched."""
+        tree = {"name": "dn_0", "source": "export fun dn_0() {\n  return 1;\n}\n", "params": [],
+                "body": [["return", ["Const", 1]]]}
+        case = {"program": {"name": "dn_0", "params": [], "body": [["return", 1]]},
+                "plan": {"params": [], "entries": []}, "vector": {"data": {}, "fill": [0, 0]}}
+
+        def replay(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            # The stand-in parser below reads only dn_0, so these renamed programs disagree with it.
+            return [{"name": c["program"]["name"], "source": tree["source"],
+                     "tree": {**tree, "name": c["program"]["name"]}, "program": c["program"], "plan": c["plan"],
+                     "vectors": [{**c["vectors"][0], "result": 1, "changed": []}]} for c in cases]
+
+        with tempfile.TemporaryDirectory() as temp:
+            cake = Path(temp) / "cake"
+            cake.write_text("#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '# initial pancake program' "
+                            "'(func 1 main () (return (Const 0x0)))' '(func 1 dn_0 () (return (Const 0x1)))'\n")
+            cake.chmod(0o755)
+            fuzz, parser = Path(temp) / "fuzz", Path(temp) / "parser"
+            with (mock.patch.multiple(native_fuzz, OUT=fuzz, replay=replay),
+                  mock.patch.object(native_fuzz.contract, "OUT", parser)):
+                self.assertEqual(native_fuzz.parsed_as_lowered(str(cake), [{"name": "dn_0", "tree": tree}], {}), 1)
+                self.assertEqual(native_fuzz.parser_failure(str(cake))([case]), [True])
+                kept = native_fuzz.fixture("parser", "p", case, case, {}, {"asked": 1}, cake=str(cake))
+            self.assertIn("nobody printed", kept["parser"])
+            self.assertEqual(sorted(p.name for p in (fuzz / "parser").iterdir()),
+                             ["fixture-0.pnk", "fuzz-0-0.pnk", "reduce-0.pnk"])
+            self.assertFalse(parser.exists())
+
 
 class Lanes(unittest.TestCase):
     """What every native lane shares: how it ends and what its report says."""

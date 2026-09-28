@@ -202,6 +202,54 @@ class CheckScript(unittest.TestCase):
         # A job added or renamed here is a job the verify lane stops requiring.
         self.assertEqual(verify_run.REQUIRED_JOBS, tuple(jobs))
 
+    def test_native_lanes_run_all_or_the_named_ones(self) -> None:
+        """Without names every lane runs in its order; with names only those, in the order named; a
+        lane that fails stops the run with its status; a misspelt name is refused before any lane
+        runs, or it would run nothing and pass."""
+        scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
+                   "parser_contract.py": "parser", "native_fuzz.py": "fuzz"}
+        with tempfile.TemporaryDirectory() as temp:
+            tree, ran = Path(temp), Path(temp) / "ran"
+            (tree / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/native_lanes.sh", tree / "scripts")
+            for name, lane in scripts.items():
+                (tree / "scripts" / name).write_text(
+                    f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
+                    f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
+
+            def lanes(*names: str, failing: str = "") -> tuple[int, str, list[str]]:
+                ran.unlink(missing_ok=True)
+                done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
+                                      env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing},
+                                      capture_output=True, check=False, timeout=60)
+                return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
+
+            self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
+                                              "entry check --cake /pinned/cake", "parser --cake /pinned/cake",
+                                              "fuzz --cake /pinned/cake"]))
+            # Each lane's output is also kept, under its own name.
+            for lane in scripts.values():
+                self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")
+            self.assertEqual(lanes("parser", "native"), (0, "", ["parser --cake /pinned/cake",
+                                                                 "native --cake /pinned/cake"]))
+            self.assertEqual(lanes(failing="baseline"), (3, "", ["native --cake /pinned/cake",
+                                                                 "baseline --cake /pinned/cake"]))
+            status, said, run_lanes = lanes("native", "parsre")
+            self.assertEqual((status, run_lanes), (2, []))
+            self.assertIn("no lane named 'parsre'", said)
+
+    def test_every_native_lane_also_runs_alone(self) -> None:
+        """CI runs the native lanes one after another in one checkout, where a lane can lean on what
+        an earlier one left in build/; the nightly run starts each on a fresh machine, always."""
+        [listed] = re.findall(r"^lanes=\(([a-z ]+)\)$", (ROOT / "scripts/native_lanes.sh").read_text(),
+                              re.MULTILINE)
+        nightly = (ROOT / ".github/workflows/scheduled.yml").read_text()
+        [job] = re.findall(r"^  lanes-alone:\n(.*?)\n\n", nightly, re.MULTILINE | re.DOTALL)
+        [alone] = re.findall(r"^        lane: \[([a-z, ]+)\]$", job, re.MULTILINE)
+        self.assertEqual(alone.split(", "), listed.split())
+        self.assertIn('run: bash scripts/native_lanes.sh "${LANE}"', job)
+        self.assertNotIn("if:", job)
+
     def test_checkers_cover_what_decides_the_checks(self) -> None:
         """The tests stage runs code from the change; what it may not change is this."""
         function = re.search(r"^checkers\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)

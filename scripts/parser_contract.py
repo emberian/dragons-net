@@ -179,7 +179,9 @@ def parsed(cake: str, source: str, path: Path, *, warnings: bool = True) -> dict
     """The functions the parser of `cake` built from `source`, in canonical form. A printed
     program has to compile without a diagnostic. A cell of the table only has to parse: the
     compiler still warns about its loads from a literal address, and those warnings are beside
-    what the cell asks, so for a cell they are not failures (they are not silenced either)."""
+    what the cell asks, so for a cell they are not failures (they are not silenced either).
+    The source is kept in `path`, whose directory is made here if it is missing."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source)
     try:
         text = lanes.pancake(cake, path, explore=True, warnings=warnings).decode()
@@ -233,11 +235,12 @@ def batches(programs: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return groups
 
 
-def compare(cake: str, programs: list[dict[str, Any]], tag: str, *, warnings: bool = True) -> int:
-    """How many functions matched; any difference raises."""
+def compare(cake: str, programs: list[dict[str, Any]], tag: str, *, out: Path, warnings: bool = True) -> int:
+    """How many functions matched; any difference raises. What is compiled is kept in `out`, the
+    directory of the lane that asks."""
     matched = 0
     for index, group in enumerate(batches(programs)):
-        trees = parsed(cake, "\n".join(p["source"] for p in group), OUT / f"{tag}-{index}.pnk",
+        trees = parsed(cake, "\n".join(p["source"] for p in group), out / f"{tag}-{index}.pnk",
                        warnings=warnings)
         if trees.pop("main", None) != ADDED_MAIN:
             raise ContractError(f"{tag}-{index}: the parser's program lacks the `main` the compiler adds")
@@ -266,7 +269,7 @@ def variant(programs: list[dict[str, Any]], old: str, new: str) -> list[dict[str
 
 def refused(cake: str, programs: list[dict[str, Any]], message: str, tag: str) -> None:
     try:
-        compare(cake, programs, tag)
+        compare(cake, programs, tag, out=OUT)
     except ContractError as error:
         if message not in str(error):
             raise LaneError(f"the {tag} variant was refused for another reason: {error}") from error
@@ -278,10 +281,10 @@ def cells_hold(cake: str, cells: list[dict[str, Any]], tag: str) -> int:
     """Hold the parser to every cell of the precedence table, both ways."""
     allowed = [cell["tree"] for cell in cells if cell["reads"]]
     if allowed:
-        compare(cake, allowed, f"{tag}-cells", warnings=False)
+        compare(cake, allowed, f"{tag}-cells", out=OUT, warnings=False)
     for index, cell in enumerate(c for c in cells if not c["reads"]):
         try:
-            compare(cake, [cell["tree"]], f"{tag}-cell-{index}", warnings=False)
+            compare(cake, [cell["tree"]], f"{tag}-cell-{index}", out=OUT, warnings=False)
         except ContractError as error:
             if PARSE_ERROR in str(error) or MISREAD in str(error):
                 continue
@@ -321,7 +324,7 @@ def contract(compilers: list[tuple[str, str]]) -> Report:
                 ([{**programs[0], "source": programs[0]["source"] + EXTRA}], "nobody printed", "extra")]
     results = []
     for tag, cake in compilers:
-        matched = compare(cake, programs, tag)
+        matched = compare(cake, programs, tag, out=OUT)
         for changed, message, name in variants:
             refused(cake, changed, message, f"{tag}-{name}")
         held = cells_hold(cake, cells, tag)
