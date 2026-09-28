@@ -75,14 +75,19 @@ most 30 s in all, at most 5 s of silence).
   address of its source.
 - HEAD and STAT, against a store that is empty until
   [#17](https://github.com/emberian/dragons-net/issues/17): `412` to a number or to no argument,
-  since no group can be selected; `430` to a message-id; `501` to anything that is neither.
+  since no group can be selected; `430` to a message-id; `501` to anything that is neither. A
+  number is one to sixteen digits of value at most 2,147,483,647 (§6, §9.8), zero included, as
+  INN takes it; a message-id has the form of §9.8: `<`, one to 248 printable octets other than
+  `>`, then `>`. CAPABILITIES answers an argument that is a keyword of §9.8 as if there were none,
+  and anything else with `501`.
   With them the slice answers every mandatory command of RFC 3977, so `VERSION 2` is not a false
   claim.
 - QUIT: `205`, after which the connection closes; input after the QUIT is not answered.
 - Anything else is `500`. The order of the checks is: an empty or white-space-only line is
   ignored, as INN does; a line whose first word is not a command the server has is `500`,
   whatever else is wrong with it; a line naming such a command that is malformed in any way —
-  bytes it may not contain, arguments it does not take, too long — is `501`.
+  bytes it may not contain, arguments it does not take, too long — is `501`. An overlong line is
+  never ignored, since only its first octets are kept: with no word among them it is `500`.
 - Pipelined commands are answered in order, one response per command.
 
 ### How input is framed
@@ -92,7 +97,8 @@ most 30 s in all, at most 5 s of silence).
   INN, a bare LF therefore ends the line without making it a command, so no command is ever taken
   from a line the standard does not allow, and the answer is still given at once.
 - Leading and trailing spaces and TABs are ignored, as INN ignores them, and so is case in
-  keywords; words are separated by spaces and TABs.
+  keywords; words are separated by spaces and TABs, so a byte such as NUL joined to a keyword makes
+  another word.
 - A line longer than 512 octets with its line end is not kept: the program keeps enough of it to
   know its first word, drops the rest up to the LF, and answers it by the rule above. The
   connection stays open, so the answers stay aligned with the commands.
@@ -110,7 +116,7 @@ most 30 s in all, at most 5 s of silence).
 | arguments | 497 octets | RFC 3977 §3.1 |
 | message-id | 250 octets | INN `NNTP_MAXLEN_MSGID` |
 | first command after the greeting | 10 s | INN `initialtimeout`; RFC 3977 §3.1 allows it |
-| inactivity: no command received and no output taken | 1800 s | INN `clienttimeout`; RFC 3977 asks for at least 180 |
+| inactivity: no command answered and no output taken | 1800 s | INN `clienttimeout`; RFC 3977 asks for at least 180 |
 | one command line, from its first octet to its line end | 180 s | ours: a deadline bytes do not renew, no shorter than RFC 3977's minimum |
 | closing after QUIT | 30 s in all, 5 s of silence | nginx `lingering_time`, `lingering_timeout` |
 | connections | 64 | ours, for the slice; set at build time |
@@ -125,9 +131,10 @@ per client belong with the operational limits of
 Backpressure: while a connection has output the kernel has not taken, the program asks the host
 not to read from it, and processes no further command already received from it. When the output
 is taken, the program resumes: it first answers the commands it holds, then asks for input again.
-The command-line deadline runs only while the program is waiting for the rest of a line; the
-inactivity deadline counts output taken as activity, so a client that reads slowly is not closed
-while it reads, and one that stops reading is closed when the inactivity deadline passes.
+The command-line deadline runs from when the program begins reading a line, and only while it is
+waiting for the rest of that line; the inactivity deadline counts output taken as activity, so a
+client that reads slowly is not closed while it reads, and one that stops reading is closed when
+the inactivity deadline passes.
 
 After a QUIT, the host sends the 205, shuts down the sending side, reads and drops what still
 arrives, and closes when the client closes or the lingering limits pass. When the client shuts
@@ -149,10 +156,12 @@ limit and a generation the host increases each time it gives the index to a new 
 - `@dn_emit` hands the host a batch of actions and the earliest deadline the program is waiting
   for, in the same clock (none when zero), which the host uses as its `poll` timeout. Per
   connection there is at most one action per batch, so bytes cannot be reordered: send these
-  bytes, then say whether to read from the connection; close gracefully (after QUIT); or close at
-  once. For a send, the host writes back into the same array how much the kernel took at once.
-  What it did not take stays with the program, which sends it again when a later batch reports the
-  connection ready to write.
+  bytes, then say whether to read from the connection; close gracefully (after QUIT or the end
+  of input, once everything sent was taken); or close at once. The host reads from the connection
+  only once everything the send carried was taken, and reports input from a connection at most
+  once a batch. For a send, the host writes back into the same array how much the kernel took at
+  once. What it did not take stays with the program, which sends it again when a later batch
+  reports the connection ready to write.
 - The host knows sockets and the clock and nothing of the protocol. It gives out what one `poll`
   reported before polling again; polls a connection for input only while the program asks for
   input from it; stops polling the listening socket while every index is in use; receives and

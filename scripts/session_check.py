@@ -1,0 +1,569 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The session (`DN.News.SessionSpec`), driven by a simulated host and judged by `session_ref`.
+
+A scenario is a set of clients: when each connects, what it sends and when, how much of what it is
+sent it takes at once and how soon it takes more, when it stops taking for a while, and when it
+shuts down its side or resets. The simulated host does what docs/decisions/0003-nntp-slice.md asks
+of the real one: it gives each connection the lowest free index and the next generation of it, holds
+back connections while every index is in use, reads from a connection only while the program's last
+action asked to and everything it carried was taken, reports at most one input a connection a batch
+and at most 512 bytes of it, reports a connection ready to write once the client takes more of what
+it left, reports the end of input once the client's bytes are all read, takes the connections in
+turn when more than a batch has something to report, and runs the next turn at the time the program
+asked for or at once when anything waits to be reported. In some scenarios it also repeats the close
+of a connection once its index serves another, which the program has to leave alone. `dn-compiler session-model`
+answers the turns a line at a time.
+
+Every trace has to be one `session_ref.judge` accepts, and every scenario has to end with each
+connection closed. Hosts that break the contract are answered with the code of the breach. Each rule
+of the session broken in the model (`DN.News.SessionMutant`) has to be caught by the judge on some
+scenario, and each defect planted in a recorded trace by the judge's check for it.
+"""
+from __future__ import annotations
+
+import argparse
+from collections.abc import Callable, Iterator
+import copy
+from dataclasses import dataclass, field
+import itertools
+from pathlib import Path
+import queue
+import subprocess
+import sys
+import threading
+from typing import IO, Self
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lanes  # the path above is what makes these importable
+from lanes import LaneError, Report
+import session_ref as ref
+from session_ref import Action, Event, Turn, Violation
+
+REVISION, SOURCE = b"0123abc", b"https://example.org/dragons-net"
+GREETING = len(ref.texts(REVISION, SOURCE)["greeting"])
+BATCH, TURNS, TIMEOUT = 16, 20_000, 60
+# The rules `DN.News.SessionMutant` breaks, by the name `dn-compiler session-model --mutant` takes.
+MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-renewed", "blank-counts",
+           "first-not-cleared", "read-not-resumed", "no-greeting", "stale-applied", "end-ignored",
+           "resend-anytime", "wake-early", "answer-while-busy", "quit-tail")
+
+
+class Unfinished(LaneError):
+    """A scenario that could not run to its end, with the turns it had."""
+
+    def __init__(self, message: str, trace: list[Turn]) -> None:
+        super().__init__(message)
+        self.trace = trace
+
+
+@dataclass
+class Client:
+    opens: int
+    sends: list[tuple[int, bytes]] = field(default_factory=list)
+    shut: int | None = None
+    reset: int | None = None
+    # the most bytes of one send it takes, from `slow` on, and how long it takes to take more
+    take: int | None = None
+    slow: int = 0
+    pace: int = 1
+    # it takes nothing from the first time to the second
+    pause: tuple[int, int] = (0, 0)
+
+    def stream(self, now: int) -> bytes:
+        return b"".join(data for at, data in self.sends if at <= now)
+
+    def paused(self, now: int) -> bool:
+        return self.pause[0] <= now < self.pause[1]
+
+    def takes(self, now: int, length: int) -> int:
+        if self.paused(now):
+            return 0
+        return length if self.take is None or now < self.slow else min(length, self.take)
+
+    def ready_at(self, now: int) -> int:
+        """When it takes more after leaving part of a send."""
+        return max(now + self.pace, self.pause[1]) if self.paused(now + self.pace) else now + self.pace
+
+
+@dataclass
+class Link:
+    client: Client
+    idx: int
+    gen: int
+    read: int = 0
+    reading: bool = False
+    unsent: bool = False
+    ready: int = 0
+    ended: bool = False
+
+    def asked(self) -> bool:
+        return self.reading and not self.unsent
+
+
+class Model:
+    """`dn-compiler session-model`, a line at a time, with a bound on every wait."""
+
+    def __init__(self, mutant: str | None = None) -> None:
+        command = [str(lanes.DN_COMPILER), "session-model", *(["--mutant", mutant] if mutant else [])]
+        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+        # A reader thread, so that every wait for an answer can be bounded; "" marks the end.
+        self.lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=self.read, args=(self.pipe(self.proc.stdout),), daemon=True).start()
+        self.say(f"identity {REVISION.hex()} {SOURCE.hex()}")
+
+    def read(self, stream: IO[str]) -> None:
+        for line in stream:
+            self.lines.put(line)
+        self.lines.put("")
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait(timeout=TIMEOUT)
+
+    def pipe(self, stream: IO[str] | None) -> IO[str]:
+        if stream is None:
+            raise LaneError("the model has no pipe")
+        return stream
+
+    def say(self, line: str) -> None:
+        self.pipe(self.proc.stdin).write(line + "\n")
+
+    def hear(self) -> list[str]:
+        self.pipe(self.proc.stdin).flush()
+        try:
+            line = self.lines.get(timeout=TIMEOUT)
+        except queue.Empty:
+            raise LaneError(f"the model gave no answer in {TIMEOUT} s") from None
+        if not line:
+            raise LaneError(f"the model stopped answering (status {self.proc.wait(timeout=TIMEOUT)})")
+        return line.rstrip("\n").split(" ")
+
+    def turn(self, now: int, events: list[Event]) -> list[Action] | int:
+        self.say(f"turn {now}")
+        for e in events:
+            self.say(" ".join([e[0], str(e[1]), str(e[2]), *([e[3].hex() or "-"] if len(e) > 3 else [])]))
+        self.say("go")
+        actions: list[Action] = []
+        while (words := self.hear()) != ["done"]:
+            match words:
+                case ["stop", code]:
+                    return int(code)
+                case ["send", idx, gen, data, read]:
+                    actions.append(("send", int(idx), int(gen), b"" if data == "-" else bytes.fromhex(data),
+                                    read == "1"))
+                case ["graceful" | "close" as kind, idx, gen]:
+                    actions.append((kind, int(idx), int(gen)))
+                case _:
+                    raise LaneError(f"the model answered {' '.join(words)}")
+        return actions
+
+    def settle(self, took: list[int]) -> int | str:
+        self.say(" ".join(["took", *map(str, took)]))
+        match self.hear():
+            case ["deadline", at]:
+                return int(at)
+            case ["stop", code]:
+                return f"stop {code}"
+            case words:
+                raise LaneError(f"the model answered {' '.join(words)} to what was taken")
+
+
+def run(clients: list[Client], mutant: str | None = None, ghosts: bool = False) -> list[Turn]:
+    """The turns of one scenario, as the simulated host lives them."""
+    trace: list[Turn] = []
+    with Model(mutant) as model:
+        try:
+            simulate(model, clients, ghosts, trace)
+        except LaneError as error:
+            raise Unfinished(str(error), trace) from None
+    return trace
+
+
+def simulate(model: Model, clients: list[Client], ghosts: bool, trace: list[Turn]) -> None:
+    links: dict[int, Link] = {}
+    gens = [0] * ref.CONNS
+    waiting = sorted(range(len(clients)), key=lambda k: clients[k].opens)
+    echoes: list[Event] = []
+    # the close of a connection gone, repeated once its index serves another
+    graves: dict[int, Event] = {}
+    now, start = 1, 0
+    for _ in range(TURNS):
+        events = echoes[:BATCH]
+        echoes = echoes[BATCH:]
+        cut = bool(echoes)
+        order = [(start + k) % ref.CONNS for k in range(ref.CONNS)]
+        start = (start + 1) % ref.CONNS
+        for idx in order:
+            if idx not in links:
+                continue
+            link = links[idx]
+            report = news(link, now)
+            if report is None:
+                continue
+            if len(events) == BATCH:
+                cut = True
+                break
+            events.append(report)
+            if report[0] == "closed":
+                del links[idx]
+                if ghosts:
+                    graves[idx] = ("closed", idx, link.gen)
+            elif report[0] == "recv":
+                link.read += len(report[3])
+            elif report[0] == "end":
+                link.ended = True
+        while waiting and clients[waiting[0]].opens <= now:
+            free = [i for i in range(ref.CONNS) if i not in links]
+            if not free or len(events) == BATCH:
+                break
+            idx = free[0]
+            gens[idx] += 1
+            links[idx] = Link(clients[waiting.pop(0)], idx, gens[idx])
+            events.append(("open", idx, gens[idx]))
+            if idx in graves:
+                echoes.append(graves.pop(idx))
+        answer = model.turn(now, events)
+        if isinstance(answer, int):
+            raise LaneError(f"the model stopped with code {answer} on a host that kept the contract")
+        took = []
+        for action in answer:
+            target = links.get(action[1])
+            if target is None or target.gen != action[2]:
+                raise LaneError(f"an action for {action[1]}/{action[2]}, which the host does not hold")
+            if action[0] == "send":
+                data = action[3]
+                k = target.client.takes(now, len(data))
+                took.append(k)
+                target.unsent = k < len(data)
+                target.ready = target.client.ready_at(now)
+                target.reading = action[4]
+            else:
+                del links[action[1]]
+                if ghosts:
+                    graves[action[1]] = ("closed", action[1], action[2])
+        deadline = model.settle(took)
+        if isinstance(deadline, str):
+            raise LaneError(f"the model answered {deadline} to what the host took")
+        trace.append(Turn(now, events, answer, took, deadline))
+        if not links and not waiting and not echoes:
+            return
+        now = next_time(now, deadline, links, clients, waiting, cut or bool(echoes))
+    raise LaneError(f"the scenario had not ended after {TURNS} turns, at {now}")
+
+
+def news(link: Link, now: int) -> Event | None:
+    """What the host has to report of a connection at `now`, if anything."""
+    c = link.client
+    if c.reset is not None and c.reset <= now:
+        return ("closed", link.idx, link.gen)
+    if link.unsent:
+        return ("writable", link.idx, link.gen) if now >= link.ready else None
+    if link.asked():
+        stream = c.stream(now)
+        if link.read < len(stream):
+            return ("recv", link.idx, link.gen, stream[link.read:link.read + ref.CHUNK])
+        if c.shut is not None and c.shut <= now and not link.ended and link.read == len(c.stream(c.shut)):
+            return ("end", link.idx, link.gen)
+    return None
+
+
+def next_time(now: int, deadline: int, links: dict[int, Link], clients: list[Client], waiting: list[int],
+              pending: bool) -> int:
+    """When the host's next turn comes: at once if something waits to be reported, else the
+    program's deadline or the first thing that happens."""
+    free = len(links) < ref.CONNS
+    if pending or (deadline and deadline <= now) or (waiting and free and clients[waiting[0]].opens <= now):
+        return now
+    if any(news(link, now) is not None for link in links.values()):
+        return now
+    times = [deadline] if deadline else []
+    times += [clients[k].opens for k in waiting] if free else []
+    for link in links.values():
+        c = link.client
+        times += [t for t in (c.reset, c.shut) if t is not None]
+        if link.unsent:
+            times.append(link.ready)
+        elif link.asked():
+            times += [at for at, _ in c.sends]
+    later = [t for t in times if t > now]
+    if not later:
+        raise LaneError(f"nothing left to happen after {now}, with connections open")
+    return min(later)
+
+
+def ascii_lines(*lines: str) -> bytes:
+    return b"".join(line.encode() + b"\r\n" for line in lines)
+
+
+CASES = ("CAPABILITIES", "capabilities foo", "CAPABILITIES 1x", "CAPABILITIES ab", "HELP", "hElP",
+         "HELP x", "QUIT x", "\tHEAD\t", "HEAD", "HEAD 0", "HEAD 05", "HEAD 2147483647", "HEAD 2147483648",
+         "HEAD 99999999999999999999", "HEAD 00000000000000001", "HEAD +5", "HEAD -1", "HEAD 12abc",
+         "HEAD <a@b>", "HEAD <a b>", "HEAD <>", "HEAD <a>b>", "HEAD <a@b> extra", "STAT", "STAT 1",
+         "STAT <x@y>", "STAT z", "MODE READER", "XY", "LIST", "", "  \t ")
+TRANSCRIPT = ascii_lines("CAPABILITIES", "help", "", "HEAD <a@b>", "STAT 12abc", "QUIT", "HELP")
+HELP = ascii_lines("HELP")
+Scenario = tuple[str, list[Client], bool]
+
+
+def scenarios() -> Iterator[Scenario]:
+    yield "commands", [Client(1, [(5, ascii_lines(*CASES, "QUIT"))])], False
+    for at in range(1, len(TRANSCRIPT)):
+        yield f"cut at {at}", [Client(1, [(5, TRANSCRIPT[:at]), (9, TRANSCRIPT[at:])])], False
+    yield "a byte at a time", [Client(1, [(5 + k, TRANSCRIPT[k:k + 1]) for k in range(len(TRANSCRIPT))])], False
+    for take in (1, 7, 60):
+        yield f"a reader taking {take}", [Client(1, [(5, TRANSCRIPT)], take=take)], False
+    yield "a reader that waits", [Client(1, [(5, TRANSCRIPT)], pause=(0, 5_000))], False
+    yield "a long pipeline", [Client(1, [(5, ascii_lines(*["HELP", "STAT 1"] * 40, "QUIT"))], take=100)], False
+    odd = (b"\n", b" \t\n", b"HELP\n", b"HELP\0\r\n", b"HE\rLP\r\n", b"FOO\n", b"\0\r\n",
+           b"HELP " + b"x" * 600 + b"\r\n", b"FOO" + b"x" * 600 + b"\r\n", b" " * 700 + b"\r\n",
+           b"HEAD " + b"1" * 505 + b"\r\n", b"HEAD " + b"1" * 506 + b"\r\n", b"QUIT\r\n")
+    yield "odd lines", [Client(1, [(5, b"".join(odd))])], False
+    yield "a QUIT and more", [Client(1, [(5, ascii_lines("QUIT", "HELP")), (9, HELP)])], False
+    yield "input ending mid-line", [Client(1, [(5, b"HELP\r\nCAPAB")], shut=9)], False
+    yield "input ending at once", [Client(1, [], shut=3)], False
+    yield "input ending after commands", [Client(1, [(5, ascii_lines("HELP", "STAT"))], shut=5, take=9)], False
+    yield "input ending with a line begun and output untaken", [
+        Client(1, [(5, b"HELP\r\nHE")], shut=6, take=10, slow=5, pace=60_000)], False
+    yield "no first command", [Client(1)], False
+    yield "only empty lines", [Client(1, [(5 + 1_000 * k, b"\r\n") for k in range(15)])], False
+    yield "a first command just in time", [Client(1, [(10_000, ascii_lines("HELP", "QUIT"))])], False
+    yield "a first command too late", [Client(1, [(10_001, HELP)])], False
+    yield "silence after a command", [Client(1, [(5, HELP)])], False
+    yield "empty lines after a command", [
+        Client(1, [(5, HELP)] + [(60_000 * k, b"\r\n") for k in range(1, 40)])], False
+    yield "a command just before the inactivity deadline", [Client(1, [(5, HELP), (1_800_004, HELP)])], False
+    yield "a command at the inactivity deadline", [Client(1, [(5, HELP), (1_800_005, HELP)])], False
+    yield "a reader slower than the inactivity deadline", [
+        Client(1, [(5, HELP)], take=10, slow=5, pace=600_000)], False
+    yield "a reader that stops reading", [Client(1, [(5, HELP)], pause=(5, 10 ** 9))], False
+    yield "an unfinished line", [Client(1, [(5, b"HELP\r\nHEL")])], False
+    yield "a line finished just in time", [Client(1, [(5, HELP), (10, b"HEL"), (180_009, b"P\r\n")])], False
+    yield "a line finished too late", [Client(1, [(5, HELP), (10, b"HEL"), (180_010, b"P\r\n")])], False
+    yield "a line a byte a minute", [Client(1, [(5, HELP)] + [(6 + 60_000 * k, b"H") for k in range(5)])], False
+    yield "a line begun while output is untaken", [
+        Client(1, [(5, b"HELP\r\nHE")], take=10, slow=5, pace=60_000)], False
+    yield "a reset", [Client(1, [(5, HELP)], reset=6, take=10)], False
+    yield "a crowd", [Client(1 + k % 3, [(5, ascii_lines("HELP", "QUIT"))], take=None if k % 2 else 50)
+                      for k in range(70)], False
+    yield "seventy clients holding sixty-four connections", [Client(1, [(5, HELP)]) for _ in range(70)], False
+    yield "ghosts of closed connections", [
+        Client(1 + k, [(5 + k, ascii_lines("HELP", "QUIT"))], reset=7 if k % 3 == 0 else None, take=30)
+        for k in range(12)] + [Client(20 + k, [(30, HELP)]) for k in range(12)], True
+    yield "a slow reader among busy ones", [Client(1, [(5, HELP)], take=5, slow=5, pace=1_000)] + [
+        Client(1, [(5 + 7 * k, HELP) for k in range(30)]) for _ in range(3)], False
+
+
+def breaches() -> Iterator[tuple[str, list[str], int]]:
+    """Scripts a host breaks the contract in, and the code the model has to stop with."""
+    begin = ["turn 1", "open 0 1", "go", f"took {GREETING}"]
+    yield "more events than a batch", ["turn 1", *[f"open {k} 1" for k in range(17)], "go"], 1
+    yield "more bytes than a chunk", [*begin, "turn 2", "recv 0 1 " + "41" * 513, "go"], 2
+    yield "an index past the table", ["turn 1", "open 64 1", "go"], 3
+    yield "input before the greeting was taken", ["turn 1", "open 0 1", "go", "took 0", "turn 2",
+                                                  "recv 0 1 41", "go"], 4
+    yield "two inputs in one batch", [*begin, "turn 2", "recv 0 1 41", "recv 0 1 41", "go"], 4
+    yield "bytes and the end of input in one batch", [*begin, "turn 2", "recv 0 1 41", "end 0 1", "go"], 4
+    yield "more taken than sent", ["turn 1", "open 0 1", "go", f"took {GREETING + 1}"], 5
+    yield "a count for no send", ["turn 1", "go", "took 1"], 5
+    yield "an index opened twice", [*begin, "turn 2", "open 0 2", "go"], 6
+    yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
+
+
+def check_breach(script: list[str], code: int) -> None:
+    with Model() as model:
+        for line in script:
+            model.say(line)
+        model.pipe(model.proc.stdin).close()
+        model.proc.wait(timeout=TIMEOUT)
+        out = []
+        while line := model.lines.get(timeout=TIMEOUT):
+            out.append(line.rstrip("\n"))
+        if f"stop {code}" not in out:
+            raise LaneError(f"the model answered {out[-3:]}, not stop {code}")
+
+
+def sends(trace: list[Turn]) -> list[tuple[Turn, int, int]]:
+    """Each send of a trace: its turn, its place among the turn's actions, and among its sends."""
+    found = []
+    for t in trace:
+        places = [k for k, a in enumerate(t.actions) if a[0] == "send"]
+        found += [(t, k, n) for n, k in enumerate(places)]
+    return found
+
+
+def replies(trace: list[Turn]) -> list[tuple[Turn, int, int]]:
+    return [(t, k, n) for t, k, n in sends(trace) if t.actions[k][3][:3].isdigit()]
+
+
+def swap_replies(trace: list[Turn]) -> None:
+    (t1, k1, n1), (t2, k2, n2) = next((a, b) for a, b in itertools.pairwise(replies(trace)[1:])
+                                      if a[0].actions[a[1]][3] != b[0].actions[b[1]][3])
+    a1, a2 = t1.actions[k1], t2.actions[k2]
+    t1.actions[k1], t2.actions[k2] = (*a1[:3], a2[3], *a1[4:]), (*a2[:3], a1[3], *a2[4:])
+    t1.took[n1], t2.took[n2] = len(a2[3]), len(a1[3])
+
+
+def double_reply(trace: list[Turn]) -> None:
+    t, k, n = replies(trace)[1]
+    a = t.actions[k]
+    t.actions[k] = (*a[:3], a[3] * 2, *a[4:])
+    t.took[n] = len(a[3]) * 2
+
+
+def change_byte(trace: list[Turn]) -> None:
+    t, k, _ = replies(trace)[2]
+    a = t.actions[k]
+    t.actions[k] = (*a[:3], a[3][:-3] + b"X" + a[3][-2:], *a[4:])
+
+
+def read_early(trace: list[Turn]) -> None:
+    t, k, _ = next(s for s in replies(trace) if not s[0].actions[s[1]][4])
+    t.actions[k] = (*t.actions[k][:4], True)
+
+
+def answer_before_taken(trace: list[Turn]) -> None:
+    t, k, _ = next(s for s in sends(trace) if s[0].actions[s[1]][3] and not s[0].actions[s[1]][3][:3].isdigit())
+    later = next(s for s in replies(trace) if s[0].now > t.now)
+    t.actions[k] = (*t.actions[k][:3], later[0].actions[later[1]][3], *t.actions[k][4:])
+
+
+def resend_early(trace: list[Turn]) -> None:
+    for t, u in itertools.pairwise(trace):
+        for _, k, n in sends([t]):
+            a = t.actions[k]
+            quiet = not any(e[1] == a[1] for e in u.events) and not any(b[1] == a[1] for b in u.actions)
+            if t.took[n] < len(a[3]) and quiet:
+                u.actions.append(("send", a[1], a[2], a[3][t.took[n]:], a[4]))
+                u.took.append(0)
+                return
+    raise LaneError("no connection left waiting for the host to plant a defect on")
+
+
+def close_early(trace: list[Turn]) -> None:
+    t = trace[1]
+    t.actions = [("close", *t.actions[0][1:3])]
+    t.took = []
+
+
+def no_close(trace: list[Turn]) -> None:
+    t = next(t for t in trace if any(a[0] == "close" for a in t.actions))
+    t.actions = [a for a in t.actions if a[0] != "close"]
+
+
+def graceful_early(trace: list[Turn]) -> None:
+    t = next(t for t in trace if any(e[0] == "recv" for e in t.events))
+    t.actions = [("graceful", *t.actions[0][1:3])]
+    t.took = []
+
+
+def graceful_untaken(trace: list[Turn]) -> None:
+    t, _, n = next(s for s in sends(trace) if s[0].actions[s[1]][3] == b"205 Bye\r\n")
+    t.took[n] = 3
+    t.deadline = t.now + ref.INACTIVITY
+
+
+def late_turn(trace: list[Turn]) -> None:
+    t = next(t for t in trace if t.deadline == t.now)
+    t.deadline = t.now + 1
+
+
+def early_turn(trace: list[Turn]) -> None:
+    t = next(t for t in trace if t.deadline > t.now + 1)
+    t.deadline -= 1
+
+
+def no_greeting(trace: list[Turn]) -> None:
+    t = trace[0]
+    t.actions, t.took = [], []
+
+
+def stranger(trace: list[Turn]) -> None:
+    trace[1].actions.append(("send", 9, 1, b"", True))
+    trace[1].took.append(0)
+
+
+# Defects planted in a recorded trace: (name, scenario, the kind of violation, the change).
+Plant = Callable[[list[Turn]], None]
+PLANTS: list[tuple[str, str, str, Plant]] = [
+    ("replies out of order", "commands", "order", swap_replies),
+    ("a reply twice in one send", "commands", "whole", double_reply),
+    ("a byte of a reply changed", "commands", "order", change_byte),
+    ("reading with a line unanswered", "a long pipeline", "read", read_early),
+    ("a reply before the last was taken", "a reader taking 7", "untaken", answer_before_taken),
+    ("output sent again before the host reported it ready", "a slow reader among busy ones", "unready",
+     resend_early),
+    ("a close with no deadline passed", "commands", "close", close_early),
+    ("no close at a deadline", "no first command", "missed", no_close),
+    ("a graceful close with lines unanswered", "input ending mid-line", "graceful-unanswered", graceful_early),
+    ("a graceful close before the 205 was taken", "a QUIT and more", "graceful-untaken", graceful_untaken),
+    ("the next turn late", "a long pipeline", "turn", late_turn),
+    ("the next turn early", "silence after a command", "turn", early_turn),
+    ("no greeting", "commands", "greeting", no_greeting),
+    ("an action for a connection not open", "commands", "stranger", stranger),
+]
+
+
+def caught(mutant: str, all_scenarios: list[Scenario]) -> str:
+    """The first scenario on which the judge refuses the session with `mutant` broken; a scenario
+    the broken session cannot finish is judged on the turns it had."""
+    for name, clients, ghosts in all_scenarios:
+        try:
+            trace = run(clients, mutant, ghosts)
+        except Unfinished as error:
+            trace = error.trace
+        try:
+            ref.judge(REVISION, SOURCE, trace)
+        except Violation as error:
+            return f"{name}: {error}"
+    raise LaneError(f"the judge accepted the session with {mutant} on every scenario")
+
+
+def check() -> Report:
+    all_scenarios = list(scenarios())
+    turns = 0
+    traces = {}
+    for name, clients, ghosts in all_scenarios:
+        trace = run(clients, None, ghosts)
+        try:
+            ref.judge(REVISION, SOURCE, trace)
+        except Violation as error:
+            raise LaneError(f"scenario {name!r}: {error}") from None
+        traces[name] = trace
+        turns += len(trace)
+    for name, script, code in breaches():
+        try:
+            check_breach(script, code)
+        except LaneError as error:
+            raise LaneError(f"breach {name!r}: {error}") from None
+    mutants = {m: caught(m, all_scenarios) for m in MUTANTS}
+    planted = {}
+    for name, scenario, kind, plant in PLANTS:
+        trace = copy.deepcopy(traces[scenario])
+        plant(trace)
+        try:
+            ref.judge(REVISION, SOURCE, trace)
+        except Violation as error:
+            if error.kind != kind:
+                raise LaneError(f"the planted {name!r} was caught as {error.kind}, not {kind}: {error}") from None
+            planted[name] = str(error)
+            continue
+        raise LaneError(f"the planted {name!r} was not caught")
+    lanes.require_quoted({"docs/baseline.md": [f"{len(traces)} scenarios and {turns:,} turns"]})
+    return Report("checked", None, [], {"scenarios": len(traces), "turns": turns,
+                                        "breaches": sum(1 for _ in breaches()), "mutants_caught": mutants,
+                                        "planted_defects_caught": planted})
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args()
+    lanes.lane_main("SESSION", lanes.ROOT / "build/session", check)
+
+
+if __name__ == "__main__":
+    main()

@@ -168,7 +168,7 @@ class CheckScript(unittest.TestCase):
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
-                          "python3 scripts/state_check.py"],
+                          "python3 scripts/state_check.py", "python3 scripts/session_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):

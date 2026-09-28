@@ -7,21 +7,49 @@ import DN.Compiler.GenCorpus
 import DN.Dsl.Example
 import DN.Printed
 import DN.News.FrameModel
+import DN.News.SessionModel
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
-with its host, the differential fixtures, the programs and
-precedence cells the parser contract compares, generated programs and their recorded cases, and
-the corpus of stopping states. Printing is not a correctness certificate: see docs/assurance.md
-for the remaining connections. -/
+with its host, runs the framing and session models, prints the differential fixtures, the programs
+and precedence cells the parser contract compares, generated programs and their recorded cases,
+and the corpus of stopping states. Printing is not a correctness certificate: see
+docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
 
 private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
-   "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model", "emit-layout",
-   "emit-reply-cases", "emit-baseline",
+   "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
+   "session-model [--mutant NAME]", "emit-layout", "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
+
+/-- The most lines `session-model` reads. -/
+private def sessionLines : Nat := 100000000
+
+/-- Turns on standard input, answered a line at a time by `DN.News.SessionSpec` or by one of its
+mutants, so that a host simulator can decide each batch from the answers to the last. -/
+private def sessionModel (mutant : DN.News.SessionMutant.Mutant) : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  let mut m : DN.News.SessionModel.Model := { mutant }
+  for _ in [0:sessionLines] do
+    let line ← stdin.getLine
+    if line.isEmpty then
+      if m.atRest then return 0
+      IO.eprintln "error: the input ended inside a turn"
+      return 2
+    match DN.News.SessionModel.step m line.trimAsciiEnd.toString with
+    | .error e =>
+      IO.eprintln ("error: " ++ e)
+      return 2
+    | .ok (m', answer) =>
+      m := m'
+      unless answer.isEmpty do
+        stdout.putStr answer
+        stdout.flush
+  IO.eprintln "error: more lines than the model reads"
+  return 2
 
 private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 
@@ -40,9 +68,15 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["emit-layout"] => output (.ok DN.Server.Layout.header)
   | ["frame-model"] =>
-    -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven to run.
+    -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven
+    -- to run.
     let input ← (← IO.getStdin).readToEnd
     output (DN.News.FrameModel.runAll input)
+  | ["session-model"] => sessionModel .none
+  | ["session-model", "--mutant", name] =>
+    match DN.News.SessionMutant.names.lookup name with
+    | some m => sessionModel m
+    | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
   | ["emit-reply-cases"] => output (.ok DN.Dsl.Example.cases.compress)
   | ["emit-baseline"] => output (Baseline.fixture.map (·.compress))
   | ["emit-trees"] =>

@@ -118,7 +118,8 @@ def compilerModules : Array Name :=
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
     `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.Printed,
     `DN.Server.Layout, `DN.Server.Skeleton, `DN.News.FrameSpec, `DN.News.Framer,
-    `DN.News.FramerCode, `DN.News.FrameModel]
+    `DN.News.FramerCode, `DN.News.FrameModel, `DN.News.CommandSpec, `DN.News.SessionSpec,
+    `DN.News.SessionMutant, `DN.News.SessionModel]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
