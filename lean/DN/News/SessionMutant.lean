@@ -23,6 +23,8 @@ inductive Mutant
   | lineWhileBusy
   /-- output taken does not count as activity -/
   | idleNotRenewed
+  /-- a send of which nothing was taken counts as activity -/
+  | zeroTakeCounts
   /-- a line that gets no reply counts as a command -/
   | blankCounts
   /-- the first command does not clear its deadline -/
@@ -48,7 +50,8 @@ inductive Mutant
 def names : List (String × Mutant) :=
   [("line-renewed", .lineRenewed), ("no-line-deadline", .noLineDeadline),
    ("line-while-busy", .lineWhileBusy), ("idle-not-renewed", .idleNotRenewed),
-   ("blank-counts", .blankCounts), ("first-not-cleared", .firstNotCleared),
+   ("zero-take-counts", .zeroTakeCounts), ("blank-counts", .blankCounts),
+   ("first-not-cleared", .firstNotCleared),
    ("read-not-resumed", .readNotResumed), ("no-greeting", .noGreeting),
    ("stale-applied", .staleApplied), ("end-ignored", .endIgnored),
    ("resend-anytime", .resendAnytime), ("wake-early", .wakeEarly),
@@ -147,7 +150,7 @@ def actM (m : Mutant) (i : Identity) (now idx : Nat) (c : Conn) : Option Conn ×
 def turnM (m : Mutant) (i : Identity) (s : Server) (now : Nat) (events : List Event) :
     Except Breach (Server × List Action) := do
   if batch < events.length then throw .tooManyEvents
-  if now < s.clock then throw .clockBack
+  if now < s.clock || clockLimit ≤ now then throw .badClock
   let t ← events.foldlM (applyEventM m i now) s.table
   let results := (List.range conns).map fun idx =>
     match t[idx]? with
@@ -162,7 +165,8 @@ def settleTableM (m : Mutant) (now : Nat) (t : Table) :
     if data.length < n then throw .overTaken
     let t := match liveM m t idx gen with
       | some c =>
-        let idle := if n = 0 || m = .idleNotRenewed then c.idle else now + inactivity
+        let idle := if m = .zeroTakeCounts then now + inactivity
+          else if n = 0 || m = .idleNotRenewed then c.idle else now + inactivity
         t.set idx (some (waitLineM m now
           { c with out := c.out.drop n, idle := idle, blocked := decide (n < data.length) }))
       | none => t
@@ -235,7 +239,7 @@ theorem settleTableM_none (now : Nat) : settleTableM .none now = settleTable now
   | cons a rest ih =>
     cases a <;> cases ns <;>
       simp only [settleTableM, settleTable, ih, liveM_none, waitLineM_none, reduceCtorEq,
-        decide_false, Bool.or_false, decide_eq_true_eq] <;> rfl
+        ↓reduceIte, decide_false, Bool.or_false, decide_eq_true_eq] <;> rfl
 
 theorem settleM_none : settleM .none = settle := by
   funext s acts ns

@@ -20,7 +20,8 @@ open DN.Compiler
 private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
    "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
-   "session-model [--mutant NAME]", "emit-layout", "emit-reply-cases", "emit-baseline",
+   "session-model [--mutant NAME]", "emit-layout", "emit-session", "emit-session-layout",
+   "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
 
@@ -67,6 +68,7 @@ def main (args : List String) : IO UInt32 := do
       return ← output (program.map (·.source))
   match args with
   | ["emit-layout"] => output (.ok DN.Server.Layout.header)
+  | ["emit-session-layout"] => output (.ok DN.Server.SessionLayout.header)
   | ["frame-model"] =>
     -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven
     -- to run.

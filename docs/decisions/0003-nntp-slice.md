@@ -145,23 +145,27 @@ closes. A reset or a failed send closes at once.
 
 As [0002](0002-entry-and-memory.md) set out: the program's `main` loops, and each turn makes two
 external calls on arrays in its heap. A connection is named by an index below the connection
-limit and a generation the host increases each time it gives the index to a new connection.
+limit and a generation the host increases each time it gives the index to a new connection; a
+generation is a word, and the host does not give out an index and generation it gave out before.
 
-- `@dn_next` returns a batch: the host's monotonic clock in milliseconds, then up to `K` events —
-  opened, bytes received (in the event's own slot, at most one slot's worth), ready to write, end
-  of input, closed. The host touches the heap only inside a call, so it cannot finish a send on
-  its own between calls. The
-  configuration bytes of the call carry the version of the layout; a host that finds another
-  version stops the run in that call.
-- `@dn_emit` hands the host a batch of actions and the earliest deadline the program is waiting
-  for, in the same clock (none when zero), which the host uses as its `poll` timeout. Per
+- `@dn_next` takes the time the program needs its next turn at, written into the first word of
+  its array before the call, in the host's clock: the earliest deadline it waits for, or the
+  clock of the last batch (at least 1) when a connection can go on at once, or zero for none. The
+  host uses it as its `poll` timeout. It depends on how much of each send the kernel took, which
+  the program learns only once `@dn_emit` returns. It returns a batch: the host's monotonic clock in
+  milliseconds, the revision and the address of the source the replies name, then up to `K`
+  events — opened, bytes received (in the event's own slot, at most one slot's worth), ready to
+  write, end of input, closed. The host touches the heap only inside a call, so it cannot finish
+  a send on its own between calls. The configuration bytes of both calls carry the version of the
+  layout; a host that finds another version stops the run in that call.
+- `@dn_emit` hands the host a batch of actions. Per
   connection there is at most one action per batch, so bytes cannot be reordered: send these
   bytes, then say whether to read from the connection; close gracefully (after QUIT or the end
   of input, once everything sent was taken); or close at once. The host reads from the connection
   only once everything the send carried was taken, and reports input from a connection at most
   once a batch. For a send, the host writes back into the same array how much the kernel took at
-  once. What it did not take stays with the program, which sends it again when a later batch
-  reports the connection ready to write.
+  once; the program reads nothing else of the array back. What the kernel did not take stays with
+  the program, which sends it again when a later batch reports the connection ready to write.
 - The host knows sockets and the clock and nothing of the protocol. It gives out what one `poll`
   reported before polling again; polls a connection for input only while the program asks for
   input from it; stops polling the listening socket while every index is in use; receives and
@@ -169,10 +173,17 @@ limit and a generation the host increases each time it gives the index to a new 
   the heap, sends with `MSG_NOSIGNAL`, and writes the heap header before `cml_main`. It carries
   out an action only if the generation in it is the connection's current one; the program ignores
   an event whose generation is not the one it holds for that index.
+- A host that breaks this contract — more events than a batch, more bytes than a slot, an index
+  past the table, input the program did not ask for, more taken than sent, an index opened twice,
+  a clock that goes back or reaches 2^62, an event of no kind the layout has, an identity that
+  does not fit the replies — stops the run: the program writes the code of the breach into a word
+  of its own area and returns from `main`, and the host, whose runtime ends the run there, reads
+  the code. The model also refuses a count for no send, which the layout cannot express: each
+  count lies in its send's slot.
 
-The layout — offsets, `K`, slot size, the version, the codes of events and actions — is defined
-once in Lean and emitted as a C header, so that the program and the host cannot disagree about
-it.
+The layout — offsets down to the fields of an event and an action, `K`, slot size, the version,
+the codes of events, of actions and of the stops the host has to know — is defined once in Lean
+and emitted as a C header, so that the program and the host cannot disagree about it.
 
 ### What is proved and what is tested
 
@@ -188,7 +199,9 @@ it.
   copy and the number printer.
 - The framing code is equal to a framing specification written from the grammar above, whatever
   the split of the input into received chunks.
-- Replies come from the reply language of [0001](0001-embedding.md), whose theorem covers them.
+- Replies are the texts `DN.News.CommandSpec` gives, laid out once in the program's own area
+  and copied from there with the identity; that the program sends them is tested with the rest of
+  the session, not proven. The reply language of [0001](0001-embedding.md) is not used here.
 - The session — which command gets which reply, in which order, and when a connection closes — is
   specified in Lean apart from its code. The code is held against the specification by the model,
   an independent reference in Python and the compiled code: on transcripts split at every octet,

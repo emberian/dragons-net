@@ -117,7 +117,8 @@ def compilerModules : Array Name :=
     `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
     `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.Printed,
-    `DN.Server.Layout, `DN.Server.Skeleton, `DN.News.FrameSpec, `DN.News.Framer,
+    `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout, `DN.Server.Skeleton,
+    `DN.News.FrameSpec, `DN.News.Framer,
     `DN.News.FramerCode, `DN.News.FrameModel, `DN.News.CommandSpec, `DN.News.SessionSpec,
     `DN.News.SessionMutant, `DN.News.SessionModel]
 

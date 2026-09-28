@@ -27,13 +27,13 @@ The diagram describes the intended path. Today the region-digest, byte-copy, dec
 | Concurrency models | `models/` | Small algorithms explored with Loom; separate from production code |
 | Reactor models | `lean/DN/Dataplane` | Abstract invariants, not a verified connection to kernel completions |
 | Preserved native implementation | `migration/dataplane` | Source for porting; old product integration remains visible |
-| News specification seed | `lean/DN/News` | CRLF state across chunks; no command parser yet |
+| NNTP session | `lean/DN/News`, `DN.Server.Session` | The framing, the reply to each command line and the session specified in Lean, the framers proven; the session's program held against its model, not proven |
 
 ## Host contract to develop
 
 Use bounded buffers and explicit lengths at the native boundary. A buffer identifier needs its generation and ownership state. Submission, completion, cancellation, and recycling are distinct events. Output progress must survive short writes; disconnect and error paths must release exactly the resources they own. Backpressure should stop new work before unbounded buffering becomes necessary.
 
-An OS-specific adapter should translate real completions into a small protocol-neutral event vocabulary. The protocol step consumes a session state and bounded input, and returns output plus explicit storage/transport requests. The vocabulary is fixed by [decision 0003](decisions/0003-nntp-slice.md) and defined in `DN.Server.Layout`, which prints it as a C header for the host; the server's loop (`DN.Server.Skeleton`) runs on it, echoing payloads until the NNTP session replaces the echo. Its shape was [decided](decisions/0002-entry-and-memory.md) first: the generated program's `main` runs the loop and fetches events from the host in batches through external calls, with its buffers in its own heap, because that is the only entry CakeML's compiler theorem covers, and the memory it covers without an event in the trace for every access.
+An OS-specific adapter should translate real completions into a small protocol-neutral event vocabulary. The protocol step consumes a session state and bounded input, and returns output plus explicit storage/transport requests. The vocabulary is fixed by [decision 0003](decisions/0003-nntp-slice.md) and defined in `DN.Server.Layout`, which prints it as a C header for the host; the server's loop (`DN.Server.Skeleton`) runs on it, echoing payloads, and the session's program (`DN.Server.Session`) on a layout of its own (`DN.Server.SessionLayout`). Its shape was [decided](decisions/0002-entry-and-memory.md) first: the generated program's `main` runs the loop and fetches events from the host in batches through external calls, with its buffers in its own heap, because that is the only entry CakeML's compiler theorem covers, and the memory it covers without an event in the trace for every access.
 
 ## Storage and offline exchange
 

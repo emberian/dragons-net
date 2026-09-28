@@ -4,6 +4,7 @@ import DN.Compiler.Canon
 import DN.Compiler.Kernels
 import DN.Dsl.Example
 import DN.Server.Skeleton
+import DN.Server.Session
 import DN.News.FramerCode
 
 /-!
@@ -50,6 +51,11 @@ def reply : Except String Program := do
 def skeleton : Except String Program :=
   checkedBy (Checked.emitMain [Server.Layout.nextName, Server.Layout.emitName]) Server.Skeleton.main
 
+/-- The NNTP session, a whole program that reaches its host through two external calls. -/
+def session : Except String Program :=
+  checkedBy (Checked.emitMain [Server.SessionLayout.nextName, Server.SessionLayout.emitName])
+    Server.Session.main
+
 /-- The framers: command lines of at most 512 octets, as the session reads them, and of at most
 four, for the lane's exhaustive run; blocks for a buffer of 64 bytes and of four. The buffer the
 store needs is set by the store; the framing is proven for every size below 2^62. -/
@@ -62,7 +68,7 @@ def framers : List (String × Except String Program) :=
 /-- The programs `emit-NAME` prints, by name. -/
 def named : List (String × Except String Program) :=
   [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
-   ("reply", reply), ("skeleton", skeleton)] ++ framers
+   ("reply", reply), ("skeleton", skeleton), ("session", session)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/

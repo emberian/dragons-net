@@ -182,6 +182,11 @@ jobs:
             build/framing/framers.pnk
             build/framing/framers.S
             build/framing/framers
+            build/session/report.json
+            build/session/session.pnk
+            build/session/session.S
+            build/session/session
+            build/session/dn_session_layout.h
             build/parser/report.json
             build/parser/*.pnk
             build/fuzz/report.json

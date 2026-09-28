@@ -43,6 +43,8 @@ def lineLimit : Nat := 512
 def firstCommand : Nat := 10000
 def inactivity : Nat := 1800000
 def lineTime : Nat := 180000
+/-- The host's clock stays below this, so deadlines never overflow a signed word. -/
+def clockLimit : Nat := 2 ^ 62
 
 inductive Phase
   /-- greeted, no command yet or commands being answered -/
@@ -106,13 +108,13 @@ inductive Breach
   | overTaken
   /-- a connection opened at an index still in use -/
   | reopened
-  /-- a clock earlier than the last batch's -/
-  | clockBack
+  /-- a clock earlier than the last batch's, or not below `clockLimit` -/
+  | badClock
   deriving DecidableEq, Repr
 
 def Breach.code : Breach → Nat
   | .tooManyEvents => 1 | .tooLong => 2 | .noSuchIndex => 3 | .unasked => 4 | .overTaken => 5
-  | .reopened => 6 | .clockBack => 7
+  | .reopened => 6 | .badClock => 7
 
 abbrev Table := List (Option Conn)
 
@@ -233,7 +235,7 @@ def act (i : Identity) (now idx : Nat) (c : Conn) : Option Conn × Option Action
 def turn (i : Identity) (s : Server) (now : Nat) (events : List Event) :
     Except Breach (Server × List Action) := do
   if batch < events.length then throw .tooManyEvents
-  if now < s.clock then throw .clockBack
+  if now < s.clock || clockLimit ≤ now then throw .badClock
   let t ← events.foldlM (applyEvent i now) s.table
   let results := (List.range conns).map fun idx =>
     match t[idx]? with
