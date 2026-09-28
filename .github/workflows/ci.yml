@@ -178,6 +178,10 @@ jobs:
             build/server/skeleton.S
             build/server/dn_layout.h
             build/server/skeleton
+            build/framing/report.json
+            build/framing/framers.pnk
+            build/framing/framers.S
+            build/framing/framers
             build/parser/report.json
             build/parser/*.pnk
             build/fuzz/report.json

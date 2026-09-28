@@ -587,20 +587,6 @@ theorem printed_never_fails (o : Oracle σ) (s : PancakeState σ) (h : Covers s.
 def heapWords (b : Word) (n : Nat) (a : Word) : Bool :=
   a.toNat % 8 = 0 && b.toNat ≤ a.toNat && a.toNat < b.toNat + n
 
-theorem byteAlign_toNat (w : Word) : (byteAlign w).toNat = w.toNat / 8 * 8 := by
-  have e : byteAlign w = (w >>> 3) <<< 3 := by
-    apply BitVec.eq_of_getLsbD_eq
-    intro k hk
-    rw [BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight]
-    rcases Nat.lt_or_ge k 3 with h3 | h3
-    · rcases (show k = 0 ∨ k = 1 ∨ k = 2 by omega) with rfl | rfl | rfl <;>
-        simp [byteAlign]
-    · rw [Bytes.getLsbD_byteAlign_high w k h3 hk]
-      simp [hk, Nat.not_lt.mpr h3, show 3 + (k - 3) = k by omega]
-  rw [e, BitVec.toNat_shiftLeft, BitVec.toNat_ushiftRight, Nat.shiftLeft_eq, Nat.shiftRight_eq_div_pow]
-  have := w.isLt
-  omega
-
 /-- The premise holds of a heap of just the layout, from any aligned `@base` it fits above. -/
 theorem covers_heap (b : Word) (hb : b.toNat % 8 = 0) (hfit : b.toNat + size < 2 ^ 64) :
     Covers (heapWords b size) b := by
@@ -609,7 +595,7 @@ theorem covers_heap (b : Word) (hb : b.toNat % 8 = 0) (hfit : b.toNat + size < 2
     rw [BitVec.toNat_add, BitVec.toNat_ofNat]
     omega
   refine ⟨fun off hoff => ?_, fun off hoff h8 => ?_⟩
-  · simp only [heapWords, byteAlign_toNat, e off hoff, Bool.and_eq_true, decide_eq_true_eq]
+  · simp only [heapWords, Bytes.byteAlign_toNat, e off hoff, Bool.and_eq_true, decide_eq_true_eq]
     have : size % 8 = 0 := by decide
     omega
   · simp only [heapWords, e off hoff, Bool.and_eq_true, decide_eq_true_eq]

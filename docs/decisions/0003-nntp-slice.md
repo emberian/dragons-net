@@ -99,7 +99,8 @@ most 30 s in all, at most 5 s of silence).
 - A multi-line block — read by no command of this slice, but framed by the same code, for #17 —
   ends only at CRLF "." CRLF. Its lines end at CRLF only; NUL, a CR or an LF inside a line make
   the block invalid; dot-stuffing is undone. A block that is invalid or larger than its buffer is
-  read and discarded to its terminator, then refused whole, never truncated.
+  read and discarded to its terminator, then refused whole, never truncated; one that is both is
+  refused as invalid.
 
 ### Time and resources
 

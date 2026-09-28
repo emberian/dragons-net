@@ -124,6 +124,21 @@ theorem getLsbD_byteAlign_high (w : Word) (k : Nat) (h3 : 3 ≤ k) (hk : k < 64)
     simp [Nat.not_lt.mpr h3]
   rw [h7]; simp [hk]
 
+/-- An aligned address as a number: the address with its low three bits cleared. -/
+theorem byteAlign_toNat (w : Word) : (byteAlign w).toNat = w.toNat / 8 * 8 := by
+  have e : byteAlign w = (w >>> 3) <<< 3 := by
+    apply BitVec.eq_of_getLsbD_eq
+    intro k hk
+    rw [BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight]
+    rcases Nat.lt_or_ge k 3 with h3 | h3
+    · rcases (show k = 0 ∨ k = 1 ∨ k = 2 by omega) with rfl | rfl | rfl <;>
+        simp [byteAlign]
+    · rw [getLsbD_byteAlign_high w k h3 hk]
+      simp [hk, Nat.not_lt.mpr h3, show 3 + (k - 3) = k by omega]
+  rw [e, BitVec.toNat_shiftLeft, BitVec.toNat_ushiftRight, Nat.shiftLeft_eq, Nat.shiftRight_eq_div_pow]
+  have := w.isLt
+  omega
+
 /-- On the low bits (`k < 3`), equal `mod 8` gives equal bit. -/
 theorem getLsbD_low_of_mod (w w' : Word) (hmod : w.toNat % 8 = w'.toNat % 8)
     (k : Nat) (h3 : k < 3) : w.getLsbD k = w'.getLsbD k := by

@@ -6,6 +6,7 @@ import DN.Compiler.Gen
 import DN.Compiler.GenCorpus
 import DN.Dsl.Example
 import DN.Printed
+import DN.News.FrameModel
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
 with its host, the differential fixtures, the programs and
@@ -16,7 +17,8 @@ for the remaining connections. -/
 open DN.Compiler
 
 private def commands : List String :=
-  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-layout",
+  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
+   "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model", "emit-layout",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -37,6 +39,10 @@ def main (args : List String) : IO UInt32 := do
       return ← output (program.map (·.source))
   match args with
   | ["emit-layout"] => output (.ok DN.Server.Layout.header)
+  | ["frame-model"] =>
+    -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven to run.
+    let input ← (← IO.getStdin).readToEnd
+    output (DN.News.FrameModel.runAll input)
   | ["emit-reply-cases"] => output (.ok DN.Dsl.Example.cases.compress)
   | ["emit-baseline"] => output (Baseline.fixture.map (·.compress))
   | ["emit-trees"] =>

@@ -1,0 +1,67 @@
+export fun dn_frame_line(1 blk, 1 p, 1 n, 1 i) {
+  if n < 0 {
+    return 4294967295;
+  } else {
+    if i < 0 {
+      return 4294967295;
+    } else {
+      if n < i {
+        return 4294967295;
+      } else {
+        var len = 0;
+        var cr = 0;
+        var bad = 0;
+        var kind = 0;
+        var kept = 0;
+        var b = 0;
+        len = lds 1 blk;
+        cr = lds 1 (blk + 8);
+        bad = lds 1 (blk + 16);
+        kind = 0;
+        kept = 0;
+        while (i < n) & (kind == 0) {
+          b = ld8 (p + i);
+          i = i + 1;
+          if b == 10 {
+            if 512 <= len {
+              kind = 3;
+              kept = len;
+            } else {
+              if cr & (bad == 0) {
+                kind = 1;
+                kept = len - 1;
+              } else {
+                kind = 2;
+                kept = len;
+              }
+            }
+            len = 0;
+            cr = 0;
+            bad = 0;
+          } else {
+            if cr {
+              bad = 1;
+            } else {
+            }
+            if b == 0 {
+              bad = 1;
+            } else {
+            }
+            cr = b == 13;
+            if len < 512 {
+              st8 blk + 40 + len, b;
+              len = len + 1;
+            } else {
+            }
+          }
+        }
+        st blk, len;
+        st blk + 8, cr;
+        st blk + 16, bad;
+        st blk + 24, kind;
+        st blk + 32, kept;
+        return i;
+      }
+    }
+  }
+}
