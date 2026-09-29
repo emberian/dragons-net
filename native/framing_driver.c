@@ -92,7 +92,8 @@ static uint32_t call(framer *f, unsigned char *blk, const unsigned char *p, uint
     if (next <= i || next > n) dn_violation("a call from %" PRIu64 " of %" PRIu64 " returned %" PRIu32, i, n, next);
     uint64_t kind = dn_word(blk + 24);
     if (kind == 0 && next != n)
-        dn_violation("a call from %" PRIu64 " of %" PRIu64 " stopped at %" PRIu32 " with nothing to report", i, n, next);
+        dn_violation("a call from %" PRIu64 " of %" PRIu64 " stopped at %" PRIu32 " with nothing to report", i, n,
+                     next);
     if (kind != 0 && p[next - 1] != '\n')
         dn_violation("a call from %" PRIu64 " of %" PRIu64 " reported at %" PRIu32 ", not after an LF", i, n, next);
     return next;
@@ -135,7 +136,8 @@ static void lines(uint64_t lim, char **chunks, size_t count) {
         }
     }
     uint64_t len = dn_word(blk), cr = dn_word(blk + 8), bad = dn_word(blk + 16);
-    if (len > lim || cr > 1 || bad > 1) dn_violation("a state out of range: %" PRIu64 " %" PRIu64 " %" PRIu64, len, cr, bad);
+    if (len > lim || cr > 1 || bad > 1)
+        dn_violation("a state out of range: %" PRIu64 " %" PRIu64 " %" PRIu64, len, cr, bad);
     printf(" state %" PRIu64 " %" PRIu64 " %" PRIu64 " ", len, cr, bad);
     hex(blk + STATE_WORDS, len);
     putchar('\n');

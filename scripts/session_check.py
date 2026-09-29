@@ -126,17 +126,10 @@ class Speaker:
     def __init__(self, command: list[str], identity: Identity = IDENTITY) -> None:
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, bufsize=1)
-        # Reader threads, so that every wait for an answer can be bounded; "" marks the end.
-        self.lines: queue.Queue[str] = queue.Queue()
+        self.lines = lanes.Lines(self.pipe(self.proc.stdout))
         self.complaints: list[str] = []
-        threading.Thread(target=self.read, args=(self.pipe(self.proc.stdout),), daemon=True).start()
         threading.Thread(target=self.listen, args=(self.pipe(self.proc.stderr),), daemon=True).start()
         self.say(f"identity {identity[0].hex() or '-'} {identity[1].hex() or '-'}")
-
-    def read(self, stream: IO[str]) -> None:
-        for line in stream:
-            self.lines.put(line)
-        self.lines.put("")
 
     def listen(self, stream: IO[str]) -> None:
         for line in stream:
@@ -153,6 +146,9 @@ class Speaker:
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(timeout=TIMEOUT)
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+            if stream:
+                stream.close()
 
     def pipe(self, stream: IO[str] | None) -> IO[str]:
         if stream is None:
@@ -168,7 +164,7 @@ class Speaker:
     def hear(self) -> list[str]:
         try:
             self.pipe(self.proc.stdin).flush()
-            line = self.lines.get(timeout=TIMEOUT)
+            line = self.lines.get(TIMEOUT)
         except OSError as error:
             raise LaneError(f"the session no longer listens ({error}){self.why()}") from None
         except queue.Empty:
@@ -188,7 +184,7 @@ class Speaker:
         out: list[str] = []
         while True:
             try:
-                line = self.lines.get(timeout=TIMEOUT)
+                line = self.lines.get(TIMEOUT)
             except queue.Empty:
                 raise LaneError(f"the session gave no answer in {TIMEOUT} s") from None
             if not line:
@@ -198,7 +194,7 @@ class Speaker:
     def turn(self, now: int, events: list[Event]) -> list[Action] | int:
         self.say(f"turn {now}")
         for e in events:
-            self.say(" ".join([e[0], str(e[1]), str(e[2]), *([e[3].hex() or "-"] if len(e) > 3 else [])]))
+            self.say(" ".join([e.kind, str(e.idx), str(e.gen), *([e.data.hex() or "-"] if e.kind == "recv" else [])]))
         self.say("go")
         actions: list[Action] = []
         while (words := self.hear()) != ["done"]:
@@ -206,10 +202,10 @@ class Speaker:
                 case ["stop", code]:
                     return int(code)
                 case ["send", idx, gen, data, "0" | "1" as read]:
-                    actions.append(("send", int(idx), int(gen), b"" if data == "-" else bytes.fromhex(data),
-                                    read == "1"))
+                    actions.append(Action("send", int(idx), int(gen), b"" if data == "-" else bytes.fromhex(data),
+                                          read == "1"))
                 case ["graceful" | "close" as kind, idx, gen]:
-                    actions.append((kind, int(idx), int(gen)))
+                    actions.append(Action(kind, int(idx), int(gen)))
                 case _:
                     raise LaneError(f"the session answered {' '.join(words)}")
         return actions
@@ -243,7 +239,7 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
     echoes: list[Event] = []
     # the generation of a connection gone, whose events come again once its index serves another
     graves: dict[int, int] = {}
-    now, start = 1, 0
+    now, start = min((c.opens for c in clients), default=1), 0
     for _ in range(TURNS):
         events = echoes[:BATCH]
         echoes = echoes[BATCH:]
@@ -261,14 +257,14 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
                 cut = True
                 break
             events.append(report)
-            if report[0] == "closed":
+            if report.kind == "closed":
                 del links[idx]
                 if ghosts:
                     graves[idx] = link.gen
                     echoes += haunting(idx, link.gen)
-            elif report[0] == "recv":
-                link.read += len(report[3])
-            elif report[0] == "end":
+            elif report.kind == "recv":
+                link.read += len(report.data)
+            elif report.kind == "end":
                 link.ended = True
         while waiting and clients[waiting[0]].opens <= now:
             free = [i for i in range(ref.CONNS) if i not in links]
@@ -277,7 +273,7 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
             idx = free[0]
             gens[idx] += 1
             links[idx] = Link(clients[waiting.pop(0)], idx, gens[idx])
-            events.append(("open", idx, gens[idx]))
+            events.append(Event("open", idx, gens[idx]))
             if idx in graves:
                 echoes += haunting(idx, graves.pop(idx))
         answer = session.turn(now, events)
@@ -285,21 +281,21 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
             raise LaneError(f"the session stopped with code {answer} on a host that kept the contract")
         took = []
         for action in answer:
-            target = links.get(action[1])
-            if target is None or target.gen != action[2]:
-                raise LaneError(f"an action for {action[1]}/{action[2]}, which the host does not hold")
-            if action[0] == "send":
-                data = action[3]
+            target = links.get(action.idx)
+            if target is None or target.gen != action.gen:
+                raise LaneError(f"an action for {action.idx}/{action.gen}, which the host does not hold")
+            if action.kind == "send":
+                data = action.data
                 k = target.client.takes(now, len(data))
                 took.append(k)
                 target.unsent = k < len(data)
                 target.ready = target.client.ready_at(now)
-                target.reading = action[4]
+                target.reading = action.read
             else:
-                del links[action[1]]
+                del links[action.idx]
                 if ghosts:
-                    graves[action[1]] = action[2]
-                    echoes += haunting(action[1], action[2])
+                    graves[action.idx] = action.gen
+                    echoes += haunting(action.idx, action.gen)
         deadline = session.settle(took)
         if isinstance(deadline, str):
             raise LaneError(f"the session answered {deadline} to what the host took")
@@ -312,22 +308,23 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
 
 def haunting(idx: int, gen: int) -> list[Event]:
     """Every kind of event of a connection gone, as a host may still report them."""
-    return [("closed", idx, gen), ("recv", idx, gen, b"QUIT\r\n"), ("writable", idx, gen), ("end", idx, gen)]
+    return [Event("closed", idx, gen), Event("recv", idx, gen, b"QUIT\r\n"), Event("writable", idx, gen),
+            Event("end", idx, gen)]
 
 
 def news(link: Link, now: int) -> Event | None:
     """What the host has to report of a connection at `now`, if anything."""
     c = link.client
     if c.reset is not None and c.reset <= now:
-        return ("closed", link.idx, link.gen)
+        return Event("closed", link.idx, link.gen)
     if link.unsent:
-        return ("writable", link.idx, link.gen) if now >= link.ready else None
+        return Event("writable", link.idx, link.gen) if now >= link.ready else None
     if link.asked():
         stream = c.stream(now)
         if link.read < len(stream):
-            return ("recv", link.idx, link.gen, stream[link.read:link.read + ref.CHUNK])
+            return Event("recv", link.idx, link.gen, stream[link.read:link.read + ref.CHUNK])
         if c.shut is not None and c.shut <= now and not link.ended and link.read == len(c.stream(c.shut)):
-            return ("end", link.idx, link.gen)
+            return Event("end", link.idx, link.gen)
     return None
 
 
@@ -402,6 +399,7 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
     yield "input ending with a line begun and output untaken", [
         Client(1, [(5, b"HELP\r\nHE")], shut=6, take=10, slow=5, pace=60_000)], False
     yield "no first command", [Client(1)], False
+    yield "a clock of zero", [Client(0, [(0, ascii_lines("HELP", "HELP"))])], False
     yield "only empty lines", [Client(1, [(5 + 1_000 * k, b"\r\n") for k in range(15)])], False
     yield "a first command just in time", [Client(1, [(10_000, ascii_lines("HELP", "QUIT"))])], False
     yield "a first command too late", [Client(1, [(10_001, HELP)])], False
@@ -476,54 +474,54 @@ def sends(trace: list[Turn]) -> list[tuple[Turn, int, int]]:
     """Each send of a trace: its turn, its place among the turn's actions, and among its sends."""
     found = []
     for t in trace:
-        places = [k for k, a in enumerate(t.actions) if a[0] == "send"]
+        places = [k for k, a in enumerate(t.actions) if a.kind == "send"]
         found += [(t, k, n) for n, k in enumerate(places)]
     return found
 
 
 def replies(trace: list[Turn]) -> list[tuple[Turn, int, int]]:
-    return [(t, k, n) for t, k, n in sends(trace) if t.actions[k][3][:3].isdigit()]
+    return [(t, k, n) for t, k, n in sends(trace) if t.actions[k].data[:3].isdigit()]
 
 
 def swap_replies(trace: list[Turn]) -> None:
     (t1, k1, n1), (t2, k2, n2) = next((a, b) for a, b in itertools.pairwise(replies(trace)[1:])
-                                      if a[0].actions[a[1]][3] != b[0].actions[b[1]][3])
+                                      if a[0].actions[a[1]].data != b[0].actions[b[1]].data)
     a1, a2 = t1.actions[k1], t2.actions[k2]
-    t1.actions[k1], t2.actions[k2] = (*a1[:3], a2[3], *a1[4:]), (*a2[:3], a1[3], *a2[4:])
-    t1.took[n1], t2.took[n2] = len(a2[3]), len(a1[3])
+    t1.actions[k1], t2.actions[k2] = a1._replace(data=a2.data), a2._replace(data=a1.data)
+    t1.took[n1], t2.took[n2] = len(a2.data), len(a1.data)
 
 
 def double_reply(trace: list[Turn]) -> None:
     t, k, n = replies(trace)[1]
     a = t.actions[k]
-    t.actions[k] = (*a[:3], a[3] * 2, *a[4:])
-    t.took[n] = len(a[3]) * 2
+    t.actions[k] = a._replace(data=a.data * 2)
+    t.took[n] = len(a.data) * 2
 
 
 def change_byte(trace: list[Turn]) -> None:
     t, k, _ = replies(trace)[2]
     a = t.actions[k]
-    t.actions[k] = (*a[:3], a[3][:-3] + b"X" + a[3][-2:], *a[4:])
+    t.actions[k] = a._replace(data=a.data[:-3] + b"X" + a.data[-2:])
 
 
 def read_early(trace: list[Turn]) -> None:
-    t, k, _ = next(s for s in replies(trace) if not s[0].actions[s[1]][4])
-    t.actions[k] = (*t.actions[k][:4], True)
+    t, k, _ = next(s for s in replies(trace) if not s[0].actions[s[1]].read)
+    t.actions[k] = t.actions[k]._replace(read=True)
 
 
 def answer_before_taken(trace: list[Turn]) -> None:
-    t, k, _ = next(s for s in sends(trace) if s[0].actions[s[1]][3] and not s[0].actions[s[1]][3][:3].isdigit())
+    t, k, _ = next(s for s in sends(trace) if s[0].actions[s[1]].data and not s[0].actions[s[1]].data[:3].isdigit())
     later = next(s for s in replies(trace) if s[0].now > t.now)
-    t.actions[k] = (*t.actions[k][:3], later[0].actions[later[1]][3], *t.actions[k][4:])
+    t.actions[k] = t.actions[k]._replace(data=later[0].actions[later[1]].data)
 
 
 def resend_early(trace: list[Turn]) -> None:
     for t, u in itertools.pairwise(trace):
         for _, k, n in sends([t]):
             a = t.actions[k]
-            quiet = not any(e[1] == a[1] for e in u.events) and not any(b[1] == a[1] for b in u.actions)
-            if t.took[n] < len(a[3]) and quiet:
-                u.actions.append(("send", a[1], a[2], a[3][t.took[n]:], a[4]))
+            quiet = not any(e.idx == a.idx for e in u.events) and not any(b.idx == a.idx for b in u.actions)
+            if t.took[n] < len(a.data) and quiet:
+                u.actions.append(a._replace(data=a.data[t.took[n]:]))
                 u.took.append(0)
                 return
     raise LaneError("no connection left waiting for the host to plant a defect on")
@@ -531,23 +529,23 @@ def resend_early(trace: list[Turn]) -> None:
 
 def close_early(trace: list[Turn]) -> None:
     t = trace[1]
-    t.actions = [("close", *t.actions[0][1:3])]
+    t.actions = [Action("close", t.actions[0].idx, t.actions[0].gen)]
     t.took = []
 
 
 def no_close(trace: list[Turn]) -> None:
-    t = next(t for t in trace if any(a[0] == "close" for a in t.actions))
-    t.actions = [a for a in t.actions if a[0] != "close"]
+    t = next(t for t in trace if any(a.kind == "close" for a in t.actions))
+    t.actions = [a for a in t.actions if a.kind != "close"]
 
 
 def graceful_early(trace: list[Turn]) -> None:
-    t = next(t for t in trace if any(e[0] == "recv" for e in t.events))
-    t.actions = [("graceful", *t.actions[0][1:3])]
+    t = next(t for t in trace if any(e.kind == "recv" for e in t.events))
+    t.actions = [Action("graceful", t.actions[0].idx, t.actions[0].gen)]
     t.took = []
 
 
 def graceful_untaken(trace: list[Turn]) -> None:
-    t, _, n = next(s for s in sends(trace) if s[0].actions[s[1]][3] == b"205 Bye\r\n")
+    t, _, n = next(s for s in sends(trace) if s[0].actions[s[1]].data == b"205 Bye\r\n")
     t.took[n] = 3
     t.deadline = t.now + ref.INACTIVITY
 
@@ -568,7 +566,7 @@ def no_greeting(trace: list[Turn]) -> None:
 
 
 def stranger(trace: list[Turn]) -> None:
-    trace[1].actions.append(("send", 9, 1, b"", True))
+    trace[1].actions.append(Action("send", 9, 1, b"", True))
     trace[1].took.append(0)
 
 

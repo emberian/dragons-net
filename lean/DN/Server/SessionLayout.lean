@@ -107,7 +107,7 @@ def align8 (k : Nat) : Nat := (k + 7) / 8 * 8
 def tableOff : Nat := align8 (ownOff + ownTexts + textAt texts.length)
 
 /-- The words of the framer's block before the bytes of the line it keeps
-(`DN.News.FramerCode.lineFrag`). -/
+(`DN.News.FramerProg.lineFrag`). -/
 def framerHead : Nat := 40
 
 /-- A connection's record: whether it is in use, its generation, its phase (open, quitting,
@@ -208,7 +208,7 @@ theorem sizes_agree :
     data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit := by
   decide +kernel
 
-/-- The identities the program accepts, by its bounds, are those `Identity.ok` accepts. -/
+/-- The layout's bounds on the identity are those of `Identity.ok`. -/
 theorem identity_ok (i : Identity) :
     i.ok = (1 ≤ i.revision.length && i.revision.length ≤ revMax && i.revision.all isVisible &&
       1 ≤ i.source.length && i.source.length ≤ srcMax && i.source.all isVisible) := rfl

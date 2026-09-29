@@ -107,8 +107,12 @@ def eqKnown (a b : AVal) : Option Bool :=
   else if a.hi < b.lo || b.hi < a.lo then some false
   else none
 
-/-- A byte at an address in the heap. -/
-def byteOk (size : Nat) (p : AVal) : Bool := p.ptr && 0 ≤ p.lo && p.hi < size
+/-- The bytes at the start of the heap, which hold the header the compiler theorem requires and the
+host writes before the program starts: no access the analysis accepts reaches into them. -/
+def floor : Nat := 64
+
+/-- A byte at an address in the heap, above its header. -/
+def byteOk (size : Nat) (p : AVal) : Bool := p.ptr && floor ≤ p.lo && p.hi < size
 
 /-- A word at an address in the heap, on a word boundary. -/
 def wordOk (size : Nat) (p : AVal) : Bool := byteOk size p && p.res == some 0
@@ -331,9 +335,9 @@ def leOpt : Option AState → AState → Bool
 
 /-! ## Statements -/
 
-/-- An array of `len` bytes from `p` that lies in the heap. -/
+/-- An array of `len` bytes from `p` that lies in the heap, above its header. -/
 def arrayOk (size : Nat) (p len : AVal) : Bool :=
-  p.ptr && 0 ≤ p.lo && !len.ptr && 0 ≤ len.lo && p.hi + len.hi ≤ size
+  p.ptr && floor ≤ p.lo && !len.ptr && 0 ≤ len.lo && p.hi + len.hi ≤ size
 
 /-- Why a program was not shown safe. -/
 abbrev Alarm := String
@@ -383,7 +387,8 @@ def searchFuel : Nat := 6
 /-- A candidate for a loop's invariant, from `X` with `fuel` more rounds, and the body's outcome
 from it. `step` is the body's outcome from the states in which the guard `e` holds. The rounds
 join and widen up to the guard, which is enough for counters and for locals the body sets from
-bounded ones; the last two widen whatever still grows. -/
+bounded ones; the last two widen whatever still grows. A statement leaves the names in scope as it
+found them, so the alarm for locals that change is not reached; it keeps the search total. -/
 def search (size : Nat) (e : PancakeExp) (step : AState → Out) :
     Nat → AState → Except Alarm (AState × Option AState)
   | 0, X => do .ok (X, ← step X)
@@ -409,7 +414,8 @@ def branch (size : Nat) (e : PancakeExp) (t : Bool) (body : AState → Out) (X :
   | none => .ok none
   | some G => body G
 
-/-- Of the outcomes of two branches, the state either may end in. -/
+/-- Of the outcomes of two branches, the state either may end in. Both start from one state and
+keep its names in scope, so the alarm is not reached; it keeps the join total. -/
 def joinOuts : Option AState → Option AState → Out
   | some B1, some B2 =>
     match B1.join B2 with
@@ -480,10 +486,13 @@ def check (size : Nat) (p : PancakeProg) : Except Alarm Unit := do
   | none => .ok ()
   | some _ => .error "main: a run may finish without a result"
 
-/-! ## Examples: what it accepts and what it refuses, in a heap of 64 bytes -/
+/-! ## Examples: what it accepts and what it refuses, in a heap of 64 bytes above its header -/
 
-private def c (k : Nat) : PancakeExp := .const (BitVec.ofNat 64 k)
-private def at' (k : Nat) : PancakeExp := .op .add .base (c k)
+open DN.Compiler.PancakeExp (c)
+
+/-- The byte `k` of the heap above its header. -/
+private def at' (k : Nat) : PancakeExp := .op .add .base (c (floor + k))
+private def heap : Nat := floor + 64
 private def storeThenReturn (k : Nat) : PancakeProg := .seq (.store (at' k) (c 1)) (.ret (c 0))
 
 /-- Bytes copied up to a length read from memory, checked (or not) to be at most 32 first. -/
@@ -526,16 +535,31 @@ private def down : PancakeProg :=
         (.storeByte (.op .add (at' 8) (.var "j")) (c 0))))
     (.ret (c 0)))
 
-def regression_825 : Bool := (check 64 (storeThenReturn 8)).toBool
-def regression_826 : Bool := !(check 64 (storeThenReturn 64)).toBool
-def regression_827 : Bool := !(check 64 (storeThenReturn 4)).toBool
-def regression_828 : Bool := !(check 64 (.seq (.assign "x" (c 1)) (.ret (c 0)))).toBool
-def regression_829 : Bool := (check 64 (copyUpTo true)).toBool
-def regression_830 : Bool := !(check 64 (copyUpTo false)).toBool
-def regression_831 : Bool := !(check 64 (.store (at' 8) (c 1))).toBool
-def regression_832 : Bool := (check 64 (cellProg false)).toBool
-def regression_833 : Bool := !(check 64 (cellProg true)).toBool
-def regression_834 : Bool := (check 64 rows).toBool
-def regression_835 : Bool := (check 64 down).toBool
+/-- An external call whose second array runs `len` bytes from byte 8 of the heap. -/
+private def call (len : Nat) : PancakeProg :=
+  .seq (.extCall "f" (at' 0) (c 8) (at' 8) (c len)) (.ret (c 0))
+
+/-- A word shifted right by `k`: a distance of 64 or more gives no value. -/
+private def shifted (k : Nat) : PancakeProg :=
+  .dec "n" (.shiftR (.loadWord (at' 0)) (c k)) (.ret (.var "n"))
+
+def regression_825 : Bool := (check heap (storeThenReturn 8)).toBool
+def regression_826 : Bool := !(check heap (storeThenReturn 64)).toBool
+def regression_827 : Bool := !(check heap (storeThenReturn 4)).toBool
+def regression_828 : Bool := !(check heap (.seq (.assign "x" (c 1)) (.ret (c 0)))).toBool
+def regression_829 : Bool := (check heap (copyUpTo true)).toBool
+def regression_830 : Bool := !(check heap (copyUpTo false)).toBool
+def regression_831 : Bool := !(check heap (.store (at' 8) (c 1))).toBool
+def regression_832 : Bool := (check heap (cellProg false)).toBool
+def regression_833 : Bool := !(check heap (cellProg true)).toBool
+def regression_834 : Bool := (check heap rows).toBool
+def regression_835 : Bool := (check heap down).toBool
+/-- A store into the header is refused. -/
+def regression_836 : Bool :=
+  !(check heap (.seq (.store (.op .add .base (c 8)) (c 1)) (.ret (c 0)))).toBool
+def regression_837 : Bool := (check heap (call 56)).toBool
+def regression_838 : Bool := !(check heap (call 57)).toBool
+def regression_839 : Bool := (check heap (shifted 63)).toBool
+def regression_840 : Bool := !(check heap (shifted 64)).toBool
 
 end DN.Compiler.Analyzer

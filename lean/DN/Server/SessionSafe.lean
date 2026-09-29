@@ -7,11 +7,11 @@ import DN.Server.Session
 
 **The session's program never fails, whatever its host does.** For every FFI oracle, every clock
 and every content of the heap, a run of the session's `main` from a state whose heap covers its
-layout ends only as a run may end — out of clock, a call the host ended, or a return — and never in
-`Fail` (`Entry.Fails`). The safety analysis of `DN.Compiler.Analyzer` accepts the program, and
-`DN.Compiler.AnalyzerSound` proves that a program it accepts never fails; `printed_never_fails` ties
-this to the text the gate prints. That the Pancake parser reads the text as its lowering is checked
-of this program by `scripts/parser_contract.py`, not proved.
+layout above the header ends only as a run may end — out of clock, a call the host ended, or a
+return — and never in `Fail` (`Entry.Fails`). The safety analysis of `DN.Compiler.Analyzer`
+accepts the program, and `DN.Compiler.AnalyzerSound` proves that a program it accepts never fails;
+`printed_never_fails` ties this to the text the gate prints. That the Pancake parser reads the text
+as its lowering is checked of this program by `scripts/parser_contract.py`, not proved.
 -/
 
 namespace DN.Server.SessionSafe
@@ -30,12 +30,7 @@ theorem lower_main : Lower.lower Session.main = some mainP := (Option.some_get l
 /-- The analysis accepts the program: computed by the kernel. -/
 theorem accepted : (check SessionLayout.size mainP).toBool = true := by decide +kernel
 
-theorem checked : check SessionLayout.size mainP = .ok () := by
-  have h := accepted
-  revert h
-  cases check SessionLayout.size mainP with
-  | ok u => intro _; rfl
-  | error e => intro h; cases h
+theorem checked : check SessionLayout.size mainP = .ok () := ok_of_toBool accepted
 
 /-- **The session's program never fails, whatever its host does.** -/
 theorem never_fails (o : Oracle σ) (s : PancakeState σ)
@@ -56,12 +51,6 @@ theorem printed_never_fails (o : Oracle σ) (s : PancakeState σ)
 /-- The premise holds of a heap of just the layout, above the first page. -/
 theorem covers_witness :
     Covers SessionLayout.size (heapWords 4096 SessionLayout.size) 4096 :=
-  covers_heap _ (by decide +kernel) (by decide +kernel) (by decide +kernel)
-
-/-- The program's theorem at a concrete oracle. -/
-theorem safe_witness :
-    Safe.Safe (Oracle.idle (σ := Unit)) (fun s => Covers SessionLayout.size s.memaddrs s.baseAddr)
-      mainP (fun _ => False) :=
-  check_safe _ checked
+  covers_heap _ (Nat.le_refl _) (by decide +kernel) (by decide +kernel)
 
 end DN.Server.SessionSafe

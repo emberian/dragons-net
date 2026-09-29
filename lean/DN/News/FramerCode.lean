@@ -1,103 +1,33 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import DN.News.Framer
-import DN.Compiler.Kernels
+import DN.News.FramerProg
 import DN.Compiler.Clock
 
 /-!
 # DN.News.FramerCode
 
-The framer as a program of the subset the compiler prints, and the proof that the program makes
-exactly the framer's steps (`DN.News.Framer`), so that what it reports is the specification's
-verdict (`DN.News.FrameSpec`).
+The proof that the framers of `DN.News.FramerProg` make exactly the framer's steps
+(`DN.News.Framer`), so that what they report is the specification's verdict
+(`DN.News.FrameSpec`).
 
-The state of a connection lives in memory at `blk`: the words at `blk`, `blk + 8` and `blk + 16`
-hold the length of the line so far, whether its last byte was a CR, and whether it is already
-spoiled; the verdict goes to `blk + 24` (its kind, zero when no line ended) and `blk + 32` (how many
-bytes it keeps); the bytes of the line are kept from `blk + 40`. `dn_frame_line(blk, p, n, i)`
-reads the received bytes at `p` from position `i` up to `n`, stops after the first line that ends,
-and returns the position it stopped at; a negative `n` or `i`, or `i` past `n`, it refuses before
-reading anything. `dn_frame_block` does the same for a block, whose phase, whether it is spoiled
-and its size are the first three words, and the bytes it holds are kept from `blk + 40`.
-
-The framer's statements are proven apart from the function around them, as a session will run
-them inside its `main`: from a state holding the framer's state they spend one clock tick a byte
-and then run whatever follows them, or time out when the clock is short (`lineFrag_run`,
-`blockFrag_run`). The exported functions add the checks of their arguments and the return
-(`frameLine_run`, `frameBlock_run`, `frameLine_refuses`, `frameBlock_refuses`).
+The framer's statements are proven apart from the function around them: from a state holding the
+framer's state they spend one clock tick a byte and then run whatever follows them, or time out
+when the clock is short (`lineFrag_run`, `blockFrag_run`). The exported functions add the checks of
+their arguments and the return (`frameLine_run`, `frameBlock_run`, `frameLine_refuses`,
+`frameBlock_refuses`). The session's `main` runs `lineFrag` in place; that composition is held
+against the session's model by tests, not proven.
 -/
 
 namespace DN.News.FramerCode
 
 open DN.Compiler DN.Compiler.Syntax DN.Compiler.Region DN.Compiler.Bytes DN.Compiler.Clock
-open DN.News.FrameSpec DN.News.Framer
+open DN.News.FrameSpec DN.News.Framer DN.News.FramerProg
 
 variable {σ : Type}
 
-/-! ## The program -/
-
-/-- What a line's verdict is called in memory. -/
-def kindCode : Kind → Nat
-  | .command => 1
-  | .malformed => 2
-  | .overlong => 3
-
-/-- Reading bytes until the chunk is read or a line ends. -/
-def lineLoop (lim : Nat) : PStmt :=
-  .while (eAnd (eLt (v "i") (v "n")) (eEq (v "kind") (n 0)))
-    [.assign "b" (.loadb (eAdd (v "p") (v "i"))),
-     .assign "i" (eAdd (v "i") (n 1)),
-     .ite (eEq (v "b") (n 10))
-       [.ite (eLe (n lim) (v "len"))
-          [.assign "kind" (n 3), .assign "kept" (v "len")]
-          [.ite (eAnd (v "cr") (eEq (v "bad") (n 0)))
-             [.assign "kind" (n 1), .assign "kept" (eSub (v "len") (n 1))]
-             [.assign "kind" (n 2), .assign "kept" (v "len")]],
-        .assign "len" (n 0), .assign "cr" (n 0), .assign "bad" (n 0)]
-       [.ite (v "cr") [.assign "bad" (n 1)] [],
-        .ite (eEq (v "b") (n 0)) [.assign "bad" (n 1)] [],
-        .assign "cr" (eEq (v "b") (n 13)),
-        .ite (eLt (v "len") (n lim))
-          [.storeb (eAdd (eAdd (v "blk") (n 40)) (v "len")) (v "b"),
-           .assign "len" (eAdd (v "len") (n 1))]
-          []]]
-
-/-- The framer as statements that declare nothing: the state is read from `blk`, the loop runs,
-the state and the verdict are written back. `len`, `cr`, `bad`, `kind`, `kept` and `b` are the
-caller's working names, and `i` is where reading starts and where it stopped. -/
-def lineFrag (lim : Nat) : List PStmt :=
-  [.assign "len" (.loadw 1 (v "blk")),
-   .assign "cr" (.loadw 1 (eAdd (v "blk") (n 8))),
-   .assign "bad" (.loadw 1 (eAdd (v "blk") (n 16))),
-   .assign "kind" (n 0),
-   .assign "kept" (n 0),
-   lineLoop lim,
-   .store (v "blk") (v "len"),
-   .store (eAdd (v "blk") (n 8)) (v "cr"),
-   .store (eAdd (v "blk") (n 16)) (v "bad"),
-   .store (eAdd (v "blk") (n 24)) (v "kind"),
-   .store (eAdd (v "blk") (n 32)) (v "kept")]
-
-/-- The working names, declared. -/
-def lineDecs : List PStmt :=
-  [.dec "len" (n 0), .dec "cr" (n 0), .dec "bad" (n 0), .dec "kind" (n 0), .dec "kept" (n 0),
-   .dec "b" (n 0)]
-
-/-- The exported function's run: the working names, the framer, the position it stopped at. -/
-def lineRun (lim : Nat) : List PStmt := lineDecs ++ lineFrag lim ++ [.ret (v "i")]
-
-/-- A negative length or position, or a position past the length, is refused before anything is
-read. -/
-def refused : Nat := 2 ^ 32 - 1
-
-/-- `dn_frame_line(blk, p, n, i)`, for lines of at most `lim` octets. -/
-def frameLine (name : String) (lim : Nat) : PFun :=
-  { name, exported := true, params := [(1, "blk"), (1, "p"), (1, "n"), (1, "i")],
-    body := Kernels.rejectNegative ["n", "i"] [.ret (n refused)]
-      [.ite (eLt (v "n") (v "i")) [.ret (n refused)] (lineRun lim)] }
-
 /-! ## The program as the model runs it -/
 
-private def c (k : Nat) : PancakeExp := .const (BitVec.ofNat 64 k)
+open DN.Compiler.PancakeExp (c)
+
 private def x (name : String) : PancakeExp := .var name
 private def add (a b : PancakeExp) : PancakeExp := .op .add a b
 private def set (name : String) (k : Nat) : PancakeProg := .assign name (c k)
@@ -176,10 +106,6 @@ theorem widen_eq (y : Byte) (k : Nat) (hk : k < 256) :
 line whose last byte is a CR has one. -/
 def Fits (lim : Nat) (A : LineState) : Prop :=
   A.buf.length = A.len ∧ A.len ≤ lim ∧ (A.cr = true → 0 < A.len)
-
-theorem bw_ne_zero (b : Bool) : bw b ≠ 0#64 ↔ b = true := by cases b <;> decide
-
-theorem lf_code : (10#64 : Word) = BitVec.ofNat 64 10 := rfl
 
 /-- The byte that does not end the line: the program's flags and length are the framer's. -/
 theorem lineMore_run (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (s : PancakeState σ)
@@ -706,15 +632,6 @@ def Outside (lim : Nat) (st a : Word) : Prop :=
     byteAlign a ≠ st + 24#64 ∧ byteAlign a ≠ st + 32#64 ∧
     ∀ j, j < lim → a ≠ st + 40#64 + BitVec.ofNat 64 j
 
-theorem memStoreWord_some (m : Word → Word) (dm : Word → Bool) (a w : Word) (h : dm a = true) :
-    memStoreWord m dm a w = some (fun k => if k = a then w else m k) := by
-  simp [memStoreWord, h]
-
-theorem load_after_word (m : Word → Word) (dm : Word → Bool) (be : Bool) (a w x : Word)
-    (h : byteAlign x ≠ a) :
-    memLoadByte (fun k => if k = a then w else m k) dm be x = memLoadByte m dm be x := by
-  simp [memLoadByte, h]
-
 /-- The kept bytes are not in the five words of the block. -/
 theorem kept_word_ne (lim : Nat) (st : Word) (hal : st.toNat % 8 = 0)
     (hfit : st.toNat + 40 + lim ≤ 2 ^ 64) (j : Nat) (hj : j < lim) (k : Nat) (hk : k < 5) :
@@ -1163,98 +1080,6 @@ theorem frameLine_refuses (o : Oracle σ) (name : String) (lim : Nat) (s : Panca
   cases hprog
   exact guard_refuses o _ s nw iw hn hi h
 
-/-! ## The block framer
-
-The state of a block lives at `blk` too: the phase at `blk`, whether the block is already refused
-at `blk + 8`, how many bytes it holds at `blk + 16`; the verdict at `blk + 24` and the number of
-bytes the block holds at `blk + 32`; the bytes it holds from `blk + 40`, up to `cap` of them.
-`dn_frame_block(blk, p, n, i)` reads up to the end of the block or of the chunk. -/
-
-def phaseCode : Phase → Nat
-  | .bol => 0 | .data => 1 | .cr => 2 | .dot => 3 | .dotcr => 4
-
-def blockCode : BlockKind → Nat
-  | .accepted => 1 | .refused => 2 | .tooLarge => 3
-
-def spoilS : List PStmt :=
-  [.ite (eEq (v "b") (n 10)) [.assign "bad" (n 1)] [],
-   .ite (eEq (v "b") (n 0)) [.assign "bad" (n 1)] []]
-
-/-- A byte inside a line: hold it, and see whether it spoils the block. -/
-def dataS : List PStmt := [.assign "post" (n 1)] ++ spoilS ++ [.assign "ph" (n 1)]
-
-/-- A CR after a CR held back: the first is inside the line. -/
-def crCrS : List PStmt := [.assign "pre" (n 1), .assign "bad" (n 1), .assign "ph" (n 2)]
-
-/-- Another byte after a CR held back. -/
-def crByteS : List PStmt :=
-  [.assign "pre" (n 1), .assign "post" (n 1), .assign "bad" (n 1), .assign "ph" (n 1)]
-
-/-- The end of the block: the verdict, and a fresh state. -/
-def endS (cap : Nat) : List PStmt :=
-  [.ite (v "bad") [.assign "kind" (n 2), .assign "held" (n 0)]
-     [.ite (eLt (n cap) (v "size")) [.assign "kind" (n 3), .assign "held" (n 0)]
-        [.assign "kind" (n 1), .assign "held" (v "size")]],
-   .assign "ph" (n 0), .assign "bad" (n 0)]
-
-/-- What the byte does, decided from the phase and the byte. -/
-def logicS (cap : Nat) : List PStmt :=
-  [.assign "pre" (n 0), .assign "post" (n 0),
-   .ite (eEq (v "ph") (n 0))
-     [.ite (eEq (v "b") (n 46)) [.assign "ph" (n 3)]
-        [.ite (eEq (v "b") (n 13)) [.assign "ph" (n 2)] dataS]]
-     [.ite (eEq (v "ph") (n 1))
-        [.ite (eEq (v "b") (n 13)) [.assign "ph" (n 2)] dataS]
-        [.ite (eEq (v "ph") (n 2))
-           [.ite (eEq (v "b") (n 10))
-              [.assign "pre" (n 1), .assign "post" (n 1), .assign "ph" (n 0)]
-              [.ite (eEq (v "b") (n 13)) crCrS crByteS]]
-           [.ite (eEq (v "ph") (n 3))
-              [.ite (eEq (v "b") (n 13)) [.assign "ph" (n 4)] dataS]
-              [.ite (eEq (v "b") (n 10)) (endS cap)
-                 [.ite (eEq (v "b") (n 13)) crCrS crByteS]]]]]]
-
-/-- Hold one byte: kept while there is room, only counted past it. -/
-def putS (cap : Nat) (e : PExpr) : List PStmt :=
-  [.ite (eLt (v "size") (n cap))
-     [.storeb (eAdd (eAdd (v "blk") (n 40)) (v "size")) e,
-      .assign "size" (eAdd (v "size") (n 1))]
-     [.assign "size" (eAdd (v "size") (eEq (v "size") (n cap)))]]
-
-def blockLoop (cap : Nat) : PStmt :=
-  .while (eAnd (eLt (v "i") (v "n")) (eEq (v "kind") (n 0)))
-    ([.assign "b" (.loadb (eAdd (v "p") (v "i"))), .assign "i" (eAdd (v "i") (n 1))] ++
-     logicS cap ++
-     [.ite (v "pre") (putS cap (n 13)) [], .ite (v "post") (putS cap (v "b")) [],
-      .ite (v "kind") [.assign "size" (n 0)] []])
-
-/-- The block framer as statements that declare nothing, like `lineFrag`: its working names are
-`ph`, `bad`, `size`, `kind`, `held`, `b`, `pre` and `post`. -/
-def blockFrag (cap : Nat) : List PStmt :=
-  [.assign "ph" (.loadw 1 (v "blk")),
-   .assign "bad" (.loadw 1 (eAdd (v "blk") (n 8))),
-   .assign "size" (.loadw 1 (eAdd (v "blk") (n 16))),
-   .assign "kind" (n 0),
-   .assign "held" (n 0),
-   blockLoop cap,
-   .store (v "blk") (v "ph"),
-   .store (eAdd (v "blk") (n 8)) (v "bad"),
-   .store (eAdd (v "blk") (n 16)) (v "size"),
-   .store (eAdd (v "blk") (n 24)) (v "kind"),
-   .store (eAdd (v "blk") (n 32)) (v "held")]
-
-def blockDecs : List PStmt :=
-  [.dec "ph" (n 0), .dec "bad" (n 0), .dec "size" (n 0), .dec "kind" (n 0), .dec "held" (n 0),
-   .dec "b" (n 0), .dec "pre" (n 0), .dec "post" (n 0)]
-
-def blockRun (cap : Nat) : List PStmt := blockDecs ++ blockFrag cap ++ [.ret (v "i")]
-
-/-- `dn_frame_block(blk, p, n, i)`, for blocks of at most `cap` bytes. -/
-def frameBlock (name : String) (cap : Nat) : PFun :=
-  { name, exported := true, params := [(1, "blk"), (1, "p"), (1, "n"), (1, "i")],
-    body := Kernels.rejectNegative ["n", "i"] [.ret (n refused)]
-      [.ite (eLt (v "n") (v "i")) [.ret (n refused)] (blockRun cap)] }
-
 /-! ### The block program as the model runs it -/
 
 private def eqc (name : String) (k : Nat) : PancakeExp := .cmp .equal (x name) (c k)
@@ -1353,57 +1178,22 @@ theorem widen_facts (y : Byte) :
   ⟨widen_eq y 10 (by decide), widen_eq y 13 (by decide), widen_eq y 46 (by decide),
     widen_eq y 0 (by decide)⟩
 
-/-- The phase logic at the start of a line. -/
-theorem phase_bol (o : Oracle σ) (cap : Nat) (s : PancakeState σ) (S : BlockState) (y : Byte)
-    (hP : S.phase = .bol) (h : PhaseIn s S y) :
+/-- The phase logic but after a dot and a CR at the start of a line: at the start of a line, inside
+one, after a CR held back, and after a dot at the start of a line. -/
+theorem phase_early (o : Oracle σ) (cap : Nat) (s : PancakeState σ) (S : BlockState) (y : Byte)
+    (hP : S.phase ≠ .dotcr) (h : PhaseIn s S y) :
     ∃ s', PancakeSem o (phaseP cap) s = (none, s') ∧ PhaseOut cap s s' S y := by
   obtain ⟨hph, hbad, hsize, hb, hpre, hpost, ⟨wk, hwk⟩, ⟨wh, hwh⟩⟩ := h
   obtain ⟨e10, e13, e46, e0⟩ := widen_facts y
+  have hS : S.phase = .bol ∨ S.phase = .data ∨ S.phase = .cr ∨ S.phase = .dot := by
+    cases hp : S.phase <;> simp_all
+  rcases hS with hS | hS | hS | hS <;>
   by_cases hL : y = LF <;> by_cases hC : y = CR <;> by_cases hD : y = DOT <;>
-      by_cases hN : y = NUL <;>
-    simp +contextual [cr_ne_dot, lf_ne_cr, lf_ne_dot, nul_ne_cr, lf_ne_nul, nul_ne_dot, nul_ne_lf,
-        PhaseOut, phaseP, dataP, eqc, set, x, c, PancakeSem, eval, clampClock,
-      setLocal, hph, hbad, hsize, hb, hpre, hpost, hwk, hwh, e10, e13, e46, e0, plan, hP, hL, hC,
-      hD, hN, phaseCode, bw, spoils, wLF, wCR, wDOT, wNUL]
-
-/-- The phase logic inside a line. -/
-theorem phase_data (o : Oracle σ) (cap : Nat) (s : PancakeState σ) (S : BlockState) (y : Byte)
-    (hP : S.phase = .data) (h : PhaseIn s S y) :
-    ∃ s', PancakeSem o (phaseP cap) s = (none, s') ∧ PhaseOut cap s s' S y := by
-  obtain ⟨hph, hbad, hsize, hb, hpre, hpost, ⟨wk, hwk⟩, ⟨wh, hwh⟩⟩ := h
-  obtain ⟨e10, e13, _, e0⟩ := widen_facts y
-  by_cases hL : y = LF <;> by_cases hC : y = CR <;> by_cases hD : y = DOT <;>
-      by_cases hN : y = NUL <;>
-    simp +contextual [dot_ne_cr, lf_ne_cr, dot_ne_lf, nul_ne_cr, dot_ne_nul, lf_ne_nul, nul_ne_lf,
-        PhaseOut, phaseP, dataP, crCrP, crByteP, eqc, set, x, c, PancakeSem, eval,
-      clampClock, setLocal, hph, hbad, hsize, hb, hpre, hpost, hwk, hwh, e10, e13, e0, plan, hP,
-      hL, hC, hD, hN, phaseCode, bw, spoils, wLF, wCR, wDOT, wNUL]
-
-/-- The phase logic after a CR held back. -/
-theorem phase_cr (o : Oracle σ) (cap : Nat) (s : PancakeState σ) (S : BlockState) (y : Byte)
-    (hP : S.phase = .cr) (h : PhaseIn s S y) :
-    ∃ s', PancakeSem o (phaseP cap) s = (none, s') ∧ PhaseOut cap s s' S y := by
-  obtain ⟨hph, hbad, hsize, hb, hpre, hpost, ⟨wk, hwk⟩, ⟨wh, hwh⟩⟩ := h
-  obtain ⟨e10, e13, _, _⟩ := widen_facts y
-  by_cases hL : y = LF <;> by_cases hC : y = CR <;> by_cases hD : y = DOT <;>
-      by_cases hN : y = NUL <;>
-    simp +contextual [dot_ne_cr, cr_ne_lf, dot_ne_lf, nul_ne_cr, nul_ne_lf, PhaseOut, phaseP, dataP,
-        crCrP, crByteP, eqc, set, x, c, PancakeSem, eval,
-      clampClock, setLocal, hph, hbad, hsize, hb, hpre, hpost, hwk, hwh, e10, e13, plan, hP,
-      hL, hC, hD, hN, phaseCode, bw, wLF, wCR, wDOT, wNUL]
-
-/-- The phase logic after a dot at the start of a line. -/
-theorem phase_dot (o : Oracle σ) (cap : Nat) (s : PancakeState σ) (S : BlockState) (y : Byte)
-    (hP : S.phase = .dot) (h : PhaseIn s S y) :
-    ∃ s', PancakeSem o (phaseP cap) s = (none, s') ∧ PhaseOut cap s s' S y := by
-  obtain ⟨hph, hbad, hsize, hb, hpre, hpost, ⟨wk, hwk⟩, ⟨wh, hwh⟩⟩ := h
-  obtain ⟨e10, e13, _, e0⟩ := widen_facts y
-  by_cases hL : y = LF <;> by_cases hC : y = CR <;> by_cases hD : y = DOT <;>
-      by_cases hN : y = NUL <;>
-    simp +contextual [dot_ne_cr, lf_ne_cr, dot_ne_lf, nul_ne_cr, dot_ne_nul, lf_ne_nul, nul_ne_lf,
-        PhaseOut, phaseP, dataP, crCrP, crByteP, eqc, set, x, c, PancakeSem, eval,
-      clampClock, setLocal, hph, hbad, hsize, hb, hpre, hpost, hwk, hwh, e10, e13, e0, plan, hP,
-      hL, hC, hD, hN, phaseCode, bw, spoils, wLF, wCR, wDOT, wNUL]
+    by_cases hN : y = NUL <;>
+  simp +contextual [dot_ne_cr, cr_ne_dot, lf_ne_cr, cr_ne_lf, dot_ne_lf, lf_ne_dot, nul_ne_cr,
+    dot_ne_nul, lf_ne_nul, nul_ne_dot, nul_ne_lf, PhaseOut, phaseP, dataP, crCrP, crByteP, eqc, set,
+    x, c, PancakeSem, eval, clampClock, setLocal, hph, hbad, hsize, hb, hpre, hpost, hwk, hwh, e10,
+    e13, e46, e0, plan, hS, hL, hC, hD, hN, phaseCode, bw, spoils, wLF, wCR, wDOT, wNUL]
 
 /-- The phase logic after a dot and a CR at the start of a line: the end of the block, or more. -/
 theorem phase_dotcr (o : Oracle σ) (cap : Nat) (hcap : cap < 2 ^ 62) (s : PancakeState σ)
@@ -1431,11 +1221,8 @@ theorem phase_run (o : Oracle σ) (cap : Nat) (hcap : cap < 2 ^ 62) (s : Pancake
     (S : BlockState) (y : Byte) (hsz : S.size ≤ cap + 1) (h : PhaseIn s S y) :
     ∃ s', PancakeSem o (phaseP cap) s = (none, s') ∧ PhaseOut cap s s' S y := by
   cases hP : S.phase
-  · exact phase_bol o cap s S y hP h
-  · exact phase_data o cap s S y hP h
-  · exact phase_cr o cap s S y hP h
-  · exact phase_dot o cap s S y hP h
-  · exact phase_dotcr o cap hcap s S y hsz hP h
+  case dotcr => exact phase_dotcr o cap hcap s S y hsz hP h
+  all_goals exact phase_early o cap s S y (by simp [hP]) h
 
 /-! ### Holding a byte -/
 
@@ -2018,12 +1805,6 @@ def ReportedB (s : PancakeState σ) (st : Word) : Option BlockResult → Prop
   | some r => s.memory (st + 24#64) = BitVec.ofNat 64 (blockCode r.kind) ∧
       s.memory (st + 32#64) = BitVec.ofNat 64 r.held.length ∧ Kept s st r.held
 
-/-- A block whose first words are zero holds a fresh block framer, as `holds_zero` for lines. -/
-theorem holdsB_zero (s : PancakeState σ) (st : Word) (h0 : s.memory st = 0#64)
-    (h8 : s.memory (st + 8#64) = 0#64) (h16 : s.memory (st + 16#64) = 0#64) :
-    HoldsB s st .fresh :=
-  ⟨h0, h8, h16, fun j h => absurd h (by simp [BlockState.fresh])⟩
-
 theorem blockStores_run (o : Oracle σ) (k : PancakeProg) (s : PancakeState σ)
     (st ph bad size kind held : Word)
     (hst : s.locals "blk" = some st) (hph : s.locals "ph" = some ph)
@@ -2438,6 +2219,39 @@ theorem frameLine_demo : ∃ s', PancakeSem (Oracle.idle (σ := Unit)) (guardP (
     demo 0 64 [72#8] 0 demoLine fits_witness (by decide) (by decide) rfl rfl rfl rfl holds_witness
     chunk_witness room_witness (by decide) (by decide) apart_witness (frameLine_lower "f" 4)).1
     (by decide)
+  exact ⟨s', h1, h2, h3.holds, h3.reported⟩
+
+/-- The demo state with the chunk CR LF at 64 instead, and clock for both bytes. -/
+def demoEnd : PancakeState Unit :=
+  { demo with
+    locals := (fun name => if name = "n" then some 2 else demoLocals name),
+    memory := (fun w => if w = 0 then 1 else if w = 40 then 65 else if w = 64 then 2573 else 0),
+    clock := 2 }
+
+theorem holdsEnd_witness : Holds demoEnd 0 demoLine := by
+  refine ⟨rfl, rfl, rfl, fun j hj => ?_⟩
+  have : j = 0 := by simpa [demoLine] using hj
+  subst this
+  rfl
+
+theorem chunkEnd_witness : Chunk demoEnd 64 [13#8, 10#8] := by
+  intro j hj
+  have : j = 0 ∨ j = 1 := by simp at hj; omega
+  rcases this with rfl | rfl <;> rfl
+
+/-- **A line that ends is reported**: `dn_frame_line_4` reads the chunk CR LF after the "A" the demo
+state holds, reports the command line "A", and leaves a fresh state. -/
+theorem frameLine_demo_line : ∃ s',
+    PancakeSem (Oracle.idle (σ := Unit)) (guardP (lineRunP 4)) demoEnd =
+      (some (.return_ (BitVec.ofNat 64 2)), s') ∧ s'.clock = 0 ∧
+    Holds s' 0 .fresh ∧ Reported s' 0 (some ⟨.command, [65#8]⟩) := by
+  obtain ⟨s', h1, h2, h3⟩ := (frameLine_run (Oracle.idle (σ := Unit)) "f" 4 (by decide) (by decide)
+    demoEnd 0 64 [13#8, 10#8] 0 demoLine fits_witness (by decide) (by decide) rfl rfl rfl rfl
+    holdsEnd_witness chunkEnd_witness ⟨rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl⟩ (by decide)
+    (by decide) (fun j j' hj hj' h => by
+      have := congrArg BitVec.toNat h
+      simp at hj' this
+      omega) (frameLine_lower "f" 4)).1 (by decide)
   exact ⟨s', h1, h2, h3.holds, h3.reported⟩
 
 /-- …and with no clock left it times out. -/

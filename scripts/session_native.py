@@ -37,7 +37,7 @@ from session_ref import Turn
 
 OUT = ROOT / "build/session"
 HOST = NATIVE / "session_host.c"
-HOSTS = [HOST, NATIVE / "cake_header.c", *lanes.RUNTIME]
+HOSTS = [HOST, NATIVE / "session_calls.h", NATIVE / "call_checks.h", NATIVE / "cake_header.c", *lanes.RUNTIME]
 LIMIT = 2 ** 62
 # The hosts drawn at random: how many, how many turns each at most, and the seed.
 RUNS, STEPS, SEED = 200, 60, 20_260_928
@@ -93,25 +93,8 @@ DEFECTS = [
 ]
 
 
-def build(cake: str, name: str, source: str, out: Path = OUT, host: Path = HOST) -> Path:
-    """Compile a program without `--main_return`, make its bitmaps label global for the heap
-    header (native/cake_header.c), and link it with the host; `out` holds the layout's header."""
-    pnk = out / f"{name}.pnk"
-    pnk.write_text(source)
-    asm = lanes.assemble(cake, pnk, main_return=False)
-    text = asm.read_text()
-    if text.count("\ncake_bitmaps:\n") != 1:
-        raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
-    asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
-    return lanes.link(out / name, [host, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm],
-                      includes=[out])
-
-
 def plant(source: str, pattern: str, becomes: str, times: int) -> str:
-    planted, found = re.subn(pattern, becomes, source)
-    if found != times:
-        raise LaneError(f"the program holds {pattern!r} {found} times, not {times}, for a planted defect")
-    return planted
+    return lanes.plant(source, pattern, becomes, times, "the program, for a planted defect,")
 
 
 def first_difference(expected: list[Turn], got: list[Turn], broken: str | None) -> str | None:
@@ -220,7 +203,12 @@ class Wander:
     def __init__(self, rng: random.Random, binary: Path) -> None:
         self.rng = rng
         identity = rng.choice([IDENTITY, LONGEST, SHORTEST])
-        self.pair = [Speaker(sessions.model_command(), identity), Speaker([str(binary)], identity)]
+        model = Speaker(sessions.model_command(), identity)
+        try:
+            self.pair = [model, Speaker([str(binary)], identity)]
+        except BaseException:
+            model.__exit__()
+            raise
         self.gens = [0] * 64
         # each open connection: its generation, whether it asked for input, whether output is untaken
         self.live: dict[int, list[int]] = {}
@@ -384,7 +372,7 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    binary = build(cake, "session", source)
+    binary = lanes.whole_program(cake, "session", source, OUT, HOST)
     scenarios = list(sessions.scenarios())
     model = sessions.model_command()
     expected = {name: sessions.run(clients, model, ghosts, identity) for name, clients, ghosts, identity in scenarios}
@@ -396,7 +384,7 @@ def check(cake: str) -> Report:
     random_hosts = wander(binary, RUNS)
     caught = {}
     for index, (name, pattern, becomes, times, sign) in enumerate(DEFECTS):
-        planted = build(cake, f"defect-{index}", plant(source, pattern, becomes, times))
+        planted = lanes.whole_program(cake, f"defect-{index}", plant(source, pattern, becomes, times), OUT, HOST)
         try:
             scenarios_hold(planted, scenarios, expected)
             scripts_hold(planted, answers)

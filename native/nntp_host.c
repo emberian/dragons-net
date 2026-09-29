@@ -17,15 +17,17 @@
  * A run the program stops because the host broke the contract ends it with status 3. SIGTERM or
  * SIGINT closes every socket and ends the run inside a call, with status 0.
  *
- * `--revision` and `--source` name the revision and the address of the source the replies give;
- * `--send-buffer N` sets SO_SNDBUF on each connection. Only for tests: `--clock-fd N` takes the
- * time from N instead of CLOCK_MONOTONIC — a line with a number of milliseconds sets it, and it
- * moves only then, so nothing waits for it before that — and `--report-fd N` receives a line for
- * each turn: `turn`, the time handed to the program, its events (`open` with the client's port,
- * `recv` with the bytes in hex, `end`, `writable`, `closed`, each with the index and generation),
- * `|`, its actions (`send` with whether to read, how much the kernel took and the bytes, `graceful`,
- * `close`), `| wake` and the time the program asked to be woken at — or, when the program stops
- * the run in that turn, `| stopped` and its code. */
+ * `--address A` and `--port N` choose where it listens: by default 127.0.0.1 and a port the kernel
+ * picks, printed as JSON on standard output. `--revision` and `--source` name the revision and the
+ * address of the source the replies give; `--send-buffer N` sets SO_SNDBUF on each connection, and
+ * each sends its replies at once (TCP_NODELAY). Only for tests, and costing nothing unless given:
+ * `--clock-fd N` takes the time from N instead of CLOCK_MONOTONIC — a line with a number of
+ * milliseconds sets it, and it moves only then, so nothing waits for it before that — and
+ * `--report-fd N` receives a line for each turn: `turn`, the time handed to the program, its events
+ * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`, each
+ * with the index and generation), `|`, its actions (`send` with whether to read, how much the kernel
+ * took and the bytes, `graceful`, `close`), `| wake` and the time the program asked to be woken at
+ * — or, when the program stops the run in that turn, `| stopped` and its code. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "session_calls.h"
@@ -35,6 +37,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/resource.h>
@@ -48,7 +51,8 @@ enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER
 struct conn {
     int fd;          /* -1 when the index is free */
     uint64_t gen;    /* the generation last given out at this index */
-    int reading;     /* the last send asked to read and was taken whole; kept until the next one */
+    int reading;     /* the last send asked to read and was taken whole; kept until the next send or
+                        the end of input */
     int unsent;      /* the last send left bytes: poll for writing */
     int lost;        /* a send failed; the socket is closed, its close still to be reported */
     short ready;     /* what the last poll reported, not yet given out */
@@ -111,7 +115,8 @@ static void trace_events(const unsigned char *a, uint64_t now) {
         uint64_t kind = dn_word(slot + DN_SESSION_EVENT_KIND), idx = dn_word(slot + DN_SESSION_EVENT_IDX);
         traced(" %s %" PRIu64 " %" PRIu64, names[kind], idx, dn_word(slot + DN_SESSION_EVENT_GEN));
         if (kind == DN_SESSION_OPENED) traced(" %u", conns[idx].port);
-        if (kind == DN_SESSION_RECEIVED) traced_bytes(slot + DN_SESSION_EVENT_HEAD, dn_word(slot + DN_SESSION_EVENT_LEN));
+        if (kind == DN_SESSION_RECEIVED)
+            traced_bytes(slot + DN_SESSION_EVENT_HEAD, dn_word(slot + DN_SESSION_EVENT_LEN));
     }
     traced(" |");
 }
@@ -246,14 +251,16 @@ static void wait_for(uint64_t wake) {
             struct conn *c = &conns[i];
             if (c->fd < 0) continue;
             conn_at[i] = n;
-            fds[n++] = (struct pollfd){.fd = c->fd, .events = (short)((c->reading ? POLLIN : 0) | (c->unsent ? POLLOUT : 0))};
+            short wanted = (short)((c->reading ? POLLIN : 0) | (c->unsent ? POLLOUT : 0));
+            fds[n++] = (struct pollfd){.fd = c->fd, .events = wanted};
         }
         for (int i = 0; i < LINGERING; ++i) {
             linger_at[i] = -1;
             if (lingering[i].fd < 0) continue;
             linger_at[i] = n;
             fds[n++] = (struct pollfd){.fd = lingering[i].fd, .events = POLLIN};
-            uint64_t end = lingering[i].until < lingering[i].quiet_until ? lingering[i].until : lingering[i].quiet_until;
+            uint64_t end = lingering[i].until < lingering[i].quiet_until ? lingering[i].until
+                                                                          : lingering[i].quiet_until;
             timeout = until(end, timeout);
         }
         int got = poll(fds, (nfds_t)n, timeout);
@@ -323,7 +330,7 @@ static void give_out(unsigned char *a, int i) {
     }
 }
 
-static void take_connections(unsigned char *a) {
+static void take_connections(unsigned char *a, uint64_t now) {
     while (accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {
         struct sockaddr_storage peer;
         socklen_t peer_len = sizeof peer;
@@ -338,14 +345,17 @@ static void take_connections(unsigned char *a) {
                 if (!pausing) fprintf(stderr, "accept: %s; pausing\n", strerror(code));
                 pausing = 1;
                 accept_ready = 0;
-                accept_paused_until = now_ms() + ACCEPT_PAUSE_MS;
+                accept_paused_until = now + ACCEPT_PAUSE_MS;
                 return;
             case DN_ACCEPT_FATAL:
+            default:
                 dn_harness("accept: %s", strerror(code));
             }
         }
         pausing = 0;
-        if (send_buffer && setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof send_buffer)) {
+        static const int one = 1;
+        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) ||
+            (send_buffer && setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof send_buffer))) {
             close(fd);
             continue;
         }
@@ -368,14 +378,14 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     }
     started = 1;
     if (!carrying) wait_for(wake);
+    uint64_t now = now_ms();
     turn_events = 0;
     for (unsigned k = 0; k < CONNS && turn_events < DN_SESSION_BATCH; ++k) give_out(a, (int)((start + k) % CONNS));
     start = (start + 1) % CONNS;
-    take_connections(a);
+    take_connections(a, now);
     carrying = 0;
     for (int i = 0; i < CONNS; ++i) carrying |= conns[i].ready != 0 || conns[i].lost;
     carrying |= accept_ready && free_indexes() > 0;
-    uint64_t now = now_ms();
     dn_put_word(a + DN_SESSION_NEXT_COUNT, turn_events);
     dn_put_word(a + DN_SESSION_NEXT_CLOCK, now);
     size_t rl = strlen(revision), sl = strlen(source);
@@ -451,9 +461,10 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     awaiting_emit = 0;
 }
 
-static void on_exit_run(int code) {
+__attribute__((noreturn)) static void on_exit_run(int code) {
     if (code != 0) dn_violation("the run ended for want of stack or heap (code %d)", code);
     uint64_t stop = dn_word(dn_heap_at(DN_SESSION_OWN_OFF + DN_SESSION_OWN_STOP));
+    if (stop == 0) dn_violation("the program ended its run without a cause");
     fprintf(stderr, "the program stopped the run: code %" PRIu64 "\n", stop);
     if (report_fd >= 0 && started) {
         traced(" | stopped %" PRIu64 "\n", stop);
@@ -546,9 +557,9 @@ int main(int argc, char **argv) {
      * sockets have to fit under the limit. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files)) dn_harness("getrlimit: %s", strerror(errno));
-    int open = open_descriptors();
-    if (files.rlim_cur < (rlim_t)open + CONNS + LINGERING)
-        dn_harness("too few file descriptors: %llu, and %d open", (unsigned long long)files.rlim_cur, open);
+    int in_use = open_descriptors();
+    if (files.rlim_cur < (rlim_t)in_use + CONNS + LINGERING)
+        dn_harness("too few file descriptors: %llu, and %d open", (unsigned long long)files.rlim_cur, in_use);
     printf("{\"port\":%u,\"conns\":%d}\n",
            (unsigned)ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port), CONNS);
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));

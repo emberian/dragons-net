@@ -24,9 +24,8 @@
  * hands over has to be its area of the layout. */
 #include "session_calls.h"
 
-enum { MAX_LINE = 1 << 16, HEADER_BYTES = 40 };
+enum { MAX_LINE = 1 << 16 };
 static const uint64_t FILL = UINT64_C(0x5A5A5A5A5A5A5A5A);
-_Static_assert(HEADER_BYTES <= DN_SESSION_CONF_OFF, "the layout overlaps the heap header");
 
 static unsigned char revision[DN_SESSION_REV_MAX], source[DN_SESSION_SRC_MAX];
 static size_t revision_len, source_len;
@@ -34,16 +33,16 @@ static int started, awaiting_emit;
 static long sends;
 static char line[MAX_LINE];
 
-static unsigned char *heap_at(size_t offset) { return dn_heap_at(offset); }
-
 /* The heap outside the program's areas: the header, the bytes before the first area, and all past
  * the layout. */
 static void heap_intact(const char *call) {
-    if (!dn_runtime_header_intact()) dn_violation("%s: the heap header is not what the compiler theorem requires", call);
-    for (size_t off = HEADER_BYTES; off < DN_SESSION_CONF_OFF; off += 8)
-        if (dn_word(heap_at(off)) != FILL) dn_violation("%s: the program wrote before its layout, at heap offset %zu", call, off);
+    dn_header_checked(call);
+    for (size_t off = DN_HEADER_BYTES; off < DN_SESSION_CONF_OFF; off += 8)
+        if (dn_word(dn_heap_at(off)) != FILL)
+            dn_violation("%s: the program wrote before its layout, at heap offset %zu", call, off);
     for (size_t off = DN_SESSION_SIZE; off < DN_RUNTIME_SEGMENT_BYTES; off += 8)
-        if (dn_word(heap_at(off)) != FILL) dn_violation("%s: the program wrote past its layout, at heap offset %zu", call, off);
+        if (dn_word(dn_heap_at(off)) != FILL)
+            dn_violation("%s: the program wrote past its layout, at heap offset %zu", call, off);
 }
 
 static void checked(const unsigned char *c, long clen, const unsigned char *a, long alen, size_t offset, long len,
@@ -111,13 +110,15 @@ static void batch(unsigned char *a) {
             char *off = strtok(text + 5, " "), *value = strtok(NULL, " ");
             if (!off || !value || strtok(NULL, " ")) dn_harness("bad input: not a poke");
             uint64_t at = number(off);
-            if (at < DN_SESSION_OWN_OFF || at >= DN_SESSION_SIZE || at % 8) dn_harness("bad input: a poke outside the program's own area");
-            dn_put_word(heap_at(at), number(value));
+            if (at < DN_SESSION_OWN_OFF || at >= DN_SESSION_SIZE || at % 8)
+                dn_harness("bad input: a poke outside the program's own area");
+            dn_put_word(dn_heap_at(at), number(value));
             continue;
         }
         char *kind = strtok(text, " "), *raw = kind && strcmp(kind, "raw") == 0 ? strtok(NULL, " ") : NULL;
         char *idx = strtok(NULL, " "), *gen = strtok(NULL, " "), *data = strtok(NULL, " ");
-        if (!kind || !idx || !gen || (strcmp(kind, "raw") == 0 && !raw)) dn_harness("bad input: an event without its connection");
+        if (!kind || !idx || !gen || (strcmp(kind, "raw") == 0 && !raw))
+            dn_harness("bad input: an event without its connection");
         uint64_t code = raw ? number(raw) : 0;
         for (uint64_t k = 0; !raw && k < 5; ++k)
             if (strcmp(kind, kinds[k]) == 0) code = k + 1;
@@ -128,7 +129,8 @@ static void batch(unsigned char *a) {
             dn_put_word(slot + DN_SESSION_EVENT_KIND, code);
             dn_put_word(slot + DN_SESSION_EVENT_IDX, number(idx));
             dn_put_word(slot + DN_SESSION_EVENT_GEN, number(gen));
-            dn_put_word(slot + DN_SESSION_EVENT_LEN, data ? unhex(data, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA) : 0);
+            dn_put_word(slot + DN_SESSION_EVENT_LEN,
+                        data ? unhex(data, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA) : 0);
         }
         ++count;
     }
@@ -176,7 +178,8 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             dn_violation("dn_emit: an action of kind %" PRIu64, kind);
         }
     }
-    if (actions != count) dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, actions);
+    if (actions != count)
+        dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, actions);
     printf("done\n");
     answer();
     char *text = next_line();
@@ -199,10 +202,10 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     awaiting_emit = 0;
 }
 
-static void on_exit_run(int code) {
+__attribute__((noreturn)) static void on_exit_run(int code) {
     if (code != 0) dn_violation("the run ended for want of stack or heap (code %d)", code);
     heap_intact("the end of the run");
-    uint64_t stop = dn_word(heap_at(DN_SESSION_OWN_OFF + DN_SESSION_OWN_STOP));
+    uint64_t stop = dn_word(dn_heap_at(DN_SESSION_OWN_OFF + DN_SESSION_OWN_STOP));
     if (stop == 0) dn_violation("the program ended its run without a cause");
     printf("stop %" PRIu64 "\n", stop);
     answer();
@@ -213,13 +216,14 @@ int main(void) {
     char *text = next_line();
     if (!text) dn_harness("bad input: no identity first");
     char *word = strtok(text, " "), *rev = strtok(NULL, " "), *src = strtok(NULL, " ");
-    if (!word || strcmp(word, "identity") || !rev || !src || strtok(NULL, " ")) dn_harness("bad input: no identity first");
+    if (!word || strcmp(word, "identity") || !rev || !src || strtok(NULL, " "))
+        dn_harness("bad input: no identity first");
     revision_len = unhex(rev, revision, sizeof revision);
     source_len = unhex(src, source, sizeof source);
     dn_expect_faults();
     dn_runtime_setup();
     dn_runtime_header();
-    for (size_t off = HEADER_BYTES; off < DN_RUNTIME_SEGMENT_BYTES; off += 8) dn_put_word(heap_at(off), FILL);
+    for (size_t off = DN_HEADER_BYTES; off < DN_RUNTIME_SEGMENT_BYTES; off += 8) dn_put_word(dn_heap_at(off), FILL);
     dn_runtime_on_exit = on_exit_run;
     cml_main();
     dn_violation("the program returned to its host, which a build without --main_return cannot do");

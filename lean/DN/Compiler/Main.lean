@@ -57,7 +57,8 @@ private def sessionModel (mutant : DN.News.SessionMutant.Mutant) : IO UInt32 := 
 private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 
 private def help : String :=
-  "Emit checked native examples, differential fixtures, generated programs or the state corpus."
+  "Emit checked programs and layouts, run the framing and session models and the safety " ++
+    "analysis, and print differential fixtures, generated programs or the state corpus."
 
 /-- What the safety analysis says of a lowered `main`. -/
 private def analyzed (size : Nat) : Option PancakeProg → Except String String
@@ -79,8 +80,8 @@ def main (args : List String) : IO UInt32 := do
   | ["analyze-session"] =>
     output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
   | ["frame-model"] =>
-    -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven
-    -- to run.
+    -- Framing cases on standard input, answered by the framers whose programs
+    -- (`DN.News.FramerProg`) `DN.News.FramerCode` proves to make the same steps.
     let input ← (← IO.getStdin).readToEnd
     output (DN.News.FrameModel.runAll input)
   | ["session-model"] => sessionModel .none

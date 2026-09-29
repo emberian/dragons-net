@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any
+from typing import NamedTuple
 
 import framing_ref
 
@@ -109,10 +109,23 @@ class Violation(Exception):
         self.kind = kind
 
 
-# An event or an action, as `dn-compiler session-model` writes it: its kind, the connection's index
-# and generation, then the bytes and, for a send, whether to read.
-Event = tuple[Any, ...]
-Action = tuple[Any, ...]
+class Event(NamedTuple):
+    """An event, as `dn-compiler session-model` takes it: its kind, the connection's index and
+    generation, and the bytes of a `recv`."""
+    kind: str
+    idx: int
+    gen: int
+    data: bytes = b""
+
+
+class Action(NamedTuple):
+    """An action, as the model gives it: its kind, the connection's index and generation, and for a
+    send its bytes and whether to read once they are taken."""
+    kind: str
+    idx: int
+    gen: int
+    data: bytes = b""
+    read: bool = False
 
 
 @dataclass
@@ -200,14 +213,14 @@ class Judge:
     def turn(self, t: Turn) -> None:
         opened = set()
         for event in t.events:
-            kind, idx, gen = event[:3]
+            kind, idx, gen = event.kind, event.idx, event.gen
             if kind == "open":
                 self.conns[idx] = (gen, Conn(opened=t.now, activity=t.now))
                 opened.add(idx)
             elif idx in self.conns and self.conns[idx][0] == gen:
                 c = self.conns[idx][1]
                 if kind == "recv":
-                    c.delivered += event[3]
+                    c.delivered += event.data
                 elif kind == "end":
                     c.ended = True
                 elif kind == "writable":
@@ -218,7 +231,7 @@ class Judge:
         acted: set[int] = set()
         sends = []
         for action in t.actions:
-            kind, idx, gen = action[:3]
+            kind, idx, gen = action.kind, action.idx, action.gen
             if idx in acted:
                 raise Violation("twice", f"two actions for {idx} in one turn")
             acted.add(idx)
@@ -236,8 +249,8 @@ class Judge:
                     raise Violation("graceful-unanswered", f"{idx}/{gen} closed gracefully with lines unanswered")
                 del self.conns[idx]
             else:
-                self.send(c, idx, gen, action[3], action[4], t.now)
-                sends.append((idx, len(action[3])))
+                self.send(c, idx, gen, action.data, action.read, t.now)
+                sends.append((idx, len(action.data)))
         for idx, (gen, c) in self.conns.items():
             if idx in acted:
                 continue
@@ -308,7 +321,8 @@ class Judge:
             return
         ready = [idx for idx, (_, c) in self.conns.items() if self.ready(c)]
         if ready:
-            if t.deadline != t.now:
+            # At once: the clock of this turn, or 1 at a clock of zero, since zero means none.
+            if t.deadline != max(t.now, 1):
                 raise Violation("turn", f"{ready[0]} can go on at {t.now}, but the next turn is at {t.deadline}")
             return
         earliest = min(min(self.deadlines(c).values()) for _, c in self.conns.values())

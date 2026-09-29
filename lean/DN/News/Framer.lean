@@ -5,8 +5,8 @@ import DN.News.FrameSpec
 # DN.News.Framer
 
 The framer as the program runs it: a state per connection that one byte at a time turns into
-the next state and, at the end of a line or of a block, a verdict. `DN.News.FramerCode` holds the
-program and proves that it makes exactly these steps.
+the next state and, at the end of a line or of a block, a verdict. `DN.News.FramerProg` holds the
+program and `DN.News.FramerCode` proves that it makes exactly these steps.
 
 The state after some bytes is not defined by running the framer: `absLine` computes it from the
 bytes of the unfinished line alone, in the vocabulary of `DN.News.FrameSpec`. Each step is proven
@@ -498,7 +498,6 @@ theorem cr_ne_lf : ¬ CR = LF := by decide
 theorem dot_ne_lf : ¬ DOT = LF := by decide
 theorem lf_ne_dot : ¬ LF = DOT := by decide
 theorem nul_ne_cr : ¬ NUL = CR := by decide
-theorem cr_ne_nul : ¬ CR = NUL := by decide
 theorem dot_ne_nul : ¬ DOT = NUL := by decide
 theorem lf_ne_nul : ¬ LF = NUL := by decide
 theorem nul_ne_dot : ¬ NUL = DOT := by decide
@@ -796,7 +795,9 @@ theorem feedBlock_block (cap : Nat) {s : List Byte} {ls : List (List Byte)} {res
   have := feedBlock_lines cap [] ls rest hls
   rw [absBlock_nil] at this
   rw [this]
-  simp
+  simp only [List.map_append, List.map_cons, List.cons_append, List.nil_append, List.map_nil,
+    List.flatten_append, List.flatten_cons, List.flatten_nil, List.append_nil, List.length_append,
+    List.length_flatten, List.map_map, List.length_cons, List.append_assoc, Prod.mk.injEq, and_true]
   omega
 
 /-- **A block that has not ended leaves the state of its lines and its unfinished line.** -/
@@ -850,7 +851,7 @@ theorem feedBlock_append (cap : Nat) (s : BlockState) (a b : List Byte) :
     · rename_i s' _
       rw [ih s']
       simp only
-      split <;> simp_all <;> omega
+      split <;> simp_all only [Prod.mk.injEq, and_true] <;> omega
 
 /-! ### The block step as the program takes it
 
@@ -891,10 +892,6 @@ def plan (s : BlockState) (x : Byte) : Plan :=
 /-- Hold a byte when asked to. -/
 def putIf (cap : Nat) (f : Bool) (s : BlockState) (x : Byte) : BlockState :=
   if f then put cap s x else s
-
-theorem putIf_bad (cap : Nat) (f : Bool) (s : BlockState) (x : Byte) :
-    (putIf cap f s x).bad = s.bad := by
-  unfold putIf put; split <;> (try split) <;> rfl
 
 theorem putIf_phase (cap : Nat) (f : Bool) (s : BlockState) (x : Byte) :
     (putIf cap f s x).phase = s.phase := by

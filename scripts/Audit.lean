@@ -109,18 +109,17 @@ def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool 
 /-- The modules `dn-compiler` is built from. Pinned so that the executable compiler cannot
 start depending on another module without that being reviewed. -/
 def compilerModules : Array Name :=
-  #[`DN.Compiler.Abi, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy, `DN.Compiler.Bytes,
-    `DN.Compiler.Analyzer, `DN.Compiler.Canon,
-    `DN.Compiler.Checked, `DN.Compiler.Clock, `DN.Compiler.Decimal, `DN.Compiler.Div10,
-    `DN.Compiler.Gen, `DN.Compiler.GenCorpus,
+  #[`DN.Compiler.Abi, `DN.Compiler.Analyzer, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy,
+    `DN.Compiler.Bytes, `DN.Compiler.Canon, `DN.Compiler.Checked, `DN.Compiler.Clock,
+    `DN.Compiler.Decimal, `DN.Compiler.Div10, `DN.Compiler.Gen, `DN.Compiler.GenCorpus,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
     `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
-    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.Printed,
-    `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout, `DN.Server.Skeleton,
-    `DN.News.FrameSpec, `DN.News.Framer,
-    `DN.News.FramerCode, `DN.News.FrameModel, `DN.News.CommandSpec, `DN.News.SessionSpec,
-    `DN.News.SessionMutant, `DN.News.SessionModel]
+    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example,
+    `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec, `DN.News.Framer,
+    `DN.News.FramerProg, `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec,
+    `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
+    `DN.Server.Skeleton]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
@@ -166,8 +165,8 @@ where
 /-- Arguments for `lean4export`, each ended by NUL: the modules, `--`, and every declaration the
 kernel checks, which is all but unsafe and `partial` ones. Refused if any other axiom would pass
 for a permitted one in nanoda. -/
-def printExportList (env : Environment) (modules : Array Name) (decls : Array (Name × ConstantInfo)) :
-    IO UInt32 := do
+def printExportList (env : Environment) (modules : Array Name)
+    (decls : Array (Name × ConstantInfo)) : IO UInt32 := do
   let mut errors := env.constants.fold (init := #[]) fun acc name info =>
     if info matches .axiomInfo _ && !allowedAxioms.contains name &&
         allowedAxioms.any (nanodaName · == nanodaName name) then
@@ -340,7 +339,8 @@ unsafe def main (args : List String) : IO UInt32 := do
         errors := errors.push s!"dn-compiler no longer needs {name}; update compilerModules"
     for name in closure.toList do
       unless compilerModules.contains name do
-        errors := errors.push s!"dn-compiler now also needs {name}; review that and update compilerModules"
+        errors := errors.push
+          s!"dn-compiler now also needs {name}; review that and update compilerModules"
   for h : idx in [0:env.header.moduleNames.size] do
     let module := env.header.moduleNames[idx]
     if ours.contains module then

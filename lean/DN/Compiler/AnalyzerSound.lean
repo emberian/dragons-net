@@ -299,11 +299,16 @@ theorem eqKnown_sound {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.
 
 /-! ## States -/
 
-/-- The heap covers `size` bytes from `b`: the word that holds each of its bytes, and each word of
-it on a word boundary, is in the program's memory `dm`. -/
+/-- The heap covers the bytes from `floor` to `size` after `b`: the word that holds each of them,
+and each word of them on a word boundary, is in the program's memory `dm`. Nothing is asked of the
+bytes below `floor`, so the heap may leave them out. -/
 def Covers (size : Nat) (dm : Word → Bool) (b : Word) : Prop :=
-  (∀ off, off < size → dm (byteAlign (b + BitVec.ofNat 64 off)) = true) ∧
-  (∀ off, off < size → off % 8 = 0 → dm (b + BitVec.ofNat 64 off) = true)
+  (∀ off, floor ≤ off → off < size → dm (byteAlign (b + BitVec.ofNat 64 off)) = true) ∧
+  (∀ off, floor ≤ off → off < size → off % 8 = 0 → dm (b + BitVec.ofNat 64 off) = true)
+
+theorem covers_mono {size : Nat} {dm dm' : Word → Bool} {b : Word} (h : Covers size dm b)
+    (hm : ∀ a, dm a = true → dm' a = true) : Covers size dm' b :=
+  ⟨fun off hf hs => hm _ (h.1 off hf hs), fun off hf hs h8 => hm _ (h.2 off hf hs h8)⟩
 
 /-- Every local the abstract state has in scope is declared, with a value it stands for. -/
 def LocalsHold (b : Word) (ls : List (String × AVal)) (locals : String → Option Word) : Prop :=
@@ -324,23 +329,23 @@ theorem ofInt_of_nonneg {x : Int} (h : 0 ≤ x) : BitVec.ofInt 64 x = BitVec.ofN
 theorem byte_in_heap {size : Nat} {dm : Word → Bool} {b w : Word} {p : AVal}
     (hc : Covers size dm b) (hp : p.holds b w) (ok : byteOk size p = true) :
     dm (byteAlign w) = true := by
-  simp only [byteOk, Bool.and_eq_true, decide_eq_true_eq] at ok
+  simp only [byteOk, floor, Bool.and_eq_true, decide_eq_true_eq] at ok
   obtain ⟨⟨pp, lo⟩, hi⟩ := ok
   simp only [AVal.holds, pp, if_true] at hp
   obtain ⟨x, l, u, e, _⟩ := hp
   rw [e, ofInt_of_nonneg (by omega)]
-  exact hc.1 _ (by omega)
+  exact hc.1 _ (by simp only [floor]; omega) (by omega)
 
 theorem word_in_heap {size : Nat} {dm : Word → Bool} {b w : Word} {p : AVal}
     (hc : Covers size dm b) (hp : p.holds b w) (ok : wordOk size p = true) :
     dm w = true := by
-  simp only [wordOk, byteOk, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at ok
+  simp only [wordOk, byteOk, floor, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at ok
   obtain ⟨⟨⟨pp, lo⟩, hi⟩, r0⟩ := ok
   simp only [AVal.holds, pp, if_true] at hp
   obtain ⟨x, l, u, e, r⟩ := hp
   have := r 0 r0
   rw [e, ofInt_of_nonneg (by omega)]
-  exact hc.2 _ (by omega) (by omega)
+  exact hc.2 _ (by simp only [floor]; omega) (by omega) (by omega)
 
 theorem holds_byte (b : Word) (y : BitVec 8) :
     (AVal.num 0 255 none).holds b (y.setWidth 64) := by
@@ -868,6 +873,7 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
       decide (w ≠ 0) = t → ∃ A', assume size A e t = some A' ∧ Holds size A' s := by
   intro A e t
   fun_induction assume size A e t with
+  -- `0 < a + b` false, of two flags: each is zero
   | case1 A z a b va vb hvb hva hc ih2 ih1 =>
     intro hA w hw ht
     obtain ⟨wz, wab, ez, eab, rfl⟩ := eval_less_inv hw
@@ -899,8 +905,10 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
     obtain ⟨A1, e1, h1⟩ := ih2 hA wa ea (by simp [za])
     obtain ⟨A2, e2, h2⟩ := ih1 A1 h1 wb eb (by simp [zb])
     exact ⟨A2, by simp [e1, e2], h2⟩
+  -- the same, not of two flags, or of a part with no value: nothing learnt
   | case2 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
   | case3 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
+  -- `(a == b) == 0` false: `a` and `b` are equal
   | case4 A a b =>
     intro hA w hw ht
     obtain ⟨wi, wz, ei, ez, rfl⟩ := eval_equal_inv hw
@@ -913,7 +921,9 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
       · simp [hne] at ht
     subst heq
     exact assumeEq_sound hA ea eb
+  -- `(a == b) == z` false for another `z`: nothing learnt
   | case5 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
+  -- `a & b` true, of two flags: each is one
   | case6 A a b va vb hvb hva hc ih2 ih1 =>
     intro hA w hw ht
     obtain ⟨wa, wb, ea, eb, rfl⟩ := eval_and_inv hw
@@ -940,8 +950,10 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
     obtain ⟨A1, e1, h1⟩ := ih2 hA wa ea (by simpa using na)
     obtain ⟨A2, e2, h2⟩ := ih1 A1 h1 wb eb (by simpa using nb)
     exact ⟨A2, by simp [e1, e2], h2⟩
+  -- the same, not of two flags, or of a part with no value: nothing learnt
   | case7 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
   | case8 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
+  -- `a < b` and `a >= b`
   | case9 A a b t =>
     intro hA w hw ht
     obtain ⟨wa, wb, ea, eb, rfl⟩ := eval_less_inv hw
@@ -952,6 +964,7 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
     obtain ⟨wa, wb, ea, eb, rfl⟩ := eval_notLess_inv hw
     refine assumeLt_sound hA ea eb (!t) ?_
     cases hs : signedLt wa wb <;> simp [hs] at ht <;> simp [← ht]
+  -- `a == b` true
   | case11 A a b =>
     intro hA w hw ht
     obtain ⟨wa, wb, ea, eb, rfl⟩ := eval_equal_inv hw
@@ -961,6 +974,8 @@ theorem assume_sound {size : Nat} {s : PancakeState σ} :
       · simp [hne] at ht
     subst heq
     exact assumeEq_sound hA ea eb
+  -- any other `e`: a pointer tells nothing; zero cannot be nonzero; a range from zero that is
+  -- nonzero starts at one; a range from elsewhere tells nothing; a value that is zero is zero
   | case12 => intro hA; exact fun _ _ _ => ⟨_, rfl, hA⟩
   | case13 A e _ _ p hp hnp hz =>
     intro hA w hw ht
@@ -1275,7 +1290,7 @@ theorem readByteArray_some (m : Word → Word) (dm : Word → Bool) (be : Bool) 
 theorem array_readable {size : Nat} {dm : Word → Bool} {b wp wl : Word} {p l : AVal}
     (m : Word → Word) (be : Bool) (hc : Covers size dm b) (hp : p.holds b wp) (hl : l.holds b wl)
     (ok : arrayOk size p l = true) : ∃ bs, readByteArray m dm be wp wl.toNat = some bs := by
-  simp only [arrayOk, Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at ok
+  simp only [arrayOk, floor, Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at ok
   obtain ⟨⟨⟨⟨pp, plo⟩, lp⟩, llo⟩, fit⟩ := ok
   simp only [AVal.holds, pp, if_true] at hp
   simp only [AVal.holds, lp, Bool.false_eq_true, if_false] at hl
@@ -1288,7 +1303,7 @@ theorem array_readable {size : Nat} {dm : Word → Bool} {b wp wl : Word} {p l :
     apply BitVec.eq_of_toNat_eq
     simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
     omega]
-  exact hc.1 _ (by omega)
+  exact hc.1 _ (by simp only [floor]; omega) (by omega)
 
 theorem search_spec {size : Nat} {e : PancakeExp} {step : AState → Out} :
     ∀ (n : Nat) (X I : AState) (post : Option AState), search size e step n X = .ok (I, post) →
@@ -1341,9 +1356,6 @@ theorem loop_spec {size : Nat} {e : PancakeExp} {body : AState → Out} {A : ASt
           cases h
           exact ⟨I, post, search_spec searchFuel A I post h1, need_ok hle, ⟨v, valOf_ok hv⟩,
             need_ok hlp, rfl⟩
-
-theorem safe_false (o : Oracle σ) (p : PancakeProg) (Q : PancakeState σ → Prop) :
-    Safe o (fun _ => False) p Q := fun _ h => h.elim
 
 theorem post_none (o : Oracle σ) (p : PancakeProg) (size : Nat) (Q : PancakeState σ → Prop) :
     Safe o (Post size none) p Q := fun _ h => by
@@ -1629,8 +1641,8 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
       obtain ⟨w, ew, _⟩ := eval_of hs hv
       exact ⟨w, ew⟩
 
-/-- The analysis of a whole `main`, accepted: from every state whose heap covers `size` bytes
-from `@base`, the run never finishes normally and never errs. -/
+/-- The analysis of a whole `main`, accepted: from every state whose heap covers the bytes from
+`floor` to `size` after `@base`, the run never finishes normally and never errs. -/
 theorem check_safe (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check size p = .ok ()) :
     Safe o (fun s => Covers size s.memaddrs s.baseAddr) p (fun _ => False) := by
   simp only [check, bind, Except.bind] at h
@@ -1647,8 +1659,14 @@ theorem check_safe (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check siz
         cases hB
     | some B => cases h
 
+theorem ok_of_toBool {e : Except Alarm Unit} (h : e.toBool = true) : e = .ok () := by
+  cases e with
+  | ok u => rfl
+  | error _ => cases h
+
 /-- **No run of a `main` the analysis accepts fails**, whatever the external world answers and
-whatever the clock, from a heap that covers `size` bytes from `@base`. -/
+whatever the clock, from any heap that covers the bytes from `floor` to `size` after `@base`, one
+that leaves out the bytes below `floor` too. -/
 theorem never_fails (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check size p = .ok ())
     (s : PancakeState σ) (hc : Covers size s.memaddrs s.baseAddr) : ¬ Entry.Fails o p s :=
   Safe.not_fails (check_safe o h) (fun _ => hc)
@@ -1659,15 +1677,15 @@ theorem never_fails (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check si
 def heapWords (b : Word) (n : Nat) (a : Word) : Bool :=
   a.toNat % 8 = 0 && b.toNat ≤ a.toNat && a.toNat < b.toNat + n
 
-/-- The premise holds of a heap of just the aligned words of the layout, from any aligned `@base`
-it fits above. -/
-theorem covers_heap {size : Nat} (b : Word) (hs : size % 8 = 0) (hb : b.toNat % 8 = 0)
-    (hfit : b.toNat + size < 2 ^ 64) : Covers size (heapWords b size) b := by
+/-- The premise holds of a heap of the aligned words of `n` bytes from any aligned `@base` they
+fit above, for every `size` up to `n`. -/
+theorem covers_heap {size n : Nat} (b : Word) (hn : size ≤ n) (hb : b.toNat % 8 = 0)
+    (hfit : b.toNat + n < 2 ^ 64) : Covers size (heapWords b n) b := by
   have e : ∀ off, off < size → (b + BitVec.ofNat 64 off).toNat = b.toNat + off := by
     intro off hoff
     rw [BitVec.toNat_add, BitVec.toNat_ofNat]
     omega
-  refine ⟨fun off hoff => ?_, fun off hoff h8 => ?_⟩
+  refine ⟨fun off _ hoff => ?_, fun off _ hoff h8 => ?_⟩
   · simp only [heapWords, Bytes.byteAlign_toNat, e off hoff, Bool.and_eq_true, decide_eq_true_eq]
     omega
   · simp only [heapWords, e off hoff, Bool.and_eq_true, decide_eq_true_eq]
@@ -1687,8 +1705,8 @@ theorem locals_witness :
     exact ⟨5, by simp [hy], holds_const 0 5⟩
   · cases hv
 
-/-- A state of a heap of 64 bytes from address 0, with nothing declared. -/
-def heapState : PancakeState Unit := { Entry.bare with memaddrs := heapWords 0 64 }
+/-- A state of a heap of 128 bytes from address 0, with nothing declared. -/
+def heapState : PancakeState Unit := { Entry.bare with memaddrs := heapWords 0 128 }
 
 theorem cells_witness : CellsHold heapState [("x", 0, AVal.top)] := by
   intro x k v hv p _
@@ -1698,10 +1716,10 @@ theorem cells_witness : CellsHold heapState [("x", 0, AVal.top)] := by
     exact holds_top _ _
   · cases hv
 
-theorem holds_state_witness : Holds 64 ⟨[], []⟩ heapState :=
+theorem holds_state_witness : Holds 128 ⟨[], []⟩ heapState :=
   ⟨covers_heap 0 (by decide) (by decide) (by decide), (fun _ _ h => by cases h),
     holds_empty_cells _⟩
 
-theorem post_witness : Post 64 (some ⟨[], []⟩) heapState := ⟨_, rfl, holds_state_witness⟩
+theorem post_witness : Post 128 (some ⟨[], []⟩) heapState := ⟨_, rfl, holds_state_witness⟩
 
 end DN.Compiler.Analyzer

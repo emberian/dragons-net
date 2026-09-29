@@ -1,6 +1,6 @@
 # 0003. The first NNTP slice: what it answers, how it frames input, and what is proved
 
-Status: accepted, 2026-09-27.
+Status: accepted, 2026-09-27; amended while the slice was built, 2026-09-29.
 
 ## Question
 
@@ -158,15 +158,15 @@ generation is a word, and the host does not give out an index and generation it 
   write, end of input, closed. The host touches the heap only inside a call, so it cannot finish
   a send on its own between calls. The configuration bytes of both calls carry the version of the
   layout; a host that finds another version stops the run in that call.
-- `@dn_emit` hands the host a batch of actions: their number, then a slot for each connection
-  that holds its action, or kind zero when it has none. Per
-  connection there is at most one action per batch, so bytes cannot be reordered: send these
-  bytes, then say whether to read from the connection; close gracefully (after QUIT or the end
-  of input, once everything sent was taken); or close at once. The host reads from the connection
-  only once everything the send carried was taken, and reports input from a connection at most
-  once a batch. For a send, the host writes back into the same array how much the kernel took at
-  once; the program reads nothing else of the array back. What the kernel did not take stays with
-  the program, which sends it again when a later batch reports the connection ready to write.
+- `@dn_emit` hands the host a batch of actions: their number, then a slot for each connection that
+  holds its action, or kind zero when it has none. Per connection there is at most one action per
+  batch, so bytes cannot be reordered: send these bytes, then say whether to read from the
+  connection; close gracefully (after QUIT or the end of input, once everything sent was taken); or
+  close at once. The host reads from the connection only once everything the send carried was taken,
+  and reports input from a connection at most once a batch. For a send, the host writes back into
+  the same array how much the kernel took at once; the program reads nothing else of the array back.
+  What the kernel did not take stays with the program, which sends it again when a later batch
+  reports the connection ready to write.
 - The host knows sockets and the clock and nothing of the protocol. It gives out what one `poll`
   reported before polling again; polls a connection for input only while the program asks for
   input from it; stops polling the listening socket while every index is in use; receives and
@@ -174,15 +174,14 @@ generation is a word, and the host does not give out an index and generation it 
   the heap, sends with `MSG_NOSIGNAL`, and writes the heap header before `cml_main`. It carries
   out an action only if the generation in it is the connection's current one; the program ignores
   an event whose generation is not the one it holds for that index.
-- A host that breaks this contract — more events than a batch, more bytes than a slot, an index
-  past the table, input the program did not ask for, more taken than sent, an index opened twice,
-  a clock that goes back or reaches 2^62, an event of no kind the layout has, an identity that
-  does not fit the replies, a word of the program's own area the program finds out of the range
-  it keeps it in (which a host that writes only into its arrays is not seen to cause, in tests)
-  — stops the run: the program writes the code of the breach into a word
-  of its own area and returns from `main`, and the host, whose runtime ends the run there, reads
-  the code. The model also refuses a count for no send, which the layout cannot express: each
-  count lies in its send's slot.
+- A host that breaks this contract — more events than a batch, more bytes than a slot, an index past
+  the table, input the program did not ask for, more taken than sent, an index opened twice, a clock
+  that goes back or reaches 2^62, an event of no kind the layout has, an identity that does not fit
+  the replies, a word of the program's own area the program finds out of the range it keeps it in
+  (no test has seen a host that writes only into its arrays cause this) — stops the run: the program
+  writes the code of the breach into a word of its own area and returns from `main`, and the host,
+  whose runtime ends the run there, reads the code. The model also refuses a count for no send,
+  which the layout cannot express: each count lies in its send's slot.
 
 The layout — offsets down to the fields of an event and an action, `K`, slot size, the version,
 the codes of events, of actions and of the stops the host has to know — is defined once in Lean
@@ -190,19 +189,20 @@ and emitted as a C header, so that the program and the host cannot disagree abou
 
 ### What is proved and what is tested
 
-- The whole server `main`: in the Lean model of Pancake, extended with the call through which a
-  run enters `main` and with `semantics`, which says whether a run fails, terminates or diverges:
-  for every FFI oracle, every amount of fuel (the model's clock) and every content of the heap
-  after its header, provided the heap covers the program's layout, the run is not `Fail`. Each
-  outcome is then running out of fuel, the end of a run the host chose inside a call
-  (`FinalFFI`), or a return, which the loop is written to make only when the host breaks the
-  contract; the theorem does not say which. `Fail` in the upstream semantics
-  also covers running off the end of `main`, so the loop is written never to fall through. The
-  theorem is assembled from theorems about the pieces the program is built from, as for the byte
-  copy and the number printer; for the session's program, from a safety analysis proven sound
-  once and run on the program by the kernel ([0004](0004-safety-analysis.md)).
-- The framing code is equal to a framing specification written from the grammar above, whatever
-  the split of the input into received chunks.
+- The whole server `main`: in the Lean model of Pancake, extended with the call through which a run
+  enters `main` and with when that run counts as `Fail` in the upstream `semantics`
+  (`DN.Compiler.Entry.Fails`): for every FFI oracle, every amount of fuel (the model's clock) and
+  every content of the heap, provided the heap covers the program's layout above its header, the run
+  is not `Fail`. Each outcome is then running out of fuel, the end of a run the host chose inside a
+  call (`FinalFFI`), or a return, which the loop is written to make only when the host breaks the
+  contract; the theorem does not say which. `Fail` in the upstream semantics also covers running off
+  the end of `main`, so the loop is written never to fall through. The theorem comes from a safety
+  analysis proven sound once and run on the program by the kernel ([0004](0004-safety-analysis.md)),
+  which keeps every access above the heap's header.
+- The framing code is equal to a framing specification written from the grammar above, whatever the
+  split of the input into received chunks: proven of the framers the compiler prints as functions;
+  the session's `main` runs the line framer's statements in place, which is tested with the rest of
+  the session.
 - Replies are the texts `DN.News.CommandSpec` gives, laid out once in the program's own area
   and copied from there with the identity; that the program sends them is tested with the rest of
   the session, not proven. The reply language of [0001](0001-embedding.md) is not used here.
@@ -211,18 +211,18 @@ and emitted as a C header, so that the program and the host cannot disagree abou
   an independent reference in Python and the compiled code: on transcripts split at every octet,
   on hostile sockets and against an independent client. A theorem relating the session code to
   its specification is not part of this slice.
-- Not claimed: anything about the C host beyond what the FFI oracle quantifies over, and the rest
-  of what [assurance](../assurance.md) lists as trusted (the transcription of the semantics, the
+- Not claimed: anything about the C host beyond what the FFI oracle quantifies over, and the rest of
+  what [assurance](../assurance.md) lists as trusted (the transcription of the semantics, the
   printer and CakeML's parser, the runtime, the linker); running out of stack, which the upstream
   theorem allows unless the stack is at least the bound the compiler computes (the host provisions
-  1 MiB; the bound itself is not yet obtained, [assurance](../assurance.md) item 8); the step from the model with fuel to the trace of an
-  unending run.
+  1 MiB; the bound itself is not yet obtained, [assurance](../assurance.md) item 8); the step from
+  the model with fuel to the trace of an unending run.
 
 ## Consequences
 
-- The model gains the entry call and `semantics`; the gate learns a second profile: a `main` with
-  external calls to the two names above, arrays addressed from `@base`, and a loop that ends only
-  when the host ends a call or breaks the contract.
+- The model gains the entry call and when a run fails (`Entry.Fails`); the gate learns a second
+  profile: a `main` with external calls to the two names above, arrays addressed from `@base`, and a
+  loop that ends only when the host ends a call or breaks the contract.
 - `lean/DN/News` holds the framing specification and code; the session specification and code
   follow it.
 - `native/nntp_host.c` is the server's host. The exported kernels stay tests outside the theorem.

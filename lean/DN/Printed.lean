@@ -5,7 +5,7 @@ import DN.Compiler.Kernels
 import DN.Dsl.Example
 import DN.Server.Skeleton
 import DN.Server.Session
-import DN.News.FramerCode
+import DN.News.FramerProg
 
 /-!
 # DN.Printed
@@ -60,10 +60,10 @@ def session : Except String Program :=
 four, for the lane's exhaustive run; blocks for a buffer of 64 bytes and of four. The buffer the
 store needs is set by the store; the framing is proven for every size below 2^62. -/
 def framers : List (String × Except String Program) :=
-  [("frame-line", checked (News.FramerCode.frameLine "dn_frame_line" 512)),
-   ("frame-line-4", checked (News.FramerCode.frameLine "dn_frame_line_4" 4)),
-   ("frame-block-64", checked (News.FramerCode.frameBlock "dn_frame_block_64" 64)),
-   ("frame-block-4", checked (News.FramerCode.frameBlock "dn_frame_block_4" 4))]
+  [("frame-line", checked (News.FramerProg.frameLine "dn_frame_line" 512)),
+   ("frame-line-4", checked (News.FramerProg.frameLine "dn_frame_line_4" 4)),
+   ("frame-block-64", checked (News.FramerProg.frameBlock "dn_frame_block_64" 64)),
+   ("frame-block-4", checked (News.FramerProg.frameBlock "dn_frame_block_4" 4))]
 
 /-- The programs `emit-NAME` prints, by name. -/
 def named : List (String × Except String Program) :=

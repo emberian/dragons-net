@@ -13,8 +13,10 @@ batch of actions, for ever. It is the shape the NNTP session is built in
 Every count and length the host writes is checked before it is used, so no host can make the
 program read or write outside its layout; a host that writes one out of range ends the run with a
 return (1 for the count of events, 2 for a length, as the model sees it: the start-up code of a
-program built without `--main_return` passes the host no value). The loop itself never finishes,
-so the run never falls off the end of `main`.
+program built without `--main_return` passes the host no value). The number of actions is checked
+against the batch as well (3), though the count of events already bounds it: the safety analysis
+sees ranges, not that one counter stays below another. The loop itself never finishes, so the run
+never falls off the end of `main`.
 -/
 
 namespace DN.Server.Skeleton
@@ -40,19 +42,20 @@ def copyData : List PStmt :=
 def echo : List PStmt :=
   [.ite (eLt (v "len") (n 0)) [.ret (n 2)] [],
    .ite (eLt (n data) (v "len")) [.ret (n 2)] [],
-   .dec "ac" (eAdd (at_ (emitOff + 16)) (eMul (v "m") (n actionSlot))),
+   .ite (eLt (n (batch - 1)) (v "m")) [.ret (n 3)] [],
+   .dec "ac" (eAdd (at_ (emitOff + emitActions)) (eMul (v "m") (n actionSlot))),
    .store (v "ac") (n send),
-   .store (eAdd (v "ac") (n 8)) (.loadw 1 (eAdd (v "ev") (n 8))),
-   .store (eAdd (v "ac") (n 16)) (.loadw 1 (eAdd (v "ev") (n 16))),
-   .store (eAdd (v "ac") (n 24)) (v "len"),
-   .store (eAdd (v "ac") (n 32)) (n 1),
-   .store (eAdd (v "ac") (n 40)) (n 0)] ++ copyData ++
+   .store (eAdd (v "ac") (n actionIdx)) (.loadw 1 (eAdd (v "ev") (n eventIdx))),
+   .store (eAdd (v "ac") (n actionGen)) (.loadw 1 (eAdd (v "ev") (n eventGen))),
+   .store (eAdd (v "ac") (n actionLen)) (v "len"),
+   .store (eAdd (v "ac") (n actionRead)) (n 1),
+   .store (eAdd (v "ac") (n actionTaken)) (n 0)] ++ copyData ++
   [.assign "m" (eAdd (v "m") (n 1))]
 
 /-- One event: received bytes are echoed, every other event is left alone. -/
 def event : List PStmt :=
-  [.dec "ev" (eAdd (at_ (nextOff + 16)) (eMul (v "i") (n eventSlot))),
-   .dec "len" (.loadw 1 (eAdd (v "ev") (n 24))),
+  [.dec "ev" (eAdd (at_ (nextOff + nextEvents)) (eMul (v "i") (n eventSlot))),
+   .dec "len" (.loadw 1 (eAdd (v "ev") (n eventLen))),
    .ite (eEq (.loadw 1 (v "ev")) (n received)) echo [],
    .assign "i" (eAdd (v "i") (n 1))]
 
@@ -66,7 +69,7 @@ def turn : List PStmt :=
    .dec "m" (n 0),
    .while (eLt (v "i") (v "k")) event,
    .store (at_ emitOff) (v "m"),
-   .store (at_ (emitOff + 8)) (n 0),
+   .store (at_ (emitOff + emitWake)) (n 0),
    hand]
 
 /-- `main`: write the layout's version where both calls read it, then loop. -/

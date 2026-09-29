@@ -225,6 +225,9 @@ inductive PancakeExp
   | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
 deriving Repr
 
+/-- The word `k`, as a constant. -/
+def PancakeExp.c (k : Nat) : PancakeExp := .const (BitVec.ofNat 64 k)
+
 /-- `word_cmp Less` = HOL `word_lt` = SIGNED comparison. In Lean `BitVec.slt` is
 signed-less-than (`BitVec.<` / `<` would be UNSIGNED — the exact bug C1 warns of). -/
 @[inline] def signedLt (a b : Word) : Bool := BitVec.slt a b
@@ -542,7 +545,8 @@ theorem eval_loadWord_outside_domain (ffi : σ) :
 
 /-- A declaration whose initialiser has no value is an error. -/
 theorem dec_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
-    PancakeSem oracle (.dec "x" (.var "y") .skip) (bareState ffi) = (some .error, bareState ffi) := by
+    PancakeSem oracle (.dec "x" (.var "y") .skip) (bareState ffi) =
+      (some .error, bareState ffi) := by
   simp only [PancakeSem, eval, bareState]
 
 /-- Assigning to a variable that was never declared is an error. -/
@@ -591,7 +595,8 @@ theorem ret_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
 
 /-- An external call whose array is not readable is an error: the oracle is not reached. -/
 theorem extCall_unreadable_array_is_error (ffi : σ) :
-    PancakeSem ⟨fun st _ _ _ => .ret st []⟩ (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1))
+    PancakeSem ⟨fun st _ _ _ => .ret st []⟩
+        (.extCall "name" (.const 0) (.const 0) (.const 8) (.const 1))
         { bareState ffi with memaddrs := fun _ => false }
       = (some .error, { bareState ffi with memaddrs := fun _ => false }) := by
   simp [PancakeSem, eval, bareState, readByteArray, memLoadByte]
@@ -607,7 +612,8 @@ theorem extCall_final_propagates (ffi : σ) :
 theorem assign_without_value_is_error (oracle : Oracle σ) (ffi : σ) :
     PancakeSem oracle (.assign "x" (.var "y"))
         { bareState ffi with locals := fun k => if k = "x" then some 0 else none }
-      = (some .error, { bareState ffi with locals := fun k => if k = "x" then some 0 else none }) := by
+      = (some .error,
+          { bareState ffi with locals := fun k => if k = "x" then some 0 else none }) := by
   simp [PancakeSem, eval, bareState]
 
 /-- A word store whose address or value has no value is an error. -/

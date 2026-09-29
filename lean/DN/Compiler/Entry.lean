@@ -11,6 +11,11 @@ otherwise the body runs with one tick less and no locals, a body that ends witho
 with `Break` or `Continue` is an `Error`, and any other result is passed on with the locals
 emptied. The run fails if, for some clock, the call ends in anything but a timeout, an external
 call that ends the run, or a return. Running off the end of `main` is therefore a failure.
+
+The compiler's theorem asks this of `semantics_decls`, which first declares the program's
+functions (`evaluate_decls`) and then runs `semantics`. For a program of one `main` without
+parameters, as the server's are, declaring it only puts its body in the code, where the `Call`
+clause finds it; that step is read off the HOL definitions, not modelled here.
 -/
 
 namespace DN.Compiler.Entry

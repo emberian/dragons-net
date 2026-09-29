@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The framers (`DN.News.FramerCode`) held three ways: the Lean model `dn-compiler frame-model`
+"""The framers (`DN.News.FramerProg`) held three ways: the Lean model `dn-compiler frame-model`
 runs, an independent reference over the whole stream (`framing_ref`), and the code CakeML compiles
 from the printed source, fed by `native/framing_driver.c` a chunk at a time, each call from where the
 last one stopped.
@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 import itertools
 import os
 from pathlib import Path
-import re
 import signal
 import subprocess
 import sys
@@ -299,11 +298,8 @@ def plant(source: str, defect: Defect) -> str:
         _, size, function = PROGRAMS[name]
         pattern = defect.pattern.replace("{size}", str(size))
         becomes = defect.becomes.replace("{size}", str(size)).replace("{more}", str(size + 1))
-        body, found = re.subn(pattern, becomes, parts[function])
-        if found != defect.times:
-            raise LaneError(f"{function} holds {pattern!r} {found} times, not {defect.times}, "
-                            f"for the planted defect {defect.name!r}")
-        parts[function] = body
+        parts[function] = lanes.plant(parts[function], pattern, becomes, defect.times,
+                                      f"{function}, for the planted defect {defect.name!r},")
     return "".join(parts.values())
 
 

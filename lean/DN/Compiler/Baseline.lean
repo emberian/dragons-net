@@ -115,7 +115,8 @@ def fixture : Except String Json := do
     let some p := lower f | throw "ABI wrapper does not lower"
     for (a,b) in values do
       let original := state a b
-      let s := { original with locals := setLocal original.locals "dn_result" 16, memaddrs := fun address => address == 16 }
+      let s := { original with locals := setLocal original.locals "dn_result" 16,
+                               memaddrs := fun address => address == 16 }
       let (result, final) := PancakeSem .failing p s
       let some originalFunction := (functions ++ [control, control2])[index]?
         | throw "original function missing"

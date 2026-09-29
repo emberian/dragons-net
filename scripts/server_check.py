@@ -28,7 +28,7 @@ from lanes import NATIVE, ROOT, LaneError, Report
 
 OUT = ROOT / "build/server"
 HOST = NATIVE / "skeleton_check.c"
-HOSTS = [HOST, NATIVE / "server.h", NATIVE / "cake_header.c", *lanes.RUNTIME]
+HOSTS = [HOST, NATIVE / "server.h", NATIVE / "call_checks.h", NATIVE / "cake_header.c", *lanes.RUNTIME]
 HOSTILE = ("count-negative", "count-over", "length-negative", "length-over")
 # Each check of the loop as the gate prints it.
 CHECKS = {"count-negative": "    if k < 0 {\n      return 1;\n    } else {\n    }\n",
@@ -89,20 +89,6 @@ VARIANTS = [
 ]
 
 
-def build(cake: str, name: str, source: str) -> Path:
-    """Compile a variant of the loop without `--main_return`, make its bitmaps label global for the
-    heap header (native/cake_header.c), and link it with the checking host."""
-    pnk = OUT / f"{name}.pnk"
-    pnk.write_text(source)
-    asm = lanes.assemble(cake, pnk, main_return=False)
-    text = asm.read_text()
-    if text.count("\ncake_bitmaps:\n") != 1:
-        raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
-    asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
-    return lanes.link(OUT / name, [HOST, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm],
-                      includes=[OUT])
-
-
 def run(binary: Path, mode: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run([str(binary), mode], text=True, capture_output=True, check=False, timeout=60)
@@ -122,7 +108,7 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_layout.h").write_text(lanes.emit("emit-layout"))
     source = lanes.emit("emit-skeleton")
-    binary = build(cake, "skeleton", source)
+    binary = lanes.whole_program(cake, "skeleton", source, OUT, HOST)
     echo = run(binary, "echo")
     if echo.returncode:
         raise LaneError(f"the echo run failed with status {echo.returncode}:\n{echo.stdout}{echo.stderr}")
@@ -138,9 +124,8 @@ def check(cake: str) -> Report:
             raise LaneError(f"the loop did not end its run on a {mode} batch:\n{done.stdout}{done.stderr}")
     refused = {}
     for index, (name, right, wrong, mode, said) in enumerate(VARIANTS):
-        if source.count(right) != 1:
-            raise LaneError(f"the printed loop does not hold {right!r} once, for the variant {name}")
-        done = run(build(cake, f"variant-{index}", source.replace(right, wrong)), mode)
+        variant = lanes.plant(source, right, wrong, 1, f"the printed loop, for the variant {name},", exact=True)
+        done = run(lanes.whole_program(cake, f"variant-{index}", variant, OUT, HOST), mode)
         if done.returncode != 1 or said not in done.stderr:
             raise LaneError(f"the loop {name} was not refused for it:\n{done.stdout}{done.stderr}")
         refused[name] = done.stderr.strip()

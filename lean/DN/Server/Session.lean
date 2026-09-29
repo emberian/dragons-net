@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Checked
-import DN.News.FramerCode
+import DN.News.FramerProg
 import DN.News.SessionSpec
 import DN.Server.SessionLayout
 
@@ -12,7 +12,7 @@ events from its host, runs the session's turn over its table of connections in t
 the host the actions, reads back how much of each send the kernel took, and names the time it
 needs its next turn (docs/decisions/0003-nntp-slice.md). The layout is `DN.Server.SessionLayout`.
 
-Lines are framed by the statements of `DN.News.FramerCode.lineFrag`, run on a connection's held
+Lines are framed by the statements of `DN.News.FramerProg.lineFrag`, run on a connection's held
 input; the reply to a line follows `DN.News.CommandSpec.reply`; the texts of the replies are laid
 out once in the program's own area and copied from there, with the revision and the address of the
 source the host gives in its first batch.
@@ -60,13 +60,33 @@ def copy (j : String) (dst src len : PExpr) : List PStmt :=
 def copyNew (j : String) (dst src len : PExpr) : List PStmt :=
   [.dec j (n 0), copyLoop j dst src len]
 
+/-! ## Codes -/
+
+/-- The code the local `r` holds for a reply; zero is none. -/
+def replyCode : News.CommandSpec.Reply → Nat
+  | .ignore => 0 | .capabilities => 1 | .help => 2 | .quit => 3 | .noGroup => 4
+  | .noSuchId => 5 | .unknown => 6 | .syntax => 7
+
+/-- The code a connection's record keeps for its phase. -/
+def phaseCode : News.SessionSpec.Phase → Nat
+  | .open_ => 0 | .quitting => 1 | .ending => 2
+
+def reply (r : News.CommandSpec.Reply) : PStmt := .assign "r" (n (replyCode r))
+def isReply (r : News.CommandSpec.Reply) : PExpr := eEq (v "r") (n (replyCode r))
+/-- Whether the line the framer reported is of kind `k`. -/
+def isKind (k : News.FrameSpec.Kind) : PExpr := eEq (v "kind") (n (News.FramerProg.kindCode k))
+
 /-! ## The texts of the replies -/
 
-/-- The texts, one byte at a time, into the program's own area. -/
+/-- The word of the texts that starts at byte `8 * w` of them, its first byte lowest, as the
+machines the host runs on lay out a word; past the last text, zeros. -/
+def textWord (w : Nat) : Nat :=
+  (List.range 8).foldr (fun j acc => acc * 256 + (texts.flatten.getD (8 * w + j) 0).toNat) 0
+
+/-- The texts, a word at a time, into the program's own area. -/
 def textsInit : List PStmt :=
-  (List.range texts.length).flatMap fun k =>
-    (texts.getD k []).zipIdx.map fun (b, j) =>
-      .storeb (at_ (ownOff + ownTexts + textAt k + j)) (n b.toNat)
+  (List.range ((texts.flatten.length + 7) / 8)).map fun w =>
+    .store (at_ (ownOff + ownTexts + 8 * w)) (n (textWord w))
 
 def textAddr (k : Nat) : PExpr := at_ (ownOff + ownTexts + textAt k)
 def textLen (k : Nat) : Nat := (texts.getD k []).length
@@ -114,18 +134,18 @@ def writeGreeting : List PStmt :=
     appendText tGreetingHead ++ appendRevision ++ appendText tGreetingMid ++ appendSource ++
     appendText tCrlf ++ [setf "cb" cOutLen (v "o")]
 
-/-- The reply `r` (1 capabilities, 2 help, 3 quit, 4 no group, 5 no such id, 6 unknown, 7 syntax)
-into the output of the record `cb`. -/
+/-- The reply `r` into the output of the record `cb`. -/
 def writeReply : List PStmt :=
   outputDecs ++
-  [.ite (eEq (v "r") (n 1)) (appendText tCapabilitiesHead ++ appendRevision ++ appendText tBlockEnd)
-    [.ite (eEq (v "r") (n 2))
+  [.ite (isReply .capabilities)
+    (appendText tCapabilitiesHead ++ appendRevision ++ appendText tBlockEnd)
+    [.ite (isReply .help)
       (appendText tHelpHead ++ appendRevision ++ appendText tHelpMid ++ appendSource ++
         appendText tBlockEnd)
-      [.ite (eEq (v "r") (n 3)) (appendText tQuit)
-        [.ite (eEq (v "r") (n 4)) (appendText tNoGroup)
-          [.ite (eEq (v "r") (n 5)) (appendText tNoSuchId)
-            [.ite (eEq (v "r") (n 6)) (appendText tUnknown) (appendText tSyntax)]]]]],
+      [.ite (isReply .quit) (appendText tQuit)
+        [.ite (isReply .noGroup) (appendText tNoGroup)
+          [.ite (isReply .noSuchId) (appendText tNoSuchId)
+            [.ite (isReply .unknown) (appendText tUnknown) (appendText tSyntax)]]]]],
    setf "cb" cOutLen (v "o")]
 
 /-! ## The reply to a line -/
@@ -214,34 +234,36 @@ def classify : List PStmt :=
   scanWords ++
   [.dec "cmd" (n 0), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "ok" (n 0), .dec "val" (n 0),
    .ite (eEq (v "w") (n 0))
-     [.ite (eEq (v "kind") (n 3)) [.assign "r" (n 6)] [.assign "r" (n 0)]]
+     [.ite (isKind .overlong) [reply .unknown] [reply .ignore]]
      ((List.range 5).flatMap (fun k => nameIs k ++
         [.ite (v "eqk") [.assign "cmd" (n (k + 1))] []]) ++
-      [.ite (eEq (v "cmd") (n 0)) [.assign "r" (n 6)]
-        [.ite (ne (v "kind") (n 1)) [.assign "r" (n 7)]
+      [.ite (eEq (v "cmd") (n 0)) [reply .unknown]
+        [.ite (ne (v "kind") (n (News.FramerProg.kindCode .command))) [reply .syntax]
           [.dec "args" (eSub (v "w") (n 1)),
            .ite (eEq (v "cmd") (n 1))
-             [.ite (eEq (v "args") (n 0)) [.assign "r" (n 1)]
+             [.ite (eEq (v "args") (n 0)) [reply .capabilities]
                [.ite (eEq (v "args") (n 1))
-                 (keywordCheck ++ [.ite (v "ok") [.assign "r" (n 1)] [.assign "r" (n 7)]])
-                 [.assign "r" (n 7)]]]
+                 (keywordCheck ++ [.ite (v "ok") [reply .capabilities] [reply .syntax]])
+                 [reply .syntax]]]
              [.ite (eEq (v "cmd") (n 2))
-               [.ite (eEq (v "args") (n 0)) [.assign "r" (n 2)] [.assign "r" (n 7)]]
+               [.ite (eEq (v "args") (n 0)) [reply .help] [reply .syntax]]
                [.ite (eEq (v "cmd") (n 3))
-                 [.ite (eEq (v "args") (n 0)) [.assign "r" (n 3)] [.assign "r" (n 7)]]
-                 [.ite (eEq (v "args") (n 0)) [.assign "r" (n 4)]
+                 [.ite (eEq (v "args") (n 0)) [reply .quit] [reply .syntax]]
+                 [.ite (eEq (v "args") (n 0)) [reply .noGroup]
                    [.ite (eEq (v "args") (n 1))
                      (numberCheck ++
-                      [.ite (v "ok") [.assign "r" (n 4)]
+                      [.ite (v "ok") [reply .noGroup]
                         (messageIdCheck ++
-                         [.ite (v "ok") [.assign "r" (n 5)] [.assign "r" (n 7)]])])
-                     [.assign "r" (n 7)]]]]]]]])]
+                         [.ite (v "ok") [reply .noSuchId] [reply .syntax]])])
+                     [reply .syntax]]]]]]]])]
 
 /-! ## A connection's turn -/
 
 /-- The record's fields as expressions. -/
 def outLen : PExpr := fld "cb" cOutLen
 def phase : PExpr := fld "cb" cPhase
+def inPhase (ph : News.SessionSpec.Phase) : PExpr := eEq phase (n (phaseCode ph))
+def toPhase (ph : News.SessionSpec.Phase) : PStmt := setf "cb" cPhase (n (phaseCode ph))
 def heldEmpty : PExpr := eEq (fld "cb" cHeldPos) (fld "cb" cHeldLen)
 
 /-- Answer the first held line that gets a reply and frame on past the lines that get none, as
@@ -253,17 +275,17 @@ def serve : List PStmt :=
    .while (v "sv")
      [.ite (eEq (v "i") (v "n")) [.assign "sv" (n 0)]
        ([keptIn (ld (v "blk")) News.SessionSpec.lineLimit, .dec "i0" (v "i")] ++
-        News.FramerCode.lineDecs ++
-        News.FramerCode.lineFrag News.SessionSpec.lineLimit ++
+        News.FramerProg.lineDecs ++
+        News.FramerProg.lineFrag News.SessionSpec.lineLimit ++
         [.ite (eEq (v "kind") (n 0)) [.assign "sv" (n 0)]
-          ([.dec "r" (n 0)] ++ classify ++
-           [.ite (eEq (v "r") (n 0)) []
+          ([.dec "r" (n (replyCode .ignore))] ++ classify ++
+           [.ite (isReply .ignore) []
              [.ite (ne outLen (n 0)) [.assign "i" (v "i0"), .assign "sv" (n 0)]
                (writeReply ++
                 [setf "cb" cFirst (n 0),
                  setf "cb" cIdle (eAdd (v "now") (n News.SessionSpec.inactivity)),
-                 .ite (eEq (v "r") (n 3))
-                   [setf "cb" cPhase (n 1), .assign "i" (v "n"), .assign "sv" (n 0)] []])]])])],
+                 .ite (isReply .quit)
+                   [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]])])],
    .ite (eEq (v "i") (v "n")) [setf "cb" cHeldPos (n 0), setf "cb" cHeldLen (n 0)]
      [setf "cb" cHeldPos (v "i")]]
 
@@ -290,7 +312,7 @@ def sending : List PStmt :=
 /-- The line's deadline runs while the program waits for the rest of a line, as
 `DN.News.SessionSpec.Conn.waitLine` says. -/
 def waitLine : List PStmt :=
-  [.ite (eAnd (eAnd (eEq outLen (n 0)) (eEq phase (n 0)))
+  [.ite (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_))
       (eLt (n 0)
         (eAdd (eAdd (fld "cb" cFramer) (fld "cb" (cFramer + 8))) (fld "cb" (cFramer + 16)))))
      [.ite (eEq (fld "cb" cLineDue) (n 0))
@@ -304,11 +326,11 @@ def act : List PStmt :=
       (eLe (fld "cb" cIdle) (v "now")))
       (eAnd (ne (fld "cb" cLineDue) (n 0)) (eLe (fld "cb" cLineDue) (v "now")))),
    .ite (v "due") (closing closeNow)
-     [.ite (eAnd (eEq outLen (n 0)) (ne phase (n 1))) serve [],
-      .dec "wants" (eAnd (eEq phase (n 0)) heldEmpty),
+     [.ite (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting)))) serve [],
+      .dec "wants" (eAnd (inPhase .open_) heldEmpty),
       .ite (ne outLen (n 0))
         [.ite (eEq (fld "cb" cBlocked) (n 0)) sending []]
-        [.ite (or2 (eEq phase (n 1)) (eAnd (eEq phase (n 2)) heldEmpty))
+        [.ite (or2 (inPhase .quitting) (eAnd (inPhase .ending) heldEmpty))
           (closing closeGracefully) []],
       .ite (fld "cb" cLive) waitLine []]]
 
@@ -319,7 +341,7 @@ def record (idx : PExpr) : PExpr := eAdd (at_ tableOff) (eMul idx (n connSlot))
 /-- A new connection, greeted. -/
 def openConn : List PStmt :=
   [.ite (fld "cb" cLive) (breach .reopened)
-    ([setf "cb" cLive (n 1), setf "cb" cGen (v "eg"), setf "cb" cPhase (n 0),
+    ([setf "cb" cLive (n 1), setf "cb" cGen (v "eg"), toPhase .open_,
       setf "cb" cReading (n 0), setf "cb" cBlocked (n 0),
       setf "cb" cFirst (eAdd (v "now") (n News.SessionSpec.firstCommand)),
       setf "cb" cIdle (eAdd (v "now") (n News.SessionSpec.inactivity)),
@@ -330,7 +352,7 @@ def openConn : List PStmt :=
 /-- Whether the connection may report input: it takes commands, asked to read, and has nothing
 untaken and nothing held. -/
 def asked : PExpr :=
-  eAnd (eAnd (eEq phase (n 0)) (fld "cb" cReading)) (eAnd (eEq outLen (n 0)) heldEmpty)
+  eAnd (eAnd (inPhase .open_) (fld "cb" cReading)) (eAnd (eEq outLen (n 0)) heldEmpty)
 
 /-- One event of the batch. -/
 def event : List PStmt :=
@@ -352,7 +374,7 @@ def event : List PStmt :=
    .ite (eEq (v "ek") (n writable)) [.ite (v "lv") [setf "cb" cBlocked (n 0)] []] [],
    .ite (eEq (v "ek") (n inputEnded))
      [.ite (v "lv")
-       [.ite asked [setf "cb" cPhase (n 2), setf "cb" cLineDue (n 0)] (breach .unasked)] []] [],
+       [.ite asked [toPhase .ending, setf "cb" cLineDue (n 0)] (breach .unasked)] []] [],
    .ite (eEq (v "ek") (n closed)) [.ite (v "lv") [setf "cb" cLive (n 0)] []] [],
    inc "e"]
 
@@ -384,7 +406,8 @@ def wake : List PStmt :=
    .while (eLt (v "dt") (n conns))
      [.dec "cb" (record (v "dt")),
       .ite (fld "cb" cLive)
-        [.ite (eAnd (eEq outLen (n 0)) (or2 (eEq heldEmpty (n 0)) (ne phase (n 0))))
+        [.ite (eAnd (eEq outLen (n 0))
+            (or2 (eEq heldEmpty (n 0)) (ne phase (n (phaseCode .open_)))))
            [.assign "rd" (n 1)] [],
          .dec "ea" (fld "cb" cIdle),
          .ite (eAnd (ne (fld "cb" cFirst) (n 0)) (eLt (fld "cb" cFirst) (v "ea")))

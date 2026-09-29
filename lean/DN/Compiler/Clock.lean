@@ -101,38 +101,53 @@ theorem refinesClk_conseq (o : Oracle σ) {p : PancakeProg}
 /-! ## 3. The bounded-`While` rule with clock accounting
 
 `while_inv_cond` (EmitCorrectLoop) delivers `∃ s', … ∧ I 0 s'` but does NOT track
-the final clock. `RefinesClk` needs `s'.clock ≤ s.clock`, so we re-run the same
-induction adding the clock bound — the body hypothesis already supplies
-`s2.clock = s.clock - 1` per step, so the bound telescopes. -/
-theorem while_inv_cond_clk (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
+the final clock. `RefinesClk` needs `s'.clock ≤ s.clock`, so the same induction is run
+adding the clock: the body hypothesis supplies `s2.clock = s.clock - 1` per step, so the
+clock spent telescopes. -/
+
+/-- One iteration: with the guard true and clock left, the loop runs on from the body's end. -/
+theorem while_iter (o : Oracle σ) (e : PancakeExp) (body : PancakeProg) {s s2 : PancakeState σ}
+    (hcond : eval s e = some (1 : Word)) (h0 : s.clock ≠ 0)
+    (hs2 : PancakeSem o body (decClock s) = (none, s2)) (hclk : s2.clock = s.clock - 1) :
+    PancakeSem o (.while_ e body) s = PancakeSem o (.while_ e body) s2 := by
+  have hclamp : ({ s2 with clock := min (s.clock - 1) s2.clock } : PancakeState σ) = s2 := by
+    rw [show min (s.clock - 1) s2.clock = s2.clock by omega]
+  conv => lhs; rw [PancakeSem]
+  simp only [hcond, ne_eq, show ((1 : Word) = 0) = False from by decide, not_false_eq_true,
+    if_true, h0, if_false, clampClock, hs2]
+  rw [hclamp]
+
+/-- The loop with clock enough spends exactly one tick per iteration. -/
+theorem while_inv_cond_exact (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
     (I : Nat → PancakeState σ → Prop)
     (hguard : ∀ n s, I n s → eval s e = some (if n = 0 then (0 : Word) else 1))
     (hbody : ∀ n s, I (n + 1) s →
       ∃ s2, PancakeSem o body (decClock s) = (none, s2) ∧ I n s2 ∧ s2.clock = s.clock - 1) :
     ∀ (rem : Nat) (s : PancakeState σ), I rem s → rem ≤ s.clock →
-      ∃ s', PancakeSem o (.while_ e body) s = (none, s') ∧ I 0 s' ∧ s'.clock ≤ s.clock := by
+      ∃ s', PancakeSem o (.while_ e body) s = (none, s') ∧ I 0 s' ∧ s'.clock + rem = s.clock := by
   intro rem
   induction rem with
   | zero =>
     intro s hI _
-    refine ⟨s, ?_, hI, Nat.le_refl _⟩
+    refine ⟨s, ?_, hI, rfl⟩
     rw [PancakeSem, hguard 0 s hI]; simp
   | succ m ih =>
     intro s hI hclock
-    have hclock0 : s.clock ≠ 0 := by omega
     have hcond : eval s e = some (1 : Word) := by
       have := hguard (m + 1) s hI; simpa using this
     obtain ⟨s2, hs2eq, hs2I, hs2clk⟩ := hbody m s hI
-    have hmin : min (s.clock - 1) s2.clock = s2.clock := by omega
-    have hclamp : ({ s2 with clock := min (s.clock - 1) s2.clock } : PancakeState σ) = s2 := by
-      rw [hmin]
     obtain ⟨s', hs'eq, hs'I, hs'clk⟩ := ih s2 hs2I (by omega)
-    refine ⟨s', ?_, hs'I, by omega⟩
-    rw [PancakeSem]
-    simp only [hcond, ne_eq, show ((1 : Word) = 0) = False from by decide, not_false_eq_true,
-               if_true, hclock0, if_false, clampClock, hs2eq]
-    rw [hclamp]
-    exact hs'eq
+    exact ⟨s', (while_iter o e body hcond (by omega) hs2eq hs2clk).trans hs'eq, hs'I, by omega⟩
+
+theorem while_inv_cond_clk (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
+    (I : Nat → PancakeState σ → Prop)
+    (hguard : ∀ n s, I n s → eval s e = some (if n = 0 then (0 : Word) else 1))
+    (hbody : ∀ n s, I (n + 1) s →
+      ∃ s2, PancakeSem o body (decClock s) = (none, s2) ∧ I n s2 ∧ s2.clock = s.clock - 1)
+    (rem : Nat) (s : PancakeState σ) (hI : I rem s) (hc : rem ≤ s.clock) :
+    ∃ s', PancakeSem o (.while_ e body) s = (none, s') ∧ I 0 s' ∧ s'.clock ≤ s.clock := by
+  obtain ⟨s', h, hI', hk⟩ := while_inv_cond_exact o e body I hguard hbody rem s hI hc
+  exact ⟨s', h, hI', by omega⟩
 
 /-- The same loop with too little clock times out, and ends in nothing else. -/
 theorem while_inv_timeout (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
@@ -155,46 +170,7 @@ theorem while_inv_timeout (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
       simp only [hcond, ne_eq, show ((1 : Word) = 0) = False from by decide, not_false_eq_true,
         if_true, h0]
     · obtain ⟨s2, hs2eq, hs2I, hs2clk⟩ := hbody m s hI
-      have hmin : min (s.clock - 1) s2.clock = s2.clock := by omega
-      have hclamp : ({ s2 with clock := min (s.clock - 1) s2.clock } : PancakeState σ) = s2 := by
-        rw [hmin]
       obtain ⟨t, ht⟩ := ih s2 hs2I (by omega)
-      refine ⟨t, ?_⟩
-      rw [PancakeSem]
-      simp only [hcond, ne_eq, show ((1 : Word) = 0) = False from by decide, not_false_eq_true,
-        if_true, h0, if_false, clampClock, hs2eq]
-      rw [hclamp]
-      exact ht
-
-/-- The loop with clock enough spends exactly one tick per iteration. -/
-theorem while_inv_cond_exact (o : Oracle σ) (e : PancakeExp) (body : PancakeProg)
-    (I : Nat → PancakeState σ → Prop)
-    (hguard : ∀ n s, I n s → eval s e = some (if n = 0 then (0 : Word) else 1))
-    (hbody : ∀ n s, I (n + 1) s →
-      ∃ s2, PancakeSem o body (decClock s) = (none, s2) ∧ I n s2 ∧ s2.clock = s.clock - 1) :
-    ∀ (rem : Nat) (s : PancakeState σ), I rem s → rem ≤ s.clock →
-      ∃ s', PancakeSem o (.while_ e body) s = (none, s') ∧ I 0 s' ∧ s'.clock + rem = s.clock := by
-  intro rem
-  induction rem with
-  | zero =>
-    intro s hI _
-    refine ⟨s, ?_, hI, rfl⟩
-    rw [PancakeSem, hguard 0 s hI]; simp
-  | succ m ih =>
-    intro s hI hclock
-    have hclock0 : s.clock ≠ 0 := by omega
-    have hcond : eval s e = some (1 : Word) := by
-      have := hguard (m + 1) s hI; simpa using this
-    obtain ⟨s2, hs2eq, hs2I, hs2clk⟩ := hbody m s hI
-    have hmin : min (s.clock - 1) s2.clock = s2.clock := by omega
-    have hclamp : ({ s2 with clock := min (s.clock - 1) s2.clock } : PancakeState σ) = s2 := by
-      rw [hmin]
-    obtain ⟨s', hs'eq, hs'I, hs'clk⟩ := ih s2 hs2I (by omega)
-    refine ⟨s', ?_, hs'I, by omega⟩
-    rw [PancakeSem]
-    simp only [hcond, ne_eq, show ((1 : Word) = 0) = False from by decide, not_false_eq_true,
-               if_true, hclock0, if_false, clampClock, hs2eq]
-    rw [hclamp]
-    exact hs'eq
+      exact ⟨t, (while_iter o e body hcond h0 hs2eq hs2clk).trans ht⟩
 
 end DN.Compiler.Clock

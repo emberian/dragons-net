@@ -26,6 +26,10 @@ fun main() {
           return 2;
         } else {
         }
+        if 15 < m {
+          return 3;
+        } else {
+        }
         var ac = @base + 8864 + (m * 560);
         st ac, 1;
         st ac + 8, lds 1 (ev + 8);

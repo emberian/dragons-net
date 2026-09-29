@@ -2,8 +2,9 @@
 
 Start with the [project backlog](docs/project.md), [handoff](docs/handoff.md),
 [review findings](docs/reviews/README.md), and [assurance boundaries](docs/assurance.md).
-The working baseline is a compiler and generated-code TCP echo service. NNTP,
-optimized OS adapters, and end-to-end verification are work in progress.
+The working baseline is a compiler, a generated-code TCP echo service and a first
+NNTP slice on loopback. The article store, optimized OS adapters, and end-to-end
+verification are work in progress.
 
 ## Choose and scope work
 

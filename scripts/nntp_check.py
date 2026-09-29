@@ -1,46 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The NNTP server: the session's program (`DN.Server.Session`) with its socket host
-(`native/nntp_host.c`), run on loopback and checked from outside.
+(`native/nntp_host.c`), run on loopback and checked from outside (docs/baseline.md, "NNTP server").
 
-Every byte a client reads has to be what `session_ref` computes from the bytes it sent. Every run
-but `nntplib`'s, which runs the server as it is run in use, has the host report each turn — the
-events it gave the program, the actions it carried out and what the kernel took of each send — and
-the report is held three times: `session_ref.judge` holds the program to the session's contract on
-real sockets; the model, `dn-compiler session-model`, replays it and has to act and ask to be woken
-as the program did; and it is held against the clients' sockets and the host's side of the
-contract: what a client sent reaches its connection's input in order, what it read is what the
-kernel took of the program's sends; input comes only from a connection the program asked to read
-from whose last send was taken whole, at most once a batch, and `writable` only after a send taken
-in part; an index is never given out again with a generation it had, and no turn is taken with
-nothing to do. Whether the server still holds a connection's socket is read off the kernel's
-tables.
-
-The standard library's `nntplib` is greeted, reads the capabilities and the help, and quits. A
-pipeline of lines of many kinds gets its replies in order. Three recorded transcripts
-(`tests/golden/nntp-transcripts.json`), whose replies `session_ref` has to compute too, are sent cut
-at every position into two parts, the second once the host has given out the first, and one is
-sent a byte at a time; each reads what it records: a line past the limit is refused and not
-answered as its command, and nothing after QUIT is answered. A client that shuts down its sending
-side gets the replies to its whole lines and then the end of the stream; a reset mid-line is
-reported as a close. A client that reads nothing until its receive queue stops growing gets every
-byte once it reads; a line sent once an answer that asks to read waits for room waits in the
-kernel; a client reset while a send waits for room is reported closed, and never ready to write.
-On a clock the check moves, the deadlines of the first command, of a line and of inactivity close
-their connections at once at the time the program asked to be woken at and not a millisecond
-before; after QUIT the server shuts down sending and holds the socket, dropping what still comes,
-until the client closes its side, 5 s of silence or 30 s in all, and not a millisecond before; out
-of descriptors, it leaves the listening socket alone for 100 ms and then serves the client that
-waited. On the real clock, the first command's deadline closes at ten seconds and a silent
-lingering socket at five, with the server idle meanwhile, and the client that waited out a pause
-is served once it is over. A hundred resets leave the server the descriptors it had, and of
-seventy lingering sockets it keeps the last sixty-four. Sixty-four clients that connect while the
-server is stopped are taken sixteen a batch, a sixty-fifth waits until one closes, and one reset
-while it waits is closed as soon as it is taken. Where nothing happens, the server spends no
-processor time. Every run ends on SIGTERM.
-
-Each planted defect, in the host or in the program, has to be caught by the check named for it and
-for the reason named.
+Every byte a client reads has to be what `session_ref` computes from the bytes it sent. Every run but
+`nntplib`'s reports its turns, and each report is held against the clients' sockets and the host's
+side of the contract, judged by `session_ref.judge`, and replayed through the model. The checks are
+`CHECKS`; each defect of `DEFECTS`, planted in the host or in the program, has to be caught by the
+check named for it and for the reason named.
 """
 from __future__ import annotations
 
@@ -61,9 +28,8 @@ import struct
 import subprocess
 import sys
 import termios
-import threading
 import time
-from typing import IO, Any
+from typing import IO, NamedTuple
 import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,15 +41,29 @@ import session_ref as ref
 
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
-HOSTS = [HOST, NATIVE / "session_calls.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
-REVISION, SOURCE = b"0123abc", b"https://example.org/dragons-net"
+HOSTS = [HOST, NATIVE / "session_calls.h", NATIVE / "call_checks.h", NATIVE / "cake_header.c",
+         NATIVE / "accept_policy.h", *lanes.RUNTIME]
+REVISION, SOURCE = sessions.IDENTITY
 TEXTS = ref.texts(REVISION, SOURCE)
 GREETING = TEXTS["greeting"]
-# The host's own limits: how long a graceful close lingers, and how long accepting pauses.
+GOLDEN = ROOT / "tests/golden/nntp-transcripts.json"
+# The host's own limits: how long a graceful close lingers, how long accepting pauses, and how many
+# sockets linger at once.
 LINGER_QUIET, LINGER_TOTAL, ACCEPT_PAUSE, LINGERING = 5_000, 30_000, 100, 64
-# How long a check waits for the server; shorter while planted defects are run.
-TIMEOUT = 10.0
+# How long a check waits for the server, and for a server with a planted defect.
+TIMEOUT, DEFECT_TIMEOUT = 10.0, 1.5
+# The program acts for the generation before its connection's, to see the host refuse it.
+STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 3)
 Conn = tuple[int, int]
+
+
+@dataclass
+class Build:
+    """The server to check, the same server built with a program that acts for the generation before
+    its connection's, and how long to wait for either."""
+    path: Path
+    stale: Path
+    timeout: float = TIMEOUT
 
 
 def expected(stream: bytes) -> bytes:
@@ -93,9 +73,6 @@ def expected(stream: bytes) -> bytes:
 
 def lines(*texts: str) -> bytes:
     return b"".join(t.encode() + b"\r\n" for t in texts)
-
-
-GOLDEN = ROOT / "tests/golden/nntp-transcripts.json"
 
 
 def transcripts() -> dict[str, tuple[bytes, bytes]]:
@@ -113,49 +90,97 @@ def transcripts() -> dict[str, tuple[bytes, bytes]]:
     return found
 
 
+class Event(NamedTuple):
+    """An event as the host reports it: `data` for input, `port` of the client for an opening."""
+    kind: str
+    idx: int
+    gen: int
+    data: bytes = b""
+    port: int = 0
+
+    @property
+    def conn(self) -> Conn:
+        return (self.idx, self.gen)
+
+    def plain(self) -> ref.Event:
+        """As the judge and the model take it."""
+        return ref.Event(self.kind, self.idx, self.gen, self.data)
+
+
+class Action(NamedTuple):
+    """An action as the host reports it: for a send, its bytes, whether to read once they are taken,
+    and how many the kernel took."""
+    kind: str
+    idx: int
+    gen: int
+    data: bytes = b""
+    read: bool = False
+    taken: int = 0
+
+    @property
+    def conn(self) -> Conn:
+        return (self.idx, self.gen)
+
+    def plain(self) -> ref.Action:
+        return ref.Action(self.kind, self.idx, self.gen, self.data, self.read)
+
+
 @dataclass
 class Turn:
-    """One turn as the host reports it; a send carries whether to read and what the kernel took."""
+    """One turn as the host reports it."""
     now: int
-    events: list[tuple[Any, ...]]
-    actions: list[tuple[Any, ...]]
+    events: list[Event]
+    actions: list[Action]
     wake: int
 
     def judged(self) -> ref.Turn:
-        sends = [a for a in self.actions if a[0] == "send"]
-        return ref.Turn(self.now, self.events, [a[:5] for a in self.actions], [a[5] for a in sends], self.wake)
+        sends = [a for a in self.actions if a.kind == "send"]
+        return ref.Turn(self.now, [e.plain() for e in self.events], [a.plain() for a in self.actions],
+                        [a.taken for a in sends], self.wake)
 
     @property
     def partial(self) -> bool:
-        return any(a[0] == "send" and a[5] < len(a[3]) for a in self.actions)
-
-
-# How many words follow the index and the generation of each kind.
-EVENTS = {"open": 1, "recv": 1, "end": 0, "writable": 0, "closed": 0}
-ACTIONS = {"send": 3, "graceful": 0, "close": 0}
+        return any(a.kind == "send" and a.taken < len(a.data) for a in self.actions)
 
 
 def hexed(word: str) -> bytes:
     return b"" if word == "-" else bytes.fromhex(word)
 
 
-def items(words: list[str], kinds: dict[str, int]) -> list[tuple[Any, ...]]:
-    found: list[tuple[Any, ...]] = []
+def events(words: list[str]) -> list[Event]:
+    """`open idx gen port`, `recv idx gen hex`, and `end`, `writable`, `closed` with idx and gen."""
+    found = []
     k = 0
     while k < len(words):
-        kind = words[k]
-        if kind not in kinds:
-            raise LaneError(f"the host reported {kind!r}")
-        idx, gen, rest = int(words[k + 1]), int(words[k + 2]), words[k + 3:k + 3 + kinds[kind]]
-        k += 3 + kinds[kind]
+        kind, idx, gen = words[k], int(words[k + 1]), int(words[k + 2])
         if kind == "open":
-            found.append((kind, idx, gen, int(rest[0])))
+            found.append(Event(kind, idx, gen, port=int(words[k + 3])))
+            k += 4
         elif kind == "recv":
-            found.append((kind, idx, gen, hexed(rest[0])))
-        elif kind == "send":
-            found.append((kind, idx, gen, hexed(rest[2]), rest[0] == "1", int(rest[1])))
+            found.append(Event(kind, idx, gen, hexed(words[k + 3])))
+            k += 4
+        elif kind in ("end", "writable", "closed"):
+            found.append(Event(kind, idx, gen))
+            k += 3
         else:
-            found.append((kind, idx, gen))
+            raise LaneError(f"the host reported an event {kind!r}")
+    return found
+
+
+def actions(words: list[str]) -> list[Action]:
+    """`send idx gen read taken hex`, and `graceful`, `close` with idx and gen."""
+    found = []
+    k = 0
+    while k < len(words):
+        kind, idx, gen = words[k], int(words[k + 1]), int(words[k + 2])
+        if kind == "send":
+            found.append(Action(kind, idx, gen, hexed(words[k + 5]), words[k + 3] == "1", int(words[k + 4])))
+            k += 6
+        elif kind in ("graceful", "close"):
+            found.append(Action(kind, idx, gen))
+            k += 3
+        else:
+            raise LaneError(f"the host reported an action {kind!r}")
     return found
 
 
@@ -167,7 +192,7 @@ def parse(line: str) -> Turn:
         raise LaneError(f"the host reported {line[:160]!r}")
     head, acts, tail = parts
     try:
-        turn = Turn(int(head[1]), items(head[2:], EVENTS), items(acts, ACTIONS), int(tail[1]))
+        turn = Turn(int(head[1]), events(head[2:]), actions(acts), int(tail[1]))
     except (ValueError, IndexError):
         raise LaneError(f"the host reported {line[:160]!r}") from None
     if tail[0] == "stopped":
@@ -179,19 +204,23 @@ class Client(socket.socket):
     """A client on loopback that keeps what it sent and what it read. It sends each piece at once,
     since a check times its pieces against the clock it moves."""
 
-    def __init__(self, port: int, receive_buffer: int = 0) -> None:
-        super().__init__(socket.AF_INET, socket.SOCK_STREAM)
+    def __init__(self, port: int, timeout: float, receive_buffer: int = 0, family: int = socket.AF_INET) -> None:
+        super().__init__(family, socket.SOCK_STREAM)
         self.sent = bytearray()
         self.got = bytearray()
         self.eof = False
         # the connection the host reported for this client, once it has
         self.conn: Conn | None = None
-        if receive_buffer:
-            self.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
-        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.settimeout(TIMEOUT)
-        self.connect(("127.0.0.1", port))
-        self.port: int = self.getsockname()[1]
+        try:
+            if receive_buffer:
+                self.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+            self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.settimeout(timeout)
+            self.connect(("::1" if family == socket.AF_INET6 else "127.0.0.1", port))
+            self.port: int = self.getsockname()[1]
+        except BaseException:
+            self.close()
+            raise
 
     def sendall(self, data: Buffer, flags: int = 0, /) -> None:
         self.sent += data
@@ -206,12 +235,15 @@ class Client(socket.socket):
 
 class Server:
     """The server on a free loopback port. With `virtual`, on a clock the check moves; otherwise on
-    the real clock. With `traced`, its report is read as it comes, and when the run ends it is
-    judged and held against the clients' sockets."""
+    the real clock. With `traced`, its report is read as it comes, and when the run ends it is held
+    against the clients' sockets and the host's side of the contract, and, with `judged`, judged and
+    replayed through the model."""
 
-    def __init__(self, binary: Path, virtual: bool, traced: bool, options: tuple[str, ...]) -> None:
+    def __init__(self, binary: Path, timeout: float, virtual: bool, traced: bool, judged: bool,
+                 options: tuple[str, ...]) -> None:
+        self.timeout = timeout
         self.clock_write = -1
-        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.lines = lanes.Lines()
         self.trace: list[Turn] = []
         # the clients of each port, in the order they connected
         self.clients: dict[int, list[Client]] = {}
@@ -220,7 +252,7 @@ class Server:
         self.last = Turn(0, [], [], 0)
         self.batch = session_native.layout(OUT)["BATCH"]
         self.idle_allowed = 0
-        self.traced = traced
+        self.traced, self.judged = traced, judged
         self.err: str | None = None
         extra: list[str] = []
         ours: list[int] = []
@@ -246,25 +278,19 @@ class Server:
         for fd in theirs:
             os.close(fd)
         if traced:
-            threading.Thread(target=self.read_reports, args=(ours[0],), daemon=True).start()
+            self.lines = lanes.Lines(os.fdopen(ours[0], encoding="ascii"))
         try:
             self.port = self.read_port()
         except BaseException:
             self.close()
             raise
 
-    def read_reports(self, fd: int) -> None:
-        with open(fd, encoding="ascii") as stream:
-            for line in stream:
-                self.lines.put(line)
-        self.lines.put(None)
-
     def read_port(self) -> int:
         out = self.pipe(self.proc.stdout)
         with selectors.DefaultSelector() as ready:
             ready.register(out.fileno(), selectors.EVENT_READ)
-            if not ready.select(TIMEOUT):
-                raise LaneError(f"the server gave no port in {TIMEOUT} s{self.why()}")
+            if not ready.select(self.timeout):
+                raise LaneError(f"the server gave no port in {self.timeout} s{self.why()}")
         line = out.readline()
         if not line:
             raise LaneError(f"the server gave no port{self.why()}")
@@ -295,19 +321,18 @@ class Server:
             return ""
         return f"; the server had ended with status {self.proc.returncode}: {self.said()[-300:]!r}"
 
-    def client(self, receive_buffer: int = 0) -> Client:
-        c = Client(self.port, receive_buffer)
+    def client(self, receive_buffer: int = 0, family: int = socket.AF_INET) -> Client:
+        c = Client(self.port, self.timeout, receive_buffer, family)
         self.clients.setdefault(c.port, []).append(c)
         return c
 
     def turn(self) -> Turn:
         """The next turn the host reports."""
         try:
-            line = self.lines.get(timeout=TIMEOUT)
+            line = self.lines.get(self.timeout)
         except queue.Empty:
-            raise LaneError(f"the server gave no turn in {TIMEOUT} s{self.why()}") from None
+            raise LaneError(f"the server gave no turn in {self.timeout} s{self.why()}") from None
         if line is None:
-            self.lines.put(None)
             raise LaneError(f"the server stopped reporting{self.why()}")
         return self.take(parse(line))
 
@@ -318,17 +343,17 @@ class Server:
                 raise LaneError(f"the server took a turn with nothing to do at {t.now}")
             self.idle_allowed -= 1
         for e in t.events:
-            if e[0] == "open":
-                waiting = [c for c in self.clients.get(e[3], []) if c.conn is None]
+            if e.kind == "open":
+                waiting = [c for c in self.clients.get(e.port, []) if c.conn is None]
                 if waiting:
-                    waiting[0].conn = (e[1], e[2])
-            elif e[0] == "recv":
-                self.delivered.setdefault((e[1], e[2]), bytearray()).extend(e[3])
-            elif e[0] == "closed":
-                self.gone[e[1], e[2]] = t.now
+                    waiting[0].conn = e.conn
+            elif e.kind == "recv":
+                self.delivered.setdefault(e.conn, bytearray()).extend(e.data)
+            elif e.kind == "closed":
+                self.gone[e.conn] = t.now
         for a in t.actions:
-            if a[0] != "send":
-                self.gone[a[1], a[2]] = t.now
+            if a.kind != "send":
+                self.gone[a.conn] = t.now
         self.trace.append(t)
         self.last = t
         return t
@@ -345,13 +370,21 @@ class Server:
         end = time.monotonic() + seconds
         while (left := end - time.monotonic()) > 0:
             try:
-                line = self.lines.get(timeout=left)
+                line = self.lines.get(left)
             except queue.Empty:
                 return
             if line is None:
-                self.lines.put(None)
                 return
             self.take(parse(line))
+
+    def quiet(self, seconds: float, what: str) -> None:
+        """Take the turns of `seconds` with nothing to do; the server has to spend less than a
+        quarter of that time on the processor."""
+        before = cpu_seconds(self.proc.pid)
+        self.idle(seconds)
+        used = cpu_seconds(self.proc.pid) - before
+        if used > seconds / 4:
+            raise LaneError(f"{what}: the server used {used:.2f} s of CPU in {seconds} s with nothing to do")
 
     def conn_of(self, c: Client) -> Conn:
         self.until(lambda: c.conn is not None, f"the connection from port {c.port}")
@@ -369,22 +402,17 @@ class Server:
     def await_close(self, c: Client, what: str) -> None:
         self.until(lambda: self.closed(c), what)
 
-    def quiet(self, seconds: float, what: str) -> None:
-        """Take the turns of `seconds` with nothing to do; the server has to spend almost no
-        processor time in them."""
-        before = cpu_seconds(self.proc.pid)
-        self.idle(seconds)
-        used = cpu_seconds(self.proc.pid) - before
-        if used > seconds / 4:
-            raise LaneError(f"{what}: the server used {used:.2f} s of CPU in {seconds} s with nothing to do")
-
     def await_input(self, c: Client, n: int) -> None:
         """Take turns until the host has given the program `n` bytes of `c`, or its connection is gone."""
         self.until(lambda: len(self.received(c)) >= n or self.closed(c), f"{n} bytes from port {c.port}")
 
     def kinds(self, c: Client) -> list[str]:
         """The kinds of the events and actions of `c`'s connection, in order."""
-        return [x[0] for t in self.trace for x in [*t.events, *t.actions] if (x[1], x[2]) == c.conn]
+        found: list[str] = []
+        for t in self.trace:
+            found += [e.kind for e in t.events if e.conn == c.conn]
+            found += [a.kind for a in t.actions if a.conn == c.conn]
+        return found
 
     def advance(self, now: int) -> None:
         os.write(self.clock_write, f"{now}\n".encode())
@@ -393,7 +421,7 @@ class Server:
         if self.proc.poll() is None:
             self.proc.send_signal(signal.SIGTERM)
         try:
-            _, err = self.proc.communicate(timeout=TIMEOUT)
+            _, err = self.proc.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.communicate()
@@ -404,12 +432,14 @@ class Server:
         if not self.traced:
             return
         try:
-            while (line := self.lines.get(timeout=TIMEOUT)) is not None:
+            while (line := self.lines.get(self.timeout)) is not None:
                 self.take(parse(line))
         except queue.Empty:
             raise LaneError("the report did not end with the server") from None
         # The host first: what the program did is judged on events the host has to have given it.
         held_to_sockets(self.trace, self.clients, self.batch)
+        if not self.judged:
+            return
         try:
             ref.judge(REVISION, SOURCE, [t.judged() for t in self.trace])
         except ref.Violation as error:
@@ -436,10 +466,11 @@ def replayed(trace: list[Turn]) -> None:
     took, the model has to act and ask to be woken as the program did."""
     with sessions.Speaker(sessions.model_command(), (REVISION, SOURCE)) as model:
         for k, t in enumerate(trace):
-            answer = model.turn(t.now, [e[:3] if e[0] == "open" else e for e in t.events])
-            if answer != [a[:5] for a in t.actions]:
-                raise LaneError(f"turn {k} at {t.now}: the program did {t.actions}, the model {answer}")
-            wake = model.settle([a[5] for a in t.actions if a[0] == "send"])
+            judged = t.judged()
+            answer = model.turn(t.now, judged.events)
+            if answer != judged.actions:
+                raise LaneError(f"turn {k} at {t.now}: the program did {judged.actions}, the model {answer}")
+            wake = model.settle(judged.took)
             if wake != t.wake:
                 raise LaneError(f"turn {k} at {t.now}: the program asked to be woken at {t.wake}, the model {wake}")
 
@@ -467,42 +498,40 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
             raise LaneError(f"at {t.now} a batch of {len(t.events)} events")
         inputs: set[Conn] = set()
         for e in t.events:
-            conn = (e[1], e[2])
-            if e[0] == "open":
-                if e[2] <= generation.get(e[1], 0):
-                    raise LaneError(f"index {e[1]} was given out again with generation {e[2]}")
-                if (e[1], generation.get(e[1], 0)) in client_of and (e[1], generation[e[1]]) not in gone:
-                    raise LaneError(f"at {t.now} index {e[1]} was given out while its connection was open")
-                if not waiting.get(e[3]):
-                    raise LaneError(f"{conn} opened from port {e[3]}, which is no client of the check")
-                generation[e[1]] = e[2]
-                client_of[conn], given[conn], delivered[conn] = waiting[e[3]].pop(0), bytearray(), bytearray()
-                reading[conn] = unsent[conn] = False
+            if e.kind == "open":
+                if e.gen <= generation.get(e.idx, 0):
+                    raise LaneError(f"index {e.idx} was given out again with generation {e.gen}")
+                if (e.idx, generation.get(e.idx, 0)) in client_of and (e.idx, generation[e.idx]) not in gone:
+                    raise LaneError(f"at {t.now} index {e.idx} was given out while its connection was open")
+                if not waiting.get(e.port):
+                    raise LaneError(f"{e.conn} opened from port {e.port}, which is no client of the check")
+                generation[e.idx] = e.gen
+                client_of[e.conn], given[e.conn], delivered[e.conn] = waiting[e.port].pop(0), bytearray(), bytearray()
+                reading[e.conn] = unsent[e.conn] = False
                 continue
-            if conn not in client_of or conn in gone:
-                raise LaneError(f"at {t.now} an event {e[0]} for {conn}, which is not open")
-            if e[0] in ("recv", "end"):
-                if not reading[conn] or conn in inputs or conn in ended:
-                    raise LaneError(f"at {t.now} input from {conn}, which the host was not to read")
-                inputs.add(conn)
-            if e[0] == "recv":
-                delivered[conn] += e[3]
-            elif e[0] == "end":
-                ended.add(conn)
-            elif e[0] == "writable":
-                if not unsent[conn]:
-                    raise LaneError(f"at {t.now} {conn} reported ready to write with nothing untaken")
-                unsent[conn] = False
-            elif e[0] == "closed":
-                gone.add(conn)
+            if e.conn not in client_of or e.conn in gone:
+                raise LaneError(f"at {t.now} an event {e.kind} for {e.conn}, which is not open")
+            if e.kind in ("recv", "end"):
+                if not reading[e.conn] or e.conn in inputs or e.conn in ended:
+                    raise LaneError(f"at {t.now} input from {e.conn}, which the host was not to read")
+                inputs.add(e.conn)
+            if e.kind == "recv":
+                delivered[e.conn] += e.data
+            elif e.kind == "end":
+                ended.add(e.conn)
+            elif e.kind == "writable":
+                if not unsent[e.conn]:
+                    raise LaneError(f"at {t.now} {e.conn} reported ready to write with nothing untaken")
+                unsent[e.conn] = False
+            elif e.kind == "closed":
+                gone.add(e.conn)
         for a in t.actions:
-            conn = (a[1], a[2])
-            if a[0] == "send" and conn in given and conn not in gone:
-                given[conn] += a[3][:a[5]]
-                reading[conn] = a[4] and a[5] == len(a[3])
-                unsent[conn] = a[5] < len(a[3])
-            elif a[0] != "send":
-                gone.add(conn)
+            if a.kind == "send" and a.conn in given and a.conn not in gone:
+                given[a.conn] += a.data[:a.taken]
+                reading[a.conn] = a.read and a.taken == len(a.data)
+                unsent[a.conn] = a.taken < len(a.data)
+            elif a.kind != "send":
+                gone.add(a.conn)
     for conn, c in client_of.items():
         if not c.sent.startswith(delivered[conn]):
             raise LaneError(f"{conn} was given {bytes(delivered[conn][-60:])!r}, not what its client sent")
@@ -519,8 +548,11 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
 
 
 @contextmanager
-def serving(binary: Path, virtual: bool = False, *options: str, traced: bool = True) -> Iterator[Server]:
-    server = Server(binary, virtual, traced, options)
+def serving(build: Build, virtual: bool = False, *options: str, traced: bool = True,
+            stale: bool = False) -> Iterator[Server]:
+    """The server of `build`, or with `stale` its program that acts for the generation before, which
+    is not judged since it is wrong on purpose."""
+    server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, not stale, options)
     try:
         try:
             yield server
@@ -568,13 +600,14 @@ def ended(s: socket.socket) -> bool:
 
 def still_open(s: socket.socket) -> bool:
     """Whether nothing has arrived and the connection is not closed, without waiting."""
+    timeout = s.gettimeout()
     s.setblocking(False)
     try:
         s.recv(1)
     except BlockingIOError:
         return True
     finally:
-        s.settimeout(TIMEOUT)
+        s.settimeout(timeout)
     return False
 
 
@@ -588,11 +621,16 @@ def held(pid: int, c: Client) -> bool:
             ours.add(str(fd.readlink()))
         except FileNotFoundError:
             continue
-    for row in Path(f"/proc/{pid}/net/tcp").read_text().splitlines()[1:]:
-        fields = row.split()
-        if int(fields[2].split(":")[1], 16) == c.port and f"socket:[{fields[9]}]" in ours:
-            return True
+    for table in ("tcp", "tcp6"):
+        for row in Path(f"/proc/{pid}/net/{table}").read_text().splitlines()[1:]:
+            fields = row.split()
+            if int(fields[2].split(":")[1], 16) == c.port and f"socket:[{fields[9]}]" in ours:
+                return True
     return False
+
+
+def descriptors(pid: int) -> int:
+    return sum(1 for _ in Path(f"/proc/{pid}/fd").iterdir())
 
 
 def queued(s: socket.socket) -> int:
@@ -611,15 +649,15 @@ def cpu_seconds(pid: int) -> float:
     return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
 
-def with_nntplib(binary: Path) -> str:
+def with_nntplib(b: Build) -> str:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            import nntplib  # noqa: PLC0415  (deprecated, and gone after Python 3.12)
+            import nntplib  # noqa: PLC0415 -- deprecated, and gone after Python 3.12
     except ImportError:
         raise LaneError("this check needs the nntplib of Python 3.12") from None
-    with serving(binary, traced=False) as server:
-        news = nntplib.NNTP("127.0.0.1", server.port, timeout=TIMEOUT)
+    with serving(b, traced=False) as server:
+        news = nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout)
         welcome = news.getwelcome()
         capabilities = news.getcapabilities()
         _, help_lines = news.help()
@@ -635,10 +673,10 @@ def with_nntplib(binary: Path) -> str:
     return f"{len(help_lines)} lines of help"
 
 
-def pipeline(binary: Path) -> str:
+def pipeline(b: Build) -> str:
     recorded = transcripts()
     stream = recorded["commands"][0].removesuffix(b"QUIT\r\n") + recorded["long lines"][0] + lines("HELP")
-    with serving(binary) as server:
+    with serving(b) as server:
         s = server.client()
         s.sendall(stream)
         got = read_to_end(s)
@@ -662,10 +700,10 @@ def in_parts(server: Server, stream: bytes, read: bytes, parts: list[bytes]) -> 
         raise LaneError(f"{stream[:30]!r} in parts of {[len(p) for p in parts][:4]} bytes: read {got[-120:]!r}")
 
 
-def every_cut(binary: Path) -> str:
+def every_cut(b: Build) -> str:
     recorded = transcripts()
     cuts = 0
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         for sent, read in recorded.values():
             for at in range(1, len(sent)):
                 in_parts(server, sent, read, [sent[:at], sent[at:]])
@@ -675,9 +713,9 @@ def every_cut(binary: Path) -> str:
     return f"{cuts} cuts of {len(recorded)} transcripts, and one sent a byte at a time"
 
 
-def half_close(binary: Path) -> str:
+def half_close(b: Build) -> str:
     stream = b"HELP\r\nSTAT 1\r\nCAPAB"
-    with serving(binary) as server:
+    with serving(b) as server:
         s = server.client()
         s.sendall(stream)
         s.shutdown(socket.SHUT_WR)
@@ -691,8 +729,8 @@ def half_close(binary: Path) -> str:
     return "the replies to the whole lines, then the end"
 
 
-def reset_mid_line(binary: Path) -> str:
-    with serving(binary) as server:
+def reset_mid_line(b: Build) -> str:
+    with serving(b) as server:
         s = server.client()
         read_expected(s, GREETING, "the greeting")
         s.sendall(b"HEL")
@@ -710,10 +748,10 @@ def reset_mid_line(binary: Path) -> str:
     return "reported as a close; the next client served"
 
 
-def slow_reader(binary: Path) -> str:
+def slow_reader(b: Build) -> str:
     # Far more than the kernel buffers on both ends hold, so that the server has to wait for room.
     stream = b"HELP\r\n" * 100 + b"QUIT\r\n"
-    with serving(binary, True, "--send-buffer", "4096") as server:
+    with serving(b, True, "--send-buffer", "4096") as server:
         s = server.client(receive_buffer=1024)
         s.sendall(stream)
         # The client reads nothing until the server reports a send taken only in part and its own
@@ -730,21 +768,21 @@ def slow_reader(binary: Path) -> str:
     return f"{len(got)} bytes, {held} of them held in the client's queue before it read"
 
 
-def reading_waits(binary: Path) -> str:
+def reading_waits(b: Build) -> str:
     """Lines sent one at a time to a client that reads nothing: once an answer that asks to read
     again is taken only in part, the next line waits in the kernel until the rest is taken."""
-    with serving(binary, True, "--send-buffer", "4096") as server:
+    with serving(b, True, "--send-buffer", "4096") as server:
         c = server.client(receive_buffer=1024)
         conn = server.conn_of(c)
 
-        def answers() -> list[tuple[Any, ...]]:
-            return [a for t in server.trace for a in t.actions if a[0] == "send" and (a[1], a[2]) == conn]
+        def answers() -> list[Action]:
+            return [a for t in server.trace for a in t.actions if a.kind == "send" and a.conn == conn]
 
         def answered(n: int) -> Callable[[], bool]:
             return lambda: len(answers()) == n
 
         sent = 0
-        while not answers()[-1][5] < len(answers()[-1][3]):
+        while not answers()[-1].taken < len(answers()[-1].data):
             if sent == 1000:
                 raise LaneError("no answer was taken in part")
             c.sendall(b"HELP\r\n")
@@ -762,10 +800,10 @@ def reading_waits(binary: Path) -> str:
     return f"the next line waited once the answer to line {sent} was taken in part"
 
 
-def reset_while_sending(binary: Path) -> str:
+def reset_while_sending(b: Build) -> str:
     """A client that reads nothing and is reset while a send waits for room: the report shows its
     close and no room ever came, and the next client is served."""
-    with serving(binary, True, "--send-buffer", "4096") as server:
+    with serving(b, True, "--send-buffer", "4096") as server:
         s = server.client(receive_buffer=1024)
         s.sendall(b"HELP\r\n" * 100)
         server.until(lambda: server.last.partial, "a send taken in part")
@@ -780,10 +818,10 @@ def reset_while_sending(binary: Path) -> str:
     return f"closed; the next client served at {conn[0]}/{conn[1]}"
 
 
-def deadline(binary: Path, name: str, sends: list[tuple[int, bytes]], after: int) -> str:
+def deadline(b: Build, name: str, sends: list[tuple[int, bytes]], after: int) -> str:
     """Send each part at its time; the connection has to close at once `after` milliseconds past the
     last turn, where the program has to ask to be woken, and not a millisecond before."""
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         s = server.client()
         server.conn_of(s)
         last = server.last
@@ -810,18 +848,18 @@ def deadline(binary: Path, name: str, sends: list[tuple[int, bytes]], after: int
         server.advance(due)
         server.await_close(s, f"the close at {due}")
         closing = server.last
-        if closing.now != due or ("close", *server.conn_of(s)) not in closing.actions or not ended(s):
+        if closing.now != due or Action("close", *server.conn_of(s)) not in closing.actions or not ended(s):
             raise LaneError(f"{name}: the connection was not closed at {due}: {closing}")
         if held(server.proc.pid, s):
             raise LaneError(f"{name}: the connection was closed gracefully, not at once")
     return f"closed at {due}"
 
 
-def real_deadline(binary: Path) -> str:
+def real_deadline(b: Build) -> str:
     """On the real clock: the first command's deadline closes at ten seconds and not before; a
     client that quits and stays silent has its socket held for 5 s and then closed; and the server
-    waits for both without using the processor."""
-    with serving(binary) as server:
+    waits for both using less than 0.2 s of processor time."""
+    with serving(b) as server:
         pid = server.proc.pid
         began = time.monotonic()
         s = server.client()
@@ -846,12 +884,12 @@ def real_deadline(binary: Path) -> str:
     return f"closed after {took:.2f} s, the lingering socket after {LINGER_QUIET} ms, {used:.2f} s of CPU"
 
 
-def lingering(binary: Path) -> str:
+def lingering(b: Build) -> str:
     """Three clients send QUIT and a line after it: each reads the reply to QUIT and the end. One stays
     silent, one keeps sending every 4 s, and one closes its side, after which the server closes its
     socket and does nothing more; after each step a turn of a fourth client, the ticker, shows the
     host has read the clock and drained what came."""
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         pid = server.proc.pid
         ticker = server.client()
         read_expected(ticker, GREETING, "the ticker's greeting")
@@ -906,15 +944,11 @@ def lingering(binary: Path) -> str:
     return f"held until the client's close, {LINGER_QUIET} ms of silence or {LINGER_TOTAL} ms in all"
 
 
-def descriptors(pid: int) -> int:
-    return sum(1 for _ in Path(f"/proc/{pid}/fd").iterdir())
-
-
-def descriptors_kept(binary: Path) -> str:
+def descriptors_kept(b: Build) -> str:
     """A hundred clients reset one after another leave the server the descriptors it had. Seventy
     that quit and keep their side open leave it sixty-four more, those of the last sixty-four: a
     full list of lingering sockets gives up the one that has lingered longest."""
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         pid = server.proc.pid
         base = descriptors(pid)
         for _ in range(100):
@@ -957,10 +991,10 @@ def refuse_accepts(server: Server) -> tuple[int, Client]:
     return soft, late
 
 
-def out_of_descriptors(binary: Path) -> str:
+def out_of_descriptors(b: Build) -> str:
     """Out of descriptors, the server takes one turn on the refused accept and none more while it
     pauses; it serves the client once the pause is over."""
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         soft, late = refuse_accepts(server)
         refused = server.last.now
         server.advance(refused + ACCEPT_PAUSE - 1)
@@ -978,27 +1012,54 @@ def out_of_descriptors(binary: Path) -> str:
     return f"served after {ACCEPT_PAUSE} ms"
 
 
-def real_pause(binary: Path) -> str:
+def real_pause(b: Build) -> str:
     """The same on the real clock: with nothing else to wake it, the server serves the client that
-    waited once the pause is over."""
-    with serving(binary) as server:
+    waited once the pause is over, as its own clock, which the report gives, measures it from the
+    turn that refused the connection."""
+    with serving(b) as server:
         soft, late = refuse_accepts(server)
-        refused = time.monotonic()
+        refused = server.last.now
         pid = server.proc.pid
         resource.prlimit(pid, resource.RLIMIT_NOFILE, (soft, resource.prlimit(pid, resource.RLIMIT_NOFILE)[1]))
         server.conn_of(late)
-        waited = time.monotonic() - refused
+        waited = server.last.now - refused
         read_expected(late, GREETING, "the greeting after the pause")
-    if not ACCEPT_PAUSE / 2000 <= waited <= 1:
-        raise LaneError(f"on the real clock the client that waited was served {waited:.3f} s after the refusal")
-    return f"served {waited:.3f} s after the refusal"
+    if not ACCEPT_PAUSE <= waited <= 1000:
+        raise LaneError(f"on the real clock the client that waited was served {waited} ms after the refusal")
+    return f"served {waited} ms after the refusal"
 
 
-def crowd(binary: Path) -> str:
+def stale_generation(b: Build) -> str:
+    """A program that acts for the generation before its connection's: the host carries out none of
+    its actions and tells it that nothing of its sends was taken, and the client reads nothing."""
+    with serving(b, True, stale=True) as server:
+        c = server.client()
+        conn = server.conn_of(c)
+        server.quiet(0.1, "with every action for another generation")
+        if not still_open(c):
+            raise LaneError("an action for another generation reached the client")
+        sends = [a for t in server.trace for a in t.actions if a.kind == "send"]
+    if not sends or any(a.conn == conn or a.taken for a in sends):
+        raise LaneError(f"the host took the sends {sends} for the generation before {conn}")
+    return f"{len(sends)} sends for the generation before, none taken"
+
+
+def over_ipv6(b: Build) -> str:
+    """The server listening on the IPv6 loopback address greets a client and answers its QUIT."""
+    with serving(b, False, "--address", "::1") as server:
+        s = server.client(family=socket.AF_INET6)
+        s.sendall(b"QUIT\r\n")
+        got = read_to_end(s)
+    if got != expected(b"QUIT\r\n"):
+        raise LaneError(f"over IPv6 the client read {got[-80:]!r}")
+    return "greeted and answered on ::1"
+
+
+def crowd(b: Build) -> str:
     """Sixty-four clients connect while the server is stopped, so that it takes them in full
     batches; a sixty-fifth waits until one of them closes, and a sixty-sixth, reset while it waits,
     is closed as soon as the server takes it."""
-    with serving(binary, True) as server:
+    with serving(b, True) as server:
         server.proc.send_signal(signal.SIGSTOP)
         try:
             clients = [server.client() for _ in range(ref.CONNS)]
@@ -1027,7 +1088,7 @@ def crowd(binary: Path) -> str:
     return f"{ref.CONNS} served {server.batch} a batch, the next once one closed"
 
 
-CHECKS: dict[str, Callable[[Path], str]] = {
+CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
     "lines cut between reads": every_cut,
@@ -1044,6 +1105,8 @@ CHECKS: dict[str, Callable[[Path], str]] = {
     "descriptors": descriptors_kept,
     "out of descriptors": out_of_descriptors,
     "out of descriptors on the real clock": real_pause,
+    "actions for another generation": stale_generation,
+    "over IPv6": over_ipv6,
     "sixty-five clients": crowd,
 }
 
@@ -1059,11 +1122,12 @@ class Defect:
     program: bool = False
 
 
-# Not planted, since nothing outside could tell: a batch that does not rotate where it starts, an
-# action carried out for a stale generation, and a failed send not marked lost. The host gives out
-# all one poll reported before it polls again, so a connection one batch does not reach the next one
-# does; the program never acts for a generation it was told is closed; and a socket whose send
-# failed hangs up at the next poll.
+# Not planted, since nothing outside could tell: a batch that does not rotate where it starts, and a
+# failed send not marked lost. The host gives out all one poll reported before it polls again, so a
+# connection one batch does not reach the next one does; and a socket whose send failed hangs up at
+# the next poll. Nor TCP_NODELAY left off: it only delays a reply until the one before is
+# acknowledged, which on loopback no check can time reliably, and no portable call reads another
+# process's socket option.
 DEFECTS = [
     Defect("input no longer read after a read", [(
         "            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);",
@@ -1155,14 +1219,17 @@ DEFECTS = [
     Defect("no poll timeout for the pause of accepting", [(
         "        if (paused) timeout = until(accept_paused_until, timeout);\n", "", 1)],
         "out of descriptors on the real clock", "waiting for the connection"),
+    Defect("an action carried out for a stale generation", [(
+        "if (cn->fd < 0 || cn->gen != gen) {", "(void)gen;\n        if (cn->fd < 0) {", 1)],
+        "actions for another generation", "reached the client"),
     Defect("SIGTERM ignored", [('if (fds[0].revents) stop_serving("a signal");', "", 1)],
            "pipeline", "did not end on SIGTERM"),
     Defect("accepting paused for good", [(
-        "accept_paused_until = now_ms() + ACCEPT_PAUSE_MS;", "accept_paused_until = UINT64_MAX;", 1)],
+        "accept_paused_until = now + ACCEPT_PAUSE_MS;", "accept_paused_until = UINT64_MAX + 0 * now;", 1)],
         "out of descriptors", "waiting for the connection"),
     Defect("accepting not paused when out of descriptors", [(
-        ("                accept_ready = 0;\n                accept_paused_until = now_ms() + ACCEPT_PAUSE_MS;\n"
-         "                return;"), "                return;", 1)],
+        ("                accept_ready = 0;\n                accept_paused_until = now + ACCEPT_PAUSE_MS;\n"
+         "                return;"), "                (void)now;\n                return;", 1)],
         "out of descriptors", "a turn with nothing to do"),
     Defect("the first command's deadline a millisecond early", [(r"now \+ 10000;", "now + 9999;", 1)],
            "first command", "asked to be woken at 10000", program=True),
@@ -1189,57 +1256,59 @@ def spelled(n: int) -> str:
     return tens[n // 10] + (f"-{ones[n % 10]}" if n % 10 else "")
 
 
-def planted(cake: str, source: str, assembly: Path, index: int, defect: Defect) -> Path:
+def planted(cake: str, source: str, build: Build, index: int, defect: Defect) -> Build:
+    """The server with `defect` planted, waited for no longer than a defect needs."""
+    text = source if defect.program else HOST.read_text()
+    for pattern, becomes, times in defect.edits:
+        what = f"the {'program' if defect.program else 'host'}, for {defect.name},"
+        text = lanes.plant(text, pattern, becomes, times, what, exact=not defect.program)
+    name = f"defect-{index}"
     if defect.program:
-        text = source
-        for pattern, becomes, times in defect.edits:
-            text = session_native.plant(text, pattern, becomes, times)
-        return session_native.build(cake, f"defect-{index}", text, OUT, HOST)
-    text = HOST.read_text()
-    for old, new, times in defect.edits:
-        if text.count(old) != times:
-            raise LaneError(f"the host holds {old[:60]!r} {text.count(old)} times, not {times}, for {defect.name}")
-        text = text.replace(old, new)
-    host = OUT / f"defect-{index}.c"
+        return Build(lanes.whole_program(cake, name, text, OUT, HOST), build.stale, DEFECT_TIMEOUT)
+    host = OUT / f"{name}.c"
     host.write_text(text)
-    return lanes.link(OUT / f"defect-{index}", [host, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", assembly],
-                      includes=[OUT], check=False)
+    runtime = [NATIVE / "cake_header.c", NATIVE / "cake_runtime.c"]
+
+    def linked(binary: str, program: str) -> Path:
+        return lanes.link(OUT / binary, [host, *runtime, OUT / program], includes=[OUT], check=False)
+
+    # Only the check of actions for another generation runs the program that acts for the one before.
+    stale = linked(f"{name}-stale", "stale.S") if CHECKS[defect.check] is stale_generation else build.stale
+    return Build(linked(name, "nntp.S"), stale, DEFECT_TIMEOUT)
 
 
-def caught(cake: str, source: str, assembly: Path) -> dict[str, str]:
-    global TIMEOUT  # noqa: PLW0603  (a defect caught by a wait needs no ten seconds of it)
+def caught(cake: str, source: str, build: Build) -> dict[str, str]:
     found = {}
-    TIMEOUT = 1.5
-    try:
-        for index, defect in enumerate(DEFECTS):
-            binary = planted(cake, source, assembly, index, defect)
-            try:
-                CHECKS[defect.check](binary)
-            except (LaneError, OSError) as error:
-                if defect.sign not in str(error):
-                    raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error!r}") from None
-                found[defect.name] = f"{defect.check}: {str(error)[:300]}"
-                continue
-            raise LaneError(f"{defect.name} passed the check {defect.check!r}")
-    finally:
-        TIMEOUT = 10.0
+    for index, defect in enumerate(DEFECTS):
+        try:
+            CHECKS[defect.check](planted(cake, source, build, index, defect))
+        except (LaneError, OSError) as error:
+            if defect.sign not in str(error):
+                raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error!r}") from None
+            found[defect.name] = f"{defect.check}: {str(error)[:300]}"
+            continue
+        raise LaneError(f"{defect.name} passed the check {defect.check!r}")
     return found
 
 
 def check(cake: str) -> Report:
+    if sys.version_info[:2] != (3, 12):
+        raise LaneError(f"this lane needs the nntplib of Python 3.12, not Python {sys.version.split()[0]}")
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    binary = session_native.build(cake, "nntp", source, OUT, HOST)
+    stale = lanes.plant(source, *STALE, "the program, for acting for the generation before,", exact=True)
+    build = Build(lanes.whole_program(cake, "nntp", source, OUT, HOST),
+                  lanes.whole_program(cake, "stale", stale, OUT, HOST))
     results = {}
     for name, run in CHECKS.items():
         try:
-            results[name] = run(binary)
+            results[name] = run(build)
         except OSError as error:
             raise LaneError(f"{name}: {error!r}") from None
         except LaneError as error:
             raise LaneError(f"{name}: {error}") from None
-    found = caught(cake, source, OUT / "nntp.S")
+    found = caught(cake, source, build)
     cuts = sum(len(sent) - 1 for sent, _ in transcripts().values())
     program = sum(d.program for d in DEFECTS)
     lanes.require_quoted({
@@ -1247,7 +1316,7 @@ def check(cake: str) -> Report:
             f"{len(DEFECTS)} planted defects", f"{cuts:,} cuts", f"{spelled(len(DEFECTS))} NNTP servers",
             f"{spelled(len(DEFECTS) - program)} planted in its host and {spelled(program)} in its program"],
         "docs/assurance.md": [f"{len(DEFECTS)} planted defects", f"{cuts:,} cuts"]})
-    return Report("checked", cake, HOSTS, {"executable_sha256": lanes.digest(binary), "checks": results,
+    return Report("checked", cake, HOSTS, {"executable_sha256": lanes.digest(build.path), "checks": results,
                                            "planted_defects_caught": found})
 
 

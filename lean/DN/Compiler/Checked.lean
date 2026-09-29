@@ -130,7 +130,8 @@ def statement (p : Profile) (scope : List String) : PStmt → Except Reason Unit
     if p.externals.contains name then do
       expression p scope c; expression p scope cl; expression p scope a; expression p scope al
     else .error .externalEffect
-  | .ffi name _ => if p.externals.contains name then .error .externalArity else .error .externalEffect
+  | .ffi name _ =>
+    if p.externals.contains name then .error .externalArity else .error .externalEffect
   | .call _ _ _ => .error .callEffect
 def statements (p : Profile) (scope : List String) : List PStmt → Except Reason Unit
   | [] => .ok ()
@@ -380,7 +381,8 @@ theorem accepted_lowers {f : PFun} {src : String} (h : emit f = .ok src) :
 /-- What the gate accepts as a whole program is a `main` without parameters that is not exported:
 the lowering does not see the name, the parameters or the flag, so this is what fixes them. -/
 theorem emitMain_entry {externals : List String} {f : PFun} {src : String}
-    (h : emitMain externals f = .ok src) : f.exported = false ∧ f.name = "main" ∧ f.params = [] := by
+    (h : emitMain externals f = .ok src) :
+    f.exported = false ∧ f.name = "main" ∧ f.params = [] := by
   unfold emitMain at h
   by_cases hc : (!f.exported && f.name == "main" && f.params.isEmpty) = true
   · simp only [Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at hc
@@ -407,14 +409,6 @@ theorem exported_refuses_external (scope : List String) (name : String) (args : 
 /-- …and `@base`. -/
 theorem exported_refuses_base (scope : List String) :
     expression exportedProfile scope .base = .error .baseAddress := rfl
-
-theorem accepted_main_lowers {externals : List String} {f : PFun} {src : String}
-    (h : emitMain externals f = .ok src) : (lower f).isSome = true := by
-  simp only [emitMain, bind, Except.bind] at h
-  repeat' split at h
-  all_goals first
-    | exact absurd h (by simp)
-    | (simp only [lower]; apply statements_lower; assumption)
 
 /-- A function the gate refuses, paired with the closest one it accepts: the pair pins
 which rule did the refusing, so a rule cannot quietly stop working. -/
@@ -451,7 +445,8 @@ private def io (args : List PExpr) : PStmt := .ffi "dn_probe_io" args
 fail to compile, and `catalog_is_honest` keeps each case on the rule it names. -/
 def catalog : List RuleCase :=
   [{ reason := .exportedName, rejected := fn "while" [(1, "a")] body1, accepted := scalar body1 },
-   { reason := .foreignNamespace, rejected := fn "atoi" [(1, "a")] body1, accepted := scalar body1 },
+   { reason := .foreignNamespace, rejected := fn "atoi" [(1, "a")] body1,
+     accepted := scalar body1 },
    { reason := .parameterCount,
      rejected := probe [(1, "a"), (1, "b"), (1, "c"), (1, "d"), (1, "e")] body1,
      accepted := probe [(1, "a"), (1, "b"), (1, "c"), (1, "d")] body1 },

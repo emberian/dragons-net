@@ -17,11 +17,14 @@ import json
 import os
 from pathlib import Path
 import platform
+import queue
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
-from typing import Any
+from typing import IO, Any
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native"
@@ -82,8 +85,8 @@ def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = 
     warnings are beside what is asked of it, only the status does, and nothing is silenced."""
     options = ["--explore"] if explore else []
     with source.open("rb") as inp:
-        done = subprocess.run([cake, "--pancake", *options, f"--main_return={str(main_return).lower()}"], stdin=inp,
-                              capture_output=True, timeout=timeout, check=False)
+        done = subprocess.run([cake, "--pancake", *options, f"--main_return={str(main_return).lower()}"],
+                              stdin=inp, capture_output=True, timeout=timeout, check=False)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
                           f"{done.stderr.decode(errors='replace')}")
@@ -153,6 +156,56 @@ def link(binary: Path, sources: Iterable[Path], *, includes: Iterable[Path] = ()
     if check:
         hardened(binary)
     return binary
+
+
+def plant(text: str, pattern: str, becomes: str, times: int, what: str, *, exact: bool = False) -> str:
+    """`text` with `pattern`, a regular expression or with `exact` the text itself, replaced by
+    `becomes`: it has to be found `times` times, so that a defect whose place moved is refused
+    rather than planted nowhere; `what` names the text and the defect."""
+    if exact:
+        found, planted = text.count(pattern), text.replace(pattern, becomes)
+    else:
+        planted, found = re.subn(pattern, becomes, text)
+    if found != times:
+        raise LaneError(f"{what} holds {pattern[:60]!r} {found} times, not {times}")
+    return planted
+
+
+def whole_program(cake: str, name: str, source: str, out: Path, host: Path) -> Path:
+    """Compile a whole program without `--main_return`, make its bitmaps label global for the heap
+    header (native/cake_header.c), and link it with `host`; `out` holds the layout's header."""
+    pnk = out / f"{name}.pnk"
+    pnk.write_text(source)
+    asm = assemble(cake, pnk, main_return=False)
+    text = asm.read_text()
+    if text.count("\ncake_bitmaps:\n") != 1:
+        raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
+    asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
+    return link(out / name, [host, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm], includes=[out])
+
+
+class Lines:
+    """The lines of a process's stream, read by a thread of their own so that every wait for one can
+    be bounded; with no stream, none ever comes."""
+
+    def __init__(self, stream: IO[str] | None = None) -> None:
+        self.queue: queue.Queue[str | None] = queue.Queue()
+        if stream is not None:
+            threading.Thread(target=self.read, args=(stream,), daemon=True).start()
+
+    def read(self, stream: IO[str]) -> None:
+        with stream:
+            for line in stream:
+                self.queue.put(line)
+        self.queue.put(None)
+
+    def get(self, timeout: float) -> str | None:
+        """The next line, or None, again and again, once the stream has ended; `queue.Empty` if
+        nothing comes in `timeout` s."""
+        line = self.queue.get(timeout=timeout)
+        if line is None:
+            self.queue.put(None)
+        return line
 
 
 def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:

@@ -29,24 +29,40 @@ def data : Nat := 512
 def confOff : Nat := 64
 def confLen : Nat := 8
 
-/-- An event: kind, connection index, generation, data length, then the data. -/
+/-! An event: kind, connection index, generation, data length, then the data. -/
+
+def eventKind : Nat := 0
+def eventIdx : Nat := 8
+def eventGen : Nat := 16
+def eventLen : Nat := 24
 def eventHead : Nat := 32
 def eventSlot : Nat := eventHead + data
 
 /-- The array `dn_next` fills: the number of events, the host's clock in milliseconds, then the
 events. -/
 def nextOff : Nat := 128
-def nextLen : Nat := 16 + batch * eventSlot
+def nextClock : Nat := 8
+def nextEvents : Nat := 16
+def nextLen : Nat := nextEvents + batch * eventSlot
 
-/-- An action: kind, connection index, generation, data length, whether to read from the
+/-! An action: kind, connection index, generation, data length, whether to read from the
 connection afterwards, how many bytes the host sent (written back by the host), then the data. -/
+
+def actionKind : Nat := 0
+def actionIdx : Nat := 8
+def actionGen : Nat := 16
+def actionLen : Nat := 24
+def actionRead : Nat := 32
+def actionTaken : Nat := 40
 def actionHead : Nat := 48
 def actionSlot : Nat := actionHead + data
 
 /-- The array `dn_emit` hands over: the number of actions, the earliest deadline in the host's
 clock (zero for none), then the actions. -/
 def emitOff : Nat := nextOff + nextLen
-def emitLen : Nat := 16 + batch * actionSlot
+def emitWake : Nat := 8
+def emitActions : Nat := 16
+def emitLen : Nat := emitActions + batch * actionSlot
 
 /-- The bytes of heap the program needs from `@base`. -/
 def size : Nat := emitOff + emitLen
@@ -71,9 +87,14 @@ def emitName : String := "dn_emit"
 def header : String :=
   let defs : List (String × Nat) :=
     [("VERSION", version), ("BATCH", batch), ("DATA", data), ("CONF_OFF", confOff),
-     ("CONF_LEN", confLen), ("EVENT_HEAD", eventHead), ("EVENT_SLOT", eventSlot),
-     ("NEXT_OFF", nextOff), ("NEXT_LEN", nextLen), ("ACTION_HEAD", actionHead),
-     ("ACTION_SLOT", actionSlot), ("EMIT_OFF", emitOff), ("EMIT_LEN", emitLen), ("SIZE", size),
+     ("CONF_LEN", confLen), ("EVENT_KIND", eventKind), ("EVENT_IDX", eventIdx),
+     ("EVENT_GEN", eventGen), ("EVENT_LEN", eventLen), ("EVENT_HEAD", eventHead),
+     ("EVENT_SLOT", eventSlot), ("NEXT_OFF", nextOff), ("NEXT_CLOCK", nextClock),
+     ("NEXT_EVENTS", nextEvents), ("NEXT_LEN", nextLen), ("ACTION_KIND", actionKind),
+     ("ACTION_IDX", actionIdx), ("ACTION_GEN", actionGen), ("ACTION_LEN", actionLen),
+     ("ACTION_READ", actionRead), ("ACTION_TAKEN", actionTaken), ("ACTION_HEAD", actionHead),
+     ("ACTION_SLOT", actionSlot), ("EMIT_OFF", emitOff), ("EMIT_WAKE", emitWake),
+     ("EMIT_ACTIONS", emitActions), ("EMIT_LEN", emitLen), ("SIZE", size),
      ("OPENED", opened), ("RECEIVED", received), ("WRITABLE", writable),
      ("INPUT_ENDED", inputEnded), ("CLOSED", closed), ("SEND", send),
      ("CLOSE_AFTER_SEND", closeAfterSend), ("CLOSE_NOW", closeNow)]

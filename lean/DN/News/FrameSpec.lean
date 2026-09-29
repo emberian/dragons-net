@@ -16,8 +16,8 @@ bytes are kept; malformed otherwise.
 A block, which starts at the beginning of a line, is its lines, each ended by CRLF, up to the
 first line that is a single dot (`Block`). It is refused when a line holds a CR, an LF or a NUL,
 too large when what it holds after undoing the dot-stuffing does not fit in `cap` bytes, and
-accepted otherwise (`blockResult`). Every stream is a block followed by the rest, or a block that has
-not ended yet (`block_or_open`).
+accepted otherwise (`blockResult`). Every stream is a block followed by the rest, or a block that
+has not ended yet (`block_or_open`).
 -/
 
 namespace DN.News.FrameSpec

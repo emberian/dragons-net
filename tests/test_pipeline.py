@@ -144,6 +144,7 @@ class CheckScript(unittest.TestCase):
             for name in ("lake", "cargo", "leanchecker", "lean"):
                 stub(stubs, name, f'echo "{name} $*" >> {log}')
             stub(stubs, "python3", f'echo "python3 $*" >> {log}\n'
+                 'case "$1" in scripts/measured.py) shift; exec "$@" ;; esac\n'
                  f'case "$2" in lean4export | nanoda) echo "{stubs}/$2" ;; esac')
             checker_env = "[$LEAN_PATH $LEAN_ABORT_ON_PANIC]"
             stub(stubs, "lean4export", f'echo "lean4export $* $LEAN_SYSROOT {checker_env}" >> {log}\n'
@@ -158,10 +159,12 @@ class CheckScript(unittest.TestCase):
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py",
+                          "python3 scripts/measured.py lake build --wfail DN dn-compiler",
                           "lake build --wfail DN dn-compiler"],
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
+                           f"python3 scripts/measured.py {toolchain}/leanchecker DN",
                            f"toolchain leanchecker DN {checked}",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",

@@ -69,8 +69,9 @@ build() {
   before=$(snapshot)
   python3 scripts/check_structure.py
   # --wfail: a warning fails the build. Lake replays a module's stored log, so
-  # this holds on a warm cache as well as on a fresh checkout.
-  lake build --wfail DN dn-compiler
+  # this holds on a warm cache as well as on a fresh checkout. The kernel's runs of the
+  # safety analyses make most of its cost, which the log shows as it grows.
+  python3 scripts/measured.py lake build --wfail DN dn-compiler
   # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(snapshot)" != "$before" ]]; then
     echo 'check: repository files changed during the source gate or the build' >&2
@@ -91,13 +92,13 @@ proofs() {
   # Toolchain modules come first, and a panic stops a checker instead of returning a default.
   local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
   python3 scripts/check_structure.py outputs
-  "$leanchecker" DN
+  python3 scripts/measured.py "$leanchecker" DN
   # The independent kernel checks the library's declarations and everything they use.
   mkdir -p build/proofs
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 129
+  "$lean" --run scripts/Audit.lean --regressions 134
 }
 
 # Tests that run the built code, and the Rust crates.

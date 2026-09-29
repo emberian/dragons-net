@@ -135,7 +135,8 @@ theorem byteAlign_toNat (w : Word) : (byteAlign w).toNat = w.toNat / 8 * 8 := by
         simp [byteAlign]
     · rw [getLsbD_byteAlign_high w k h3 hk]
       simp [hk, Nat.not_lt.mpr h3, show 3 + (k - 3) = k by omega]
-  rw [e, BitVec.toNat_shiftLeft, BitVec.toNat_ushiftRight, Nat.shiftLeft_eq, Nat.shiftRight_eq_div_pow]
+  rw [e, BitVec.toNat_shiftLeft, BitVec.toNat_ushiftRight, Nat.shiftLeft_eq,
+    Nat.shiftRight_eq_div_pow]
   have := w.isLt
   omega
 
@@ -386,7 +387,8 @@ theorem writeByteArray_preserves (dm : Word → Bool) (be : Bool) (bs : List (Bi
   | cons b bs ih =>
     intro base m hout
     have hne0 : w ≠ base := by have := hout 0 (by simp); simpa using this
-    have htail : memLoadByte (writeByteArray dm be (base + 1) bs m) dm be w = memLoadByte m dm be w := by
+    have htail :
+        memLoadByte (writeByteArray dm be (base + 1) bs m) dm be w = memLoadByte m dm be w := by
       apply ih (base + 1) m
       intro j hj
       have := hout (j + 1) (by simp only [List.length_cons]; omega)
@@ -463,7 +465,8 @@ theorem writeByteArray_memBytes (dm : Word → Bool) (be : Bool) (bs : List (Bit
       bs.length < 2 ^ 64 →
       (∀ k, k < bs.length → dm (byteAlign (base + BitVec.ofNat 64 k)) = true) →
       ∀ j (hj : j < bs.length),
-        memLoadByte (writeByteArray dm be base bs m) dm be (base + BitVec.ofNat 64 j) = some bs[j] := by
+        memLoadByte (writeByteArray dm be base bs m) dm be (base + BitVec.ofNat 64 j) =
+          some bs[j] := by
   induction bs with
   | nil => intro base m _ _ j hj; exact absurd hj (by simp)
   | cons b bs ih =>

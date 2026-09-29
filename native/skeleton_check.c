@@ -11,10 +11,6 @@
  * filled and the stack patterned; on every call the fill and the heap header have to be intact. */
 #include "server.h"
 
-enum { EVENT_KIND = 0, EVENT_INDEX = 8, EVENT_GENERATION = 16, EVENT_LENGTH = 24 };
-enum { ACTION_KIND = 0, ACTION_INDEX = 8, ACTION_GENERATION = 16, ACTION_LENGTH = 24, ACTION_READ = 32,
-       ACTION_TAKEN = 40 };
-
 struct event {
     uint64_t kind, index, generation;
     int64_t length;
@@ -34,13 +30,13 @@ static unsigned char payload_byte(const struct event *e, long j) { return (unsig
 
 static void put_events(unsigned char *a, int64_t count, const struct event *events, long n) {
     dn_put_word(a, (uint64_t)count);
-    dn_put_word(a + 8, (uint64_t)batches_done * 1000);
+    dn_put_word(a + DN_LAYOUT_NEXT_CLOCK, (uint64_t)batches_done * 1000);
     for (long i = 0; i < n; ++i) {
-        unsigned char *slot = a + 16 + i * DN_LAYOUT_EVENT_SLOT;
-        dn_put_word(slot + EVENT_KIND, events[i].kind);
-        dn_put_word(slot + EVENT_INDEX, events[i].index);
-        dn_put_word(slot + EVENT_GENERATION, events[i].generation);
-        dn_put_word(slot + EVENT_LENGTH, (uint64_t)events[i].length);
+        unsigned char *slot = a + DN_LAYOUT_NEXT_EVENTS + i * DN_LAYOUT_EVENT_SLOT;
+        dn_put_word(slot + DN_LAYOUT_EVENT_KIND, events[i].kind);
+        dn_put_word(slot + DN_LAYOUT_EVENT_IDX, events[i].index);
+        dn_put_word(slot + DN_LAYOUT_EVENT_GEN, events[i].generation);
+        dn_put_word(slot + DN_LAYOUT_EVENT_LEN, (uint64_t)events[i].length);
         long bytes = events[i].length < 0 ? 0 : events[i].length > DN_LAYOUT_DATA ? DN_LAYOUT_DATA : events[i].length;
         for (long j = 0; j < bytes; ++j) slot[DN_LAYOUT_EVENT_HEAD + j] = payload_byte(&events[i], j);
     }
@@ -64,8 +60,8 @@ static long echo_batch(int number, struct event *events) {
         return 6;
     case 2:
         for (long i = 0; i < MAX_EVENTS; ++i)
-            events[i] = (struct event){DN_LAYOUT_RECEIVED, (uint64_t)i, (uint64_t)(i + 1), i * 31 % (DN_LAYOUT_DATA + 1),
-                                       (unsigned char)i};
+            events[i] = (struct event){DN_LAYOUT_RECEIVED, (uint64_t)i, (uint64_t)(i + 1),
+                                       i * 31 % (DN_LAYOUT_DATA + 1), (unsigned char)i};
         return MAX_EVENTS;
     case 3:
         return 0;
@@ -123,26 +119,27 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     for (long i = 0; i < current_count; ++i) expected += current[i].kind == DN_LAYOUT_RECEIVED;
     if (dn_word(a) != (uint64_t)expected)
         dn_violation("dn_emit: %" PRIu64 " actions for %ld received payloads", dn_word(a), expected);
-    if (dn_word(a + 8) != 0) dn_violation("dn_emit: a deadline the loop has no reason for");
+    if (dn_word(a + DN_LAYOUT_EMIT_WAKE) != 0) dn_violation("dn_emit: a deadline the loop has no reason for");
     long action = 0;
     for (long i = 0; i < current_count; ++i) {
         const struct event *e = &current[i];
         if (e->kind != DN_LAYOUT_RECEIVED) continue;
-        unsigned char *slot = a + 16 + action * DN_LAYOUT_ACTION_SLOT;
-        if (dn_word(slot + ACTION_KIND) != DN_LAYOUT_SEND) dn_violation("dn_emit: action %ld is not a send", action);
-        if (dn_word(slot + ACTION_INDEX) != e->index)
+        unsigned char *slot = a + DN_LAYOUT_EMIT_ACTIONS + action * DN_LAYOUT_ACTION_SLOT;
+        if (dn_word(slot + DN_LAYOUT_ACTION_KIND) != DN_LAYOUT_SEND)
+            dn_violation("dn_emit: action %ld is not a send", action);
+        if (dn_word(slot + DN_LAYOUT_ACTION_IDX) != e->index)
             dn_violation("dn_emit: action %ld names another connection than payload %ld", action, i);
-        if (dn_word(slot + ACTION_GENERATION) != e->generation)
+        if (dn_word(slot + DN_LAYOUT_ACTION_GEN) != e->generation)
             dn_violation("dn_emit: action %ld names another generation than payload %ld", action, i);
-        if (dn_word(slot + ACTION_LENGTH) != (uint64_t)e->length)
+        if (dn_word(slot + DN_LAYOUT_ACTION_LEN) != (uint64_t)e->length)
             dn_violation("dn_emit: action %ld has another length than payload %ld", action, i);
-        if (dn_word(slot + ACTION_READ) != 1) dn_violation("dn_emit: action %ld does not read on", action);
-        if (dn_word(slot + ACTION_TAKEN) != 0)
+        if (dn_word(slot + DN_LAYOUT_ACTION_READ) != 1) dn_violation("dn_emit: action %ld does not read on", action);
+        if (dn_word(slot + DN_LAYOUT_ACTION_TAKEN) != 0)
             dn_violation("dn_emit: action %ld claims bytes the host has not taken", action);
         for (long j = 0; j < e->length; ++j)
             if (slot[DN_LAYOUT_ACTION_HEAD + j] != payload_byte(e, j))
                 dn_violation("dn_emit: action %ld differs from its payload at byte %ld", action, j);
-        dn_put_word(slot + ACTION_TAKEN, (uint64_t)e->length);
+        dn_put_word(slot + DN_LAYOUT_ACTION_TAKEN, (uint64_t)e->length);
         ++action;
     }
     echoed += (unsigned long)action;

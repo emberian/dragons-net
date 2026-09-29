@@ -6,8 +6,8 @@ import DN.News.Framer
 # DN.News.SessionSpec
 
 The session of docs/decisions/0003-nntp-slice.md as a function of what the host reports, apart
-from the program that will run it: a table of connections, and a turn that takes the host's batch
-of events and gives back at most one action per connection.
+from the program that runs it (`DN.Server.Session`): a table of connections, and a turn that takes
+the host's batch of events and gives back at most one action per connection.
 
 A connection is greeted when it opens. Its input is held as received and framed a line at a time
 (`DN.News.Framer.frameOnce`); a line is answered only while nothing the connection was sent is
@@ -522,5 +522,258 @@ theorem act_quitting (i : Identity) (now idx : Nat) (c : Conn) (hq : c.phase = .
       · exact .inr (.inl rfl)
       · exact .inr (.inr (.inl (by simp [Conn.wants, hq])))
     · exact .inr (.inr (.inr (by simp [hq])))
+
+/-! ## After a QUIT, only what is left of the 205 -/
+
+/-- A connection that answered QUIT has only what is left of the 205 to send. -/
+def Conn.QuitRest (i : Identity) (c : Conn) : Prop := c.phase = .quitting → c.out <:+ text i .quit
+
+def Table.QuitRest (i : Identity) (t : Table) : Prop := ∀ c, some c ∈ t → c.QuitRest i
+
+theorem empty_quitRest (i : Identity) : Table.QuitRest i Table.empty := by
+  intro c hc
+  simp [Table.empty, List.mem_replicate] at hc
+
+theorem quitRest_set {i : Identity} {t : Table} {idx : Nat} {x : Option Conn}
+    (h : Table.QuitRest i t) (hx : ∀ c, x = some c → c.QuitRest i) :
+    Table.QuitRest i (t.set idx x) := by
+  intro c hc
+  rcases List.mem_or_eq_of_mem_set hc with h1 | h1
+  · exact h c h1
+  · exact hx c h1.symm
+
+theorem live_mem {t : Table} {idx gen : Nat} {c : Conn} (h : t.live idx gen = some c) :
+    some c ∈ t := by
+  unfold Table.live at h
+  split at h
+  · rename_i c' hc
+    split at h
+    · cases h
+      exact List.mem_of_getElem? hc
+    · cases h
+  · cases h
+
+theorem applyEvent_quitRest {i : Identity} {now : Nat} {t t' : Table} {e : Event}
+    (h : applyEvent i now t e = .ok t') (ht : Table.QuitRest i t) : Table.QuitRest i t' := by
+  cases e with
+  | opened idx gen =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · cases h
+      · cases h
+        exact quitRest_set ht fun c hc' => by cases hc'; intro hq; cases hq
+  | received idx gen data =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      by_cases hlen : chunk < data.length
+      · simp [hc, hlen, bind, Except.bind] at h
+      · simp only [hc, hlen, bind, Except.bind, if_false, pure, Except.pure] at h
+        split at h
+        · rename_i c hl
+          split at h
+          · cases h
+            exact quitRest_set ht fun c' hc' => by cases hc'; exact ht c (live_mem hl)
+          · cases h
+        · cases h; exact ht
+  | writable idx gen =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · rename_i c hl
+        cases h
+        exact quitRest_set ht fun c' hc' => by cases hc'; exact ht c (live_mem hl)
+      · cases h; exact ht
+  | inputEnded idx gen =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · split at h
+        · cases h
+          exact quitRest_set ht fun c' hc' => by cases hc'; intro hq; cases hq
+        · cases h
+      · cases h; exact ht
+  | closed idx gen =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · cases h
+        exact quitRest_set ht fun c' hc' => by cases hc'
+      · cases h; exact ht
+
+theorem events_quitRest {i : Identity} {now : Nat} :
+    ∀ (es : List Event) (t t' : Table), es.foldlM (applyEvent i now) t = .ok t' →
+      Table.QuitRest i t → Table.QuitRest i t'
+  | [], t, t', h, ht => by
+    simp only [List.foldlM, pure, Except.pure, Except.ok.injEq] at h
+    exact h ▸ ht
+  | e :: es, t, t', h, ht => by
+    simp only [List.foldlM, bind, Except.bind] at h
+    split at h
+    · cases h
+    · rename_i t1 h1
+      exact events_quitRest es t1 t' h (applyEvent_quitRest h1 ht)
+
+/-- Serving a connection that has not answered QUIT leaves it with the 205 to send, if it answers
+QUIT now. -/
+theorem serve_quitRest (i : Identity) (now : Nat) :
+    ∀ fuel (c : Conn), c.phase ≠ .quitting → (serve i now fuel c).QuitRest i := by
+  intro fuel
+  induction fuel with
+  | zero => intro c hp hq; exact absurd hq hp
+  | succ fuel ih =>
+    intro c hp
+    unfold serve
+    split
+    · intro hq; exact absurd hq hp
+    · simp only
+      split
+      · intro hq; exact absurd hq hp
+      · split
+        · exact ih _ hp
+        · split
+          · intro hq; exact absurd hq hp
+          · split
+            · rename_i hq
+              intro _
+              show text i _ <:+ _
+              rw [hq]
+              exact List.suffix_refl _
+            · exact ih _ hp
+
+theorem waitLine_quitRest {i : Identity} {now : Nat} {c : Conn} (h : c.QuitRest i) :
+    (Conn.waitLine now c).QuitRest i := by
+  unfold Conn.waitLine
+  split
+  · split
+    · exact h
+    · exact h
+  · exact h
+
+theorem emit_keeps {idx : Nat} {c c1 : Conn} (h : (emit idx c).1 = some c1) :
+    c1.phase = c.phase ∧ c1.out = c.out := by
+  unfold emit at h
+  by_cases ho : c.out.isEmpty = true
+  · by_cases hq : (c.phase = .quitting || (c.phase = .ending && c.held.isEmpty)) = true
+    · simp [ho, hq] at h
+    · simp [ho, hq] at h
+      subst h
+      exact ⟨rfl, rfl⟩
+  · by_cases hb : c.blocked = true
+    · simp [ho, hb] at h
+      subst h
+      exact ⟨rfl, rfl⟩
+    · simp [ho, hb] at h
+      subst h
+      exact ⟨rfl, rfl⟩
+
+theorem act_quitRest {i : Identity} {now idx : Nat} {c c' : Conn} (hc : c.QuitRest i)
+    (h : (act i now idx c).1 = some c') : c'.QuitRest i := by
+  unfold act at h
+  split at h
+  · cases h
+  · simp only [Option.map_eq_some_iff] at h
+    obtain ⟨c1, h1, rfl⟩ := h
+    apply waitLine_quitRest
+    have h0 : (if c.out.isEmpty && c.phase != .quitting then serve i now (c.held.length + 1) c
+        else c).QuitRest i := by
+      split
+      · rename_i hs
+        simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hs
+        exact serve_quitRest i now _ c hs.2
+      · exact hc
+    obtain ⟨hp, ho⟩ := emit_keeps h1
+    intro hq
+    rw [ho]
+    exact h0 (hp ▸ hq)
+
+theorem turn_quitRest {i : Identity} {s s' : Server} {now : Nat} {es : List Event}
+    {actions : List Action} (h : turn i s now es = .ok (s', actions))
+    (hs : Table.QuitRest i s.table) : Table.QuitRest i s'.table := by
+  unfold turn at h
+  simp only [bind, Except.bind, pure, Except.pure] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i t ht
+        cases h
+        have htq := events_quitRest es s.table t ht hs
+        intro c hc
+        simp only [List.map_map, List.mem_map, List.mem_range, Function.comp] at hc
+        obtain ⟨k, _, hk⟩ := hc
+        split at hk
+        · rename_i c0 hc0
+          exact act_quitRest (htq c0 (List.mem_of_getElem? hc0)) hk
+        · cases hk
+
+theorem settleTable_quitRest {i : Identity} {now : Nat} :
+    ∀ (t : Table) (acts : List Action) (taken : List Nat) (t' : Table),
+      settleTable now t acts taken = .ok t' → Table.QuitRest i t → Table.QuitRest i t'
+  | t, [], [], t', h, ht => by
+    simp only [settleTable, pure, Except.pure, Except.ok.injEq] at h
+    exact h ▸ ht
+  | t, .send idx gen data _ :: rest, n :: ns, t', h, ht => by
+    simp only [settleTable, bind, Except.bind] at h
+    split at h
+    · cases h
+    · refine settleTable_quitRest _ rest ns t' h ?_
+      split
+      · rename_i c hl
+        apply quitRest_set ht
+        intro c' hc'
+        cases hc'
+        apply waitLine_quitRest
+        intro hq
+        exact (List.drop_suffix _ _).trans (ht c (live_mem hl) hq)
+      · exact ht
+  | t, .send .. :: _, [], t', h, _ => by simp [settleTable] at h
+  | t, .closeGracefully .. :: rest, ns, t', h, ht => by
+    simp only [settleTable] at h
+    exact settleTable_quitRest t rest ns t' h ht
+  | t, .closeNow .. :: rest, ns, t', h, ht => by
+    simp only [settleTable] at h
+    exact settleTable_quitRest t rest ns t' h ht
+  | t, [], _ :: _, t', h, _ => by simp [settleTable] at h
+
+/-- **After a QUIT, only what is left of the 205**: from a table in which every connection that
+answered QUIT has only the rest of the 205 to send, as the empty table, a turn and what the host
+took of its sends leave a table of which the same holds; `act_quitting` says such a connection
+sends only its output or closes. -/
+theorem quit_rest {i : Identity} {s s' s'' : Server} {now : Nat} {es : List Event}
+    {actions : List Action} {taken : List Nat} (hs : Table.QuitRest i s.table)
+    (h : turn i s now es = .ok (s', actions)) (h' : settle s' actions taken = .ok s'') :
+    Table.QuitRest i s''.table := by
+  have h1 := turn_quitRest h hs
+  unfold settle at h'
+  simp only [bind, Except.bind, pure, Except.pure] at h'
+  split at h'
+  · cases h'
+  · rename_i t ht
+    cases h'
+    exact settleTable_quitRest _ _ _ _ ht h1
+
+/-- The premise holds of a connection that has just answered QUIT, and of the empty table. -/
+theorem quitRest_witness :
+    Conn.QuitRest ⟨[], []⟩ { Conn.fresh ⟨[], []⟩ 1 0 with
+        phase := .quitting, out := text ⟨[], []⟩ .quit } ∧
+      Table.QuitRest ⟨[], []⟩ Table.empty :=
+  ⟨fun _ => List.suffix_refl _, empty_quitRest _⟩
 
 end DN.News.SessionSpec
