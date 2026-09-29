@@ -20,9 +20,12 @@
  * `--revision` and `--source` name the revision and the address of the source the replies give;
  * `--send-buffer N` sets SO_SNDBUF on each connection. Only for tests: `--clock-fd N` takes the
  * time from N instead of CLOCK_MONOTONIC — a line with a number of milliseconds sets it, and it
- * moves only then, so nothing waits for it before that — and `--report-fd N` receives a line after
- * each turn: the time, the events, the actions, the sends the kernel took only part of, and the
- * time the program asked to be woken at. */
+ * moves only then, so nothing waits for it before that — and `--report-fd N` receives a line for
+ * each turn: `turn`, the time handed to the program, its events (`open` with the client's port,
+ * `recv` with the bytes in hex, `end`, `writable`, `closed`, each with the index and generation),
+ * `|`, its actions (`send` with whether to read, how much the kernel took and the bytes, `graceful`,
+ * `close`), `| wake` and the time the program asked to be woken at — or, when the program stops
+ * the run in that turn, `| stopped` and its code. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "session_calls.h"
@@ -40,7 +43,7 @@
 #include <time.h>
 
 enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER_QUIET_MS = 5000,
-       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256 };
+       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18 };
 
 struct conn {
     int fd;          /* -1 when the index is free */
@@ -49,20 +52,21 @@ struct conn {
     int unsent;      /* the last send left bytes: poll for writing */
     int lost;        /* a send failed; the socket is closed, its close still to be reported */
     short ready;     /* what the last poll reported, not yet given out */
+    unsigned port;   /* the client's, for the report */
 };
 
-struct lingering { int fd; uint64_t until, quiet_until; };
+struct lingering { int fd; uint64_t until, quiet_until, since; };
 
 static struct conn conns[CONNS];
 static struct lingering lingering[LINGERING];
 static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1;
 static int accept_ready, started, awaiting_emit, carrying;
 static unsigned start;
-static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, turn_partial;
+static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
 static int send_buffer, pausing;
 static const char *revision, *source;
-static char clock_text[MAX_LINE];
-static size_t clock_len;
+static char clock_text[MAX_LINE], trace[TRACE_BYTES];
+static size_t clock_len, trace_len;
 
 static uint64_t now_ms(void) {
     if (clock_fd >= 0) return now_virtual;
@@ -71,16 +75,59 @@ static uint64_t now_ms(void) {
     return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
 }
 
-static void report(const char *format, ...) __attribute__((format(printf, 1, 2)));
-static void report(const char *format, ...) {
-    if (report_fd < 0) return;
-    char text[MAX_LINE];
+static void traced(const char *format, ...) __attribute__((format(printf, 1, 2)));
+static void traced(const char *format, ...) {
     va_list args;
     va_start(args, format);
-    int n = vsnprintf(text, sizeof text, format, args);
+    int n = vsnprintf(trace + trace_len, sizeof trace - trace_len, format, args);
     va_end(args);
-    if (n < 0 || (size_t)n >= sizeof text || write(report_fd, text, (size_t)n) != n)
-        dn_harness("report: %s", strerror(errno));
+    if (n < 0 || (size_t)n >= sizeof trace - trace_len) dn_harness("report: a turn of more than %d bytes", TRACE_BYTES);
+    trace_len += (size_t)n;
+}
+
+static void traced_bytes(const unsigned char *p, uint64_t n) {
+    if (!n) {
+        traced(" -");
+        return;
+    }
+    if (trace_len + 1 + 2 * n >= sizeof trace) dn_harness("report: a turn of more than %d bytes", TRACE_BYTES);
+    static const char digits[] = "0123456789abcdef";
+    trace[trace_len++] = ' ';
+    for (uint64_t k = 0; k < n; ++k) {
+        trace[trace_len++] = digits[p[k] >> 4];
+        trace[trace_len++] = digits[p[k] & 15];
+    }
+}
+
+/* The events of the batch just given out, as the program finds them. */
+static void trace_events(const unsigned char *a, uint64_t now) {
+    static const char *const names[] = {[DN_SESSION_OPENED] = "open", [DN_SESSION_RECEIVED] = "recv",
+                                        [DN_SESSION_INPUT_ENDED] = "end", [DN_SESSION_WRITABLE] = "writable",
+                                        [DN_SESSION_CLOSED] = "closed"};
+    trace_len = 0;
+    traced("turn %" PRIu64, now);
+    for (uint64_t k = 0; k < turn_events; ++k) {
+        const unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + k * DN_SESSION_EVENT_SLOT;
+        uint64_t kind = dn_word(slot + DN_SESSION_EVENT_KIND), idx = dn_word(slot + DN_SESSION_EVENT_IDX);
+        traced(" %s %" PRIu64 " %" PRIu64, names[kind], idx, dn_word(slot + DN_SESSION_EVENT_GEN));
+        if (kind == DN_SESSION_OPENED) traced(" %u", conns[idx].port);
+        if (kind == DN_SESSION_RECEIVED) traced_bytes(slot + DN_SESSION_EVENT_HEAD, dn_word(slot + DN_SESSION_EVENT_LEN));
+    }
+    traced(" |");
+}
+
+static void report_line(void) {
+    for (size_t done = 0; done < trace_len;) {
+        ssize_t n = write(report_fd, trace + done, trace_len - done);
+        if (n < 0 && errno != EINTR) dn_harness("report: %s", strerror(errno));
+        if (n > 0) done += (size_t)n;
+    }
+}
+
+/* The turn's line, once the program has said when to wake it. */
+static void report(uint64_t wake) {
+    traced(" | wake %" PRIu64 "\n", wake);
+    report_line();
 }
 
 /* Every socket closed, and the run ends inside the call. */
@@ -120,11 +167,11 @@ static void linger(int fd) {
             at = i;
             break;
         }
-        if (lingering[i].until < lingering[at].until) at = i;
+        if (lingering[i].since < lingering[at].since) at = i;
     }
     if (lingering[at].fd >= 0) close(lingering[at].fd);
     uint64_t now = now_ms();
-    lingering[at] = (struct lingering){fd, now + LINGER_TOTAL_MS, now + LINGER_QUIET_MS};
+    lingering[at] = (struct lingering){fd, now + LINGER_TOTAL_MS, now + LINGER_QUIET_MS, ++lingered};
 }
 
 /* Read and drop what a lingering socket still receives, a bounded number of reads a turn; close it
@@ -278,7 +325,9 @@ static void give_out(unsigned char *a, int i) {
 
 static void take_connections(unsigned char *a) {
     while (accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {
-        int fd = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        struct sockaddr_storage peer;
+        socklen_t peer_len = sizeof peer;
+        int fd = accept4(listener, (struct sockaddr *)&peer, &peer_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (fd < 0) {
             int code = errno;
             switch (dn_accept_action(code)) {
@@ -302,7 +351,9 @@ static void take_connections(unsigned char *a) {
         }
         int i = 0;
         while (conns[i].fd >= 0 || conns[i].lost) ++i;
-        conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1};
+        in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
+                                                   : ((struct sockaddr_in6 *)&peer)->sin6_port;
+        conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
         event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
     }
 }
@@ -313,8 +364,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     uint64_t wake = 0;
     if (started) {
         wake = dn_word(a + DN_SESSION_NEXT_WAKE);
-        report("turn %" PRIu64 " events %" PRIu64 " actions %" PRIu64 " partial %" PRIu64 " wake %" PRIu64 "\n",
-               now_ms(), turn_events, turn_actions, turn_partial, wake);
+        if (report_fd >= 0) report(wake);
     }
     started = 1;
     if (!carrying) wait_for(wake);
@@ -333,14 +383,30 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     memcpy(a + DN_SESSION_NEXT_REV, revision, rl);
     dn_put_word(a + DN_SESSION_NEXT_SRC_LEN, sl);
     memcpy(a + DN_SESSION_NEXT_SRC, source, sl);
+    if (report_fd >= 0) trace_events(a, now);
     awaiting_emit = 1;
+}
+
+/* The actions of the turn, with what the kernel took of each send. */
+static void trace_actions(const unsigned char *a) {
+    for (int k = 0; k < CONNS; ++k) {
+        const unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + (size_t)k * DN_SESSION_ACTION_SLOT;
+        uint64_t kind = dn_word(slot + DN_SESSION_ACTION_KIND), gen = dn_word(slot + DN_SESSION_ACTION_GEN);
+        if (kind == DN_SESSION_SEND) {
+            traced(" send %d %" PRIu64 " %" PRIu64 " %" PRIu64, k, gen, dn_word(slot + DN_SESSION_ACTION_READ),
+                   dn_word(slot + DN_SESSION_ACTION_TAKEN));
+            traced_bytes(slot + DN_SESSION_ACTION_HEAD, dn_word(slot + DN_SESSION_ACTION_LEN));
+        } else if (kind) {
+            traced(" %s %d %" PRIu64, kind == DN_SESSION_CLOSE_GRACEFULLY ? "graceful" : "close", k, gen);
+        }
+    }
 }
 
 void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_session_call(c, clen, a, alen, DN_SESSION_EMIT_OFF, DN_SESSION_EMIT_LEN, "dn_emit");
     if (!awaiting_emit) dn_violation("dn_emit: the program answered without fetching");
     uint64_t count = dn_word(a + DN_SESSION_EMIT_COUNT);
-    turn_actions = turn_partial = 0;
+    turn_actions = 0;
     for (int k = 0; k < CONNS; ++k) {
         unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + (size_t)k * DN_SESSION_ACTION_SLOT;
         uint64_t kind = dn_word(slot + DN_SESSION_ACTION_KIND);
@@ -366,9 +432,9 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
                 close(cn->fd);
                 cn->fd = -1;
                 cn->lost = 1;
+                carrying = 1;
             }
             dn_put_word(slot + DN_SESSION_ACTION_TAKEN, taken);
-            turn_partial += taken < len;
             cn->unsent = !cn->lost && taken < len;
             cn->reading = !cn->lost && read && taken == len;
         } else {
@@ -381,6 +447,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     }
     if (turn_actions != count)
         dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, turn_actions);
+    if (report_fd >= 0) trace_actions(a);
     awaiting_emit = 0;
 }
 
@@ -388,6 +455,10 @@ static void on_exit_run(int code) {
     if (code != 0) dn_violation("the run ended for want of stack or heap (code %d)", code);
     uint64_t stop = dn_word(dn_heap_at(DN_SESSION_OWN_OFF + DN_SESSION_OWN_STOP));
     fprintf(stderr, "the program stopped the run: code %" PRIu64 "\n", stop);
+    if (report_fd >= 0 && started) {
+        traced(" | stopped %" PRIu64 "\n", stop);
+        report_line();
+    }
     exit(3);
 }
 

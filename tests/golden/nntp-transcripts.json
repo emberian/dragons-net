@@ -1,0 +1,18 @@
+{
+  "revision": "0123abc",
+  "source": "https://example.org/dragons-net",
+  "transcripts": {
+    "commands": {
+      "sent": "CAPABILITIES\r\ncapabilities foo\r\nCAPABILITIES 1x\r\nhelp\r\nHELP x\r\n\r\n\tHEAD\t\r\nHEAD 7\r\nHEAD <a@b>\r\nHEAD 2147483648\r\nSTAT\r\nSTAT <a@b>\r\nSTAT 1 2\r\nQUIT now\r\nLIST\r\nQUIT\r\n",
+      "read": "201 dragons-net 0123abc ready, no posting; source code at https://example.org/dragons-net\r\n101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net 0123abc\r\n.\r\n101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net 0123abc\r\n.\r\n501 Syntax error\r\n100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net 0123abc is free software under the GNU AGPL; source code at https://example.org/dragons-net\r\n.\r\n501 Syntax error\r\n412 No newsgroup selected\r\n412 No newsgroup selected\r\n430 No article with that message-id\r\n501 Syntax error\r\n412 No newsgroup selected\r\n430 No article with that message-id\r\n501 Syntax error\r\n501 Syntax error\r\n500 Unknown command\r\n205 Bye\r\n"
+    },
+    "long lines": {
+      "sent": "HELP                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          \r\nHELP                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           \r\nQUIT                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        \r\nHE\rLP\r\nHELP\u0000\r\nHELP\nQUIT\r\n",
+      "read": "201 dragons-net 0123abc ready, no posting; source code at https://example.org/dragons-net\r\n100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net 0123abc is free software under the GNU AGPL; source code at https://example.org/dragons-net\r\n.\r\n501 Syntax error\r\n501 Syntax error\r\n500 Unknown command\r\n500 Unknown command\r\n501 Syntax error\r\n205 Bye\r\n"
+    },
+    "QUIT midway": {
+      "sent": "HELP\r\nQUIT\r\nHELP\r\n",
+      "read": "201 dragons-net 0123abc ready, no posting; source code at https://example.org/dragons-net\r\n100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net 0123abc is free software under the GNU AGPL; source code at https://example.org/dragons-net\r\n.\r\n205 Bye\r\n"
+    }
+  }
+}

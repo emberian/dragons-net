@@ -214,8 +214,8 @@ and emitted as a C header, so that the program and the host cannot disagree abou
 - Not claimed: anything about the C host beyond what the FFI oracle quantifies over, and the rest
   of what [assurance](../assurance.md) lists as trusted (the transcription of the semantics, the
   printer and CakeML's parser, the runtime, the linker); running out of stack, which the upstream
-  theorem allows unless the stack is at least the bound the compiler computes (the slice records
-  that bound and the host provisions it); the step from the model with fuel to the trace of an
+  theorem allows unless the stack is at least the bound the compiler computes (the host provisions
+  1 MiB; the bound itself is not yet obtained, [assurance](../assurance.md) item 8); the step from the model with fuel to the trace of an
   unending run.
 
 ## Consequences
