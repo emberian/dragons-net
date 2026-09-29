@@ -9,8 +9,9 @@
  *                                   comes when the program asks for its next batch
  *
  * Besides the events the model knows, a batch can hold `raw KIND IDX GEN`, an event of any kind,
- * and an identity can be longer than the layout holds, its length written in full: both are there
- * to break the contract in ways only the program is asked to see.
+ * and `poke OFFSET VALUE`, a word the host writes into the program's own area, and an identity can
+ * be longer than the layout holds, its length written in full: all are there to break the contract
+ * in ways only the program is asked to see.
  *
  * A breach ends the run with the code the program leaves in its area, answered `stop CODE`. A
  * `took` with another number of counts than sends cannot be written in the layout, where each
@@ -117,6 +118,14 @@ static void batch(unsigned char *a) {
     memcpy(a + DN_SESSION_NEXT_SRC, source, smaller(source_len, sizeof source));
     uint64_t count = 0;
     while ((text = next_line()) && strcmp(text, "go")) {
+        if (strncmp(text, "poke ", 5) == 0) {
+            char *off = strtok(text + 5, " "), *value = strtok(NULL, " ");
+            if (!off || !value || strtok(NULL, " ")) dn_harness("bad input: not a poke");
+            uint64_t at = number(off);
+            if (at < DN_SESSION_OWN_OFF || at >= DN_SESSION_SIZE || at % 8) dn_harness("bad input: a poke outside the program's own area");
+            dn_put_word(heap_at(at), number(value));
+            continue;
+        }
         char *kind = strtok(text, " "), *raw = kind && strcmp(kind, "raw") == 0 ? strtok(NULL, " ") : NULL;
         char *idx = strtok(NULL, " "), *gen = strtok(NULL, " "), *data = strtok(NULL, " ");
         if (!kind || !idx || !gen || (strcmp(kind, "raw") == 0 && !raw)) dn_harness("bad input: an event without its connection");
@@ -153,13 +162,15 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
 void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     checked(c, clen, a, alen, DN_SESSION_EMIT_OFF, DN_SESSION_EMIT_LEN, "dn_emit");
     if (!awaiting_emit) dn_violation("dn_emit: the program answered without fetching");
-    uint64_t count = dn_word(a + DN_SESSION_EMIT_COUNT);
-    if (count > DN_SESSION_CONNS) dn_violation("dn_emit: %" PRIu64 " actions", count);
+    uint64_t count = dn_word(a + DN_SESSION_EMIT_COUNT), actions = 0;
     sends = 0;
-    for (uint64_t k = 0; k < count; ++k) {
+    for (uint64_t k = 0; k < DN_SESSION_CONNS; ++k) {
         unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + k * DN_SESSION_ACTION_SLOT;
         uint64_t kind = dn_word(slot + DN_SESSION_ACTION_KIND), idx = dn_word(slot + DN_SESSION_ACTION_IDX),
                  gen = dn_word(slot + DN_SESSION_ACTION_GEN), len = dn_word(slot + DN_SESSION_ACTION_LEN);
+        if (kind == 0) continue;
+        ++actions;
+        if (idx != k) dn_violation("dn_emit: the slot of connection %" PRIu64 " holds an action for %" PRIu64, k, idx);
         if (kind == DN_SESSION_SEND) {
             uint64_t read = dn_word(slot + DN_SESSION_ACTION_READ);
             if (len > DN_SESSION_DATA) dn_violation("dn_emit: a send of %" PRIu64 " bytes", len);
@@ -176,13 +187,14 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             dn_violation("dn_emit: an action of kind %" PRIu64, kind);
         }
     }
+    if (actions != count) dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, actions);
     printf("done\n");
     answer();
     char *text = next_line();
     char *word = text ? strtok(text, " ") : NULL;
     if (!word || strcmp(word, "took")) dn_harness("bad input: no took after the actions");
     long found = 0;
-    for (uint64_t k = 0; k < count; ++k) {
+    for (uint64_t k = 0; k < DN_SESSION_CONNS; ++k) {
         unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + k * DN_SESSION_ACTION_SLOT;
         if (dn_word(slot + DN_SESSION_ACTION_KIND) != DN_SESSION_SEND) continue;
         char *taken = strtok(NULL, " ");

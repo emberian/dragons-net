@@ -48,6 +48,13 @@ End
 class Emitted(unittest.TestCase):
     """What `dn-compiler` prints, and the gate it prints through."""
 
+    def test_the_session_passes_the_safety_analysis(self) -> None:
+        """The analysis the kernel runs for the session's theorem, compiled: when a change to the
+        program makes the theorem fail, this names the first alarm."""
+        done = subprocess.run([str(DN_COMPILER), "analyze-session"], text=True, capture_output=True,
+                              check=False, timeout=600)
+        self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,

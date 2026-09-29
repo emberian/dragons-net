@@ -19,7 +19,9 @@ source the host gives in its first batch.
 
 Every number the host writes is checked before it is used; one out of range stops the run with
 the code of `DN.News.SessionSpec.Breach`, or `SessionLayout.unknownEvent`,
-`SessionLayout.badIdentity`, written where the host reads it at exit. The loop itself never
+`SessionLayout.badIdentity`, written where the host reads it at exit. So does a word the program
+reads back from its own area and uses as a length or a position, checked against the range it
+keeps it in (`SessionLayout.brokenState`). The loop itself never
 finishes, so the run never falls off the end of `main`.
 -/
 
@@ -41,6 +43,11 @@ def inc (x : String) : PStmt := .assign x (eAdd (v x) (n 1))
 /-- Stop the run with `code`: written where the host reads it at exit, then returned. -/
 def stop (code : Nat) : List PStmt := [.store (at_ (ownOff + ownStop)) (n code), .ret (n code)]
 def breach (b : News.SessionSpec.Breach) : List PStmt := stop b.code
+
+/-- Stop if `e` lies outside `[0, hi]`: a word the program reads back from its own area is checked
+to be as the program keeps it. -/
+def keptIn (e : PExpr) (hi : Nat) : PStmt :=
+  .ite (or2 (eLt e (n 0)) (eLt (n hi) e)) (stop brokenState) []
 
 def copyLoop (j : String) (dst src len : PExpr) : PStmt :=
   .while (eLt (v j) len) [.storeb (eAdd dst (v j)) (.loadb (eAdd src (v j))), inc j]
@@ -98,7 +105,8 @@ def appendSource : List PStmt :=
 lengths. -/
 def outputDecs : List PStmt :=
   [.dec "ob" (atOff (v "cb") cOut), .dec "o" (n 0), .dec "j" (n 0),
-   .dec "rl" (ld (at_ (ownOff + ownRevLen))), .dec "sl" (ld (at_ (ownOff + ownSrcLen)))]
+   .dec "rl" (ld (at_ (ownOff + ownRevLen))), .dec "sl" (ld (at_ (ownOff + ownSrcLen))),
+   keptIn (v "rl") revMax, keptIn (v "sl") srcMax]
 
 /-- The greeting into the output of the record `cb`. -/
 def writeGreeting : List PStmt :=
@@ -241,9 +249,11 @@ def heldEmpty : PExpr := eEq (fld "cb" cHeldPos) (fld "cb" cHeldLen)
 def serve : List PStmt :=
   [.dec "blk" (atOff (v "cb") cFramer), .dec "p" (atOff (v "cb") cHeld),
    .dec "n" (fld "cb" cHeldLen), .dec "i" (fld "cb" cHeldPos), .dec "sv" (n 1),
+   keptIn (v "n") data, keptIn (v "i") data,
    .while (v "sv")
      [.ite (eEq (v "i") (v "n")) [.assign "sv" (n 0)]
-       ([.dec "i0" (v "i")] ++ News.FramerCode.lineDecs ++
+       ([keptIn (ld (v "blk")) News.SessionSpec.lineLimit, .dec "i0" (v "i")] ++
+        News.FramerCode.lineDecs ++
         News.FramerCode.lineFrag News.SessionSpec.lineLimit ++
         [.ite (eEq (v "kind") (n 0)) [.assign "sv" (n 0)]
           ([.dec "r" (n 0)] ++ classify ++
@@ -257,19 +267,20 @@ def serve : List PStmt :=
    .ite (eEq (v "i") (v "n")) [setf "cb" cHeldPos (n 0), setf "cb" cHeldLen (n 0)]
      [setf "cb" cHeldPos (v "i")]]
 
-/-- The action slot the `a`-th action of the turn lies in. -/
-def slotOf (a : PExpr) : PExpr := eAdd (at_ (emitOff + emitActions)) (eMul a (n actionSlot))
+/-- The action slot of the connection `x`. -/
+def slotOf (x : PExpr) : PExpr := eAdd (at_ (emitOff + emitActions)) (eMul x (n actionSlot))
 
 /-- An action with no bytes for the connection `c`. -/
 def closing (kind : Nat) : List PStmt :=
-  [.dec "slot" (slotOf (v "m")), setf "slot" actionKind (n kind), setf "slot" actionIdx (v "c"),
+  [.dec "slot" (slotOf (v "c")), setf "slot" actionKind (n kind), setf "slot" actionIdx (v "c"),
    setf "slot" actionGen (fld "cb" cGen), setf "slot" actionLen (n 0),
    setf "slot" actionRead (n 0), setf "slot" actionTaken (n 0), inc "m",
    setf "cb" cActed (n 1), setf "cb" cLive (n 0)]
 
 /-- The connection's output as a send, and whether to read once it is taken. -/
 def sending : List PStmt :=
-  [.dec "slot" (slotOf (v "m")), .dec "ol" outLen, setf "slot" actionKind (n send),
+  [.dec "slot" (slotOf (v "c")), .dec "ol" outLen, keptIn (v "ol") data,
+   setf "slot" actionKind (n send),
    setf "slot" actionIdx (v "c"), setf "slot" actionGen (fld "cb" cGen),
    setf "slot" actionLen (v "ol"), setf "slot" actionRead (v "wants"),
    setf "slot" actionTaken (n 0)] ++
@@ -345,15 +356,16 @@ def event : List PStmt :=
    .ite (eEq (v "ek") (n closed)) [.ite (v "lv") [setf "cb" cLive (n 0)] []] [],
    inc "e"]
 
-/-- What the host took of the connection `sc`'s action, the `a`-th of the turn: for a send, the
-output left, whether to wait for the host, and activity. Of the action slot only the count the
-host wrote back is read; the rest the program knows from its own record. -/
+/-- What the host took of the connection `sc`'s action: for a send, the output left, whether to
+wait for the host, and activity. Of the action slot only the count the host wrote back is read;
+the rest the program knows from its own record. -/
 def settle : List PStmt :=
   [.dec "cb" (record (v "sc")),
    .ite (fld "cb" cActed)
      [setf "cb" cActed (n 0),
       .ite (fld "cb" cLive)
-        ([.dec "tk" (ld (atOff (slotOf (v "a")) actionTaken)), .dec "al" outLen,
+        ([.dec "tk" (ld (atOff (slotOf (v "sc")) actionTaken)), .dec "al" outLen,
+          keptIn (v "al") data,
           .ite (or2 (eLt (v "tk") (n 0)) (eLt (v "al") (v "tk"))) (breach .overTaken) [],
           .dec "ob" (atOff (v "cb") cOut), .dec "sj" (v "tk"),
           .while (eLt (v "sj") (v "al"))
@@ -362,8 +374,7 @@ def settle : List PStmt :=
           setf "cb" cOutLen (eSub (v "al") (v "tk")), setf "cb" cBlocked (eLt (v "tk") (v "al")),
           .ite (eLt (n 0) (v "tk"))
             [setf "cb" cIdle (eAdd (v "now") (n News.SessionSpec.inactivity))] []] ++
-         waitLine) [],
-      inc "a"] [],
+         waitLine) []] [],
    inc "sc"]
 
 /-- The time of the next turn, as `DN.News.SessionSpec.deadline` gives it, where the host reads it
@@ -426,10 +437,11 @@ def turn : List PStmt :=
   [.dec "e" (n 0), .while (eLt (v "e") (v "k")) event,
    .dec "m" (n 0), .dec "c" (n 0),
    .while (eLt (v "c") (n conns))
-     [.dec "cb" (record (v "c")), .ite (fld "cb" cLive) act [], inc "c"],
+     [.store (atOff (slotOf (v "c")) actionKind) (n 0), .dec "cb" (record (v "c")),
+      .ite (fld "cb" cLive) act [], inc "c"],
    .store (at_ (emitOff + emitCount)) (v "m"),
    hand,
-   .dec "a" (n 0), .dec "sc" (n 0), .while (eLt (v "sc") (n conns)) settle] ++
+   .dec "sc" (n 0), .while (eLt (v "sc") (n conns)) settle] ++
   wake
 
 /-- `main`: the version, the texts, an empty table, then the loop. -/

@@ -1,5 +1,5 @@
 fun main() {
-  st @base + 64, 2;
+  st @base + 64, 3;
   st @base + 44984, 0;
   st @base + 44992, 0;
   st @base + 45000, 0;
@@ -546,6 +546,16 @@ fun main() {
           var j = 0;
           var rl = lds 1 (@base + 45008);
           var sl = lds 1 (@base + 45080);
+          if 0 < ((rl < 0) + (64 < rl)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
+          if 0 < ((sl < 0) + (200 < sl)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
           j = 0;
           while j < 16 {
             st8 ob + o + j, ld8 (@base + 45288 + j);
@@ -635,11 +645,12 @@ fun main() {
     var m = 0;
     var c = 0;
     while c < 64 {
+      st @base + 9144 + (c * 560), 0;
       var cb = @base + 45728 + (c * 1672);
       if lds 1 cb {
         var due = 0 < ((0 < (((((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) <= now)) + ((lds 1 (cb + 48)) <= now))) + ((((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) <= now)));
         if due {
-          var slot = @base + 9144 + (m * 560);
+          var slot = @base + 9144 + (c * 560);
           st slot, 3;
           st slot + 8, c;
           st slot + 16, lds 1 (cb + 8);
@@ -656,10 +667,25 @@ fun main() {
             var n = lds 1 (cb + 72);
             var i = lds 1 (cb + 80);
             var sv = 1;
+            if 0 < ((n < 0) + (512 < n)) {
+              st @base + 45000, 10;
+              return 10;
+            } else {
+            }
+            if 0 < ((i < 0) + (512 < i)) {
+              st @base + 45000, 10;
+              return 10;
+            } else {
+            }
             while sv {
               if i == n {
                 sv = 0;
               } else {
+                if 0 < (((lds 1 blk) < 0) + (512 < (lds 1 blk))) {
+                  st @base + 45000, 10;
+                  return 10;
+                } else {
+                }
                 var i0 = i;
                 var len = 0;
                 var cr = 0;
@@ -952,6 +978,16 @@ fun main() {
                       var j = 0;
                       var rl = lds 1 (@base + 45008);
                       var sl = lds 1 (@base + 45080);
+                      if 0 < ((rl < 0) + (64 < rl)) {
+                        st @base + 45000, 10;
+                        return 10;
+                      } else {
+                      }
+                      if 0 < ((sl < 0) + (200 < sl)) {
+                        st @base + 45000, 10;
+                        return 10;
+                      } else {
+                      }
                       if r == 1 {
                         j = 0;
                         while j < 60 {
@@ -1073,8 +1109,13 @@ fun main() {
           var wants = ((lds 1 (cb + 16)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)));
           if ((lds 1 (cb + 64)) == 0) == 0 {
             if (lds 1 (cb + 32)) == 0 {
-              var slot = @base + 9144 + (m * 560);
+              var slot = @base + 9144 + (c * 560);
               var ol = lds 1 (cb + 64);
+              if 0 < ((ol < 0) + (512 < ol)) {
+                st @base + 45000, 10;
+                return 10;
+              } else {
+              }
               st slot, 1;
               st slot + 8, c;
               st slot + 16, lds 1 (cb + 8);
@@ -1093,7 +1134,7 @@ fun main() {
             }
           } else {
             if 0 < (((lds 1 (cb + 16)) == 1) + (((lds 1 (cb + 16)) == 2) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72))))) {
-              var slot = @base + 9144 + (m * 560);
+              var slot = @base + 9144 + (c * 560);
               st slot, 2;
               st slot + 8, c;
               st slot + 16, lds 1 (cb + 8);
@@ -1124,15 +1165,19 @@ fun main() {
     }
     st @base + 9136, m;
     @dn_emit(@base + 64, 8, @base + 9136, 35848);
-    var a = 0;
     var sc = 0;
     while sc < 64 {
       var cb = @base + 45728 + (sc * 1672);
       if lds 1 (cb + 88) {
         st cb + 88, 0;
         if lds 1 cb {
-          var tk = lds 1 (@base + 9144 + (a * 560) + 40);
+          var tk = lds 1 (@base + 9144 + (sc * 560) + 40);
           var al = lds 1 (cb + 64);
+          if 0 < ((al < 0) + (512 < al)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
           if 0 < ((tk < 0) + (al < tk)) {
             st @base + 45000, 5;
             return 5;
@@ -1160,7 +1205,6 @@ fun main() {
           }
         } else {
         }
-        a = a + 1;
       } else {
       }
       sc = sc + 1;

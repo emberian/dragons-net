@@ -27,7 +27,7 @@ The diagram describes the intended path. Today the region-digest, byte-copy, dec
 | Concurrency models | `models/` | Small algorithms explored with Loom; separate from production code |
 | Reactor models | `lean/DN/Dataplane` | Abstract invariants, not a verified connection to kernel completions |
 | Preserved native implementation | `migration/dataplane` | Source for porting; old product integration remains visible |
-| NNTP session | `lean/DN/News`, `DN.Server.Session` | The framing, the reply to each command line and the session specified in Lean, the framers proven; the session's program held against its model, not proven |
+| NNTP session | `lean/DN/News`, `DN.Server.Session` | The framing, the reply to each command line and the session specified in Lean, the framers proven; the session's program held against its model and proven in the model not to fail ([0004](decisions/0004-safety-analysis.md)) |
 
 ## Host contract to develop
 

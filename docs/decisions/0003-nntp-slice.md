@@ -158,7 +158,8 @@ generation is a word, and the host does not give out an index and generation it 
   write, end of input, closed. The host touches the heap only inside a call, so it cannot finish
   a send on its own between calls. The configuration bytes of both calls carry the version of the
   layout; a host that finds another version stops the run in that call.
-- `@dn_emit` hands the host a batch of actions. Per
+- `@dn_emit` hands the host a batch of actions: their number, then a slot for each connection
+  that holds its action, or kind zero when it has none. Per
   connection there is at most one action per batch, so bytes cannot be reordered: send these
   bytes, then say whether to read from the connection; close gracefully (after QUIT or the end
   of input, once everything sent was taken); or close at once. The host reads from the connection
@@ -176,7 +177,9 @@ generation is a word, and the host does not give out an index and generation it 
 - A host that breaks this contract — more events than a batch, more bytes than a slot, an index
   past the table, input the program did not ask for, more taken than sent, an index opened twice,
   a clock that goes back or reaches 2^62, an event of no kind the layout has, an identity that
-  does not fit the replies — stops the run: the program writes the code of the breach into a word
+  does not fit the replies, a word of the program's own area the program finds out of the range
+  it keeps it in (which a host that writes only into its arrays is not seen to cause, in tests)
+  — stops the run: the program writes the code of the breach into a word
   of its own area and returns from `main`, and the host, whose runtime ends the run there, reads
   the code. The model also refuses a count for no send, which the layout cannot express: each
   count lies in its send's slot.
@@ -196,7 +199,8 @@ and emitted as a C header, so that the program and the host cannot disagree abou
   contract; the theorem does not say which. `Fail` in the upstream semantics
   also covers running off the end of `main`, so the loop is written never to fall through. The
   theorem is assembled from theorems about the pieces the program is built from, as for the byte
-  copy and the number printer.
+  copy and the number printer; for the session's program, from a safety analysis proven sound
+  once and run on the program by the kernel ([0004](0004-safety-analysis.md)).
 - The framing code is equal to a framing specification written from the grammar above, whatever
   the split of the input into received chunks.
 - Replies are the texts `DN.News.CommandSpec` gives, laid out once in the program's own area

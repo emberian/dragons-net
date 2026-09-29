@@ -9,7 +9,8 @@ is run on both and the two traces — every batch, every action, what the host t
 turn — have to be the same. So do their whole answers to each host that breaks the contract, to
 scripts at the edges of what it allows, and to hosts drawn at random from a fixed seed. Hosts that
 break the contract in ways the model's protocol cannot say — an identity that does not fit the
-replies, an event of no kind the layout has — have to stop the compiled code with their codes. The
+replies, an event of no kind the layout has, a word of the program's own area that the host
+overwrites — have to stop the compiled code with their codes. The
 host checks, on every call and at the end of the run, the heap header, and the heap before the
 program's first area and past its layout, which it fills before the run so that the program cannot
 lean on what it did not write.
@@ -82,8 +83,11 @@ DEFECTS = [
     ("a word to read of two", r"st slot \+ 32, wants;", "st slot + 32, wants * 2;", 1, "word to read is 2"),
     ("a store past the program's layout", r"st @base \+ \d+, now;", "st @base + 200000, now;", 1,
      "wrote past its layout"),
-    ("a store before the program's first area", r"st @base \+ 64, 2;", "st @base + 64, 2;\n  st @base + 48, 7;", 1,
+    ("a store before the program's first area", r"(st @base \+ 64, \d+;)", r"\1\n  st @base + 48, 7;", 1,
      "wrote before its layout"),
+    ("a slot not cleared", r"\n\s*st @base \+ \d+ \+ \(c \* 560\), 0;", "", 1, "holds an action for"),
+    ("a send not counted", r"(aj = aj \+ 1;\s*\}\s*)m = m \+ 1;", r"\1", 1, "actions counted"),
+    ("a length read back unchecked", r"\(512 < ol\)", "0", 1, "a send of 1000 bytes"),
     ("a store past the layout as the run stops", r"st @base \+ 45000, 7;",
      "st @base + 200000, 1;\n      st @base + 45000, 7;", 1, "the end of the run: the program wrote past its layout"),
 ]
@@ -153,9 +157,45 @@ def edges() -> Iterator[tuple[str, list[str]]]:
         "turn 6", "writable 0 1", "writable 0 2", "go", "took 0"]
 
 
+def layout() -> dict[str, int]:
+    """The layout's constants, as the header the host is built with says them."""
+    found = re.findall(r"#define DN_SESSION_(\w+) (\d+)", (OUT / "dn_session_layout.h").read_text())
+    return {name: int(value) for name, value in found}
+
+
+def own_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
+    """Hosts that write into the program's own area a word it reads back as a length or a
+    position, one for each place it checks such a word."""
+    words = layout()
+    own, record, slot = words["OWN_OFF"], words["TABLE_OFF"], words["CONN_SLOT"]
+    greet, taken = ["turn 1", "open 0 1", "go", f"took {GREETING}"], ["turn 1", "open 0 1", "go", "took 10"]
+    word, negative = 2 ** 64 - 1, 2 ** 63
+    for what, script in [
+        ("an output length", [*taken, "turn 2", f"poke {record + words['C_OUT_LEN']} 1000", "writable 0 1"]),
+        ("a negative output length",
+         [*taken, "turn 2", f"poke {record + words['C_OUT_LEN']} {negative}", "writable 0 1"]),
+        ("an output length taken back", [*taken, "turn 2", f"poke {record + words['C_ACTED']} 1",
+                                         f"poke {record + words['C_OUT_LEN']} 1000"]),
+        ("the revision's length", ["turn 1", "go", "took", "turn 2", f"poke {own + words['OWN_REV_LEN']} 65",
+                                   "open 0 1"]),
+        ("a negative revision length", ["turn 1", "go", "took", "turn 2",
+                                        f"poke {own + words['OWN_REV_LEN']} {word}", "open 0 1"]),
+        ("the source's length", ["turn 1", "go", "took", "turn 2", f"poke {own + words['OWN_SRC_LEN']} 201",
+                                 "open 0 1"]),
+        ("a held length", [*greet, "turn 2", f"poke {record + words['C_HELD_LEN']} 1000"]),
+        ("a held position", [*greet, "turn 2", f"poke {record + words['C_HELD_POS']} {word}"]),
+        ("the framer's line length", [*greet, "turn 2", f"poke {record + words['C_FRAMER']} 513", "recv 0 1 41"]),
+        ("a held length of the last connection",
+         ["turn 1", "open 63 1", "go", f"took {GREETING}", "turn 2",
+          f"poke {record + 63 * slot + words['C_HELD_LEN']} 1000"]),
+    ]:
+        yield f"{what} written by the host", IDENTITY, [*script, "go", "took"], 10
+
+
 def program_breaches() -> Iterator[tuple[str, Identity, list[str], int]]:
     """Hosts that break the contract in ways only the program is asked to see, and their codes."""
     first = ["turn 1", "go", "took"]
+    yield from own_area_written()
     yield "no identity", (b"", b""), first, 9
     yield "no revision", (b"", SOURCE), first, 9
     yield "no address of the source", (b"r", b""), first, 9

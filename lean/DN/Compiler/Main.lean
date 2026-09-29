@@ -8,6 +8,7 @@ import DN.Dsl.Example
 import DN.Printed
 import DN.News.FrameModel
 import DN.News.SessionModel
+import DN.Compiler.Analyzer
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
 with its host, runs the framing and session models, prints the differential fixtures, the programs
@@ -21,6 +22,7 @@ private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
    "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
    "session-model [--mutant NAME]", "emit-layout", "emit-session", "emit-session-layout",
+   "analyze-session",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -57,6 +59,11 @@ private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 private def help : String :=
   "Emit checked native examples, differential fixtures, generated programs or the state corpus."
 
+/-- What the safety analysis says of a lowered `main`. -/
+private def analyzed (size : Nat) : Option PancakeProg → Except String String
+  | none => .error "the program does not lower"
+  | some p => (Analyzer.check size p).map fun _ => "safe\n"
+
 private def output (result : Except String String) : IO UInt32 :=
   match result with
   | .ok text => IO.print text *> pure 0
@@ -69,6 +76,8 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["emit-layout"] => output (.ok DN.Server.Layout.header)
   | ["emit-session-layout"] => output (.ok DN.Server.SessionLayout.header)
+  | ["analyze-session"] =>
+    output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
   | ["frame-model"] =>
     -- Framing cases on standard input, answered by the framers `DN.News.FramerCode` is proven
     -- to run.
