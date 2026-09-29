@@ -208,7 +208,7 @@ class CheckScript(unittest.TestCase):
         runs, or it would run nothing and pass."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "session_native.py": "session",
-                   "parser_contract.py": "parser",
+                   "nntp_check.py": "nntp", "parser_contract.py": "parser",
                    "native_fuzz.py": "fuzz"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
@@ -229,7 +229,7 @@ class CheckScript(unittest.TestCase):
             self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
                                               "entry check --cake /pinned/cake", "server --cake /pinned/cake",
                                               "framing --cake /pinned/cake", "session --cake /pinned/cake",
-                                              "parser --cake /pinned/cake",
+                                              "nntp --cake /pinned/cake", "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():

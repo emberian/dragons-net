@@ -93,18 +93,18 @@ DEFECTS = [
 ]
 
 
-def build(cake: str, name: str, source: str) -> Path:
+def build(cake: str, name: str, source: str, out: Path = OUT, host: Path = HOST) -> Path:
     """Compile a program without `--main_return`, make its bitmaps label global for the heap
-    header (native/cake_header.c), and link it with the host."""
-    pnk = OUT / f"{name}.pnk"
+    header (native/cake_header.c), and link it with the host; `out` holds the layout's header."""
+    pnk = out / f"{name}.pnk"
     pnk.write_text(source)
     asm = lanes.assemble(cake, pnk, main_return=False)
     text = asm.read_text()
     if text.count("\ncake_bitmaps:\n") != 1:
         raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
     asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
-    return lanes.link(OUT / name, [HOST, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm],
-                      includes=[OUT])
+    return lanes.link(out / name, [host, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm],
+                      includes=[out])
 
 
 def plant(source: str, pattern: str, becomes: str, times: int) -> str:
@@ -157,9 +157,9 @@ def edges() -> Iterator[tuple[str, list[str]]]:
         "turn 6", "writable 0 1", "writable 0 2", "go", "took 0"]
 
 
-def layout() -> dict[str, int]:
-    """The layout's constants, as the header the host is built with says them."""
-    found = re.findall(r"#define DN_SESSION_(\w+) (\d+)", (OUT / "dn_session_layout.h").read_text())
+def layout(out: Path = OUT) -> dict[str, int]:
+    """The layout's constants, as the header in `out` the host is built with says them."""
+    found = re.findall(r"#define DN_SESSION_(\w+) (\d+)", (out / "dn_session_layout.h").read_text())
     return {name: int(value) for name, value in found}
 
 

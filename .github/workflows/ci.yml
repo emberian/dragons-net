@@ -187,6 +187,11 @@ jobs:
             build/session/session.S
             build/session/session
             build/session/dn_session_layout.h
+            build/nntp/report.json
+            build/nntp/nntp.pnk
+            build/nntp/nntp.S
+            build/nntp/nntp
+            build/nntp/dn_session_layout.h
             build/parser/report.json
             build/parser/*.pnk
             build/fuzz/report.json
