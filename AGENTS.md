@@ -31,8 +31,8 @@ counts just past a boundary, empty inputs and repeats have to be produced delibe
 because a uniform generator almost never reaches them.
 
 The emitted sources are pinned in tests/golden. If a change to the emitter is
-intended, regenerate them with `.lake/build/bin/dn-compiler emit-region`,
-`emit-echo`, `emit-render` and `emit-reply`, and say in the commit why the output changed.
+intended, regenerate each `tests/golden/<name>.pnk` with
+`.lake/build/bin/dn-compiler emit-<name>`, and say in the commit why the output changed.
 
 Read docs/baseline.md before modifying the maintained compiler subset.
 Read docs/reviews/README.md before reusing inherited compiler or reactor code;

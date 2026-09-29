@@ -1,0 +1,871 @@
+fun main() {
+  st @base + 64, 3;
+  st @base + 44984, 0;
+  st @base + 44992, 0;
+  st @base + 45000, 0;
+  st @base + 45288, 7449361033009901618;
+  st @base + 45296, 2338605630395477615;
+  st @base + 45304, 2318361380226691616;
+  st @base + 45312, 7598825393740607342;
+  st @base + 45320, 8247620832851617646;
+  st @base + 45328, 2334382411428685155;
+  st @base + 45336, 3544386825980245089;
+  st @base + 45344, 7811883199287608096;
+  st @base + 45352, 8391166443843581033;
+  st @base + 45360, 5283657245585444154;
+  st @base + 45368, 5568993466012159567;
+  st @base + 45376, 4707473570065108048;
+  st @base + 45384, 7021784858939574612;
+  st @base + 45392, 8387231022536617831;
+  st @base + 45400, 3472567839402626336;
+  st @base + 45408, 8367811718512386096;
+  st @base + 45416, 7812741938002819173;
+  st @base + 45424, 5782977106974832495;
+  st @base + 45432, 4992614335706120769;
+  st @base + 45440, 8032021936938360915;
+  st @base + 45448, 4703244593869448306;
+  st @base + 45456, 7022083123464314948;
+  st @base + 45464, 8461837382603072871;
+  st @base + 45472, 5190976215500284525;
+  st @base + 45480, 5284218841404034117;
+  st @base + 45488, 2329558737683615060;
+  st @base + 45496, 7306916068917079387;
+  st @base + 45504, 7092454105570101549;
+  st @base + 45512, 7021784763360703077;
+  st @base + 45520, 8387231022536617831;
+  st @base + 45528, 7310017434736992288;
+  st @base + 45536, 7023210127212879973;
+  st @base + 45544, 8243105118545798514;
+  st @base + 45552, 6146928745873175584;
+  st @base + 45560, 8295695712566853920;
+  st @base + 45568, 8026294580736587119;
+  st @base + 45576, 3472873946873881956;
+  st @base + 45584, 3749824369216593973;
+  st @base + 45592, 7308814907693085233;
+  st @base + 45600, 2337497328126489463;
+  st @base + 45608, 7234316346692756851;
+  st @base + 45616, 8020383377782999565;
+  st @base + 45624, 7308325599891841312;
+  st @base + 45632, 7526676510244697888;
+  st @base + 45640, 7022083123460469857;
+  st @base + 45648, 3821881958689760615;
+  st @base + 45656, 8029473307266920496;
+  st @base + 45664, 7020387719312338551;
+  st @base + 45672, 2319688287432565870;
+  st @base + 45680, 7286956557046020435;
+  st @base + 45688, 4702613488775688818;
+  st @base + 45696, 5283928854807855440;
+  st @base + 45704, 6147783254847542085;
+  st @base + 45712, 6076275369378862153;
+  st @base + 45720, 21569;
+  var zt = 0;
+  while zt < 64 {
+    st @base + 45728 + (zt * 1672), 0;
+    st @base + 45728 + (zt * 1672) + 88, 0;
+    zt = zt + 1;
+  }
+  st @base + 128, 0;
+  var going = 1;
+  while going {
+    @dn_next(@base + 64, 8, @base + 128, 9008);
+    var k = lds 1 (@base + 136);
+    if 0 < ((k < 0) + (16 < k)) {
+      st @base + 45000, 1;
+      return 1;
+    } else {
+    }
+    var now = lds 1 (@base + 144);
+    if 0 < ((now < (lds 1 (@base + 44984))) + (4611686018427387904 <= now)) {
+      st @base + 45000, 7;
+      return 7;
+    } else {
+    }
+    st @base + 44984, now;
+    if (lds 1 (@base + 44992)) == 0 {
+      var rvl = lds 1 (@base + 152);
+      var scl = lds 1 (@base + 224);
+      if 0 < ((0 < ((rvl < 1) + (64 < rvl))) + (0 < ((scl < 1) + (200 < scl)))) {
+        st @base + 45000, 9;
+        return 9;
+      } else {
+      }
+      var ij = 0;
+      while ij < rvl {
+        var cz = ld8 (@base + 160 + ij);
+        if 0 < ((cz < 33) + (126 < cz)) {
+          st @base + 45000, 9;
+          return 9;
+        } else {
+        }
+        ij = ij + 1;
+      }
+      ij = 0;
+      while ij < scl {
+        var cz = ld8 (@base + 232 + ij);
+        if 0 < ((cz < 33) + (126 < cz)) {
+          st @base + 45000, 9;
+          return 9;
+        } else {
+        }
+        ij = ij + 1;
+      }
+      var ik = 0;
+      ik = 0;
+      while ik < rvl {
+        st8 @base + 45016 + ik, ld8 (@base + 160 + ik);
+        ik = ik + 1;
+      }
+      ik = 0;
+      while ik < scl {
+        st8 @base + 45088 + ik, ld8 (@base + 232 + ik);
+        ik = ik + 1;
+      }
+      st @base + 45008, rvl;
+      st @base + 45080, scl;
+      st @base + 44992, 1;
+    } else {
+    }
+    var e = 0;
+    while e < k {
+      var ev = @base + 432 + (e * 544);
+      var ek = lds 1 ev;
+      var ex = lds 1 (ev + 8);
+      var eg = lds 1 (ev + 16);
+      var el = lds 1 (ev + 24);
+      if 0 < ((ex < 0) + (64 <= ex)) {
+        st @base + 45000, 3;
+        return 3;
+      } else {
+      }
+      if 0 < ((ek < 1) + (5 < ek)) {
+        st @base + 45000, 8;
+        return 8;
+      } else {
+      }
+      var cb = @base + 45728 + (ex * 1672);
+      var lv = (lds 1 cb) & ((lds 1 (cb + 8)) == eg);
+      if ek == 1 {
+        if lds 1 cb {
+          st @base + 45000, 6;
+          return 6;
+        } else {
+          st cb, 1;
+          st cb + 8, eg;
+          st cb + 16, 0;
+          st cb + 24, 0;
+          st cb + 32, 0;
+          st cb + 40, now + 10000;
+          st cb + 48, now + 1800000;
+          st cb + 56, 0;
+          st cb + 72, 0;
+          st cb + 80, 0;
+          st cb + 96, 0;
+          st cb + 104, 0;
+          st cb + 112, 0;
+          var ob = cb + 1160;
+          var o = 0;
+          var j = 0;
+          var rl = lds 1 (@base + 45008);
+          var sl = lds 1 (@base + 45080);
+          if 0 < ((rl < 0) + (64 < rl)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
+          if 0 < ((sl < 0) + (200 < sl)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
+          j = 0;
+          while j < 16 {
+            st8 ob + o + j, ld8 (@base + 45288 + j);
+            j = j + 1;
+          }
+          o = o + 16;
+          j = 0;
+          while j < rl {
+            st8 ob + o + j, ld8 (@base + 45016 + j);
+            j = j + 1;
+          }
+          o = o + rl;
+          j = 0;
+          while j < 35 {
+            st8 ob + o + j, ld8 (@base + 45304 + j);
+            j = j + 1;
+          }
+          o = o + 35;
+          j = 0;
+          while j < sl {
+            st8 ob + o + j, ld8 (@base + 45088 + j);
+            j = j + 1;
+          }
+          o = o + sl;
+          j = 0;
+          while j < 2 {
+            st8 ob + o + j, ld8 (@base + 45339 + j);
+            j = j + 1;
+          }
+          o = o + 2;
+          st cb + 64, o;
+        }
+      } else {
+      }
+      if ek == 2 {
+        if 0 < ((el < 0) + (512 < el)) {
+          st @base + 45000, 2;
+          return 2;
+        } else {
+        }
+        if lv {
+          if (((lds 1 (cb + 16)) == 0) & (lds 1 (cb + 24))) & (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)))) {
+            var hj = 0;
+            while hj < el {
+              st8 cb + 648 + hj, ld8 (ev + 32 + hj);
+              hj = hj + 1;
+            }
+            st cb + 72, el;
+            st cb + 80, 0;
+          } else {
+            st @base + 45000, 4;
+            return 4;
+          }
+        } else {
+        }
+      } else {
+      }
+      if ek == 3 {
+        if lv {
+          st cb + 32, 0;
+        } else {
+        }
+      } else {
+      }
+      if ek == 4 {
+        if lv {
+          if (((lds 1 (cb + 16)) == 0) & (lds 1 (cb + 24))) & (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)))) {
+            st cb + 16, 2;
+            st cb + 56, 0;
+          } else {
+            st @base + 45000, 4;
+            return 4;
+          }
+        } else {
+        }
+      } else {
+      }
+      if ek == 5 {
+        if lv {
+          st cb, 0;
+        } else {
+        }
+      } else {
+      }
+      e = e + 1;
+    }
+    var m = 0;
+    var c = 0;
+    while c < 64 {
+      st @base + 9144 + (c * 560), 0;
+      var cb = @base + 45728 + (c * 1672);
+      if lds 1 cb {
+        var due = 0 < ((0 < (((((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) <= now)) + ((lds 1 (cb + 48)) <= now))) + ((((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) <= now)));
+        if due {
+          var slot = @base + 9144 + (c * 560);
+          st slot, 3;
+          st slot + 8, c;
+          st slot + 16, lds 1 (cb + 8);
+          st slot + 24, 0;
+          st slot + 32, 0;
+          st slot + 40, 0;
+          m = m + 1;
+          st cb + 88, 1;
+          st cb, 0;
+        } else {
+          if ((lds 1 (cb + 64)) == 0) & (((lds 1 (cb + 16)) == 1) == 0) {
+            var blk = cb + 96;
+            var p = cb + 648;
+            var n = lds 1 (cb + 72);
+            var i = lds 1 (cb + 80);
+            var sv = 1;
+            if 0 < ((n < 0) + (512 < n)) {
+              st @base + 45000, 10;
+              return 10;
+            } else {
+            }
+            if 0 < ((i < 0) + (512 < i)) {
+              st @base + 45000, 10;
+              return 10;
+            } else {
+            }
+            while sv {
+              if i == n {
+                sv = 0;
+              } else {
+                if 0 < (((lds 1 blk) < 0) + (512 < (lds 1 blk))) {
+                  st @base + 45000, 10;
+                  return 10;
+                } else {
+                }
+                var i0 = i;
+                var len = 0;
+                var cr = 0;
+                var bad = 0;
+                var kind = 0;
+                var kept = 0;
+                var b = 0;
+                len = lds 1 blk;
+                cr = lds 1 (blk + 8);
+                bad = lds 1 (blk + 16);
+                kind = 0;
+                kept = 0;
+                while (i < n) & (kind == 0) {
+                  b = ld8 (p + i);
+                  i = i + 1;
+                  if b == 10 {
+                    if 512 <= len {
+                      kind = 3;
+                      kept = len;
+                    } else {
+                      if cr & (bad == 0) {
+                        kind = 1;
+                        kept = len - 1;
+                      } else {
+                        kind = 2;
+                        kept = len;
+                      }
+                    }
+                    len = 0;
+                    cr = 0;
+                    bad = 0;
+                  } else {
+                    if cr {
+                      bad = 1;
+                    } else {
+                    }
+                    if b == 0 {
+                      bad = 1;
+                    } else {
+                    }
+                    cr = b == 13;
+                    if len < 512 {
+                      st8 blk + 40 + len, b;
+                      len = len + 1;
+                    } else {
+                    }
+                  }
+                }
+                st blk, len;
+                st blk + 8, cr;
+                st blk + 16, bad;
+                st blk + 24, kind;
+                st blk + 32, kept;
+                if kind == 0 {
+                  sv = 0;
+                } else {
+                  var r = 0;
+                  var w = 0;
+                  var s0 = 0;
+                  var l0 = 0;
+                  var s1 = 0;
+                  var l1 = 0;
+                  var inw = 0;
+                  var ws = 0;
+                  var q = 0;
+                  while q < kept {
+                    var cq = ld8 (blk + 40 + q);
+                    if 0 < ((cq == 32) + (cq == 9)) {
+                      if inw {
+                        if w == 1 {
+                          l0 = q - ws;
+                        } else {
+                        }
+                        if w == 2 {
+                          l1 = q - ws;
+                        } else {
+                        }
+                        inw = 0;
+                      } else {
+                      }
+                    } else {
+                      if inw == 0 {
+                        w = w + 1;
+                        ws = q;
+                        inw = 1;
+                        if w == 1 {
+                          s0 = q;
+                        } else {
+                        }
+                        if w == 2 {
+                          s1 = q;
+                        } else {
+                        }
+                      } else {
+                      }
+                    }
+                    q = q + 1;
+                  }
+                  if inw {
+                    if w == 1 {
+                      l0 = kept - ws;
+                    } else {
+                    }
+                    if w == 2 {
+                      l1 = kept - ws;
+                    } else {
+                    }
+                    inw = 0;
+                  } else {
+                  }
+                  var cmd = 0;
+                  var eqk = 0;
+                  var jq = 0;
+                  var ok = 0;
+                  var val = 0;
+                  if w == 0 {
+                    if kind == 3 {
+                      r = 6;
+                    } else {
+                      r = 0;
+                    }
+                  } else {
+                    eqk = l0 == 12;
+                    jq = 0;
+                    while eqk & (jq < l0) {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 45694 + jq))) == 0 {
+                        eqk = 0;
+                      } else {
+                      }
+                      jq = jq + 1;
+                    }
+                    if eqk {
+                      cmd = 1;
+                    } else {
+                    }
+                    eqk = l0 == 4;
+                    jq = 0;
+                    while eqk & (jq < l0) {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 45706 + jq))) == 0 {
+                        eqk = 0;
+                      } else {
+                      }
+                      jq = jq + 1;
+                    }
+                    if eqk {
+                      cmd = 2;
+                    } else {
+                    }
+                    eqk = l0 == 4;
+                    jq = 0;
+                    while eqk & (jq < l0) {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 45710 + jq))) == 0 {
+                        eqk = 0;
+                      } else {
+                      }
+                      jq = jq + 1;
+                    }
+                    if eqk {
+                      cmd = 3;
+                    } else {
+                    }
+                    eqk = l0 == 4;
+                    jq = 0;
+                    while eqk & (jq < l0) {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 45714 + jq))) == 0 {
+                        eqk = 0;
+                      } else {
+                      }
+                      jq = jq + 1;
+                    }
+                    if eqk {
+                      cmd = 4;
+                    } else {
+                    }
+                    eqk = l0 == 4;
+                    jq = 0;
+                    while eqk & (jq < l0) {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 45718 + jq))) == 0 {
+                        eqk = 0;
+                      } else {
+                      }
+                      jq = jq + 1;
+                    }
+                    if eqk {
+                      cmd = 5;
+                    } else {
+                    }
+                    if cmd == 0 {
+                      r = 6;
+                    } else {
+                      if (kind == 1) == 0 {
+                        r = 7;
+                      } else {
+                        var args = w - 1;
+                        if cmd == 1 {
+                          if args == 0 {
+                            r = 1;
+                          } else {
+                            if args == 1 {
+                              ok = 3 <= l1;
+                              if ok {
+                                ok = 0 < (((64 < (ld8 (blk + 40 + s1))) & ((ld8 (blk + 40 + s1)) < 91)) + ((96 < (ld8 (blk + 40 + s1))) & ((ld8 (blk + 40 + s1)) < 123)));
+                              } else {
+                              }
+                              jq = 1;
+                              while ok & (jq < l1) {
+                                var cz = ld8 (blk + 40 + s1 + jq);
+                                ok = 0 < ((0 < ((0 < (((64 < cz) & (cz < 91)) + ((96 < cz) & (cz < 123)))) + ((47 < cz) & (cz < 58)))) + (0 < ((cz == 46) + (cz == 45))));
+                                jq = jq + 1;
+                              }
+                              if ok {
+                                r = 1;
+                              } else {
+                                r = 7;
+                              }
+                            } else {
+                              r = 7;
+                            }
+                          }
+                        } else {
+                          if cmd == 2 {
+                            if args == 0 {
+                              r = 2;
+                            } else {
+                              r = 7;
+                            }
+                          } else {
+                            if cmd == 3 {
+                              if args == 0 {
+                                r = 3;
+                              } else {
+                                r = 7;
+                              }
+                            } else {
+                              if args == 0 {
+                                r = 4;
+                              } else {
+                                if args == 1 {
+                                  ok = (1 <= l1) & (l1 <= 16);
+                                  val = 0;
+                                  jq = 0;
+                                  while ok & (jq < l1) {
+                                    var cz = ld8 (blk + 40 + s1 + jq);
+                                    ok = (47 < cz) & (cz < 58);
+                                    val = (val * 10) + (cz - 48);
+                                    jq = jq + 1;
+                                  }
+                                  if ok {
+                                    ok = val <= 2147483647;
+                                  } else {
+                                  }
+                                  if ok {
+                                    r = 4;
+                                  } else {
+                                    ok = (3 <= l1) & (l1 <= 250);
+                                    if ok {
+                                      ok = ((ld8 (blk + 40 + s1)) == 60) & ((ld8 (blk + 40 + ((s1 + l1) - 1))) == 62);
+                                    } else {
+                                    }
+                                    jq = 1;
+                                    while ok & (jq < (l1 - 1)) {
+                                      var cz = ld8 (blk + 40 + s1 + jq);
+                                      ok = 0 < (((32 < cz) & (cz < 62)) + ((62 < cz) & (cz < 127)));
+                                      jq = jq + 1;
+                                    }
+                                    if ok {
+                                      r = 5;
+                                    } else {
+                                      r = 7;
+                                    }
+                                  }
+                                } else {
+                                  r = 7;
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  if r == 0 {
+                  } else {
+                    if ((lds 1 (cb + 64)) == 0) == 0 {
+                      i = i0;
+                      sv = 0;
+                    } else {
+                      var ob = cb + 1160;
+                      var o = 0;
+                      var j = 0;
+                      var rl = lds 1 (@base + 45008);
+                      var sl = lds 1 (@base + 45080);
+                      if 0 < ((rl < 0) + (64 < rl)) {
+                        st @base + 45000, 10;
+                        return 10;
+                      } else {
+                      }
+                      if 0 < ((sl < 0) + (200 < sl)) {
+                        st @base + 45000, 10;
+                        return 10;
+                      } else {
+                      }
+                      if r == 1 {
+                        j = 0;
+                        while j < 60 {
+                          st8 ob + o + j, ld8 (@base + 45341 + j);
+                          j = j + 1;
+                        }
+                        o = o + 60;
+                        j = 0;
+                        while j < rl {
+                          st8 ob + o + j, ld8 (@base + 45016 + j);
+                          j = j + 1;
+                        }
+                        o = o + rl;
+                        j = 0;
+                        while j < 5 {
+                          st8 ob + o + j, ld8 (@base + 45401 + j);
+                          j = j + 1;
+                        }
+                        o = o + 5;
+                      } else {
+                        if r == 2 {
+                          j = 0;
+                          while j < 123 {
+                            st8 ob + o + j, ld8 (@base + 45406 + j);
+                            j = j + 1;
+                          }
+                          o = o + 123;
+                          j = 0;
+                          while j < rl {
+                            st8 ob + o + j, ld8 (@base + 45016 + j);
+                            j = j + 1;
+                          }
+                          o = o + rl;
+                          j = 0;
+                          while j < 53 {
+                            st8 ob + o + j, ld8 (@base + 45529 + j);
+                            j = j + 1;
+                          }
+                          o = o + 53;
+                          j = 0;
+                          while j < sl {
+                            st8 ob + o + j, ld8 (@base + 45088 + j);
+                            j = j + 1;
+                          }
+                          o = o + sl;
+                          j = 0;
+                          while j < 5 {
+                            st8 ob + o + j, ld8 (@base + 45401 + j);
+                            j = j + 1;
+                          }
+                          o = o + 5;
+                        } else {
+                          if r == 3 {
+                            j = 0;
+                            while j < 9 {
+                              st8 ob + o + j, ld8 (@base + 45582 + j);
+                              j = j + 1;
+                            }
+                            o = o + 9;
+                          } else {
+                            if r == 4 {
+                              j = 0;
+                              while j < 27 {
+                                st8 ob + o + j, ld8 (@base + 45591 + j);
+                                j = j + 1;
+                              }
+                              o = o + 27;
+                            } else {
+                              if r == 5 {
+                                j = 0;
+                                while j < 37 {
+                                  st8 ob + o + j, ld8 (@base + 45618 + j);
+                                  j = j + 1;
+                                }
+                                o = o + 37;
+                              } else {
+                                if r == 6 {
+                                  j = 0;
+                                  while j < 21 {
+                                    st8 ob + o + j, ld8 (@base + 45655 + j);
+                                    j = j + 1;
+                                  }
+                                  o = o + 21;
+                                } else {
+                                  j = 0;
+                                  while j < 18 {
+                                    st8 ob + o + j, ld8 (@base + 45676 + j);
+                                    j = j + 1;
+                                  }
+                                  o = o + 18;
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                      st cb + 64, o;
+                      st cb + 40, 0;
+                      st cb + 48, now + 1800000;
+                      if r == 3 {
+                        st cb + 16, 1;
+                        i = n;
+                        sv = 0;
+                      } else {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if i == n {
+              st cb + 80, 0;
+              st cb + 72, 0;
+            } else {
+              st cb + 80, i;
+            }
+          } else {
+          }
+          var wants = ((lds 1 (cb + 16)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)));
+          if ((lds 1 (cb + 64)) == 0) == 0 {
+            if (lds 1 (cb + 32)) == 0 {
+              var slot = @base + 9144 + (c * 560);
+              var ol = lds 1 (cb + 64);
+              if 0 < ((ol < 0) + (512 < ol)) {
+                st @base + 45000, 10;
+                return 10;
+              } else {
+              }
+              st slot, 1;
+              st slot + 8, c;
+              st slot + 16, lds 1 (cb + 8);
+              st slot + 24, ol;
+              st slot + 32, wants;
+              st slot + 40, 0;
+              var aj = 0;
+              while aj < ol {
+                st8 slot + 48 + aj, ld8 (cb + 1160 + aj);
+                aj = aj + 1;
+              }
+              m = m + 1;
+              st cb + 88, 1;
+              st cb + 24, wants;
+            } else {
+            }
+          } else {
+            if 0 < (((lds 1 (cb + 16)) == 1) + (((lds 1 (cb + 16)) == 2) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72))))) {
+              var slot = @base + 9144 + (c * 560);
+              st slot, 2;
+              st slot + 8, c;
+              st slot + 16, lds 1 (cb + 8);
+              st slot + 24, 0;
+              st slot + 32, 0;
+              st slot + 40, 0;
+              m = m + 1;
+              st cb + 88, 1;
+              st cb, 0;
+            } else {
+            }
+          }
+          if lds 1 cb {
+            if (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 16)) == 0)) & (0 < ((lds 1 (cb + 96)) + (lds 1 (cb + 104)) + (lds 1 (cb + 112)))) {
+              if (lds 1 (cb + 56)) == 0 {
+                st cb + 56, now + 180000;
+              } else {
+              }
+            } else {
+              st cb + 56, 0;
+            }
+          } else {
+          }
+        }
+      } else {
+      }
+      c = c + 1;
+    }
+    st @base + 9136, m;
+    @dn_emit(@base + 64, 8, @base + 9136, 35848);
+    var sc = 0;
+    while sc < 64 {
+      var cb = @base + 45728 + (sc * 1672);
+      if lds 1 (cb + 88) {
+        st cb + 88, 0;
+        if lds 1 cb {
+          var tk = lds 1 (@base + 9144 + (sc * 560) + 40);
+          var al = lds 1 (cb + 64);
+          if 0 < ((al < 0) + (512 < al)) {
+            st @base + 45000, 10;
+            return 10;
+          } else {
+          }
+          if 0 < ((tk < 0) + (al < tk)) {
+            st @base + 45000, 5;
+            return 5;
+          } else {
+          }
+          var ob = cb + 1160;
+          var sj = tk;
+          while sj < al {
+            st8 ob + (sj - tk), ld8 (ob + sj);
+            sj = sj + 1;
+          }
+          st cb + 64, al - tk;
+          st cb + 32, tk < al;
+          if 0 < tk {
+            st cb + 48, now + 1800000;
+          } else {
+          }
+          if (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 16)) == 0)) & (0 < ((lds 1 (cb + 96)) + (lds 1 (cb + 104)) + (lds 1 (cb + 112)))) {
+            if (lds 1 (cb + 56)) == 0 {
+              st cb + 56, now + 180000;
+            } else {
+            }
+          } else {
+            st cb + 56, 0;
+          }
+        } else {
+        }
+      } else {
+      }
+      sc = sc + 1;
+    }
+    var dl = 0;
+    var rd = 0;
+    var dt = 0;
+    while dt < 64 {
+      var cb = @base + 45728 + (dt * 1672);
+      if lds 1 cb {
+        if ((lds 1 (cb + 64)) == 0) & (0 < ((((lds 1 (cb + 80)) == (lds 1 (cb + 72))) == 0) + (((lds 1 (cb + 16)) == 0) == 0))) {
+          rd = 1;
+        } else {
+        }
+        var ea = lds 1 (cb + 48);
+        if (((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) < ea) {
+          ea = lds 1 (cb + 40);
+        } else {
+        }
+        if (((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) < ea) {
+          ea = lds 1 (cb + 56);
+        } else {
+        }
+        if 0 < ((dl == 0) + (ea < dl)) {
+          dl = ea;
+        } else {
+        }
+      } else {
+      }
+      dt = dt + 1;
+    }
+    if rd {
+      if now < 1 {
+        dl = 1;
+      } else {
+        dl = now;
+      }
+    } else {
+    }
+    st @base + 128, dl;
+  }
+  return 0;
+}

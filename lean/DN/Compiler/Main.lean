@@ -6,23 +6,64 @@ import DN.Compiler.Gen
 import DN.Compiler.GenCorpus
 import DN.Dsl.Example
 import DN.Printed
+import DN.News.FrameModel
+import DN.News.SessionModel
+import DN.Compiler.Analyzer
 
-/-! `dn-compiler`: prints the checked native examples, the differential fixtures, the programs and
-precedence cells the parser contract compares, generated programs and their recorded cases, and
-the corpus of stopping states. Printing is not a correctness certificate: see docs/assurance.md
-for the remaining connections. -/
+/-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
+with its host, runs the framing and session models, prints the differential fixtures, the programs
+and precedence cells the parser contract compares, generated programs and their recorded cases,
+and the corpus of stopping states. Printing is not a correctness certificate: see
+docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
 
 private def commands : List String :=
-  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-reply-cases", "emit-baseline",
+  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
+   "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
+   "session-model [--mutant NAME]", "emit-layout", "emit-session", "emit-session-layout",
+   "analyze-session",
+   "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
+
+/-- The most lines `session-model` reads. -/
+private def sessionLines : Nat := 100000000
+
+/-- Turns on standard input, answered a line at a time by `DN.News.SessionSpec` or by one of its
+mutants, so that a host simulator can decide each batch from the answers to the last. -/
+private def sessionModel (mutant : DN.News.SessionMutant.Mutant) : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  let mut m : DN.News.SessionModel.Model := { mutant }
+  for _ in [0:sessionLines] do
+    let line ← stdin.getLine
+    if line.isEmpty then
+      if m.atRest then return 0
+      IO.eprintln "error: the input ended inside a turn"
+      return 2
+    match DN.News.SessionModel.step m line.trimAsciiEnd.toString with
+    | .error e =>
+      IO.eprintln ("error: " ++ e)
+      return 2
+    | .ok (m', answer) =>
+      m := m'
+      unless answer.isEmpty do
+        stdout.putStr answer
+        stdout.flush
+  IO.eprintln "error: more lines than the model reads"
+  return 2
 
 private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 
 private def help : String :=
-  "Emit checked native examples, differential fixtures, generated programs or the state corpus."
+  "Emit checked programs and layouts, run the framing and session models and the safety " ++
+    "analysis, and print differential fixtures, generated programs or the state corpus."
+
+/-- What the safety analysis says of a lowered `main`. -/
+private def analyzed (size : Nat) : Option PancakeProg → Except String String
+  | none => .error "the program does not lower"
+  | some p => (Analyzer.check size p).map fun _ => "safe\n"
 
 private def output (result : Except String String) : IO UInt32 :=
   match result with
@@ -34,6 +75,20 @@ def main (args : List String) : IO UInt32 := do
     if let some (_, program) := DN.Printed.named.find? (command == "emit-" ++ ·.1) then
       return ← output (program.map (·.source))
   match args with
+  | ["emit-layout"] => output (.ok DN.Server.Layout.header)
+  | ["emit-session-layout"] => output (.ok DN.Server.SessionLayout.header)
+  | ["analyze-session"] =>
+    output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
+  | ["frame-model"] =>
+    -- Framing cases on standard input, answered by the framers whose programs
+    -- (`DN.News.FramerProg`) `DN.News.FramerCode` proves to make the same steps.
+    let input ← (← IO.getStdin).readToEnd
+    output (DN.News.FrameModel.runAll input)
+  | ["session-model"] => sessionModel .none
+  | ["session-model", "--mutant", name] =>
+    match DN.News.SessionMutant.names.lookup name with
+    | some m => sessionModel m
+    | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
   | ["emit-reply-cases"] => output (.ok DN.Dsl.Example.cases.compress)
   | ["emit-baseline"] => output (Baseline.fixture.map (·.compress))
   | ["emit-trees"] =>

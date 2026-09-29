@@ -144,6 +144,7 @@ class CheckScript(unittest.TestCase):
             for name in ("lake", "cargo", "leanchecker", "lean"):
                 stub(stubs, name, f'echo "{name} $*" >> {log}')
             stub(stubs, "python3", f'echo "python3 $*" >> {log}\n'
+                 'case "$1" in scripts/measured.py) shift; exec "$@" ;; esac\n'
                  f'case "$2" in lean4export | nanoda) echo "{stubs}/$2" ;; esac')
             checker_env = "[$LEAN_PATH $LEAN_ABORT_ON_PANIC]"
             stub(stubs, "lean4export", f'echo "lean4export $* $LEAN_SYSROOT {checker_env}" >> {log}\n'
@@ -158,17 +159,19 @@ class CheckScript(unittest.TestCase):
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py",
+                          "python3 scripts/measured.py lake build --wfail DN dn-compiler",
                           "lake build --wfail DN dn-compiler"],
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
+                           f"python3 scripts/measured.py {toolchain}/leanchecker DN",
                            f"toolchain leanchecker DN {checked}",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
-                          "python3 scripts/state_check.py"],
+                          "python3 scripts/state_check.py", "python3 scripts/session_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -207,7 +210,9 @@ class CheckScript(unittest.TestCase):
         lane that fails stops the run with its status; a misspelt name is refused before any lane
         runs, or it would run nothing and pass."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
-                   "parser_contract.py": "parser", "native_fuzz.py": "fuzz"}
+                   "server_check.py": "server", "framing_check.py": "framing", "session_native.py": "session",
+                   "nntp_check.py": "nntp", "parser_contract.py": "parser",
+                   "native_fuzz.py": "fuzz"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
@@ -225,7 +230,9 @@ class CheckScript(unittest.TestCase):
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
             self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
-                                              "entry check --cake /pinned/cake", "parser --cake /pinned/cake",
+                                              "entry check --cake /pinned/cake", "server --cake /pinned/cake",
+                                              "framing --cake /pinned/cake", "session --cake /pinned/cake",
+                                              "nntp --cake /pinned/cake", "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
