@@ -93,8 +93,10 @@ def fetch(pin: dict[str, str]) -> Path:
         archive.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=archive.parent) as temp:
             partial = Path(temp) / "download"
+            # Release downloads fail with 5xx for minutes at a time; curl doubles its wait from a
+            # second, so eight tries span about four minutes.
             subprocess.run(["curl", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2",
-                            "--fail", "--location", "--retry", "3",
+                            "--fail", "--location", "--retry", "8", "--retry-max-time", "600",
                             "--silent", "--show-error", "--output", str(partial), pin["url"]], check=True)
             partial.rename(archive)
     if digest(archive) != pin["sha256"]:
