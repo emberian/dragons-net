@@ -14,7 +14,8 @@ main() {
   cd "$(dirname "$0")/.."
   bash scripts/check.sh guard
   local venv=.deps/lint pins
-  pins=$(sha256sum scripts/requirements-lint.txt)
+  # The venv is made again when the pins or the Python it is made from change.
+  pins=$(sha256sum scripts/requirements-lint.txt && python3 --version)
   # shellcheck disable=SC2312 # a failed read compares unequal, which rebuilds the venv
   if [[ ! -f $venv/pins || "$(cat "$venv/pins")" != "$pins" ]]; then
     rm -rf "$venv"

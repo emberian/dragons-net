@@ -115,11 +115,11 @@ def compilerModules : Array Name :=
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
     `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
-    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example,
-    `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec, `DN.News.Framer,
-    `DN.News.FramerProg, `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec,
-    `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
-    `DN.Server.Skeleton]
+    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.News.Abnf,
+    `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfRules, `DN.News.CommandSpec,
+    `DN.News.FrameModel, `DN.News.FrameSpec, `DN.News.Framer, `DN.News.FramerProg,
+    `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.Printed,
+    `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout, `DN.Server.Skeleton]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do

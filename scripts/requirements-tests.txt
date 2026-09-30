@@ -1,0 +1,7 @@
+# The independent reference of the grammar lane, pinned to its wheels. The library's is pure Python
+# with no dependencies; its Rust backend's is built for CPython 3.10 or later on Linux x86-64, which
+# is where the lane runs.
+abnf==2.9.0 --hash=sha256:8592e174c05cc6010f5250f2292b832993f92e2ae136d7618368ee89d649435e
+# Its Rust backend, the same library's second implementation of the same combinators, which it
+# uses when present: an order of magnitude faster on RFC 5322's white space and comments.
+abnf-rust==2.9.0 --hash=sha256:7107e92e6289008032c700cdda316b411d8af8035e8628816bae6ea8298c4018

@@ -17,6 +17,13 @@ revision are recorded in backend/lock.json.
 RFC documents in rfcs retain their individual copyright and redistribution
 notices. Their inclusion does not relicense those documents under AGPL.
 
+The header field grammar in scripts/netnews.abnf and lean/DN/News/AbnfRules.lean,
+and the rule texts in scripts/gen_abnf.py and scripts/abnf_check.py, are derived
+from the ABNF of IETF RFCs 5536, 8315, 5322, 5234, 3986, 2045 and 2231. Those
+rules are IETF Code Components, under the Revised BSD License of the IETF
+Trust's Legal Provisions and, for RFC 2231, that document's own notice; the
+files carry the notices and an SPDX identifier that names both licenses.
+
 The preserved snapshot under migration references third-party work that is not
 included here: the shims in its ffi directory call HACL* (F*-verified
 cryptography) and link against artifacts a CakeML build produces, and its

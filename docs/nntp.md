@@ -38,7 +38,11 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 
 | RFC | Role | Plan |
 | --- | --- | --- |
-| 5536 | Netnews article format | Required for article ingestion/storage |
+| 5536 | Netnews article format | Required for article ingestion/storage; its grammar is taken from the text ([details](baseline.md#header-field-grammar)) |
+| 5322 | Internet Message Format | The syntax RFC 5536 restricts: addresses, dates, comments, message identifiers |
+| 5234 | ABNF and its core rules | The notation of every grammar here |
+| 3986 | URI generic syntax | IPv4 and IPv6 addresses in a Path diagnostic |
+| 2045, 2231 | MIME parameters and tokens | The `token` and `parameter` of Archive, User-Agent and Injection-Info; MIME's own fields are checked by RFC 5536's general rules only |
 | 5537 | Netnews architecture and procedures | Required as injection/relay roles are added |
 | 4643 | Authentication | Add with an explicit access-control and transport-security design |
 | 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |
@@ -46,7 +50,7 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 4644 | Streaming feeds | Add after durable IHAVE ingestion and deduplication work |
 | 6048 | LIST extensions | Add according to actual client/feed needs |
 | 8054 | Compression | Later; include resource and decompression limits |
-| 8315 | Cancel locks | Later; cancellation policy is separate from basic article delivery |
+| 8315 | Cancel locks | The syntax of Cancel-Lock and Cancel-Key is checked with the other header fields; acting on them is later, as cancellation policy is separate from basic article delivery |
 | 4707 | Netnews Administration System (Experimental) | Reference only; not planned |
 | 2980 | Historical extensions | Compatibility reference; not a substitute for RFC 3977 |
 

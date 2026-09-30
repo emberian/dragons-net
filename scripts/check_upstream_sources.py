@@ -6,8 +6,9 @@ The Lean transcription of the semantics and the generated keyword table were bot
 from exact files; `backend/lock.json` records each one with its revision and digest. This
 fetches them by revision and compares, so a wrong digest cannot sit in the lock until
 someone happens to fetch a checkout. The stored RFCs are checked the same way, against the
-url each one records, and the files the extraction manifest records are checked against the
-repository they were taken from. It needs network.
+url each one records, the files the extraction manifest records are checked against the
+repository they were taken from, and each erratum the grammar of header fields follows has to be
+verified still, with the corrected text it carries. It needs network.
 """
 from __future__ import annotations
 
@@ -77,6 +78,39 @@ def compare_documents(documents: dict[str, dict[str, str]],
         if digest != item["sha256"]:
             errors.append(f"{name} from {item['url']}: {digest} recorded as {item['sha256']}")
     return errors
+
+
+ERRATA = "https://www.rfc-editor.org/api/v1/errata.json"
+
+
+def squeezed(text: str) -> str:
+    return " ".join(text.split())
+
+
+def compare_errata(applied: list[tuple[str, int]], corrected: dict[int, str],
+                   get: Callable[[str], bytes] = fetch) -> list[str]:
+    """One message per applied erratum that the RFC Editor no longer lists as verified, and per
+    corrected text the grammar carries that is not the erratum's."""
+    records = {(e["doc-id"], int(e["errata_id"])): e for e in json.loads(get(ERRATA))}
+    errors = []
+    for doc, number in applied:
+        record = records.get((doc, number))
+        if record is None:
+            errors.append(f"{doc} erratum {number} is not in the errata")
+            continue
+        if record["errata_status_code"] != "Verified":
+            errors.append(f"{doc} erratum {number} is {record['errata_status_code']}, not Verified")
+        if number in corrected and squeezed(corrected[number]) not in squeezed(record["correct_text"] or ""):
+            errors.append(f"{doc} erratum {number} corrects the text otherwise than the grammar has it")
+    return errors
+
+
+def grammar_errata() -> tuple[list[tuple[str, int]], dict[int, str]]:
+    """The errata scripts/gen_abnf.py applies, and the corrected rules it carries. Its directory
+    goes last on the path, so that none of its modules stands for one of the standard library."""
+    sys.path.append(str(ROOT / "scripts"))
+    import gen_abnf  # noqa: PLC0415 -- found only once its directory is on the path
+    return gen_abnf.APPLIED_ERRATA, {number: text for _, number, text in gen_abnf.ERRATA.values()}
 
 
 def raw_url(repository: str, revision: str, path: str) -> str:
@@ -149,12 +183,13 @@ def main() -> None:
     # Both lists: a module that was deleted still carries the digest of what it was taken from.
     entries = manifest["files"] + manifest["removed"]
     provenance, checked = compare_provenance(manifest["sources"], entries)
-    errors = compare(sources) + compare_documents(documents) + provenance
+    applied, corrected = grammar_errata()
+    errors = compare(sources) + compare_documents(documents) + provenance + compare_errata(applied, corrected)
     if errors:
         sys.exit("\n".join(errors))
     print(f"upstream sources: {len(sources)} files and {len(documents)} RFCs match their recorded "
           f"digests, and so do {checked} extracted files; the other {len(entries) - checked} "
-          "record no public source")
+          f"record no public source; the {len(applied)} errata the grammar follows are verified")
 
 
 if __name__ == "__main__":

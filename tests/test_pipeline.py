@@ -171,7 +171,8 @@ class CheckScript(unittest.TestCase):
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
-                          "python3 scripts/state_check.py", "python3 scripts/session_check.py"],
+                          "python3 scripts/state_check.py", "python3 scripts/session_check.py",
+                          "python3 scripts/abnf_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -685,6 +686,21 @@ class Sources(unittest.TestCase):
         self.assertIn("has no", refused({key: value for key, value in entry.items()
                                          if key != "source_sha256"}))
         self.assertIn("no recorded source could be checked", refused(private))
+
+    def test_upstream_comparison_keeps_the_grammar_errata_verified(self) -> None:
+        """An erratum the grammar follows has to be verified still, with the text it carries."""
+        listed = [{"doc-id": "RFC0000", "errata_id": "1", "errata_status_code": "Verified",
+                   "correct_text": "a  =  b\n   / c"},
+                  {"doc-id": "RFC0000", "errata_id": "2", "errata_status_code": "Rejected",
+                   "correct_text": ""}]
+        served = json.dumps(listed).encode()
+        compare = upstream_sources.compare_errata
+        self.assertEqual(compare([("RFC0000", 1)], {1: "a = b / c"}, lambda _: served), [])
+        self.assertIn("otherwise", compare([("RFC0000", 1)], {1: "a = d"}, lambda _: served)[0])
+        self.assertIn("not Verified", compare([("RFC0000", 2)], {}, lambda _: served)[0])
+        self.assertIn("not in the errata", compare([("RFC0000", 3)], {}, lambda _: served)[0])
+        applied, corrected = upstream_sources.grammar_errata()
+        self.assertTrue(applied and set(corrected) <= {number for _, number in applied})
 
     def test_upstream_comparison_covers_the_stored_documents(self) -> None:
         """A stored RFC is compared against its url, with the recorded normalization applied."""
