@@ -82,7 +82,8 @@ happened; it knows nothing of articles.
 - The operations: create a file under a new name, failing if the name exists; open a named file;
   write bytes at an offset, a short write being a failure; read bytes at an offset; report a
   file's size; sync a file's data (`fdatasync`) or all of it (`fsync`); rename a file; remove a
-  name; truncate; sync the directory; list the directory's names, a page at a time; close. Names
+  name; truncate; sync the directory; list the directory's names, a page at a time, without `.`
+  and `..`; close. Names
   have one fixed shape the host checks, and everything is relative to the directory the host
   opened at start (`openat`, `renameat`, `unlinkat`).
 - Jobs are identified by a slot and a generation, like connections, and at most eight are in
@@ -97,11 +98,14 @@ happened; it knows nothing of articles.
 
 ### On disk
 
-- The spool directory holds the journal and one file per article. An article is named by a
-  sequence number of the store, one more than the highest that a journal record or a name in the
-  directory showed at start and than any handed out since, so a number is never handed out while a
+- The spool directory holds the journal and one file per article; it is not the root of a file
+  system, whose `lost+found` would be a name of another shape. An article is named by a sequence
+  number of the store, one more than the highest that a journal record or a name in the directory
+  showed at start (none: 0) and than any handed out since, so a number is never handed out while a
   file may hold it. A file is first written under a temporary name derived from its number and then
-  renamed to its final one, which by that rule no file holds.
+  renamed to its final one, which by that rule no file holds. The final name is `a` and the number
+  in sixteen lowercase hexadecimal digits, the temporary name `t` and the same digits, and the
+  journal is `journal`.
 - The file holds the article as a reader receives it, without Xref: lines ending in CRLF,
   dot-stuffed, without the final dot line, the header fields the server added in place.
 - An article is accepted in four phases:
@@ -125,21 +129,39 @@ happened; it knows nothing of articles.
   store accepting articles for the rest of the run (POST then answers 403); what it has, it keeps
   serving.
 - A journal record is framed with a length, a type and a CRC-32C over the type and the payload, as
-  Kafka's record batches carry theirs. The journal begins with a record naming its format.
-  Recovery reads it from the start and stops at the first record that does not check: if what
-  follows fits in one append of the largest size, it is a torn tail, which is truncated away and
-  the truncation synced; otherwise the store is corrupt. At most one append is in flight, and the
-  next starts only after its sync completed. The journal is bounded by the number of articles the
-  store holds, and the directory by those and two names for each POST in flight, so recovery is
-  bounded work without a checkpoint.
+  Kafka's record batches carry theirs, and an end mark: the payload's length and the CRC-32C (RFC
+  7143 §13.1), four octets each, least significant first as every number here, then the type, one
+  octet, the payload, and the end mark, the octet 0xA5. The journal begins with a record naming its
+  format, type 1: `dragons-net journal` and the version, one octet, 1. A commit is type 2: the
+  sequence number, eight octets, from 1; the Message-ID, a length octet and 1 to 250 octets; a
+  count octet and 1 to 16 groups, no two alike, each a name in a length octet and 1 to 64 octets
+  and the article number, four octets, 1 to 2,147,483,647 (RFC 3977 §6); then the size of the
+  header section, no more than the file's, the size of the file and the file's CRC-32C, four octets
+  each. The largest record is 1,386 octets, the format's 30.
+  Recovery reads the journal from the start and stops at the first record that does not check. If it
+  is short of its header or of its length, its length is past the largest payload's, its end mark is
+  missing or its CRC-32C wrong, and what follows fits the one append that can have been cut — the
+  format's while no record has been read, one of the largest size after — it is a torn tail, which
+  is truncated away and the truncation synced; otherwise the store is corrupt. An append cut short
+  and filled with zeros, or with octets not ending in the end mark, loses its end mark, so it never
+  reads as a record; that the octets any other crash leaves never make a frame that checks — the end
+  mark where its length puts it and the CRC-32C right — is assumed, for without it a crash could
+  stop the store or have it read a record nobody wrote. A record that checks but is none a correct
+  store writes — a format of another version among them — is corruption wherever it is, and so is a
+  journal whose first record is not its format or that holds it twice. At most one append is in
+  flight, and the next starts only after its sync completed. The journal is bounded by the number of
+  articles the store holds, and the directory by those and two names for each POST in flight, so
+  recovery is bounded work without a checkpoint.
   Expiry, when it comes, brings compaction and checkpoints, and has to keep the Message-IDs of what
   it removes, or a cutoff by date, since an article accepted once is rejected ever after.
 - After reading the journal, recovery lists the directory and removes every temporary name and
   every final name without a record, then syncs the directory; such a file is an orphan, never
   read. A name of any other shape makes the store corrupt.
 - A store that is corrupt is refused, and the server does not start and says why: a record that
-  does not check before the tail; a record naming a file that is missing or of another size; a
-  group the configuration lacks; files in the directory and no journal. A journal is created only
+  does not check before the tail; a sequence number in two records; an article number in a group
+  not above the one an earlier record gave it there (RFC 3977 §6); a record naming a file that is
+  missing or of another size; a group the configuration lacks; files in the directory and no
+  journal. A journal is created only
   in an empty directory. The store is never repaired silently; repair, when it comes, is a separate
   operation (#21).
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
@@ -234,14 +256,17 @@ the run and its index.
   - which articles are accepted and what is added, each rule shown to matter by a version with it
     broken, as `DN.News.CommandSpec` does for command lines;
   - the streaming block framer gives the specification's verdict however the article is cut;
-  - a journal record decodes to what was encoded;
+  - a journal of records reads back as those records, and an append cut short — a prefix of its
+    frame, that prefix and zeros, or its length and octets not ending in the end mark, to its
+    length — reads as a torn tail;
   - under a model of crashes in the vocabulary of Pillai and Bornholt — anything not yet synced may
     or may not survive, independently for each file and name; a synced file's data and a name whose
     directory was synced survive; an unsynced append may leave any prefix of its bytes, then zeros
-    or garbage up to its length — recovery after a crash at any point of any run yields every
-    article answered 240, possibly some whose commit record was written but not answered, and never
-    one refused before its record was written or a partial one; recovery is idempotent. The model
-    has no failing sync; what happens after one is tested.
+    or garbage up to its length, garbage assumed never to make a frame that checks — recovery after
+    a crash at any point of any run yields every article answered 240, possibly some whose commit
+    record was written but not answered, and never one refused before its record was written or a
+    partial one; recovery is idempotent. The model has no failing sync; what happens after one is
+    tested.
 - Proved of the program: the CRC-32C function it prints computes the polynomial's, as
   `DN.News.FramerCode` proves the framers; no run of the program fails, by the analysis of
   [0004](0004-safety-analysis.md). The analysis now costs about 40 s and 7.4 GB; if the store's

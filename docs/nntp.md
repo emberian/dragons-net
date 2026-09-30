@@ -44,6 +44,7 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 3986 | URI generic syntax | IPv4 and IPv6 addresses in a Path diagnostic |
 | 2045, 2231 | MIME parameters and tokens | The `token` and `parameter` of Archive, User-Agent and Injection-Info; MIME's own fields are checked by RFC 5536's general rules only |
 | 5537 | Netnews architecture and procedures | The duties of an injecting agent (§3.5), which the article specification follows ([details](baseline.md#article-acceptance)); relaying and serving roles as they are added |
+| 7143 | iSCSI | Its CRC-32C (§13.1), which checks every record of the store's journal and every article's file, and the examples it prints (appendix A.4) ([details](baseline.md#journal)) |
 | 3798 | Message disposition notification | Its Disposition-Notification-To, which it deprecates for Netnews (as RFC 8098, which obsoletes it, still does), is refused |
 | 4643 | Authentication | Add with an explicit access-control and transport-security design |
 | 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |

@@ -172,7 +172,8 @@ class CheckScript(unittest.TestCase):
                 "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
                           "python3 scripts/state_check.py", "python3 scripts/session_check.py",
-                          "python3 scripts/abnf_check.py", "python3 scripts/article_check.py"],
+                          "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
+                          "python3 scripts/journal_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):

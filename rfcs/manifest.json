@@ -62,6 +62,10 @@
       "sha256": "6e7db9ac0b56c2276b1e1215d6998b406c57a97de31e7a1405223e4ef3f00a6a",
       "url": "https://www.rfc-editor.org/rfc/rfc6048.txt"
     },
+    "rfc7143.txt": {
+      "sha256": "046e834ca5fb24658bb52dbbd37b685f0fd864535345f8afb3ac3d5acbc80add",
+      "url": "https://www.rfc-editor.org/rfc/rfc7143.txt"
+    },
     "rfc8054.txt": {
       "sha256": "63f58e6675debaaaa02c7c77ba2907104903ccb9fc9461497fd36ece4a9bdbdb",
       "url": "https://www.rfc-editor.org/rfc/rfc8054.txt"

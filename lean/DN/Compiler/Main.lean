@@ -10,12 +10,13 @@ import DN.News.FrameModel
 import DN.News.SessionModel
 import DN.News.AbnfModel
 import DN.News.ArticleModel
+import DN.News.JournalModel
 import DN.Compiler.Analyzer
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
-with its host, runs the framing, grammar, article and session models, prints the differential
-fixtures, the programs and precedence cells the parser contract compares, generated programs and
-their recorded cases, and the corpus of stopping states. Printing is not a correctness
+with its host, runs the framing, grammar, article, journal and session models, prints the
+differential fixtures, the programs and precedence cells the parser contract compares, generated
+programs and their recorded cases, and the corpus of stopping states. Printing is not a correctness
 certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
@@ -24,7 +25,8 @@ private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
    "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
-   "emit-layout", "emit-session", "emit-session-layout", "analyze-session",
+   "journal-model [--mutant NAME]", "emit-layout", "emit-session", "emit-session-layout",
+   "analyze-session",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -99,6 +101,16 @@ def main (args : List String) : IO UInt32 := do
     | some m => do
       let input ← (← IO.getStdin).readToEnd
       output (DN.News.ArticleModel.runAll (DN.News.ArticleSpec.rulesOf m) input)
+    | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
+  | ["journal-model"] =>
+    -- Journals, records and names on standard input, read and written as the store does.
+    let input ← (← IO.getStdin).readToEnd
+    output (DN.News.JournalModel.runAll DN.News.Journal.spec input)
+  | ["journal-model", "--mutant", name] =>
+    match DN.News.Journal.names.lookup name with
+    | some m => do
+      let input ← (← IO.getStdin).readToEnd
+      output (DN.News.JournalModel.runAll (DN.News.Journal.rulesOf m) input)
     | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
   | ["abnf-model", "--mutant", name] =>
     match DN.News.AbnfMutant.names.lookup name with
