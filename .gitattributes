@@ -1,0 +1,2 @@
+# INN's test articles are kept byte for byte: trailing white space, CRs and NULs included.
+tests/corpus/inn-articles/** -whitespace -text

@@ -98,7 +98,7 @@ proofs() {
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 152
+  "$lean" --run scripts/Audit.lean --regressions 167
 }
 
 # Tests that run the built code, and the Rust crates.
@@ -123,6 +123,8 @@ tests() {
   python3 scripts/session_check.py
   # The grammar of header fields, taken from the RFCs, against an independent ABNF library.
   python3 scripts/abnf_check.py
+  # Which proto-articles a POST accepts and what it adds, against an independent reference.
+  python3 scripts/article_check.py
   # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2

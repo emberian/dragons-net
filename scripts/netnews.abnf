@@ -177,6 +177,8 @@ hour = 2digit
 id-left = dot-atom-text
 ; RFC 5536
 id-right = dot-atom-text / no-fold-literal
+; RFC 5322 section 3.6.4 with the msg-id of RFC 5536 section 3.1.3, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+in-reply-to = "In-Reply-To:" sp [cfws] msg-id *([cfws] msg-id) [cfws] crlf
 ; RFC 2231 section 7
 initial-section = "*0"
 ; RFC 5536
@@ -291,6 +293,8 @@ resent-cc = "Resent-Cc:" sp address-list crlf
 resent-date = "Resent-Date:" sp date-time crlf
 ; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
 resent-from = "Resent-From:" sp mailbox-list crlf
+; RFC 5322 section 3.6.6 with the msg-id of RFC 5536 section 3.1.3, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-msg-id = "Resent-Message-ID:" sp [cfws] msg-id [cfws] crlf
 ; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
 resent-sender = "Resent-Sender:" sp mailbox crlf
 ; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field

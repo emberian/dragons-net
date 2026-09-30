@@ -43,7 +43,8 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 5234 | ABNF and its core rules | The notation of every grammar here |
 | 3986 | URI generic syntax | IPv4 and IPv6 addresses in a Path diagnostic |
 | 2045, 2231 | MIME parameters and tokens | The `token` and `parameter` of Archive, User-Agent and Injection-Info; MIME's own fields are checked by RFC 5536's general rules only |
-| 5537 | Netnews architecture and procedures | Required as injection/relay roles are added |
+| 5537 | Netnews architecture and procedures | The duties of an injecting agent (§3.5), which the article specification follows ([details](baseline.md#article-acceptance)); relaying and serving roles as they are added |
+| 3798 | Message disposition notification | Its Disposition-Notification-To, which it deprecates for Netnews (as RFC 8098, which obsoletes it, still does), is refused |
 | 4643 | Authentication | Add with an explicit access-control and transport-security design |
 | 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |
 | 8143 | TLS update to RFC 4642 | Implicit TLS on port 563 is preferred over STARTTLS |

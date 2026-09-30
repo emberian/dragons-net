@@ -360,27 +360,36 @@ def reaching(rule: str) -> set[str]:
         reached |= more
 
 
-def answers(command: list[str], cases: list[tuple[str, bytes]], workers: int = 1) -> list[str]:
-    """The answers `command` gives to `cases`, from `workers` processes run at once, each given a
-    share."""
-    shares = [cases[k::workers] for k in range(workers)]
+def case_line(case: tuple[str, bytes]) -> str:
+    rule, data = case
+    return f"{rule} {data.hex() or '-'}"
 
-    def run(share: list[tuple[str, bytes]]) -> list[str]:
-        stdin = "".join(f"{rule} {data.hex() or '-'}\n" for rule, data in share)
-        done = subprocess.run(command, input=stdin, capture_output=True, text=True, timeout=3600,
-                              check=False)
+
+def answer_lines(command: list[str], lines: list[str], workers: int = 1) -> list[str]:
+    """The answers `command` gives to `lines`, a line each, from `workers` processes run at once,
+    each given a share."""
+    shares = [lines[k::workers] for k in range(workers)]
+
+    def run(share: list[str]) -> list[str]:
+        done = subprocess.run(command, input="".join(f"{ln}\n" for ln in share), capture_output=True,
+                              text=True, timeout=3600, check=False)
         if done.returncode:
             raise LaneError(f"{command[0]} failed: {done.stderr[-500:]}")
-        said = done.stdout.split()
+        said = done.stdout.splitlines()
         if len(said) != len(share):
             raise LaneError(f"{command[0]} answered {len(said)} cases of {len(share)}")
         return said
 
-    merged = [""] * len(cases)
+    merged = [""] * len(lines)
     with ThreadPoolExecutor(workers) as pool:
         for k, said in enumerate(pool.map(run, shares)):
             merged[k::workers] = said
     return merged
+
+
+def answers(command: list[str], cases: list[tuple[str, bytes]], workers: int = 1) -> list[str]:
+    """The answers `command` gives to `cases`, a rule and bytes each."""
+    return answer_lines(command, [case_line(c) for c in cases], workers)
 
 
 def library_cases(cases: list[tuple[str, bytes]], model: list[str]) -> dict[str, list[tuple[str, bytes]]]:
@@ -404,13 +413,12 @@ def library_cases(cases: list[tuple[str, bytes]], model: list[str]) -> dict[str,
     return out
 
 
-def first_difference(command: list[str], tried: list[tuple[tuple[str, bytes], str]]) \
-        -> tuple[str, bytes] | None:
-    """The first case on which `command` answers otherwise than the answer it is paired with,
-    trying them a chunk at a time as far as the first chunk that shows one."""
+def first_difference(command: list[str], tried: list[tuple[str, str]]) -> str | None:
+    """The first case, a line, on which `command` answers otherwise than the answer it is paired
+    with, trying them a chunk at a time as far as the first chunk that shows one."""
     for k in range(0, len(tried), CHUNK):
         chunk = tried[k:k + CHUNK]
-        other = answers(command, [c for c, _ in chunk], WORKERS)
+        other = answer_lines(command, [c for c, _ in chunk], WORKERS)
         differs = [c for (c, a), b in zip(chunk, other, strict=True) if a != b]
         if differs:
             return differs[0]
@@ -478,9 +486,10 @@ def check() -> Report:
     for library, tried in held.items():
         if not tried:
             raise LaneError(f"no case is held to the library's {library}")
-        other = first_difference([python, str(REFERENCE), "--library", library], [(c, "1") for c in tried])
+        other = first_difference([python, str(REFERENCE), "--library", library],
+                                 [(case_line(c), "1") for c in tried])
         if other is not None:
-            raise LaneError(f"the library's {library} refuses {other[0]} {other[1][:200]!r}")
+            raise LaneError(f"the library's {library} refuses {other[:300]}")
     steps["library"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     caught = {}
     for name, before, after in DEFECTS:
@@ -491,18 +500,19 @@ def check() -> Report:
         planted.write_bytes(text.replace(before, after).encode())
         # Only the cases of rules that reach the changed one can differ.
         near = reaching(before.split(" = ")[0])
-        answered = [(c, a) for c, a in zip(cases, model, strict=True) if c[0] in near]
+        answered = [(case_line(c), a) for c, a in zip(cases, model, strict=True) if c[0] in near]
         differs = first_difference([python, str(REFERENCE), "--grammar", str(planted)], answered)
         if differs is None:
             raise LaneError(f"the defect {name!r} was not caught")
-        caught[name] = f"{differs[0]} {differs[1][:60]!r}"
+        caught[name] = differs[:120]
     steps["defects"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     mutants = {}
     for mutant in MUTANTS:
-        differs = first_difference([*model_command, "--mutant", mutant], list(zip(cases, model, strict=True)))
+        differs = first_difference([*model_command, "--mutant", mutant],
+                                   [(case_line(c), a) for c, a in zip(cases, model, strict=True)])
         if differs is None:
             raise LaneError(f"the mutant {mutant} was not caught")
-        mutants[mutant] = f"{differs[0]} {differs[1][:60]!r}"
+        mutants[mutant] = differs[:120]
     steps["mutants"] = round(time.monotonic() - mark, 1)
     accepted = model.count("1")
     refusals = [[data.split(b"\r\n")[0].decode("ascii"), why] for (_, data), _, why in expected if why]

@@ -189,16 +189,26 @@ the run and its index.
 
 ### Which articles are accepted, and what the server adds
 
-- Refused: a missing From, Newsgroups or Subject, or one of the six fields present twice; any
-  header field not valid by RFC 5536, in particular not US-ASCII, as RFC 5536 §2.2 and RFC 5537
-  §3.5 require (INN accepts UTF-8); Injection-Info, Xref, or `POSTED` in Path; a Message-ID not
-  valid by RFC 5536 §3.1.3, compared by octets, that the store has or has reserved; no known group
-  among Newsgroups, or a reserved one; a Date or Injection-Date more than 24 hours ahead or more
-  than 72 hours past, compared in UTC; a Control or Supersedes field, since this slice carries no
-  control messages and Supersedes is a cancel; an Approved field, by policy, so that no approval
-  passes before moderation exists; the fields RFC 3798 deprecates for Netnews; anything past the
-  bounds.
-- Added, in RFC 5537 §3.5's order: Message-ID, `<seq.random@path-identity>`, and Date from the
+- Refused: a missing From, Newsgroups or Subject; a field that may appear once present twice
+  (RFC 5536 §3, §3.1 and §3.2, RFC 5322 §3.6, RFC 8315 §2), and, by policy as INN, a second
+  MIME-Version, Content-Type or Content-Transfer-Encoding, since RFC 2045 describes an entity by
+  one of each; any header field not valid by RFC 5536, in particular not US-ASCII, as RFC 5536
+  §2.2 and RFC 5537 §3.5 require (INN accepts UTF-8), with a line of a field body of white space
+  alone, a message identifier longer than 250 octets in any field that holds one, a From of
+  several mailboxes without a Sender, the distribution "All", or a date, a Received's included,
+  that is no date;
+  Injection-Info, Xref, or `POSTED` in Path; the trace fields of injecting agents older than RFC
+  5536 (NNTP-Posting-Host, NNTP-Posting-Date, X-Trace, X-Complaints-To), as RFC 5537 §3.5 allows
+  and INN does; a Message-ID, compared by octets, that the store has or has reserved; no known
+  group among Newsgroups, or a reserved one, names compared as written as the server compares
+  them with its own; a Date or Injection-Date more than 24 hours ahead or
+  more than 72 hours past, compared in UTC; a Control or Supersedes field, since this slice
+  carries no control messages and Supersedes is a cancel; an Approved field, by policy, so that
+  no approval passes before moderation exists; the fields RFC 5536 §3.3 makes obsolete and RFC
+  3798 deprecates for Netnews; anything past the bounds. The order RFC 5322 §3.6 gives blocks of
+  trace and resent fields is mail transport's and is not checked.
+- Added, in RFC 5537 §3.5's order, Path first and the proto-article's fields after it as they
+  were: Message-ID, `<seq.random@path-identity>`, and Date from the
   wall clock, when absent; the Path tail entry and the `POSTED` entry for the path identity;
   Injection-Info with the path identity and a `logging-data` parameter naming the run and the
   connection; Injection-Date, unless the proto-article has one or had both Message-ID and Date. A
@@ -241,7 +251,8 @@ the run and its index.
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;
   - acceptance against the article corpus of INN's tests (`tests/data/articles`, ISC licence),
-    with our own expected outcomes for an injecting agent, and RFC 5536's examples;
+    with our own expected outcomes for an injecting agent, and the header fields RFC 5322, RFC
+    5537 and RFC 8315 print;
   - the host's worker pool, with failed and slow syncs, no space and short writes injected
     (`libfiu`);
   - process crashes: the server killed at each operation of a job, then restarted;

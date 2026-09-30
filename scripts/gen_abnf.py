@@ -85,10 +85,18 @@ RESTRICTED = {
 
 # Where a rule's text says other than it means. RFC 5536 §3.2.4's dist-name reads, by the
 # precedence of RFC 5234 §3.10, as one letter or a digit followed by more; its own text names
-# "world" and "local" as dist-names, which only the grouped reading admits.
+# "world" and "local" as dist-names, which only the grouped reading admits. RFC 5536 §3.1.3's
+# msg-id, which has none of the comments and white space RFC 5322's carries around it, "applies
+# wherever <msg-id> is used"; RFC 5536 §3.2.10 moves them into References' own rule, and In-Reply-To
+# and Resent-Message-ID, which it does not restate, get them the same way, where RFC 5322's msg-id
+# had them.
 CORRECTED = {
     "dist-name": ("RFC 5536 §3.2.4, grouped as its text intends",
                   'dist-name = (ALPHA / DIGIT) *(ALPHA / DIGIT / "+" / "-" / "_")'),
+    "in-reply-to": ("RFC 5322 §3.6.4 with the msg-id of RFC 5536 §3.1.3",
+                    'in-reply-to = "In-Reply-To:" [CFWS] msg-id *([CFWS] msg-id) [CFWS] CRLF'),
+    "resent-msg-id": ("RFC 5322 §3.6.6 with the msg-id of RFC 5536 §3.1.3",
+                      'resent-msg-id = "Resent-Message-ID:" [CFWS] msg-id [CFWS] CRLF'),
 }
 
 # RFC 5322 §3.6.7 names Return-Path's address `path`, a name RFC 5536 gives the Path field; the
@@ -135,11 +143,9 @@ TRANSCRIBED = {
 
 # Each header field the checks know, by its name, with the rule for the whole field line and the
 # section that defines it. A field of another name is an `optional-field` (RFC 5322 §3.6.8) with
-# RFC 5536's `unstructured`. In-Reply-To and Resent-Message-ID separate their msg-ids by the white
-# space RFC 5322's msg-id allows around it; RFC 5536 §3.1.3 takes that away wherever msg-id is used
-# without restating those fields, so they are checked as optional fields. So are MIME's fields:
-# RFC 5536 §3.2 gives them the meanings of RFC 2045 under the rules of §2.2, and a server, which
-# stores and serves an article without reading its MIME structure, checks them by those rules alone.
+# RFC 5536's `unstructured`. So is each of MIME's fields: RFC 5536 §3.2 gives them the meanings of
+# RFC 2045 under the rules of §2.2, and a server, which stores and serves an article without
+# reading its MIME structure, checks them by those rules alone.
 FIELDS = {
     "Date": ("orig-date", "RFC 5536 §3.1.1"),
     "From": ("from", "RFC 5536 §3.1.2"),
@@ -179,6 +185,8 @@ FIELDS = {
     "Resent-Bcc": ("resent-bcc", "RFC 5322 §3.6.6"),
     "Return-Path": ("return", "RFC 5322 §3.6.7"),
     "Received": ("received", "RFC 5322 §3.6.7, erratum 3979"),
+    "In-Reply-To": ("in-reply-to", "RFC 5322 §3.6.4"),
+    "Resent-Message-ID": ("resent-msg-id", "RFC 5322 §3.6.6"),
 }
 OPTIONAL = ("optional-field", "RFC 5322 §3.6.8")
 

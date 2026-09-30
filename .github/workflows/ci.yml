@@ -159,6 +159,7 @@ jobs:
           path: |
             build/evidence/
             build/abnf/report.json
+            build/article/report.json
             build/native/report.json
             build/native/region.pnk
             build/native/region.S

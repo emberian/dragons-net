@@ -5,11 +5,12 @@ count of depth, and what the lane takes for the RFCs' examples and holds to the 
 transcriptions of an RFC."""
 from __future__ import annotations
 
+import re
 from typing import Any
 import unittest
 from unittest import mock
 
-from gatekit import script
+from gatekit import ROOT, script
 
 A = script("abnf_text")
 gen_abnf = script("gen_abnf")
@@ -162,6 +163,12 @@ class Lane(unittest.TestCase):
         self.assertEqual(found, [("subject", b"Subject: an example\r\n folded\r\n"),
                                  ("to", b"To: x@y.example\r\n"),
                                  ("from", b"From  : a@b.example\r\n  \r\n <c@d.example>\r\n")])
+
+    def test_the_lane_tries_every_mutant_of_the_interpreter(self) -> None:
+        text = (ROOT / "lean/DN/News/AbnfMutant.lean").read_text()
+        block = text[text.index("def names :"):]
+        block = block[:block.index("\n\n")]
+        self.assertEqual(re.findall(r'\("([a-z-]+)",', block), abnf_check.MUTANTS)
 
     def test_the_rfcs_examples_expect_what_rfc_5536_allows(self) -> None:
         expected = abnf_check.examples()

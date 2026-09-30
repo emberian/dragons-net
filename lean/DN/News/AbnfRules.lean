@@ -42,10 +42,10 @@ namespace DN.News.AbnfRules
 open DN.News.Abnf
 
 /-- `addr-spec = local-part "@" domain` (RFC 5322) -/
-def rAddrSpec : Term := .seq [.ref 90, .text "@", .ref 55]
+def rAddrSpec : Term := .seq [.ref 91, .text "@", .ref 55]
 
 /-- `address = mailbox / group` (RFC 5322) -/
-def rAddress : Term := .alt [.ref 93, .ref 73]
+def rAddress : Term := .alt [.ref 94, .ref 73]
 
 /-- `address-list = address *("," address)` (RFC 5322) -/
 def rAddressList : Term := .seq [.ref 1, .rep 0 none (.seq [.text ",", .ref 1])]
@@ -61,16 +61,16 @@ def rAngleAddr : Term := .seq [.rep 0 (some 1) (.ref 29), .text "<", .ref 0, .te
     1) (.ref 29)]
 
 /-- `approved = "Approved:" sp mailbox-list crlf` (RFC 5536) -/
-def rApproved : Term := .seq [.text "Approved:", .ref 148, .ref 94, .ref 37]
+def rApproved : Term := .seq [.text "Approved:", .ref 150, .ref 95, .ref 37]
 
 /-- `archive = "Archive:" sp [cfws] ("no" / "yes") *([cfws] ";" [cfws] archive-param) [cfws]
 crlf` (RFC 5536) -/
-def rArchive : Term := .seq [.text "Archive:", .ref 148, .rep 0 (some 1) (.ref 29), .alt [.text
+def rArchive : Term := .seq [.text "Archive:", .ref 150, .rep 0 (some 1) (.ref 29), .alt [.text
     "no", .text "yes"], .rep 0 none (.seq [.rep 0 (some 1) (.ref 29), .text ";", .rep 0 (some 1)
     (.ref 29), .ref 8]), .rep 0 (some 1) (.ref 29), .ref 37]
 
 /-- `archive-param = parameter` (RFC 5536) -/
-def rArchiveParam : Term := .ref 114
+def rArchiveParam : Term := .ref 115
 
 /-- `argument = 1*%x21-7E` (RFC 5536) -/
 def rArgument : Term := .rep 1 none (.range 33 126)
@@ -108,20 +108,20 @@ def rBase64Terminal : Term := .alt [.seq [.rep 2 (some 2) (.ref 15), .text "=="]
 
 /-- `bcc = "Bcc:" sp [address-list / cfws] crlf` (RFC 5322, with a space after the colon, as RFC
 5536 §2.2 asks of every field) -/
-def rBcc : Term := .seq [.text "Bcc:", .ref 148, .rep 0 (some 1) (.alt [.ref 2, .ref 29]), .ref 37]
+def rBcc : Term := .seq [.text "Bcc:", .ref 150, .rep 0 (some 1) (.alt [.ref 2, .ref 29]), .ref 37]
 
 /-- `c-key = scheme ":" c-key-string` (RFC 8315) -/
-def rCKey : Term := .seq [.ref 142, .text ":", .ref 21]
+def rCKey : Term := .seq [.ref 144, .text ":", .ref 21]
 
 /-- `c-key-list = [cfws] c-key *(cfws c-key) [cfws]` (RFC 8315) -/
 def rCKeyList : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 19, .rep 0 none (.seq [.ref 29, .ref
     19]), .rep 0 (some 1) (.ref 29)]
 
 /-- `c-key-string = c-lock-string / obs-c-key-string` (RFC 8315) -/
-def rCKeyString : Term := .alt [.ref 24, .ref 106]
+def rCKeyString : Term := .alt [.ref 24, .ref 107]
 
 /-- `c-lock = scheme ":" c-lock-string` (RFC 8315) -/
-def rCLock : Term := .seq [.ref 142, .text ":", .ref 24]
+def rCLock : Term := .seq [.ref 144, .text ":", .ref 24]
 
 /-- `c-lock-list = [cfws] c-lock *(cfws c-lock) [cfws]` (RFC 8315) -/
 def rCLockList : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 22, .rep 0 none (.seq [.ref 29, .ref
@@ -131,17 +131,17 @@ def rCLockList : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 22, .rep 0 none (
 def rCLockString : Term := .seq [.rep 0 none (.rep 4 (some 4) (.ref 15)), .rep 0 (some 1) (.ref 17)]
 
 /-- `cancel-key = "Cancel-Key:" sp c-key-list crlf` (RFC 8315) -/
-def rCancelKey : Term := .seq [.text "Cancel-Key:", .ref 148, .ref 20, .ref 37]
+def rCancelKey : Term := .seq [.text "Cancel-Key:", .ref 150, .ref 20, .ref 37]
 
 /-- `cancel-lock = "Cancel-Lock:" sp c-lock-list crlf` (RFC 8315) -/
-def rCancelLock : Term := .seq [.text "Cancel-Lock:", .ref 148, .ref 23, .ref 37]
+def rCancelLock : Term := .seq [.text "Cancel-Lock:", .ref 150, .ref 23, .ref 37]
 
 /-- `cc = "Cc:" sp address-list crlf` (RFC 5322, with a space after the colon, as RFC 5536 §2.2
 asks of every field) -/
-def rCc : Term := .seq [.text "Cc:", .ref 148, .ref 2, .ref 37]
+def rCc : Term := .seq [.text "Cc:", .ref 150, .ref 2, .ref 37]
 
 /-- `ccontent = ctext / quoted-pair / comment` (RFC 5322) -/
-def rCcontent : Term := .alt [.ref 38, .ref 126, .ref 31]
+def rCcontent : Term := .alt [.ref 38, .ref 127, .ref 31]
 
 /-- `cfws = 1*([fws] comment) [fws] / fws` (RFC 5322) -/
 def rCfws : Term := .alt [.seq [.rep 1 none (.seq [.rep 0 (some 1) (.ref 72), .ref 31]), .rep 0
@@ -155,7 +155,7 @@ def rComment : Term := .seq [.text "(", .rep 0 none (.seq [.rep 0 (some 1) (.ref
     .rep 0 (some 1) (.ref 72), .text ")"]
 
 /-- `comments = "Comments:" sp unstructured crlf` (RFC 5536) -/
-def rComments : Term := .seq [.text "Comments:", .ref 148, .ref 158, .ref 37]
+def rComments : Term := .seq [.text "Comments:", .ref 150, .ref 160, .ref 37]
 
 /-- `component = 1*component-char` (RFC 5536) -/
 def rComponent : Term := .rep 1 none (.ref 34)
@@ -164,11 +164,11 @@ def rComponent : Term := .rep 1 none (.ref 34)
 def rComponentChar : Term := .alt [.ref 3, .ref 50, .text "+", .text "-", .text "_"]
 
 /-- `control = "Control:" sp *wsp control-command *wsp crlf` (RFC 5536) -/
-def rControl : Term := .seq [.text "Control:", .ref 148, .rep 0 none (.ref 164), .ref 36, .rep 0
-    none (.ref 164), .ref 37]
+def rControl : Term := .seq [.text "Control:", .ref 150, .rep 0 none (.ref 166), .ref 36, .rep 0
+    none (.ref 166), .ref 37]
 
 /-- `control-command = verb *(1*wsp argument)` (RFC 5536) -/
-def rControlCommand : Term := .seq [.ref 162, .rep 0 none (.seq [.rep 1 none (.ref 164), .ref 9])]
+def rControlCommand : Term := .seq [.ref 164, .rep 0 none (.seq [.rep 1 none (.ref 166), .ref 9])]
 
 /-- `crlf = %x0D.0A` (RFC 5234) -/
 def rCrlf : Term := .exact [13, 10]
@@ -177,10 +177,10 @@ def rCrlf : Term := .exact [13, 10]
 def rCtext : Term := .alt [.range 33 39, .range 42 91, .range 93 126]
 
 /-- `date = day month year` (RFC 5322) -/
-def rDate : Term := .seq [.ref 41, .ref 98, .ref 166]
+def rDate : Term := .seq [.ref 41, .ref 99, .ref 168]
 
 /-- `date-time = [day-of-week ","] date time [cfws]` (RFC 5322) -/
-def rDateTime : Term := .seq [.rep 0 (some 1) (.seq [.ref 43, .text ","]), .ref 39, .ref 153, .rep 0
+def rDateTime : Term := .seq [.rep 0 (some 1) (.seq [.ref 43, .text ","]), .ref 39, .ref 155, .rep 0
     (some 1) (.ref 29)]
 
 /-- `day = [fws] 1*2digit fws` (RFC 5322) -/
@@ -199,10 +199,10 @@ def rDecOctet : Term := .alt [.ref 50, .seq [.range 49 57, .ref 50], .seq [.text
     2) (.ref 50)], .seq [.text "2", .range 48 52, .ref 50], .seq [.text "25", .range 48 53]]
 
 /-- `diag-deprecated = "!" ipv4address [fws]` (RFC 5536) -/
-def rDiagDeprecated : Term := .seq [.text "!", .ref 84, .rep 0 (some 1) (.ref 72)]
+def rDiagDeprecated : Term := .seq [.text "!", .ref 85, .rep 0 (some 1) (.ref 72)]
 
 /-- `diag-identity = path-identity / ipv4address / ipv6address` (RFC 5536) -/
-def rDiagIdentity : Term := .alt [.ref 117, .ref 84, .ref 85]
+def rDiagIdentity : Term := .alt [.ref 118, .ref 85, .ref 86]
 
 /-- `diag-keyword = 1*alpha` (RFC 5536) -/
 def rDiagKeyword : Term := .rep 1 none (.ref 3)
@@ -218,11 +218,11 @@ def rDiagOther : Term := .seq [.text "!.", .ref 47, .rep 0 (some 1) (.seq [.text
 def rDigit : Term := .range 48 57
 
 /-- `display-name = phrase` (RFC 5322) -/
-def rDisplayName : Term := .ref 120
+def rDisplayName : Term := .ref 121
 
 /-- `dist-list = *wsp dist-name *([fws] "," [fws] dist-name) *wsp` (RFC 5536) -/
-def rDistList : Term := .seq [.rep 0 none (.ref 164), .ref 53, .rep 0 none (.seq [.rep 0 (some 1)
-    (.ref 72), .text ",", .rep 0 (some 1) (.ref 72), .ref 53]), .rep 0 none (.ref 164)]
+def rDistList : Term := .seq [.rep 0 none (.ref 166), .ref 53, .rep 0 none (.seq [.rep 0 (some 1)
+    (.ref 72), .text ",", .rep 0 (some 1) (.ref 72), .ref 53]), .rep 0 none (.ref 166)]
 
 /-- `dist-name = (alpha / digit) *(alpha / digit / "+" / "-" / "_")` (RFC 5536 §3.2.4, grouped as
 its text intends) -/
@@ -230,7 +230,7 @@ def rDistName : Term := .seq [.alt [.ref 3, .ref 50], .rep 0 none (.alt [.ref 3,
     .text "-", .text "_"])]
 
 /-- `distribution = "Distribution:" sp dist-list crlf` (RFC 5536) -/
-def rDistribution : Term := .seq [.text "Distribution:", .ref 148, .ref 52, .ref 37]
+def rDistribution : Term := .seq [.text "Distribution:", .ref 150, .ref 52, .ref 37]
 
 /-- `domain = dot-atom / domain-literal` (RFC 5322) -/
 def rDomain : Term := .alt [.ref 57, .ref 56]
@@ -253,21 +253,21 @@ def rDquote : Term := .range 34 34
 def rDtext : Term := .alt [.range 33 90, .range 94 126]
 
 /-- `expires = "Expires:" sp date-time crlf` (RFC 5536) -/
-def rExpires : Term := .seq [.text "Expires:", .ref 148, .ref 40, .ref 37]
+def rExpires : Term := .seq [.text "Expires:", .ref 150, .ref 40, .ref 37]
 
 /-- `ext-octet = "%" 2(digit / "A" / "B" / "C" / "D" / "E" / "F")` (RFC 2231 §7) -/
 def rExtOctet : Term := .seq [.text "%", .rep 2 (some 2) (.alt [.ref 50, .text "A", .text "B", .text
     "C", .text "D", .text "E", .text "F"])]
 
 /-- `extended-initial-name = attribute [initial-section] "*"` (RFC 2231 §7) -/
-def rExtendedInitialName : Term := .seq [.ref 13, .rep 0 (some 1) (.ref 81), .text "*"]
+def rExtendedInitialName : Term := .seq [.ref 13, .rep 0 (some 1) (.ref 82), .text "*"]
 
 /-- `extended-initial-value = [charset] "'" [language] "'" extended-other-values` (RFC 2231 §7) -/
 def rExtendedInitialValue : Term := .seq [.rep 0 (some 1) (.ref 30), .text "'", .rep 0 (some 1)
-    (.ref 88), .text "'", .ref 66]
+    (.ref 89), .text "'", .ref 66]
 
 /-- `extended-other-names = attribute other-sections "*"` (RFC 2231 §7) -/
-def rExtendedOtherNames : Term := .seq [.ref 13, .ref 113, .text "*"]
+def rExtendedOtherNames : Term := .seq [.ref 13, .ref 114, .text "*"]
 
 /-- `extended-other-values = *(ext-octet / attribute-char)` (RFC 2231 §7) -/
 def rExtendedOtherValues : Term := .rep 0 none (.alt [.ref 62, .ref 14])
@@ -283,24 +283,24 @@ def rExtendedParameter : Term := .alt [.seq [.ref 63, .rep 0 (some 1) (.ref 29),
 def rFieldName : Term := .rep 1 none (.ref 71)
 
 /-- `followup-to = "Followup-To:" sp (newsgroup-list / poster-text) crlf` (RFC 5536) -/
-def rFollowupTo : Term := .seq [.text "Followup-To:", .ref 148, .alt [.ref 102, .ref 121], .ref 37]
+def rFollowupTo : Term := .seq [.text "Followup-To:", .ref 150, .alt [.ref 103, .ref 122], .ref 37]
 
 /-- `from = "From:" sp mailbox-list crlf` (RFC 5536) -/
-def rFrom : Term := .seq [.text "From:", .ref 148, .ref 94, .ref 37]
+def rFrom : Term := .seq [.text "From:", .ref 150, .ref 95, .ref 37]
 
 /-- `ftext = %x21-39 / %x3B-7E` (RFC 5322) -/
 def rFtext : Term := .alt [.range 33 57, .range 59 126]
 
 /-- `fws = [*wsp crlf] 1*wsp` (RFC 5322) -/
-def rFws : Term := .seq [.rep 0 (some 1) (.seq [.rep 0 none (.ref 164), .ref 37]), .rep 1 none (.ref
-    164)]
+def rFws : Term := .seq [.rep 0 (some 1) (.seq [.rep 0 none (.ref 166), .ref 37]), .rep 1 none (.ref
+    166)]
 
 /-- `group = display-name ":" [group-list] ";" [cfws]` (RFC 5322) -/
 def rGroup : Term := .seq [.ref 51, .text ":", .rep 0 (some 1) (.ref 74), .text ";", .rep 0 (some 1)
     (.ref 29)]
 
 /-- `group-list = mailbox-list / cfws` (RFC 5322) -/
-def rGroupList : Term := .alt [.ref 94, .ref 29]
+def rGroupList : Term := .alt [.ref 95, .ref 29]
 
 /-- `h16 = 1*4hexdig` (RFC 3986) -/
 def rH16 : Term := .rep 1 (some 4) (.ref 76)
@@ -319,19 +319,25 @@ def rHtab : Term := .range 9 9
 def rIdLeft : Term := .ref 58
 
 /-- `id-right = dot-atom-text / no-fold-literal` (RFC 5536) -/
-def rIdRight : Term := .alt [.ref 58, .ref 105]
+def rIdRight : Term := .alt [.ref 58, .ref 106]
+
+/-- `in-reply-to = "In-Reply-To:" sp [cfws] msg-id *([cfws] msg-id) [cfws] crlf` (RFC 5322 §3.6.4
+with the msg-id of RFC 5536 §3.1.3, with a space after the colon, as RFC 5536 §2.2 asks of every
+field) -/
+def rInReplyTo : Term := .seq [.text "In-Reply-To:", .ref 150, .rep 0 (some 1) (.ref 29), .ref 100,
+    .rep 0 none (.seq [.rep 0 (some 1) (.ref 29), .ref 100]), .rep 0 (some 1) (.ref 29), .ref 37]
 
 /-- `initial-section = "*0"` (RFC 2231 §7) -/
 def rInitialSection : Term := .text "*0"
 
 /-- `injection-date = "Injection-Date:" sp date-time crlf` (RFC 5536) -/
-def rInjectionDate : Term := .seq [.text "Injection-Date:", .ref 148, .ref 40, .ref 37]
+def rInjectionDate : Term := .seq [.text "Injection-Date:", .ref 150, .ref 40, .ref 37]
 
 /-- `injection-info = "Injection-Info:" sp [cfws] path-identity [cfws] *(";" [cfws] parameter)
 [cfws] crlf` (RFC 5536) -/
-def rInjectionInfo : Term := .seq [.text "Injection-Info:", .ref 148, .rep 0 (some 1) (.ref 29),
-    .ref 117, .rep 0 (some 1) (.ref 29), .rep 0 none (.seq [.text ";", .rep 0 (some 1) (.ref 29),
-    .ref 114]), .rep 0 (some 1) (.ref 29), .ref 37]
+def rInjectionInfo : Term := .seq [.text "Injection-Info:", .ref 150, .rep 0 (some 1) (.ref 29),
+    .ref 118, .rep 0 (some 1) (.ref 29), .rep 0 none (.seq [.text ";", .rep 0 (some 1) (.ref 29),
+    .ref 115]), .rep 0 (some 1) (.ref 29), .ref 37]
 
 /-- `ipv4address = dec-octet "." dec-octet "." dec-octet "." dec-octet` (RFC 3986) -/
 def rIpv4address : Term := .seq [.ref 44, .text ".", .ref 44, .text ".", .ref 44, .text ".", .ref
@@ -341,21 +347,21 @@ def rIpv4address : Term := .seq [.ref 44, .text ".", .ref 44, .text ".", .ref 44
 ":"] h16] "::" 3(h16 ":") ls32 / [*2(h16 ":") h16] "::" 2(h16 ":") ls32 / [*3(h16 ":") h16] "::"
 h16 ":" ls32 / [*4(h16 ":") h16] "::" ls32 / [*5(h16 ":") h16] "::" h16 / [*6(h16 ":") h16] "::"`
 (RFC 3986) -/
-def rIpv6address : Term := .alt [.seq [.rep 6 (some 6) (.seq [.ref 75, .text ":"]), .ref 92], .seq
-    [.text "::", .rep 5 (some 5) (.seq [.ref 75, .text ":"]), .ref 92], .seq [.rep 0 (some 1) (.ref
-    75), .text "::", .rep 4 (some 4) (.seq [.ref 75, .text ":"]), .ref 92], .seq [.rep 0 (some 1)
+def rIpv6address : Term := .alt [.seq [.rep 6 (some 6) (.seq [.ref 75, .text ":"]), .ref 93], .seq
+    [.text "::", .rep 5 (some 5) (.seq [.ref 75, .text ":"]), .ref 93], .seq [.rep 0 (some 1) (.ref
+    75), .text "::", .rep 4 (some 4) (.seq [.ref 75, .text ":"]), .ref 93], .seq [.rep 0 (some 1)
     (.seq [.rep 0 (some 1) (.seq [.ref 75, .text ":"]), .ref 75]), .text "::", .rep 3 (some 3) (.seq
-    [.ref 75, .text ":"]), .ref 92], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 2) (.seq [.ref 75,
-    .text ":"]), .ref 75]), .text "::", .rep 2 (some 2) (.seq [.ref 75, .text ":"]), .ref 92], .seq
+    [.ref 75, .text ":"]), .ref 93], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 2) (.seq [.ref 75,
+    .text ":"]), .ref 75]), .text "::", .rep 2 (some 2) (.seq [.ref 75, .text ":"]), .ref 93], .seq
     [.rep 0 (some 1) (.seq [.rep 0 (some 3) (.seq [.ref 75, .text ":"]), .ref 75]), .text "::", .ref
-    75, .text ":", .ref 92], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 4) (.seq [.ref 75, .text
-    ":"]), .ref 75]), .text "::", .ref 92], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 5) (.seq [.ref
+    75, .text ":", .ref 93], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 4) (.seq [.ref 75, .text
+    ":"]), .ref 75]), .text "::", .ref 93], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 5) (.seq [.ref
     75, .text ":"]), .ref 75]), .text "::", .ref 75], .seq [.rep 0 (some 1) (.seq [.rep 0 (some 6)
     (.seq [.ref 75, .text ":"]), .ref 75]), .text "::"]]
 
 /-- `keywords = "Keywords:" sp phrase *("," phrase) crlf` (RFC 5536) -/
-def rKeywords : Term := .seq [.text "Keywords:", .ref 148, .ref 120, .rep 0 none (.seq [.text ",",
-    .ref 120]), .ref 37]
+def rKeywords : Term := .seq [.text "Keywords:", .ref 150, .ref 121, .rep 0 none (.seq [.text ",",
+    .ref 121]), .ref 37]
 
 /-- `label = alphanum [*(alphanum / "-") alphanum]` (RFC 5536) -/
 def rLabel : Term := .seq [.ref 4, .rep 0 (some 1) (.seq [.rep 0 none (.alt [.ref 4, .text "-"]),
@@ -365,30 +371,30 @@ def rLabel : Term := .seq [.ref 4, .rep 0 (some 1) (.seq [.rep 0 none (.alt [.re
 def rLanguage : Term := .rep 1 none (.alt [.ref 3, .ref 50, .text "-"])
 
 /-- `lines = "Lines:" sp *wsp 1*digit *wsp crlf` (RFC 5536) -/
-def rLines : Term := .seq [.text "Lines:", .ref 148, .rep 0 none (.ref 164), .rep 1 none (.ref 50),
-    .rep 0 none (.ref 164), .ref 37]
+def rLines : Term := .seq [.text "Lines:", .ref 150, .rep 0 none (.ref 166), .rep 1 none (.ref 50),
+    .rep 0 none (.ref 166), .ref 37]
 
 /-- `local-part = dot-atom / quoted-string` (RFC 5322) -/
-def rLocalPart : Term := .alt [.ref 57, .ref 127]
+def rLocalPart : Term := .alt [.ref 57, .ref 128]
 
 /-- `location = newsgroup-name ":" article-locator` (RFC 5536) -/
-def rLocation : Term := .seq [.ref 103, .text ":", .ref 10]
+def rLocation : Term := .seq [.ref 104, .text ":", .ref 10]
 
 /-- `ls32 = h16 ":" h16 / ipv4address` (RFC 3986) -/
-def rLs32 : Term := .alt [.seq [.ref 75, .text ":", .ref 75], .ref 84]
+def rLs32 : Term := .alt [.seq [.ref 75, .text ":", .ref 75], .ref 85]
 
 /-- `mailbox = name-addr / addr-spec` (RFC 5322) -/
-def rMailbox : Term := .alt [.ref 101, .ref 0]
+def rMailbox : Term := .alt [.ref 102, .ref 0]
 
 /-- `mailbox-list = mailbox *("," mailbox)` (RFC 5322) -/
-def rMailboxList : Term := .seq [.ref 93, .rep 0 none (.seq [.text ",", .ref 93])]
+def rMailboxList : Term := .seq [.ref 94, .rep 0 none (.seq [.text ",", .ref 94])]
 
 /-- `mdtext = %x21-3D / %x3F-5A / %x5E-7E` (RFC 5536) -/
 def rMdtext : Term := .alt [.range 33 61, .range 63 90, .range 94 126]
 
 /-- `message-id = "Message-ID:" sp *wsp msg-id *wsp crlf` (RFC 5536) -/
-def rMessageId : Term := .seq [.text "Message-ID:", .ref 148, .rep 0 none (.ref 164), .ref 99, .rep
-    0 none (.ref 164), .ref 37]
+def rMessageId : Term := .seq [.text "Message-ID:", .ref 150, .rep 0 none (.ref 166), .ref 100, .rep
+    0 none (.ref 166), .ref 37]
 
 /-- `minute = 2digit` (RFC 5322) -/
 def rMinute : Term := .rep 2 (some 2) (.ref 50)
@@ -399,7 +405,7 @@ def rMonth : Term := .alt [.text "Jan", .text "Feb", .text "Mar", .text "Apr", .
     "Jun", .text "Jul", .text "Aug", .text "Sep", .text "Oct", .text "Nov", .text "Dec"]
 
 /-- `msg-id = "<" msg-id-core ">"` (RFC 5536) -/
-def rMsgId : Term := .seq [.text "<", .ref 100, .text ">"]
+def rMsgId : Term := .seq [.text "<", .ref 101, .text ">"]
 
 /-- `msg-id-core = id-left "@" id-right` (RFC 5536) -/
 def rMsgIdCore : Term := .seq [.ref 79, .text "@", .ref 80]
@@ -408,23 +414,23 @@ def rMsgIdCore : Term := .seq [.ref 79, .text "@", .ref 80]
 def rNameAddr : Term := .seq [.rep 0 (some 1) (.ref 51), .ref 5]
 
 /-- `newsgroup-list = *wsp newsgroup-name *([fws] "," [fws] newsgroup-name) *wsp` (RFC 5536) -/
-def rNewsgroupList : Term := .seq [.rep 0 none (.ref 164), .ref 103, .rep 0 none (.seq [.rep 0 (some
-    1) (.ref 72), .text ",", .rep 0 (some 1) (.ref 72), .ref 103]), .rep 0 none (.ref 164)]
+def rNewsgroupList : Term := .seq [.rep 0 none (.ref 166), .ref 104, .rep 0 none (.seq [.rep 0 (some
+    1) (.ref 72), .text ",", .rep 0 (some 1) (.ref 72), .ref 104]), .rep 0 none (.ref 166)]
 
 /-- `newsgroup-name = component *("." component)` (RFC 5536) -/
 def rNewsgroupName : Term := .seq [.ref 33, .rep 0 none (.seq [.text ".", .ref 33])]
 
 /-- `newsgroups = "Newsgroups:" sp newsgroup-list crlf` (RFC 5536) -/
-def rNewsgroups : Term := .seq [.text "Newsgroups:", .ref 148, .ref 102, .ref 37]
+def rNewsgroups : Term := .seq [.text "Newsgroups:", .ref 150, .ref 103, .ref 37]
 
 /-- `no-fold-literal = "[" *mdtext "]"` (RFC 5536) -/
-def rNoFoldLiteral : Term := .seq [.text "[", .rep 0 none (.ref 95), .text "]"]
+def rNoFoldLiteral : Term := .seq [.text "[", .rep 0 none (.ref 96), .text "]"]
 
 /-- `obs-c-key-string = 1*base64-octet` (RFC 8315) -/
 def rObsCKeyString : Term := .rep 1 none (.ref 16)
 
 /-- `obs-phrase = word *(word / "." / cfws)` (RFC 5322) -/
-def rObsPhrase : Term := .seq [.ref 163, .rep 0 none (.alt [.ref 163, .text ".", .ref 29])]
+def rObsPhrase : Term := .seq [.ref 165, .rep 0 none (.alt [.ref 165, .text ".", .ref 29])]
 
 /-- `obs-scheme = "sha1"` (RFC 8315) -/
 def rObsScheme : Term := .text "sha1"
@@ -434,123 +440,128 @@ def rObsZone : Term := .text "GMT"
 
 /-- `optional-field = field-name ":" sp unstructured crlf` (RFC 5322, with a space after the
 colon, as RFC 5536 §2.2 asks of every field) -/
-def rOptionalField : Term := .seq [.ref 68, .text ":", .ref 148, .ref 158, .ref 37]
+def rOptionalField : Term := .seq [.ref 68, .text ":", .ref 150, .ref 160, .ref 37]
 
 /-- `organization = "Organization:" sp unstructured crlf` (RFC 5536) -/
-def rOrganization : Term := .seq [.text "Organization:", .ref 148, .ref 158, .ref 37]
+def rOrganization : Term := .seq [.text "Organization:", .ref 150, .ref 160, .ref 37]
 
 /-- `orig-date = "Date:" sp date-time crlf` (RFC 5536) -/
-def rOrigDate : Term := .seq [.text "Date:", .ref 148, .ref 40, .ref 37]
+def rOrigDate : Term := .seq [.text "Date:", .ref 150, .ref 40, .ref 37]
 
 /-- `other-sections = "*" %x31-39 *digit` (RFC 2231 §7, erratum 7326) -/
 def rOtherSections : Term := .seq [.text "*", .range 49 57, .rep 0 none (.ref 50)]
 
 /-- `parameter = regular-parameter / extended-parameter` (RFC 2231 §7) -/
-def rParameter : Term := .alt [.ref 131, .ref 67]
+def rParameter : Term := .alt [.ref 132, .ref 67]
 
 /-- `path = "Path:" sp *wsp path-list tail-entry *wsp crlf` (RFC 5536) -/
-def rPath : Term := .seq [.text "Path:", .ref 148, .rep 0 none (.ref 164), .ref 118, .ref 152, .rep
-    0 none (.ref 164), .ref 37]
+def rPath : Term := .seq [.text "Path:", .ref 150, .rep 0 none (.ref 166), .ref 119, .ref 154, .rep
+    0 none (.ref 166), .ref 37]
 
 /-- `path-diagnostic = diag-match / diag-other / diag-deprecated` (RFC 5536) -/
 def rPathDiagnostic : Term := .alt [.ref 48, .ref 49, .ref 45]
 
 /-- `path-identity = 1*(label ".") toplabel / path-nodot` (RFC 5536) -/
-def rPathIdentity : Term := .alt [.seq [.rep 1 none (.seq [.ref 87, .text "."]), .ref 157], .ref
-    119]
+def rPathIdentity : Term := .alt [.seq [.rep 1 none (.seq [.ref 88, .text "."]), .ref 159], .ref
+    120]
 
 /-- `path-list = *(path-identity [fws] [path-diagnostic] "!")` (RFC 5536) -/
-def rPathList : Term := .rep 0 none (.seq [.ref 117, .rep 0 (some 1) (.ref 72), .rep 0 (some 1)
-    (.ref 116), .text "!"])
+def rPathList : Term := .rep 0 none (.seq [.ref 118, .rep 0 (some 1) (.ref 72), .rep 0 (some 1)
+    (.ref 117), .text "!"])
 
 /-- `path-nodot = 1*(alphanum / "-" / "_")` (RFC 5536) -/
 def rPathNodot : Term := .rep 1 none (.alt [.ref 4, .text "-", .text "_"])
 
 /-- `phrase = 1*word / obs-phrase` (RFC 5322) -/
-def rPhrase : Term := .alt [.rep 1 none (.ref 163), .ref 107]
+def rPhrase : Term := .alt [.rep 1 none (.ref 165), .ref 108]
 
 /-- `poster-text = *wsp %x70.6F.73.74.65.72 *wsp` (RFC 5536) -/
-def rPosterText : Term := .seq [.rep 0 none (.ref 164), .exact [112, 111, 115, 116, 101, 114], .rep
-    0 none (.ref 164)]
+def rPosterText : Term := .seq [.rep 0 none (.ref 166), .exact [112, 111, 115, 116, 101, 114], .rep
+    0 none (.ref 166)]
 
 /-- `product = [cfws] token [[cfws] "/" product-version]` (RFC 5536) -/
-def rProduct : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 156, .rep 0 (some 1) (.seq [.rep 0
-    (some 1) (.ref 29), .text "/", .ref 123])]
+def rProduct : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 158, .rep 0 (some 1) (.seq [.rep 0
+    (some 1) (.ref 29), .text "/", .ref 124])]
 
 /-- `product-version = [cfws] token` (RFC 5536) -/
-def rProductVersion : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 156]
+def rProductVersion : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 158]
 
 /-- `qcontent = qtext / quoted-pair` (RFC 5322) -/
-def rQcontent : Term := .alt [.ref 125, .ref 126]
+def rQcontent : Term := .alt [.ref 126, .ref 127]
 
 /-- `qtext = %x21 / %x23-5B / %x5D-7E` (RFC 5322) -/
 def rQtext : Term := .alt [.range 33 33, .range 35 91, .range 93 126]
 
 /-- `quoted-pair = "\" (vchar / wsp)` (RFC 5322) -/
-def rQuotedPair : Term := .seq [.text "\\", .alt [.ref 161, .ref 164]]
+def rQuotedPair : Term := .seq [.text "\\", .alt [.ref 163, .ref 166]]
 
 /-- `quoted-string = [cfws] dquote *([fws] qcontent) [fws] dquote [cfws]` (RFC 5322) -/
 def rQuotedString : Term := .seq [.rep 0 (some 1) (.ref 29), .ref 59, .rep 0 none (.seq [.rep 0
-    (some 1) (.ref 72), .ref 124]), .rep 0 (some 1) (.ref 72), .ref 59, .rep 0 (some 1) (.ref 29)]
+    (some 1) (.ref 72), .ref 125]), .rep 0 (some 1) (.ref 72), .ref 59, .rep 0 (some 1) (.ref 29)]
 
 /-- `received = "Received:" sp [1*received-token / cfws] ";" date-time crlf` (RFC 5322, erratum
 3979, with a space after the colon, as RFC 5536 §2.2 asks of every field) -/
-def rReceived : Term := .seq [.text "Received:", .ref 148, .rep 0 (some 1) (.alt [.rep 1 none (.ref
-    129), .ref 29]), .text ";", .ref 40, .ref 37]
+def rReceived : Term := .seq [.text "Received:", .ref 150, .rep 0 (some 1) (.alt [.rep 1 none (.ref
+    130), .ref 29]), .text ";", .ref 40, .ref 37]
 
 /-- `received-token = word / angle-addr / addr-spec / domain` (RFC 5322) -/
-def rReceivedToken : Term := .alt [.ref 163, .ref 5, .ref 0, .ref 55]
+def rReceivedToken : Term := .alt [.ref 165, .ref 5, .ref 0, .ref 55]
 
 /-- `references = "References:" sp [cfws] msg-id *(cfws msg-id) [cfws] crlf` (RFC 5536) -/
-def rReferences : Term := .seq [.text "References:", .ref 148, .rep 0 (some 1) (.ref 29), .ref 99,
-    .rep 0 none (.seq [.ref 29, .ref 99]), .rep 0 (some 1) (.ref 29), .ref 37]
+def rReferences : Term := .seq [.text "References:", .ref 150, .rep 0 (some 1) (.ref 29), .ref 100,
+    .rep 0 none (.seq [.ref 29, .ref 100]), .rep 0 (some 1) (.ref 29), .ref 37]
 
 /-- `regular-parameter = regular-parameter-name [cfws] "=" [cfws] value [cfws]` (RFC 2231 §7,
 with the CFWS of RFC 5536 §3.2.8) -/
-def rRegularParameter : Term := .seq [.ref 132, .rep 0 (some 1) (.ref 29), .text "=", .rep 0 (some
-    1) (.ref 29), .ref 160, .rep 0 (some 1) (.ref 29)]
+def rRegularParameter : Term := .seq [.ref 133, .rep 0 (some 1) (.ref 29), .text "=", .rep 0 (some
+    1) (.ref 29), .ref 162, .rep 0 (some 1) (.ref 29)]
 
 /-- `regular-parameter-name = attribute [section]` (RFC 2231 §7) -/
-def rRegularParameterName : Term := .seq [.ref 13, .rep 0 (some 1) (.ref 145)]
+def rRegularParameterName : Term := .seq [.ref 13, .rep 0 (some 1) (.ref 147)]
 
 /-- `reply-to = "Reply-To:" sp address-list crlf` (RFC 5536) -/
-def rReplyTo : Term := .seq [.text "Reply-To:", .ref 148, .ref 2, .ref 37]
+def rReplyTo : Term := .seq [.text "Reply-To:", .ref 150, .ref 2, .ref 37]
 
 /-- `resent-bcc = "Resent-Bcc:" sp [address-list / cfws] crlf` (RFC 5322, with a space after the
 colon, as RFC 5536 §2.2 asks of every field) -/
-def rResentBcc : Term := .seq [.text "Resent-Bcc:", .ref 148, .rep 0 (some 1) (.alt [.ref 2, .ref
+def rResentBcc : Term := .seq [.text "Resent-Bcc:", .ref 150, .rep 0 (some 1) (.alt [.ref 2, .ref
     29]), .ref 37]
 
 /-- `resent-cc = "Resent-Cc:" sp address-list crlf` (RFC 5322, with a space after the colon, as
 RFC 5536 §2.2 asks of every field) -/
-def rResentCc : Term := .seq [.text "Resent-Cc:", .ref 148, .ref 2, .ref 37]
+def rResentCc : Term := .seq [.text "Resent-Cc:", .ref 150, .ref 2, .ref 37]
 
 /-- `resent-date = "Resent-Date:" sp date-time crlf` (RFC 5322, with a space after the colon, as
 RFC 5536 §2.2 asks of every field) -/
-def rResentDate : Term := .seq [.text "Resent-Date:", .ref 148, .ref 40, .ref 37]
+def rResentDate : Term := .seq [.text "Resent-Date:", .ref 150, .ref 40, .ref 37]
 
 /-- `resent-from = "Resent-From:" sp mailbox-list crlf` (RFC 5322, with a space after the colon,
 as RFC 5536 §2.2 asks of every field) -/
-def rResentFrom : Term := .seq [.text "Resent-From:", .ref 148, .ref 94, .ref 37]
+def rResentFrom : Term := .seq [.text "Resent-From:", .ref 150, .ref 95, .ref 37]
+
+/-- `resent-msg-id = "Resent-Message-ID:" sp [cfws] msg-id [cfws] crlf` (RFC 5322 §3.6.6 with the
+msg-id of RFC 5536 §3.1.3, with a space after the colon, as RFC 5536 §2.2 asks of every field) -/
+def rResentMsgId : Term := .seq [.text "Resent-Message-ID:", .ref 150, .rep 0 (some 1) (.ref 29),
+    .ref 100, .rep 0 (some 1) (.ref 29), .ref 37]
 
 /-- `resent-sender = "Resent-Sender:" sp mailbox crlf` (RFC 5322, with a space after the colon,
 as RFC 5536 §2.2 asks of every field) -/
-def rResentSender : Term := .seq [.text "Resent-Sender:", .ref 148, .ref 93, .ref 37]
+def rResentSender : Term := .seq [.text "Resent-Sender:", .ref 150, .ref 94, .ref 37]
 
 /-- `resent-to = "Resent-To:" sp address-list crlf` (RFC 5322, with a space after the colon, as
 RFC 5536 §2.2 asks of every field) -/
-def rResentTo : Term := .seq [.text "Resent-To:", .ref 148, .ref 2, .ref 37]
+def rResentTo : Term := .seq [.text "Resent-To:", .ref 150, .ref 2, .ref 37]
 
 /-- `return = "Return-Path:" sp return-path-address crlf` (RFC 5322, with a space after the
 colon, as RFC 5536 §2.2 asks of every field) -/
-def rReturn : Term := .seq [.text "Return-Path:", .ref 148, .ref 141, .ref 37]
+def rReturn : Term := .seq [.text "Return-Path:", .ref 150, .ref 143, .ref 37]
 
 /-- `return-path-address = angle-addr / [cfws] "<" [cfws] ">" [cfws]` (RFC 5322, renamed) -/
 def rReturnPathAddress : Term := .alt [.ref 5, .seq [.rep 0 (some 1) (.ref 29), .text "<", .rep 0
     (some 1) (.ref 29), .text ">", .rep 0 (some 1) (.ref 29)]]
 
 /-- `scheme = "sha256" / "sha512" / 1*scheme-char / obs-scheme` (RFC 8315) -/
-def rScheme : Term := .alt [.text "sha256", .text "sha512", .rep 1 none (.ref 143), .ref 108]
+def rScheme : Term := .alt [.text "sha256", .text "sha512", .rep 1 none (.ref 145), .ref 109]
 
 /-- `scheme-char = alpha / digit / "-" / "/"` (RFC 8315) -/
 def rSchemeChar : Term := .alt [.ref 3, .ref 50, .text "-", .text "/"]
@@ -559,40 +570,40 @@ def rSchemeChar : Term := .alt [.ref 3, .ref 50, .text "-", .text "/"]
 def rSecond : Term := .rep 2 (some 2) (.ref 50)
 
 /-- `section = initial-section / other-sections` (RFC 2231 §7) -/
-def rSection : Term := .alt [.ref 81, .ref 113]
+def rSection : Term := .alt [.ref 82, .ref 114]
 
 /-- `sender = "Sender:" sp mailbox crlf` (RFC 5536) -/
-def rSender : Term := .seq [.text "Sender:", .ref 148, .ref 93, .ref 37]
+def rSender : Term := .seq [.text "Sender:", .ref 150, .ref 94, .ref 37]
 
 /-- `server-name = path-identity` (RFC 5536) -/
-def rServerName : Term := .ref 117
+def rServerName : Term := .ref 118
 
 /-- `sp = %x20` (RFC 5234) -/
 def rSp : Term := .range 32 32
 
 /-- `subject = "Subject:" sp unstructured crlf` (RFC 5536) -/
-def rSubject : Term := .seq [.text "Subject:", .ref 148, .ref 158, .ref 37]
+def rSubject : Term := .seq [.text "Subject:", .ref 150, .ref 160, .ref 37]
 
 /-- `summary = "Summary:" sp unstructured crlf` (RFC 5536) -/
-def rSummary : Term := .seq [.text "Summary:", .ref 148, .ref 158, .ref 37]
+def rSummary : Term := .seq [.text "Summary:", .ref 150, .ref 160, .ref 37]
 
 /-- `supersedes = "Supersedes:" sp *wsp msg-id *wsp crlf` (RFC 5536) -/
-def rSupersedes : Term := .seq [.text "Supersedes:", .ref 148, .rep 0 none (.ref 164), .ref 99, .rep
-    0 none (.ref 164), .ref 37]
+def rSupersedes : Term := .seq [.text "Supersedes:", .ref 150, .rep 0 none (.ref 166), .ref 100,
+    .rep 0 none (.ref 166), .ref 37]
 
 /-- `tail-entry = path-nodot` (RFC 5536) -/
-def rTailEntry : Term := .ref 119
+def rTailEntry : Term := .ref 120
 
 /-- `time = time-of-day zone` (RFC 5322) -/
-def rTime : Term := .seq [.ref 154, .ref 167]
+def rTime : Term := .seq [.ref 156, .ref 169]
 
 /-- `time-of-day = hour ":" minute [":" second]` (RFC 5322) -/
-def rTimeOfDay : Term := .seq [.ref 77, .text ":", .ref 97, .rep 0 (some 1) (.seq [.text ":", .ref
-    144])]
+def rTimeOfDay : Term := .seq [.ref 77, .text ":", .ref 98, .rep 0 (some 1) (.seq [.text ":", .ref
+    146])]
 
 /-- `to = "To:" sp address-list crlf` (RFC 5322, with a space after the colon, as RFC 5536 §2.2
 asks of every field) -/
-def rTo : Term := .seq [.text "To:", .ref 148, .ref 2, .ref 37]
+def rTo : Term := .seq [.text "To:", .ref 150, .ref 2, .ref 37]
 
 /-- `token = 1*(%x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39 / %x41-5A / %x5E-7E)` (RFC 2045
 §5.1, erratum 512) -/
@@ -601,44 +612,44 @@ def rToken : Term := .rep 1 none (.alt [.range 33 33, .range 35 39, .range 42 43
 
 /-- `toplabel = [label *"-"] alpha *"-" label / label *"-" alpha [*"-" label] / label 1*"-"
 label` (RFC 5536) -/
-def rToplabel : Term := .alt [.seq [.rep 0 (some 1) (.seq [.ref 87, .rep 0 none (.text "-")]), .ref
-    3, .rep 0 none (.text "-"), .ref 87], .seq [.ref 87, .rep 0 none (.text "-"), .ref 3, .rep 0
-    (some 1) (.seq [.rep 0 none (.text "-"), .ref 87])], .seq [.ref 87, .rep 1 none (.text "-"),
-    .ref 87]]
+def rToplabel : Term := .alt [.seq [.rep 0 (some 1) (.seq [.ref 88, .rep 0 none (.text "-")]), .ref
+    3, .rep 0 none (.text "-"), .ref 88], .seq [.ref 88, .rep 0 none (.text "-"), .ref 3, .rep 0
+    (some 1) (.seq [.rep 0 none (.text "-"), .ref 88])], .seq [.ref 88, .rep 1 none (.text "-"),
+    .ref 88]]
 
 /-- `unstructured = *wsp vchar *([fws] vchar) *wsp` (RFC 5536) -/
-def rUnstructured : Term := .seq [.rep 0 none (.ref 164), .ref 161, .rep 0 none (.seq [.rep 0 (some
-    1) (.ref 72), .ref 161]), .rep 0 none (.ref 164)]
+def rUnstructured : Term := .seq [.rep 0 none (.ref 166), .ref 163, .rep 0 none (.seq [.rep 0 (some
+    1) (.ref 72), .ref 163]), .rep 0 none (.ref 166)]
 
 /-- `user-agent = "User-Agent:" sp 1*product [cfws] crlf` (RFC 5536) -/
-def rUserAgent : Term := .seq [.text "User-Agent:", .ref 148, .rep 1 none (.ref 122), .rep 0 (some
+def rUserAgent : Term := .seq [.text "User-Agent:", .ref 150, .rep 1 none (.ref 123), .rep 0 (some
     1) (.ref 29), .ref 37]
 
 /-- `value = token / quoted-string` (RFC 2045 §5.1) -/
-def rValue : Term := .alt [.ref 156, .ref 127]
+def rValue : Term := .alt [.ref 158, .ref 128]
 
 /-- `vchar = %x21-7E` (RFC 5234) -/
 def rVchar : Term := .range 33 126
 
 /-- `verb = token` (RFC 5536) -/
-def rVerb : Term := .ref 156
+def rVerb : Term := .ref 158
 
 /-- `word = atom / quoted-string` (RFC 5322) -/
-def rWord : Term := .alt [.ref 12, .ref 127]
+def rWord : Term := .alt [.ref 12, .ref 128]
 
 /-- `wsp = sp / htab` (RFC 5234) -/
-def rWsp : Term := .alt [.ref 148, .ref 78]
+def rWsp : Term := .alt [.ref 150, .ref 78]
 
 /-- `xref = "Xref:" sp *wsp server-name 1*(fws location) *wsp crlf` (RFC 5536) -/
-def rXref : Term := .seq [.text "Xref:", .ref 148, .rep 0 none (.ref 164), .ref 147, .rep 1 none
-    (.seq [.ref 72, .ref 91]), .rep 0 none (.ref 164), .ref 37]
+def rXref : Term := .seq [.text "Xref:", .ref 150, .rep 0 none (.ref 166), .ref 149, .rep 1 none
+    (.seq [.ref 72, .ref 92]), .rep 0 none (.ref 166), .ref 37]
 
 /-- `year = fws 4*digit fws` (RFC 5322) -/
 def rYear : Term := .seq [.ref 72, .rep 4 none (.ref 50), .ref 72]
 
 /-- `zone = fws ("+" / "-") 4digit / [fws] obs-zone` (RFC 5322, erratum 6639) -/
 def rZone : Term := .alt [.seq [.ref 72, .alt [.text "+", .text "-"], .rep 4 (some 4) (.ref 50)],
-    .seq [.rep 0 (some 1) (.ref 72), .ref 109]]
+    .seq [.rep 0 (some 1) (.ref 72), .ref 110]]
 
 /-- The rules, in the order of their names. -/
 def grammar : Array Term := #[rAddrSpec, rAddress, rAddressList, rAlpha, rAlphanum, rAngleAddr,
@@ -651,18 +662,18 @@ def grammar : Array Term := #[rAddrSpec, rAddress, rAddressList, rAlpha, rAlphan
   rDomainLiteral, rDotAtom, rDotAtomText, rDquote, rDtext, rExpires, rExtOctet,
   rExtendedInitialName, rExtendedInitialValue, rExtendedOtherNames, rExtendedOtherValues,
   rExtendedParameter, rFieldName, rFollowupTo, rFrom, rFtext, rFws, rGroup, rGroupList, rH16,
-  rHexdig, rHour, rHtab, rIdLeft, rIdRight, rInitialSection, rInjectionDate, rInjectionInfo,
-  rIpv4address, rIpv6address, rKeywords, rLabel, rLanguage, rLines, rLocalPart, rLocation, rLs32,
-  rMailbox, rMailboxList, rMdtext, rMessageId, rMinute, rMonth, rMsgId, rMsgIdCore, rNameAddr,
-  rNewsgroupList, rNewsgroupName, rNewsgroups, rNoFoldLiteral, rObsCKeyString, rObsPhrase,
-  rObsScheme, rObsZone, rOptionalField, rOrganization, rOrigDate, rOtherSections, rParameter, rPath,
-  rPathDiagnostic, rPathIdentity, rPathList, rPathNodot, rPhrase, rPosterText, rProduct,
-  rProductVersion, rQcontent, rQtext, rQuotedPair, rQuotedString, rReceived, rReceivedToken,
-  rReferences, rRegularParameter, rRegularParameterName, rReplyTo, rResentBcc, rResentCc,
-  rResentDate, rResentFrom, rResentSender, rResentTo, rReturn, rReturnPathAddress, rScheme,
-  rSchemeChar, rSecond, rSection, rSender, rServerName, rSp, rSubject, rSummary, rSupersedes,
-  rTailEntry, rTime, rTimeOfDay, rTo, rToken, rToplabel, rUnstructured, rUserAgent, rValue, rVchar,
-  rVerb, rWord, rWsp, rXref, rYear, rZone]
+  rHexdig, rHour, rHtab, rIdLeft, rIdRight, rInReplyTo, rInitialSection, rInjectionDate,
+  rInjectionInfo, rIpv4address, rIpv6address, rKeywords, rLabel, rLanguage, rLines, rLocalPart,
+  rLocation, rLs32, rMailbox, rMailboxList, rMdtext, rMessageId, rMinute, rMonth, rMsgId,
+  rMsgIdCore, rNameAddr, rNewsgroupList, rNewsgroupName, rNewsgroups, rNoFoldLiteral,
+  rObsCKeyString, rObsPhrase, rObsScheme, rObsZone, rOptionalField, rOrganization, rOrigDate,
+  rOtherSections, rParameter, rPath, rPathDiagnostic, rPathIdentity, rPathList, rPathNodot, rPhrase,
+  rPosterText, rProduct, rProductVersion, rQcontent, rQtext, rQuotedPair, rQuotedString, rReceived,
+  rReceivedToken, rReferences, rRegularParameter, rRegularParameterName, rReplyTo, rResentBcc,
+  rResentCc, rResentDate, rResentFrom, rResentMsgId, rResentSender, rResentTo, rReturn,
+  rReturnPathAddress, rScheme, rSchemeChar, rSecond, rSection, rSender, rServerName, rSp, rSubject,
+  rSummary, rSupersedes, rTailEntry, rTime, rTimeOfDay, rTo, rToken, rToplabel, rUnstructured,
+  rUserAgent, rValue, rVchar, rVerb, rWord, rWsp, rXref, rYear, rZone]
 
 /-- The rules' names, as the RFCs write them in lower case. -/
 def names : Array String := #["addr-spec", "address", "address-list", "alpha", "alphanum",
@@ -677,32 +688,33 @@ def names : Array String := #["addr-spec", "address", "address-list", "alpha", "
   "ext-octet", "extended-initial-name", "extended-initial-value", "extended-other-names",
   "extended-other-values", "extended-parameter", "field-name", "followup-to", "from", "ftext",
   "fws", "group", "group-list", "h16", "hexdig", "hour", "htab", "id-left", "id-right",
-  "initial-section", "injection-date", "injection-info", "ipv4address", "ipv6address", "keywords",
-  "label", "language", "lines", "local-part", "location", "ls32", "mailbox", "mailbox-list",
-  "mdtext", "message-id", "minute", "month", "msg-id", "msg-id-core", "name-addr", "newsgroup-list",
-  "newsgroup-name", "newsgroups", "no-fold-literal", "obs-c-key-string", "obs-phrase", "obs-scheme",
-  "obs-zone", "optional-field", "organization", "orig-date", "other-sections", "parameter", "path",
-  "path-diagnostic", "path-identity", "path-list", "path-nodot", "phrase", "poster-text", "product",
-  "product-version", "qcontent", "qtext", "quoted-pair", "quoted-string", "received",
-  "received-token", "references", "regular-parameter", "regular-parameter-name", "reply-to",
-  "resent-bcc", "resent-cc", "resent-date", "resent-from", "resent-sender", "resent-to", "return",
+  "in-reply-to", "initial-section", "injection-date", "injection-info", "ipv4address",
+  "ipv6address", "keywords", "label", "language", "lines", "local-part", "location", "ls32",
+  "mailbox", "mailbox-list", "mdtext", "message-id", "minute", "month", "msg-id", "msg-id-core",
+  "name-addr", "newsgroup-list", "newsgroup-name", "newsgroups", "no-fold-literal",
+  "obs-c-key-string", "obs-phrase", "obs-scheme", "obs-zone", "optional-field", "organization",
+  "orig-date", "other-sections", "parameter", "path", "path-diagnostic", "path-identity",
+  "path-list", "path-nodot", "phrase", "poster-text", "product", "product-version", "qcontent",
+  "qtext", "quoted-pair", "quoted-string", "received", "received-token", "references",
+  "regular-parameter", "regular-parameter-name", "reply-to", "resent-bcc", "resent-cc",
+  "resent-date", "resent-from", "resent-msg-id", "resent-sender", "resent-to", "return",
   "return-path-address", "scheme", "scheme-char", "second", "section", "sender", "server-name",
   "sp", "subject", "summary", "supersedes", "tail-entry", "time", "time-of-day", "to", "token",
   "toplabel", "unstructured", "user-agent", "value", "vchar", "verb", "word", "wsp", "xref", "year",
   "zone"]
 
 /-- The rule each field is checked by, by the field's name, and the rule for any other. -/
-def fieldRules : List (String × Nat) := [("Date", 112), ("From", 70), ("Message-ID", 96),
-  ("Newsgroups", 104), ("Path", 115), ("Subject", 149), ("Comments", 32), ("Keywords", 86),
-  ("Reply-To", 133), ("Sender", 146), ("Approved", 6), ("Archive", 7), ("Control", 35),
-  ("Distribution", 54), ("Expires", 61), ("Followup-To", 69), ("Injection-Date", 82),
-  ("Injection-Info", 83), ("Organization", 111), ("References", 130), ("Summary", 150),
-  ("Supersedes", 151), ("User-Agent", 159), ("Xref", 165), ("Lines", 89), ("Cancel-Lock", 26),
-  ("Cancel-Key", 25), ("To", 155), ("Cc", 27), ("Bcc", 18), ("Resent-Date", 136), ("Resent-From",
-  137), ("Resent-Sender", 138), ("Resent-To", 139), ("Resent-Cc", 135), ("Resent-Bcc", 134),
-  ("Return-Path", 140), ("Received", 128)]
+def fieldRules : List (String × Nat) := [("Date", 113), ("From", 70), ("Message-ID", 97),
+  ("Newsgroups", 105), ("Path", 116), ("Subject", 151), ("Comments", 32), ("Keywords", 87),
+  ("Reply-To", 134), ("Sender", 148), ("Approved", 6), ("Archive", 7), ("Control", 35),
+  ("Distribution", 54), ("Expires", 61), ("Followup-To", 69), ("Injection-Date", 83),
+  ("Injection-Info", 84), ("Organization", 112), ("References", 131), ("Summary", 152),
+  ("Supersedes", 153), ("User-Agent", 161), ("Xref", 167), ("Lines", 90), ("Cancel-Lock", 26),
+  ("Cancel-Key", 25), ("To", 157), ("Cc", 27), ("Bcc", 18), ("Resent-Date", 137), ("Resent-From",
+  138), ("Resent-Sender", 140), ("Resent-To", 141), ("Resent-Cc", 136), ("Resent-Bcc", 135),
+  ("Return-Path", 142), ("Received", 129), ("In-Reply-To", 81), ("Resent-Message-ID", 139)]
 
-def optionalField : Nat := 110
+def optionalField : Nat := 111
 
 /-- The most terms a match of this grammar goes through, one inside the next, at one position of
 its input: the grammar has no left recursion, and `scripts/gen_abnf.py` counts them

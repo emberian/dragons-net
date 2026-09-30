@@ -14,6 +14,10 @@
       "url": "https://www.rfc-editor.org/rfc/rfc2980.txt",
       "normalized": "form-feeds-removed"
     },
+    "rfc3798.txt": {
+      "sha256": "e3f41ae826f0c4d73596b191c5a75ecd2908e3f78af00fa1d1d278908312a6d1",
+      "url": "https://www.rfc-editor.org/rfc/rfc3798.txt"
+    },
     "rfc3977.txt": {
       "sha256": "e9bafe47d8c9b1136f11546162599ee67c233f33955c2972b57a91ecaff1f5f5",
       "url": "https://www.rfc-editor.org/rfc/rfc3977.txt"

@@ -24,6 +24,10 @@ rules are IETF Code Components, under the Revised BSD License of the IETF
 Trust's Legal Provisions and, for RFC 2231, that document's own notice; the
 files carry the notices and an SPDX identifier that names both licenses.
 
+The articles in tests/corpus/inn-articles are INN's test data, unchanged and
+under INN's ISC licence, whose file that directory carries unchanged as LICENSE;
+docs/provenance.json records their source revision and digests.
+
 The preserved snapshot under migration references third-party work that is not
 included here: the shims in its ffi directory call HACL* (F*-verified
 cryptography) and link against artifacts a CakeML build produces, and its
