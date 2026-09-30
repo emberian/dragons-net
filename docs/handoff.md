@@ -34,7 +34,7 @@ Acceptance: a real loopback connection; input split at arbitrary byte boundaries
 
 ### 3. Deliver the smallest useful NNTP slice
 
-Follow [the NNTP plan](nntp.md). The first slice is built: greeting, capability discovery, HELP, QUIT, HEAD and STAT against an empty store, and error handling, run in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)) behind a reference `poll` host ([decision 0003](decisions/0003-nntp-slice.md), [details](baseline.md#nntp-server)), without claiming READER support. Next is the durable store (#17); complete the reader/posting profile before advertising its capabilities.
+Follow [the NNTP plan](nntp.md). The first slice is built: greeting, capability discovery, HELP, QUIT, HEAD and STAT against an empty store, and error handling, run in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)) behind a reference `poll` host ([decision 0003](decisions/0003-nntp-slice.md), [details](baseline.md#nntp-server)), without claiming READER support. Next is the durable store (#17), whose design is [decision 0005](decisions/0005-article-store.md); complete the reader/posting profile before advertising its capabilities.
 
 Acceptance: transcript tests against an independent client, command/article framing under arbitrary chunk splits, dot transparency, bounded input, stable Message-ID deduplication, crosspost indexing, and crash/restart tests around article acceptance. A POST success response needs a specified durability point.
 
