@@ -120,13 +120,15 @@ happened; it knows nothing of articles.
   Numbers are allocated when the record is appended, and records are appended one at a time, so
   articles are numbered in the order they are committed, and a crosspost is one record. ARTICLE
   and HEAD insert the Xref field, built from the record, after the stored header fields.
-- A failure is known only while the commit record has not been written: the article is refused
-  with 441, and the temporary or final file is removed. Once the record has been written, a failed
-  write or sync of the journal leaves the outcome unknown: the connection is closed without an
-  answer (RFC 3977 §6.3.1 asks the client to check before posting again), and the next start
-  decides from what the journal holds. A failed sync of any kind is never retried, and it stops the
-  store accepting articles for the rest of the run (POST then answers 403); what it has, it keeps
-  serving.
+- A failure is known only while the commit record has not been written: the article is refused with
+  441, and the temporary or final file is removed. Once the record has been written, a failed write
+  or sync of the journal leaves the outcome unknown: the connection is closed without an answer (RFC
+  3977 §6.3.1 asks the client to check before posting again), and the next start decides from what
+  the journal holds. No failed write, truncation or sync of the journal, and no failed sync of any
+  kind, is retried; each stops the store accepting articles for the rest of the run (POST then
+  answers 403), since after a failed write the journal may end in part of a frame, which only the
+  next start truncates, and after a failed sync Linux may have dropped what it could not write, so
+  that no later sync is trusted. What the store has, it keeps serving.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -278,14 +280,18 @@ logs each connection's address with the run and its index.
     reads as a torn tail, whatever the tag, when no frame that checks starts in it; a frame that
     does not check with a record after it is corruption; and a start's frame is shorter than any
     other record's;
-  - under a model of crashes in the vocabulary of Pillai and Bornholt — anything not yet synced may
-    or may not survive, independently for each file and name; a synced file's data and a name whose
-    directory was synced survive; an unsynced append may leave any octets up to its length, which
-    are assumed never to make a frame whose tag checks where it was not written — recovery after a
-    crash at any point of any run yields every article answered 240, possibly some whose commit
-    record was written but not answered, and never one refused before its record was written or a
-    partial one; recovery is idempotent. The model has no failing sync; what happens after one is
-    tested.
+  - under a model of crashes in the vocabulary of Pillai and Bornholt (`DN.News.FsModel`) — a crash
+    leaves each name, independently, holding what it held at the directory's last sync or anything
+    it has held since, and each file, independently, with the octets no operation touched since its
+    last sync followed by any octets, up to the most it has held since, which are assumed never to
+    make a frame whose tag checks where it was not written; a file no name is left holding is freed;
+    so a synced file's data and a name whose directory was synced survive; an operation that fails
+    may have done any part of what it was asked, an append any first part of its octets and anything
+    else all or nothing, and after a failed sync no later sync of that file or of the directory is
+    trusted — recovery after a crash at any point of any run, operations failing or not, yields
+    every article answered 240, possibly some whose commit record was written but not answered, and
+    never one refused before its record was written or a partial one; recovery is idempotent. What
+    the host does when an operation fails is tested.
 - Proved of the program: the CRC-32C and SipHash-2-4 functions it prints compute what
   `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the framers; no run
   of the program fails, by the analysis of [0004](0004-safety-analysis.md). The analysis now costs
