@@ -33,8 +33,10 @@ main() {
   editorconfig=$(python3 -P scripts/bootstrap_tool.py editorconfig-checker)
   deny=$(python3 -P scripts/bootstrap_tool.py cargo-deny)
   machete=$(python3 -P scripts/bootstrap_tool.py cargo-machete)
-  # The preserved snapshot, the RFCs and INN's test articles are kept as their sources have them.
-  local sources=(':!:migration/**' ':!:rfcs/**' ':!:tests/corpus/inn-articles/**')
+  # The preserved snapshot, the RFCs, INN's test articles and SipHash's vectors are kept as their
+  # sources have them.
+  local sources=(':!:migration/**' ':!:rfcs/**' ':!:tests/corpus/inn-articles/**'
+    ':!:tests/corpus/siphash/**')
 
   "$actionlint" -shellcheck "$shellcheck"
   # Online audits, such as impostor commits, need a token; offline ones always run.

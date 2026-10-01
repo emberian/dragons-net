@@ -9,16 +9,22 @@ The journal of `DN.News.Journal` run on cases, as `dn-compiler journal-model` an
 each; bytes are hex, `-` for none:
 
     crc BYTES              the CRC-32C, in decimal
-    encode SEQ ID HEADER SIZE CRC GROUPS
-                           the commit's frame, or `not-ok` if a frame cannot hold it; GROUPS is
-                           `NAME=NUMBER` for each group, separated by commas
+    siphash KEY BYTES      the SipHash-2-4 tag under a key of sixteen octets, in decimal
+    format KEY             the frame of a journal's format carrying the key
+    start KEY OFFSET       the frame of a start at OFFSET under KEY
+    encode KEY OFFSET SEQ ID HEADER SIZE CRC GROUPS
+                           the commit's frame at OFFSET under KEY, or `not-ok` if a correct store
+                           does not write it; GROUPS is `NAME=NUMBER` for each group, separated by
+                           commas
     scan BYTES             the records read and how the journal ends
     name BYTES             what a name in the spool directory is
-    names SEQ              the final and the temporary name of an article
+    names SEQ              the final, the temporary and the quarantine name of an article, and the
+                           name of a tail kept, all numbered SEQ
 
-A record reads as `F` for the format and `C:SEQ:ID:HEADER:SIZE:CRC:GROUPS` for a commit; the end
-as `clean`, `torn OFFSET` or `corrupt OFFSET WHY`. Numbers are decimal digits only, and a sequence
-number past sixteen hexadecimal digits has no names. With a mutant, reading follows its rules.
+A record reads as `F:KEY` for the format, `S` for a start and `C:SEQ:ID:HEADER:SIZE:CRC:GROUPS` for
+a commit; the end as `clean`, `torn OFFSET` or `corrupt OFFSET WHY`. Numbers are decimal digits
+only, and a sequence number past sixteen hexadecimal digits has no names. With a mutant, reading
+follows its rules.
 -/
 
 namespace DN.News.JournalModel
@@ -42,14 +48,14 @@ def parseGroups (s : String) : Option (List Group) :=
     | _ => none
 
 def recordText : Record → String
-  | .format => "F"
+  | .format key => s!"F:{hex key}"
   | .commit c =>
     s!"C:{c.seq}:{hex c.messageId}:{c.headerSize}:{c.fileSize}:{c.fileCrc}:{groupsText c.groups}"
+  | .start => "S"
 
 def whyText : Why → String
   | .short => "short" | .tooLong => "too-long" | .unterminated => "unterminated"
-  | .checksum => "checksum" | .notARecord => "not-a-record" | .noFormat => "no-format"
-  | .formatAgain => "format-again"
+  | .tag => "tag" | .notARecord => "not-a-record" | .formatAgain => "format-again"
 
 def endText : End → String
   | .clean => "clean"
@@ -63,6 +69,8 @@ def nameText : Option Name → String
   | some .journal => "journal"
   | some (.final s) => s!"final {s}"
   | some (.temp s) => s!"temp {s}"
+  | some (.quarantine s) => s!"quarantine {s}"
+  | some (.tail s) => s!"tail {s}"
   | none => "none"
 
 /-- The answer to one case, or why the line is not one. -/
@@ -72,12 +80,33 @@ def answer (r : Rules) (line : String) : Except String String :=
     match parseHex bytes with
     | some bs => .ok s!"{(crc32c bs).toNat}"
     | none => .error s!"not hex: {bytes}"
-  | ["encode", seq, id, header, size, crc, groups] =>
-    match natOf seq, parseHex id, natOf header, natOf size, natOf crc, parseGroups groups with
-    | some s, some i, some h, some z, some c, some gs =>
+  | ["siphash", key, bytes] =>
+    match parseHex key, parseHex bytes with
+    | some k, some bs =>
+      if k.length = keyLength then .ok s!"{(SipHash.tag k bs).toNat}"
+      else .error s!"not a key: {key}"
+    | _, _ => .error s!"not hex: {line}"
+  | ["format", key] =>
+    match parseHex key with
+    | some k =>
+      if k.length = keyLength then .ok (hex ((Record.format k).encode k 0))
+      else .error s!"not a key: {key}"
+    | none => .error s!"not hex: {key}"
+  | ["start", key, offset] =>
+    match parseHex key, natOf offset with
+    | some k, some o =>
+      if k.length = keyLength ∧ o < 2 ^ 64 then .ok (hex (Record.start.encode k o))
+      else .error s!"not a key or an offset: {line}"
+    | _, _ => .error s!"not a start: {line}"
+  | ["encode", key, offset, seq, id, header, size, crc, groups] =>
+    match parseHex key, natOf offset, natOf seq, parseHex id, natOf header, natOf size, natOf crc,
+        parseGroups groups with
+    | some k, some o, some s, some i, some h, some z, some c, some gs =>
       let commit : Commit := ⟨s, i, gs, h, z, c⟩
-      .ok (if commit.ok then hex (Record.commit commit).encode else "not-ok")
-    | _, _, _, _, _, _ => .error s!"not a commit: {line}"
+      if k.length = keyLength ∧ o < 2 ^ 64 then
+        .ok (if commit.ok then hex ((Record.commit commit).encode k o) else "not-ok")
+      else .error s!"not a key or an offset: {line}"
+    | _, _, _, _, _, _, _, _ => .error s!"not a commit: {line}"
   | ["scan", bytes] =>
     match parseHex bytes with
     | some bs => .ok (scanText (scanWith r bs))
@@ -89,7 +118,8 @@ def answer (r : Rules) (line : String) : Except String String :=
   | ["names", seq] =>
     match natOf seq with
     | some s =>
-      if s < 2 ^ 64 then .ok s!"{hex (finalName s)} {hex (tempName s)}"
+      if s < 2 ^ 64 then
+        .ok s!"{hex (finalName s)} {hex (tempName s)} {hex (quarantineName s)} {hex (tailName s)}"
       else .error s!"not a sequence number: {seq}"
     | none => .error s!"not a number: {seq}"
   | _ => .error s!"not a case: {line}"
@@ -118,11 +148,13 @@ def regression_878 : Bool :=
 def regression_879 : Bool := (crc32c (ascii "123456789")).toNat == 0xE3069283
 /-- A journal and a torn record after it. -/
 def regression_880 : Bool :=
-  let j := encodeAll [.format, .commit sample]
-  scan (j ++ ((Record.commit sample).encode.take 12)) == ⟨[.format, .commit sample], .torn j.length⟩
-/-- A frame that checks but is no record is corruption even last: a journal of a later format. -/
+  let j := journal sampleKey [.commit sample]
+  scan (j ++ (((Record.commit sample).encode sampleKey j.length).take 12)) ==
+    ⟨[.format sampleKey, .commit sample], .torn j.length⟩
+/-- A frame that checks but is no record is corruption even last: a journal of a later format,
+whose first frame still carries a key. -/
 def regression_881 : Bool :=
-  scan (frame formatType (ascii "dragons-net journal" ++ [BitVec.ofNat 8 2])) ==
+  scan (frame sampleKey 0 formatType (journalTitle ++ [BitVec.ofNat 8 2] ++ sampleKey)) ==
     ⟨[], .corrupt 0 .notARecord⟩
 /-- Article numbers are those RFC 3977 §6 allows, 1 to 2,147,483,647. -/
 def regression_882 : Bool :=
@@ -130,10 +162,10 @@ def regression_882 : Bool :=
   !(numbered 0).ok && (numbered 1).ok && (numbered (2 ^ 31 - 1)).ok && !(numbered (2 ^ 31)).ok
 /-- An append cut short and filled with zeros reads as a torn tail: its end mark is gone. -/
 def regression_883 : Bool :=
-  let j := encodeAll [.format, .commit sample]
-  let f := (Record.commit sample).encode
-  scan (j ++ f.take 12 ++ List.replicate (f.length - 12) 0) ==
-    ⟨[.format, .commit sample], .torn j.length⟩
+  let j := journal sampleKey [.commit sample]
+  let f := (Record.commit sample).encode sampleKey j.length
+  scan (j ++ f.take 20 ++ List.replicate (f.length - 20) 0) ==
+    ⟨[.format sampleKey, .commit sample], .torn j.length⟩
 /-- Before any record, a torn tail is at most the format's frame; past it, corruption. -/
 def regression_884 : Bool :=
   scan (List.replicate firstFrame 0) == ⟨[], .torn 0⟩ &&
@@ -144,5 +176,32 @@ def regression_885 : Bool :=
   !{ sample with seq := 0 }.ok &&
     !{ sample with groups := [⟨ascii "g", 1⟩, ⟨ascii "g", 2⟩] }.ok &&
     { sample with headerSize := 200 }.ok && !{ sample with headerSize := 201 }.ok
+/-- SipHash-2-4 under the key 00 to 0f, as the authors' reference implementation gives it for the
+empty message and for the octets 00 to 0e. -/
+def regression_886 : Bool := (SipHash.tag sampleKey []).toNat == 0x726FDB47DD0E0E31
+def regression_887 : Bool :=
+  (SipHash.tag sampleKey (bytesOf (List.range 15))).toNat == 0xA129CA6149BE45E5
+/-- A frame copied to another place in the journal does not check there: its tag names its
+offset. -/
+def regression_888 : Bool :=
+  let j := journal sampleKey [.commit sample]
+  let f := (Record.commit sample).encode sampleKey (journal sampleKey []).length
+  scan (j ++ f) == ⟨[.format sampleKey, .commit sample], .torn j.length⟩
+/-- A journal that does not begin with its format has no key to check its first frame with. -/
+def regression_889 : Bool :=
+  let f := (Record.commit sample).encode sampleKey 0
+  scan (f ++ f) == ⟨[], .corrupt 0 .tag⟩
+/-- A start reads back as one, a commit after it too, and its frame is fourteen octets. -/
+def regression_890 : Bool :=
+  scan (journal sampleKey [.start, .commit sample, .start]) ==
+      ⟨[.format sampleKey, .start, .commit sample, .start], .clean⟩ &&
+    (Record.start.encode sampleKey firstFrame).length == 14
+/-- A byte changed in a record with another after it is corruption, not a torn tail. -/
+def regression_891 : Bool :=
+  let j := journal sampleKey [.commit sample, .commit { sample with seq := 2 }]
+  scan (j.set (firstFrame + headerLength) 7) == ⟨[.format sampleKey], .corrupt firstFrame .tag⟩
+/-- A first frame of another type does not carry a key, whatever its payload holds. -/
+def regression_892 : Bool :=
+  scan (frame sampleKey 0 commitType (magic ++ sampleKey)) == ⟨[], .torn 0⟩
 
 end DN.News.JournalModel

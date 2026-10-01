@@ -1,37 +1,45 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.CommandSpec
+import DN.News.SipHash
 
 /-!
 # DN.News.Journal
 
 The store's journal and the names of its files, as docs/decisions/0005-article-store.md ("On
-disk") fixes them: the CRC-32C that checks every record, how a record is framed and what it
-holds, the names of the store's files, and how a journal is read back — its records in order,
-and how it ends: cleanly, in a torn tail the next start truncates, or in corruption that keeps
-the store from starting.
+disk") fixes them: how a record is framed, tagged and what it holds, the names of the store's
+files, and how a journal is read back — its records in order, and how it ends: cleanly, in a torn
+tail the next start truncates, or in corruption that keeps the store from starting. The CRC-32C a
+commit gives of its article's file is defined here too.
 
-A record is framed as `length ‖ crc ‖ type ‖ payload ‖ end`: the payload's length and the CRC-32C
-of the type and the payload, each four octets, least significant first, then the type, one octet,
-the payload, and the end mark, one octet. The journal's first record names its format; each other
-one is the commit of an article: its number in the store, its message identifier, each group it
-goes to with the number it has there, the size of its header section and of its file, and the
-file's CRC-32C.
+A record is framed as `length ‖ tag ‖ type ‖ payload ‖ end`: the payload's length, four octets,
+least significant first; the tag, eight octets, SipHash-2-4 under the journal's key of the frame's
+offset, the type and the payload; the type, one octet; the payload; and the end mark, one octet.
+The journal's first record names its format and carries the key. Each start of the store appends a
+start record, with no payload, before anything else, and each other record is the commit of an
+article: its number in the store, its message identifier, each group it goes to with the number it
+has there, the size of its header section and of its file, and the file's CRC-32C. The start's
+frame is the shortest (`start_shortest`): appended where a torn tail was truncated, it cannot leave
+whole any frame cut away there.
 
 Reading stops at the first frame that does not check. If it is short, its length past any
-payload's, its end mark missing or its CRC-32C wrong — what an append the crash cut short can
-leave — and what is left is no longer than the one append that can have been cut, it is a torn
-tail, which the next start truncates: the format's frame while no record has been read, the
-largest frame after. Anything longer is corruption, and so is, wherever it is, a frame that
-checks but holds no record, a format of another version among them; a journal whose first record
-is not its format; and a format again.
+payload's, its end mark missing or its tag wrong — what an append the crash cut short can leave —
+what is left is no longer than the one append that can have been cut, the format's frame while no
+record has been read and the largest frame after, and no frame that checks starts in it after its
+first octet, as none does after the last thing written, it is a torn tail, which the next start
+truncates. Anything else is corruption, and so is, wherever it is, a frame that checks but holds no
+record, a format of another version among them, and a format again. Before its format a journal
+has no key, so its first frame is checked with the key it carries, which only a frame of the
+format's shape does.
 
-Proven: a journal of records reads back as those records (`scan_encoded`); after them, a frame
-cut short reads as a torn tail where it starts, whether the crash left a proper prefix of it
+Proven: a journal of records reads back as those records (`scan_encoded`); after them, a frame cut
+short reads as a torn tail where it starts, whether the crash left a proper prefix of it
 (`scan_torn`), that prefix and zeros to the frame's length (`scan_torn_zeros`), or its length and
-any octets to the frame's length but the end mark last (`scan_torn_fill`); so does the format's
+any octets to the frame's length but the end mark last (`scan_torn_fill`), whatever its tag, when
+no frame that checks starts in what is left after its first octet (`Quiet`); so does the format's
 frame cut short while it is alone (`scan_torn_format`, `scan_torn_format_zeros`,
-`scan_torn_format_fill`). That the octets any other crash leaves never make a frame that checks —
-the end mark where its length puts it and the CRC-32C right — is assumed.
+`scan_torn_format_fill`); and a frame that does not check, a record after it framed where it lies,
+is corruption (`scan_damaged`). That the octets a crash leaves never make a frame whose tag checks
+where it was not written is assumed: it takes the key.
 -/
 
 namespace DN.News.Journal
@@ -128,16 +136,26 @@ structure Commit where
   fileCrc : Nat
   deriving DecidableEq
 
+/-- A record of the journal: its format, carrying the key its tags are made with, the commit of an
+article, or the start of a run of the store. -/
 inductive Record
-  | format
+  | format (key : Bytes)
   | commit (c : Commit)
+  | start
   deriving DecidableEq
 
 def formatType : Nat := 1
 def commitType : Nat := 2
+def startType : Nat := 3
 
-/-- What the format record holds: the journal's name for itself and its version, one octet. -/
-def formatPayload : Bytes := ascii "dragons-net journal" ++ [BitVec.ofNat 8 1]
+/-- The journal's name for itself. -/
+def journalTitle : Bytes := ascii "dragons-net journal"
+
+/-- The title and the version, one octet. -/
+def magic : Bytes := journalTitle ++ [BitVec.ofNat 8 1]
+
+/-- The octets of a key. -/
+def keyLength : Nat := 16
 
 def Group.encode (g : Group) : Bytes :=
   BitVec.ofNat 8 g.name.length :: g.name ++ le 4 g.number
@@ -163,8 +181,8 @@ def Commit.ok (c : Commit) : Bool :=
 octets not ending in it, loses it; it is neither 0x00 nor 0xFF, which fill unwritten space. -/
 def endMark : Byte := BitVec.ofNat 8 0xA5
 
-/-- The octets before a payload: its length, the CRC and the type. -/
-def headerLength : Nat := 9
+/-- The octets before a payload: its length, the tag and the type. -/
+def headerLength : Nat := 13
 
 /-- The most octets a payload holds: that of the largest commit. -/
 def maxPayload : Nat := 8 + (1 + 250) + (1 + 16 * (1 + 64 + 4)) + 4 + 4 + 4
@@ -173,18 +191,44 @@ def maxPayload : Nat := 8 + (1 + 250) + (1 + 16 * (1 + 64 + 4)) + 4 + 4 + 4
 def maxFrame : Nat := headerLength + maxPayload + 1
 
 /-- The format's frame, the only append a journal without records can have had cut short. -/
-def firstFrame : Nat := headerLength + formatPayload.length + 1
+def firstFrame : Nat := headerLength + magic.length + keyLength + 1
 
-def frame (type : Nat) (payload : Bytes) : Bytes :=
-  le 4 payload.length ++ le 4 (crc32c (BitVec.ofNat 8 type :: payload)).toNat ++
+/-- The tag of a frame at `offset` in the journal: SipHash-2-4 under the journal's key, of the
+offset in eight octets, the type and the payload. -/
+def tagOf (key : Bytes) (offset type : Nat) (payload : Bytes) : Nat :=
+  (SipHash.tag key (le 8 offset ++ BitVec.ofNat 8 type :: payload)).toNat
+
+def frame (key : Bytes) (offset type : Nat) (payload : Bytes) : Bytes :=
+  le 4 payload.length ++ le 8 (tagOf key offset type payload) ++
     (BitVec.ofNat 8 type :: payload) ++ [endMark]
 
-def Record.encode : Record → Bytes
-  | .format => frame formatType formatPayload
-  | .commit c => frame commitType c.payload
+def Record.type : Record → Nat
+  | .format _ => formatType
+  | .commit _ => commitType
+  | .start => startType
 
-/-- The records encoded one after the other. -/
-def encodeAll (rs : List Record) : Bytes := (rs.map Record.encode).flatten
+def Record.payload : Record → Bytes
+  | .format key => magic ++ key
+  | .commit c => c.payload
+  | .start => []
+
+/-- The key a record carries: the format's. -/
+def Record.key : Record → Option Bytes
+  | .format key => some key
+  | _ => none
+
+/-- A record framed at `offset` in a journal keyed with `key`. -/
+def Record.encode (key : Bytes) (offset : Nat) (r : Record) : Bytes :=
+  frame key offset r.type r.payload
+
+/-- Records framed one after the other from `offset`, each at the place it lands. -/
+def encodeFrom (key : Bytes) : Nat → List Record → Bytes
+  | _, [] => []
+  | offset, r :: rs =>
+    r.encode key offset ++ encodeFrom key (offset + (r.encode key offset).length) rs
+
+/-- A journal: its format, carrying `key`, then the records `rs`. -/
+def journal (key : Bytes) (rs : List Record) : Bytes := encodeFrom key 0 (.format key :: rs)
 
 /-! ## Reading records -/
 
@@ -233,19 +277,17 @@ inductive Why
   | tooLong
   /-- its last octet is not the end mark -/
   | unterminated
-  /-- its CRC-32C is not that of its type and payload -/
-  | checksum
+  /-- its tag is not the one its key makes, or no key checks it -/
+  | tag
   /-- it checks, but is no record the journal holds -/
   | notARecord
-  /-- the journal's first record is not its format -/
-  | noFormat
   /-- a second format record -/
   | formatAgain
   deriving DecidableEq
 
 /-- Whether an append the crash cut short can leave a frame that fails so. -/
 def Why.torn : Why → Bool
-  | .short | .tooLong | .unterminated | .checksum => true
+  | .short | .tooLong | .unterminated | .tag => true
   | _ => false
 
 /-- What the octets at a place in the journal are. -/
@@ -269,10 +311,8 @@ structure Rules where
   firstFrame : Nat := firstFrame
   /-- whether the end mark is checked -/
   ended : Bool := true
-  /-- whether the CRC-32C is checked -/
-  crc : Bool := true
-  /-- whether the journal has to begin with its format -/
-  formatFirst : Bool := true
+  /-- whether the tag is checked -/
+  tagged : Bool := true
   /-- whether the format may appear only once -/
   formatOnce : Bool := true
   /-- whether a commit has to take its whole payload -/
@@ -281,36 +321,76 @@ structure Rules where
   checked : Bool := true
   /-- whether only a frame a torn append can leave may be a torn tail -/
   strict : Bool := true
+  /-- whether a torn tail may hold no frame that checks after its first octet -/
+  quiet : Bool := true
+  /-- whether only a frame of the format's shape carries a key -/
+  shaped : Bool := true
 
 def spec : Rules := {}
 
-/-- The record a type and payload make, if they make one. -/
-def recordOf (r : Rules) (type : Nat) (payload : Bytes) : Option Record :=
-  if type == formatType && payload == formatPayload then some .format
-  else if type == commitType then
-    (decodeCommit payload r.exact r.checked).map .commit
+@[simp] theorem spec_maxPayload : spec.maxPayload = maxPayload := rfl
+@[simp] theorem spec_maxFrame : spec.maxFrame = maxFrame := rfl
+@[simp] theorem spec_firstFrame : spec.firstFrame = firstFrame := rfl
+@[simp] theorem spec_ended : spec.ended = true := rfl
+@[simp] theorem spec_tagged : spec.tagged = true := rfl
+@[simp] theorem spec_formatOnce : spec.formatOnce = true := rfl
+@[simp] theorem spec_strict : spec.strict = true := rfl
+@[simp] theorem spec_quiet : spec.quiet = true := rfl
+@[simp] theorem spec_shaped : spec.shaped = true := rfl
+
+/-- The key a frame carries the way the format does: type 1 and a payload of the journal's title,
+a version and a key; with `shaped` false, the last sixteen octets of any payload. A journal's first
+frame is checked with the key it carries. -/
+def keyIn (r : Rules) (type : Nat) (payload : Bytes) : Option Bytes :=
+  if !r.shaped then
+    if keyLength ≤ payload.length then some (payload.drop (payload.length - keyLength)) else none
+  else if type == formatType && payload.length == magic.length + keyLength &&
+      payload.take journalTitle.length == journalTitle then some (payload.drop magic.length)
   else none
 
-/-- The frame at the start of `bs`. The end mark is checked before the CRC-32C, so that a frame
-cut short and filled is known without it. -/
-def next (r : Rules) (bs : Bytes) : Next :=
+/-- The record a type and payload make, if they make one. -/
+def recordOf (r : Rules) (type : Nat) (payload : Bytes) : Option Record :=
+  if type == formatType then
+    if payload.length == magic.length + keyLength && payload.take magic.length == magic then
+      some (.format (payload.drop magic.length))
+    else none
+  else if type == commitType then
+    (decodeCommit payload r.exact r.checked).map .commit
+  else if type == startType then
+    if payload.isEmpty then some .start else none
+  else none
+
+/-- Whether a stored tag is not the one a key makes; with no key, a tag cannot be checked. -/
+def tagWrong : Option Bytes → Nat → Nat → Nat → Bytes → Bool
+  | some key, stored, offset, type, payload => stored != tagOf key offset type payload
+  | none, _, _, _, _ => true
+
+/-- Whether `bs` holds at least `n` octets, looking at no more than `n` of them. -/
+def atLeast : Nat → Bytes → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, _ :: bs => atLeast n bs
+
+/-- The frame at `offset`, the start of `bs`; `key` is the journal's once its format has been read.
+The end mark is checked before the tag, so that a frame cut short and filled is known without it. -/
+def next (r : Rules) (key : Option Bytes) (offset : Nat) (bs : Bytes) : Next :=
   if bs.isEmpty then .done
-  else if bs.length < headerLength then .bad .short
+  else if !atLeast headerLength bs then .bad .short
   else
     let len := readLE (bs.take 4)
     if len > r.maxPayload then .bad .tooLong
-    else if bs.length < headerLength + len + 1 then .bad .short
+    else if !atLeast (headerLength + len + 1) bs then .bad .short
     else if r.ended && bs.getD (headerLength + len) 0 != endMark then .bad .unterminated
     else
-      let body := (bs.drop 8).take (1 + len)
-      if r.crc && readLE ((bs.drop 4).take 4) != (crc32c body).toNat then .bad .checksum
-      else
-        match body with
-        | t :: payload =>
+      match (bs.drop 12).take (1 + len) with
+      | t :: payload =>
+        if r.tagged && tagWrong (key <|> keyIn r t.toNat payload) (readLE ((bs.drop 4).take 8))
+            offset t.toNat payload then .bad .tag
+        else
           match recordOf r t.toNat payload with
           | some rec => .record rec (headerLength + len + 1) (bs.drop (headerLength + len + 1))
           | none => .bad .notARecord
-        | [] => .bad .notARecord
+      | [] => .bad .notARecord
 
 /-- How a journal ends. -/
 inductive End
@@ -326,32 +406,44 @@ structure Scan where
   ending : End
   deriving DecidableEq
 
-/-- What stops reading at `offset`, with `left` octets after it, `first` if no record has been
-read: a torn tail if a torn append can leave the frame and they fit the append that can have been
-cut, corruption otherwise. -/
-def stop (r : Rules) (offset left : Nat) (first : Bool) (why : Why) : End :=
-  if (why.torn || !r.strict) && left ≤ (if first then r.firstFrame else r.maxFrame) then
+/-- Whether the octets at `offset`, the start of `bs`, are a whole frame whose tag `key` makes. -/
+def checks (r : Rules) (key : Bytes) (offset : Nat) (bs : Bytes) : Bool :=
+  match next r (some key) offset bs with
+  | .record .. | .bad .notARecord => true
+  | _ => false
+
+/-- Whether a frame whose tag `key` makes starts anywhere in `bs`, which lies at `offset`. -/
+def anyChecks (r : Rules) (key : Bytes) : Nat → Bytes → Bool
+  | _, [] => false
+  | offset, b :: rest => checks r key offset (b :: rest) || anyChecks r key (offset + 1) rest
+
+/-- What stops reading at `offset`, the start of `bs`, `key` the journal's once its format has been
+read: a torn tail if a torn append can leave the frame, `bs` fits the append that can have been
+cut — the format's before the format, the largest frame after — and no frame that checks starts in
+it after its first octet, as none does after the last thing written; corruption otherwise. -/
+def stop (r : Rules) (offset : Nat) (bs : Bytes) (key : Option Bytes) (why : Why) : End :=
+  if (why.torn || !r.strict) && bs.length ≤ (if key.isSome then r.maxFrame else r.firstFrame) &&
+      !(r.quiet && key.any fun k => anyChecks r k (offset + 1) bs.tail) then
     .torn offset
   else .corrupt offset why
 
-/-- Reading from `offset`, `fuel` records at most; each record takes more than `headerLength`
-octets, so `scanWith` gives fuel enough and the first case is never met. -/
-def scanFrom (r : Rules) : Nat → Bytes → Nat → List Record → Scan
-  | 0, _, offset, acc => ⟨acc.reverse, .corrupt offset .tooLong⟩
-  | fuel + 1, bs, offset, acc =>
-    match next r bs with
+/-- Reading from `offset` with the journal's `key` once known, `fuel` records at most; each record
+takes more than `headerLength` octets, so `scanWith` gives fuel enough and the first case is never
+met. A journal's first record is its format: no other frame can be checked before its key. -/
+def scanFrom (r : Rules) : Nat → Bytes → Nat → Option Bytes → List Record → Scan
+  | 0, _, offset, _, acc => ⟨acc.reverse, .corrupt offset .tooLong⟩
+  | fuel + 1, bs, offset, key, acc =>
+    match next r key offset bs with
     | .done => ⟨acc.reverse, .clean⟩
-    | .bad why => ⟨acc.reverse, stop r offset bs.length acc.isEmpty why⟩
+    | .bad why => ⟨acc.reverse, stop r offset bs key why⟩
     | .record rec taken rest =>
-      if r.formatFirst && acc.isEmpty && rec != .format then
-        ⟨[], .corrupt offset .noFormat⟩
-      else if r.formatOnce && !acc.isEmpty && rec == .format then
+      if r.formatOnce && !acc.isEmpty && rec.key.isSome then
         ⟨acc.reverse, .corrupt offset .formatAgain⟩
-      else scanFrom r fuel rest (offset + taken) (rec :: acc)
+      else scanFrom r fuel rest (offset + taken) (key <|> rec.key) (rec :: acc)
 
 /-- **How a journal reads back**, under rules `r`. Each record takes more than `headerLength`
 octets, so the length of the journal is fuel enough. -/
-def scanWith (r : Rules) (bs : Bytes) : Scan := scanFrom r (bs.length + 1) bs 0 []
+def scanWith (r : Rules) (bs : Bytes) : Scan := scanFrom r (bs.length + 1) bs 0 none []
 
 def scan : Bytes → Scan := scanWith spec
 
@@ -370,13 +462,32 @@ def hex16 (n : Nat) : Bytes := hexOf 16 n
 def journalName : Bytes := ascii "journal"
 def finalName (seq : Nat) : Bytes := ascii "a" ++ hex16 seq
 def tempName (seq : Nat) : Bytes := ascii "t" ++ hex16 seq
+/-- An article's file set aside by recovery. -/
+def quarantineName (seq : Nat) : Bytes := ascii "q" ++ hex16 seq
+/-- The octets recovery truncated from the journal, kept under a number of the store's. -/
+def tailName (seq : Nat) : Bytes := ascii "j" ++ hex16 seq
 
 /-- A name the store gives a file. -/
 inductive Name
   | journal
   | final (seq : Nat)
   | temp (seq : Nat)
+  | quarantine (seq : Nat)
+  | tail (seq : Nat)
   deriving DecidableEq
+
+/-- The name a file of the store has. -/
+def Name.bytes : Name → Bytes
+  | .journal => journalName
+  | .final s => finalName s
+  | .temp s => tempName s
+  | .quarantine s => quarantineName s
+  | .tail s => tailName s
+
+/-- Whether a name's number fits its sixteen digits. -/
+def Name.valid : Name → Bool
+  | .journal => true
+  | .final s | .temp s | .quarantine s | .tail s => s < 2 ^ 64
 
 def digitValue (b : Byte) : Option Nat :=
   if 48 ≤ b.toNat ∧ b.toNat ≤ 57 then some (b.toNat - 48)
@@ -399,6 +510,8 @@ def parseName (n : Bytes) : Option Name :=
     | k :: ds =>
       if k == (ascii "a").headD 0 then .final <$> hexValue ds
       else if k == (ascii "t").headD 0 then .temp <$> hexValue ds
+      else if k == (ascii "q").headD 0 then .quarantine <$> hexValue ds
+      else if k == (ascii "j").headD 0 then .tail <$> hexValue ds
       else none
     | [] => none
 
@@ -457,18 +570,13 @@ theorem decode_payload (c : Commit) (h : c.ok = true) : decodeCommit c.payload =
     List.take_left', List.drop_left', hall]
 
 def Record.ok : Record → Bool
-  | .format => true
+  | .format key => key.length == keyLength
   | .commit c => c.ok
+  | .start => true
 
-def Record.payload : Record → Bytes
-  | .format => formatPayload
-  | .commit c => c.payload
+theorem magic_length : magic.length = 20 := by decide
 
-def Record.type : Record → Nat
-  | .format => formatType
-  | .commit _ => commitType
-
-theorem encode_frame (r : Record) : r.encode = frame r.type r.payload := by
+theorem type_toNat (r : Record) : (BitVec.ofNat 8 r.type).toNat = r.type := by
   cases r <;> rfl
 
 theorem groups_length (gs : List Group) (h : ∀ g ∈ gs, g.name.length ≤ 64) :
@@ -484,7 +592,10 @@ theorem groups_length (gs : List Group) (h : ∀ g ∈ gs, g.name.length ≤ 64)
 
 theorem payload_length (r : Record) (h : r.ok = true) : r.payload.length ≤ maxPayload := by
   cases r with
-  | format => decide
+  | format key =>
+    simp only [Record.ok, beq_iff_eq, keyLength] at h
+    simp only [Record.payload, List.length_append, magic_length, h, maxPayload]
+    omega
   | commit c =>
     simp only [Record.ok, Commit.ok, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
     obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, _⟩, _⟩, hm2⟩, _⟩, hg2⟩, hgs⟩, _⟩, _⟩, _⟩, _⟩ := h
@@ -492,208 +603,352 @@ theorem payload_length (r : Record) (h : r.ok = true) : r.payload.length ≤ max
     simp only [Record.payload, Commit.payload, List.length_append, List.length_cons, le_length,
       maxPayload]
     omega
+  | start => simp [Record.payload]
 
-theorem encode_length (r : Record) : r.encode.length = headerLength + r.payload.length + 1 := by
-  rw [encode_frame]
-  simp [frame, le_length, headerLength]
+theorem encode_length (r : Record) (key : Bytes) (offset : Nat) :
+    (r.encode key offset).length = headerLength + r.payload.length + 1 := by
+  simp [Record.encode, frame, le_length, headerLength]
   omega
 
-theorem encode_le (r : Record) (h : r.ok = true) : r.encode.length ≤ maxFrame := by
+/-- **The start's frame is the shortest**: every other record's is longer, whatever the keys and
+offsets, so an append of a start never leaves another record's frame whole. -/
+theorem start_shortest (r : Record) (hr : r ≠ .start) (k k' : Bytes) (o o' : Nat) :
+    (Record.start.encode k o).length < (r.encode k' o').length := by
+  rw [encode_length, encode_length]
+  cases r with
+  | format key => simp [Record.payload, magic_length]; omega
+  | commit c => simp [Record.payload, Commit.payload, le_length]; omega
+  | start => exact absurd rfl hr
+
+theorem encode_le (r : Record) (h : r.ok = true) (key : Bytes) (offset : Nat) :
+    (r.encode key offset).length ≤ maxFrame := by
   have := payload_length r h
   rw [encode_length]
   simp only [maxFrame]
   omega
 
-theorem format_encode_length : Record.format.encode.length = firstFrame := by
-  rw [encode_length]; rfl
+theorem format_encode_length (key : Bytes) (h : key.length = keyLength) (offset : Nat) :
+    ((Record.format key).encode key offset).length = firstFrame := by
+  rw [encode_length]
+  simp only [Record.payload, List.length_append, h, firstFrame]
+  omega
 
 /-- A frame laid out as reading takes it apart. -/
-theorem encode_shape (r : Record) (rest : Bytes) : r.encode ++ rest =
-    (le 4 r.payload.length ++ le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
-      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest)) := by
-  rw [encode_frame]; simp [frame]
+theorem encode_shape (r : Record) (key : Bytes) (offset : Nat) (rest : Bytes) :
+    r.encode key offset ++ rest =
+      (le 4 r.payload.length ++ le 8 (tagOf key offset r.type r.payload)) ++
+        (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest)) := by
+  simp [Record.encode, frame]
 
 theorem recordOf_payload (r : Record) (h : r.ok = true) :
-    recordOf spec (BitVec.ofNat 8 r.type).toNat r.payload = some r := by
+    recordOf spec r.type r.payload = some r := by
   cases r with
-  | format => decide
+  | format key =>
+    simp only [Record.ok, beq_iff_eq] at h
+    have ht : (magic ++ key).take magic.length = magic := List.take_left' rfl
+    have hd : (magic ++ key).drop magic.length = key := List.drop_left' rfl
+    simp [recordOf, Record.type, Record.payload, formatType, ht, hd, h]
   | commit c =>
     have hd := decode_payload c h
     simp [recordOf, Record.type, Record.payload, formatType, commitType, spec, hd]
+  | start => simp [recordOf, Record.type, Record.payload, formatType, commitType, startType]
 
-/-- **A record reads back as itself**, whatever follows it. -/
-theorem next_encode (r : Record) (h : r.ok = true) (rest : Bytes) :
-    next spec (r.encode ++ rest) = .record r r.encode.length rest := by
+/-- A format record carries its key the way reading looks for one. -/
+theorem keyIn_format (key : Bytes) (h : key.length = keyLength) :
+    keyIn spec formatType (magic ++ key) = some key := by
+  have ht : (magic ++ key).take journalTitle.length = journalTitle := by
+    rw [magic, List.append_assoc]; exact List.take_left' rfl
+  simp only [keyLength] at h
+  simp [keyIn, ht, magic_length, keyLength, h]
+
+theorem tag_lt (key : Bytes) (offset type : Nat) (payload : Bytes) :
+    tagOf key offset type payload < 256 ^ 8 := by
+  have := UInt64.toNat_lt (SipHash.tag key (le 8 offset ++ BitVec.ofNat 8 type :: payload))
+  simp only [tagOf]
+  omega
+
+theorem atLeast_eq (n : Nat) (bs : Bytes) : atLeast n bs = decide (n ≤ bs.length) := by
+  induction n generalizing bs with
+  | zero => simp [atLeast]
+  | succ n ih => cases bs <;> simp [atLeast, ih]
+
+theorem atLeast_of_le (n : Nat) (bs : Bytes) (h : n ≤ bs.length) : atLeast n bs = true := by
+  simp [atLeast_eq, h]
+
+theorem atLeast_of_lt (n : Nat) (bs : Bytes) (h : bs.length < n) : atLeast n bs = false := by
+  simp [atLeast_eq]; omega
+
+theorem isEmpty_of_length (bs : Bytes) (h : 0 < bs.length) : bs.isEmpty = false := by
+  cases bs with
+  | nil => simp at h
+  | cons _ _ => rfl
+
+/-- **A record reads back as itself**, whatever follows it, when the key reading checks it with
+is the one it was framed with. -/
+theorem next_encode (r : Record) (h : r.ok = true) (key : Option Bytes) (k : Bytes)
+    (hk : (key <|> keyIn spec r.type r.payload) = some k) (offset : Nat) (rest : Bytes) :
+    next spec key offset (r.encode k offset ++ rest) =
+      .record r (r.encode k offset).length rest := by
   have hp := payload_length r h
   have hlen : r.payload.length < 256 ^ 4 := by simp only [maxPayload] at hp; omega
-  have hcrc : (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat < 256 ^ 4 :=
-    UInt32.toNat_lt _
-  have hab : (le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat).length = 8 := by
+  have htag := tag_lt k offset r.type r.payload
+  have hab : (le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)).length = 12 := by
     simp [le_length]
-  have h4 : ((le 4 r.payload.length ++ le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
+  have h4 : ((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
       (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).take 4 =
       le 4 r.payload.length := by
     rw [List.append_assoc]; exact List.take_left' (le_length _ _)
-  have h44 : (((le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
-      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).drop 4).take 4 =
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat := by
+  have h48 : (((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
+      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).drop 4).take 8 =
+      le 8 (tagOf k offset r.type r.payload) := by
     rw [List.append_assoc, List.drop_left' (le_length _ _)]; exact List.take_left' (le_length _ _)
-  have hbody : (((le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
-      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).drop 8).take
+  have hbody : (((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
+      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).drop 12).take
         (1 + r.payload.length) = BitVec.ofNat 8 r.type :: r.payload := by
     rw [List.drop_left' hab, Nat.add_comm, List.take_succ_cons, List.take_left' rfl]
-  have hend : ((le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
+  have hend : ((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
       (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).getD
         (headerLength + r.payload.length) 0 = endMark := by
     rw [List.getD_eq_getElem?_getD,
       List.getElem?_append_right (by rw [hab]; simp only [headerLength]; omega), hab,
-      show headerLength + r.payload.length - 8 = r.payload.length + 1 by
+      show headerLength + r.payload.length - 12 = r.payload.length + 1 by
         simp only [headerLength]; omega]
     simp
-  have hrest : ((le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
+  have hrest : ((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
       (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).drop
         (headerLength + r.payload.length + 1) = rest := by
-    rw [show headerLength + r.payload.length + 1 = 8 + (r.payload.length + 2) by
+    rw [show headerLength + r.payload.length + 1 = 12 + (r.payload.length + 2) by
       simp only [headerLength]; omega, ← List.drop_drop, List.drop_left' hab]
     simp
-  have hfull : ((le 4 r.payload.length ++
-      le 4 (crc32c (BitVec.ofNat 8 r.type :: r.payload)).toNat) ++
+  have hfull : ((le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
       (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest))).length =
       headerLength + r.payload.length + 1 + rest.length := by
     simp [le_length, headerLength]; omega
-  have hl : ¬ (r.payload.length > maxPayload) := by omega
   have hr := recordOf_payload r h
-  rw [encode_shape]
+  have hw : tagWrong (key <|> keyIn spec r.type r.payload) (tagOf k offset r.type r.payload)
+      offset r.type r.payload = false := by
+    rw [hk]; simp [tagWrong]
+  rw [encode_shape, encode_length]
+  generalize (le 4 r.payload.length ++ le 8 (tagOf k offset r.type r.payload)) ++
+      (BitVec.ofNat 8 r.type :: (r.payload ++ endMark :: rest)) = bs
+    at h4 h48 hbody hend hrest hfull
+  have c1 := isEmpty_of_length bs (by rw [hfull]; omega)
+  have c2 := atLeast_of_le headerLength bs (by rw [hfull]; omega)
+  have c3 := atLeast_of_le (headerLength + r.payload.length + 1) bs (by rw [hfull]; omega)
+  have c4 : ¬ (r.payload.length > maxPayload) := by omega
   unfold next
-  simp only [spec] at hr ⊢
-  rw [h4, readLE_le _ _ hlen, hend, h44, readLE_le _ _ hcrc, hbody, hrest]
-  rw [if_neg (by rw [List.isEmpty_iff, ← List.length_eq_zero_iff, hfull]; omega),
-    if_neg (by rw [hfull]; simp only [headerLength]; omega), if_neg hl,
-    if_neg (by rw [hfull]; omega), if_neg (by simp), if_neg (by simp)]
-  simp only [hr, encode_length]
+  simp only [h4, readLE_le _ _ hlen, c1, c2, c3, c4, spec_maxPayload, spec_ended, spec_tagged, hend,
+    bne_self_eq_false, Bool.and_false, Bool.not_true, Bool.false_eq_true, ↓reduceIte, hbody, h48,
+    readLE_le _ _ htag, type_toNat, hw, hr, hrest]
 
-@[simp] theorem spec_formatFirst : spec.formatFirst = true := rfl
-@[simp] theorem spec_formatOnce : spec.formatOnce = true := rfl
+theorem encodeFrom_cons (key : Bytes) (offset : Nat) (r : Record) (rs : List Record) :
+    encodeFrom key offset (r :: rs) =
+      r.encode key offset ++ encodeFrom key (offset + (r.encode key offset).length) rs := rfl
 
-theorem encodeAll_cons (r : Record) (rs : List Record) :
-    encodeAll (r :: rs) = r.encode ++ encodeAll rs := rfl
-
-theorem encodeAll_length (rs : List Record) : headerLength * rs.length ≤ (encodeAll rs).length := by
+theorem encodeFrom_length (key : Bytes) (rs : List Record) :
+    ∀ offset, headerLength * rs.length ≤ (encodeFrom key offset rs).length := by
   induction rs with
-  | nil => simp [encodeAll]
+  | nil => intro offset; simp [encodeFrom]
   | cons r rs ih =>
-    rw [encodeAll_cons, List.length_append, encode_length, List.length_cons]
+    intro offset
+    have := ih (offset + (r.encode key offset).length)
+    have h2 := encode_length r key offset
+    rw [encodeFrom_cons, List.length_append, List.length_cons]
     simp only [Nat.mul_succ]
     omega
 
-/-- Reading on through commits, once the format has been read. -/
-theorem scanFrom_commits (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format) :
+/-- The records a journal holds after its format: records a correct store writes that carry no
+key, its commits and starts. -/
+def Appends (cs : List Record) : Prop := ∀ r ∈ cs, r.ok = true ∧ r.key = none
+
+/-- Reading on through what follows the format, once its key is known. -/
+theorem scanFrom_appends (k : Bytes) (cs : List Record) (hcs : Appends cs) :
     ∀ (fuel : Nat) (tail : Bytes) (off : Nat) (acc : List Record), cs.length < fuel → acc ≠ [] →
-      scanFrom spec fuel (encodeAll cs ++ tail) off acc =
-        scanFrom spec (fuel - cs.length) tail (off + (encodeAll cs).length)
+      scanFrom spec fuel (encodeFrom k off cs ++ tail) off (some k) acc =
+        scanFrom spec (fuel - cs.length) tail (off + (encodeFrom k off cs).length) (some k)
           (cs.reverse ++ acc) := by
   induction cs with
-  | nil => intro fuel tail off acc _ _; simp [encodeAll]
+  | nil => intro fuel tail off acc _ _; simp [encodeFrom]
   | cons c cs ih =>
     intro fuel tail off acc hf hacc
     have hc := hcs c (by simp)
     obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by simp at hf; omega⟩
-    rw [encodeAll_cons, List.append_assoc]
-    simp only [scanFrom, next_encode c hc.1]
+    rw [encodeFrom_cons, List.append_assoc]
+    simp only [scanFrom, next_encode c hc.1 (some k) k rfl]
     have hne : acc.isEmpty = false := by cases acc <;> simp_all
-    have hnf : (c == Record.format) = false := by simp [hc.2]
-    simp only [spec_formatFirst, spec_formatOnce, hne, hnf, Bool.and_false, Bool.false_and,
-      Bool.not_false, Bool.and_true, Bool.false_eq_true, ↓reduceIte]
-    rw [ih (fun r hr => hcs r (by simp [hr])) f tail (off + c.encode.length) (c :: acc)
+    simp only [spec_formatOnce, hne, hc.2, Option.isSome_none, Bool.and_false, Bool.not_false,
+      Bool.true_and, Bool.false_eq_true, ↓reduceIte]
+    rw [show (some k <|> (none : Option Bytes)) = some k from rfl]
+    rw [ih (fun r hr => hcs r (by simp [hr])) f tail (off + (c.encode k off).length) (c :: acc)
       (by simp at hf; omega) (by simp)]
     have e1 : f + 1 - (c :: cs).length = f - cs.length := by simp
-    have e2 : off + (c.encode ++ encodeAll cs).length =
-        off + c.encode.length + (encodeAll cs).length := by simp; omega
+    have e2 : off + (c.encode k off ++ encodeFrom k (off + (c.encode k off).length) cs).length =
+        off + (c.encode k off).length +
+          (encodeFrom k (off + (c.encode k off).length) cs).length := by simp; omega
     have e3 : (c :: cs).reverse ++ acc = cs.reverse ++ c :: acc := by simp
     rw [e1, e2, e3]
 
-/-- Reading on after a frame that reads as the format, then commits: what follows them is read
-with the format and the commits taken. -/
-theorem scan_after_format (F : Bytes) (h0 : 0 < F.length)
-    (hF : ∀ rest, next spec (F ++ rest) = .record .format F.length rest)
-    (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format) (tail : Bytes) :
-    ∃ g, scan (F ++ (encodeAll cs ++ tail)) =
-      scanFrom spec (g + 1) tail (F.length + (encodeAll cs).length) (cs.reverse ++ [.format]) := by
-  have hlen := encodeAll_length cs
+/-- Reading on after a frame that reads as a format carrying `k`, then records framed under `k`:
+what follows them is read with the format and the records taken. -/
+theorem scan_after_format (F k : Bytes) (h0 : 0 < F.length)
+    (hF : ∀ rest, next spec none 0 (F ++ rest) = .record (.format k) F.length rest)
+    (cs : List Record) (hcs : Appends cs) (tail : Bytes) :
+    ∃ g, scan (F ++ (encodeFrom k F.length cs ++ tail)) =
+      scanFrom spec (g + 1) tail (F.length + (encodeFrom k F.length cs).length) (some k)
+        (cs.reverse ++ [.format k]) := by
+  have hlen := encodeFrom_length k cs F.length
   simp only [headerLength] at hlen
-  obtain ⟨f, hfe⟩ : ∃ f, (F ++ (encodeAll cs ++ tail)).length + 1 = f + 1 := ⟨_, rfl⟩
-  have hl : (F ++ (encodeAll cs ++ tail)).length =
-      F.length + (encodeAll cs).length + tail.length := by
+  obtain ⟨f, hfe⟩ : ∃ f, (F ++ (encodeFrom k F.length cs ++ tail)).length + 1 = f + 1 :=
+    ⟨_, rfl⟩
+  have hl : (F ++ (encodeFrom k F.length cs ++ tail)).length =
+      F.length + (encodeFrom k F.length cs).length + tail.length := by
     simp only [List.length_append]; omega
   obtain ⟨g, hg⟩ : ∃ g, f - cs.length = g + 1 := ⟨f - cs.length - 1, by omega⟩
   refine ⟨g, ?_⟩
   rw [← hg]
-  calc scan (F ++ (encodeAll cs ++ tail))
-      = scanFrom spec (f + 1) (F ++ (encodeAll cs ++ tail)) 0 [] := by
+  calc scan (F ++ (encodeFrom k F.length cs ++ tail))
+      = scanFrom spec (f + 1) (F ++ (encodeFrom k F.length cs ++ tail)) 0 none [] := by
         simp only [scan, scanWith]; rw [hfe]
-    _ = scanFrom spec f (encodeAll cs ++ tail) (0 + F.length) [.format] := by
-        simp only [scanFrom, hF, spec_formatFirst, spec_formatOnce, List.isEmpty_nil,
-          bne_self_eq_false, Bool.and_false, Bool.false_eq_true, ↓reduceIte, Bool.not_true,
-          Bool.false_and, Bool.true_and]
-    _ = scanFrom spec (f - cs.length) tail (0 + F.length + (encodeAll cs).length)
-          (cs.reverse ++ [.format]) :=
-        scanFrom_commits cs hcs f tail (0 + F.length) [.format] (by omega) (by simp)
+    _ = scanFrom spec f (encodeFrom k F.length cs ++ tail) (0 + F.length) (some k)
+          [.format k] := by
+        simp only [scanFrom, hF, spec_formatOnce, List.isEmpty_nil, Bool.not_true,
+          Bool.false_and, Bool.and_false, Bool.false_eq_true, ↓reduceIte, Nat.zero_add]
+        rfl
+    _ = scanFrom spec (f - cs.length) tail (0 + F.length + (encodeFrom k F.length cs).length)
+          (some k) (cs.reverse ++ [.format k]) := by
+        rw [Nat.zero_add]
+        exact scanFrom_appends k cs hcs f tail F.length [.format k] (by omega) (by simp)
     _ = _ := by rw [Nat.zero_add]
 
+/-- The format's frame reads as the format, its tag checked with the key it carries. -/
+theorem next_format (k : Bytes) (hk : k.length = keyLength) (rest : Bytes) :
+    next spec none 0 ((Record.format k).encode k 0 ++ rest) =
+      .record (.format k) ((Record.format k).encode k 0).length rest :=
+  next_encode (.format k) (by simp [Record.ok, hk]) none k
+    (by simp only [Record.type, Record.payload]; rw [keyIn_format k hk]; rfl) 0 rest
+
+theorem journal_split (k : Bytes) (cs : List Record) :
+    journal k cs = (Record.format k).encode k 0 ++
+      encodeFrom k ((Record.format k).encode k 0).length cs := by
+  simp [journal, encodeFrom]
+
 /-- **A journal of records reads back as those records**, ending cleanly: its format, then its
-commits. -/
-theorem scan_encoded (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format) :
-    scan (encodeAll (.format :: cs)) = ⟨.format :: cs, .clean⟩ := by
-  obtain ⟨g, hg⟩ := scan_after_format Record.format.encode
-    (by rw [format_encode_length]; decide) (next_encode .format rfl) cs hcs []
+commits and starts. -/
+theorem scan_encoded (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
+    (hcs : Appends cs) : scan (journal k cs) = ⟨.format k :: cs, .clean⟩ := by
+  obtain ⟨g, hg⟩ := scan_after_format ((Record.format k).encode k 0) k
+    (by rw [format_encode_length k hk]; decide) (next_format k hk) cs hcs []
   rw [List.append_nil] at hg
-  rw [encodeAll_cons, hg]
+  rw [journal_split, hg]
   simp [scanFrom, next]
 
-/-- After the records, what does not check for a reason a torn append can leave, and is no longer
-than the largest frame, reads as a torn tail where it starts. -/
-theorem scan_stop (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format) (t : Bytes)
-    (w : Why) (hw : next spec t = .bad w) (hwt : w.torn = true) (ht : t.length ≤ maxFrame) :
-    scan (encodeAll (.format :: cs) ++ t) =
-      ⟨.format :: cs, .torn (encodeAll (.format :: cs)).length⟩ := by
-  obtain ⟨g, hg⟩ := scan_after_format Record.format.encode
-    (by rw [format_encode_length]; decide) (next_encode .format rfl) cs hcs t
-  rw [encodeAll_cons, List.append_assoc, hg]
-  simp only [scanFrom, hw]
-  simp [stop, hwt, ht, spec, List.length_append]
+/-- No frame whose tag `k` makes starts in `t`, which lies at `offset`, after its first octet: what
+an append the crash cut short leaves, since that tag takes the key. -/
+def Quiet (k : Bytes) (offset : Nat) (t : Bytes) : Prop :=
+  anyChecks spec k (offset + 1) t.tail = false
+
+/-- After the records, a frame `t` starts with that fails at `w`: what `stop` makes of it. -/
+theorem scan_stop_with (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
+    (hcs : Appends cs) (t : Bytes) (w : Why)
+    (hw : next spec (some k) (journal k cs).length t = .bad w) :
+    scan (journal k cs ++ t) = ⟨.format k :: cs, stop spec (journal k cs).length t (some k) w⟩ := by
+  obtain ⟨g, hg⟩ := scan_after_format ((Record.format k).encode k 0) k
+    (by rw [format_encode_length k hk]; decide) (next_format k hk) cs hcs t
+  have hj : (journal k cs).length = ((Record.format k).encode k 0).length +
+      (encodeFrom k ((Record.format k).encode k 0).length cs).length := by
+    rw [journal_split, List.length_append]
+  have hs : scan (journal k cs ++ t) = scanFrom spec (g + 1) t
+      (((Record.format k).encode k 0).length +
+        (encodeFrom k ((Record.format k).encode k 0).length cs).length) (some k)
+      (cs.reverse ++ [.format k]) := by
+    rw [journal_split, List.append_assoc, hg]
+  rw [hs, hj]
+  rw [hj] at hw
+  simp only [scanFrom, hw, List.reverse_append, List.reverse_cons, List.reverse_nil,
+    List.nil_append, List.reverse_reverse, List.singleton_append]
+
+/-- After the records, what does not check for a reason a torn append can leave, is no longer
+than the largest frame and is quiet reads as a torn tail where it starts. -/
+theorem scan_stop (k : Bytes) (hk : k.length = keyLength) (cs : List Record) (hcs : Appends cs)
+    (t : Bytes) (w : Why) (hw : next spec (some k) (journal k cs).length t = .bad w)
+    (hwt : w.torn = true) (ht : t.length ≤ maxFrame) (hq : Quiet k (journal k cs).length t) :
+    scan (journal k cs ++ t) = ⟨.format k :: cs, .torn (journal k cs).length⟩ := by
+  rw [scan_stop_with k hk cs hcs t w hw]
+  simp only [Quiet] at hq
+  simp [stop, hwt, ht, hq]
 
 /-- Before any record, what does not check for a reason a torn append can leave, and is no longer
 than the format's frame, reads as a torn tail at the start. -/
-theorem scan_stop_first (t : Bytes) (w : Why) (hw : next spec t = .bad w) (hwt : w.torn = true)
-    (ht : t.length ≤ firstFrame) : scan t = ⟨[], .torn 0⟩ := by
+theorem scan_stop_first (t : Bytes) (w : Why) (hw : next spec none 0 t = .bad w)
+    (hwt : w.torn = true) (ht : t.length ≤ firstFrame) : scan t = ⟨[], .torn 0⟩ := by
   simp only [scan, scanWith]
   obtain ⟨f, hfe⟩ : ∃ f, t.length + 1 = f + 1 := ⟨_, rfl⟩
   rw [hfe]
   simp only [scanFrom, hw]
-  simp [stop, hwt, ht, spec]
+  simp [stop, hwt, ht]
+
+/-- A record framed where it lies, anywhere in what follows `xs`, is a frame that checks. -/
+theorem anyChecks_encode (k : Bytes) (r : Record) (hr : r.ok = true) (rest : Bytes) :
+    ∀ (xs : Bytes) (offset : Nat),
+      anyChecks spec k offset (xs ++ r.encode k (offset + xs.length) ++ rest) = true := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro offset
+    have hc : checks spec k offset (r.encode k offset ++ rest) = true := by
+      simp [checks, next_encode r hr (some k) k rfl offset rest]
+    have hl : 0 < (r.encode k offset ++ rest).length := by
+      rw [List.length_append, encode_length]; omega
+    simp only [List.nil_append, List.length_nil, Nat.add_zero]
+    revert hc hl
+    cases r.encode k offset ++ rest with
+    | nil => simp
+    | cons b bs => intro hc _; simp [anyChecks, hc]
+  | cons x xs ih =>
+    intro offset
+    have := ih (offset + 1)
+    rw [show offset + 1 + xs.length = offset + (x :: xs).length by simp; omega] at this
+    show anyChecks spec k offset
+      (x :: (xs ++ r.encode k (offset + (x :: xs).length) ++ rest)) = true
+    simp only [anyChecks, this, Bool.or_true]
+
+/-- **Damage before the last record is corruption**: after the records, a frame that does not
+check, followed after its first octet by a record framed where it lies, is not a torn tail — an
+append the crash cut short is the last thing written. -/
+theorem scan_damaged (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
+    (hcs : Appends cs) (x : Byte) (xs : Bytes) (r : Record) (hr : r.ok = true) (rest : Bytes)
+    (w : Why) (hw : next spec (some k) (journal k cs).length
+      (x :: (xs ++ r.encode k ((journal k cs).length + 1 + xs.length) ++ rest)) = .bad w) :
+    scan (journal k cs ++ x :: (xs ++ r.encode k ((journal k cs).length + 1 + xs.length) ++ rest)) =
+      ⟨.format k :: cs, .corrupt (journal k cs).length w⟩ := by
+  rw [scan_stop_with k hk cs hcs _ w hw]
+  have hl := anyChecks_encode k r hr rest xs ((journal k cs).length + 1)
+  simp only [stop, List.tail_cons, Option.isSome_some, Option.any_some, hl, spec_quiet,
+    Bool.and_true, Bool.not_true, Bool.and_false, Bool.false_eq_true, ↓reduceIte]
 
 /-- A proper prefix of a frame is short: its length says more than there is. -/
-theorem next_short (r : Record) (h : r.ok = true) (n : Nat) (h0 : 0 < n)
-    (hn : n < r.encode.length) : next spec (r.encode.take n) = .bad .short := by
+theorem next_short (r : Record) (h : r.ok = true) (k : Bytes) (o : Nat) (key : Option Bytes)
+    (offset n : Nat) (h0 : 0 < n) (hn : n < (r.encode k o).length) :
+    next spec key offset ((r.encode k o).take n) = .bad .short := by
   have hp := payload_length r h
   have hlen : r.payload.length < 256 ^ 4 := by simp only [maxPayload] at hp; omega
-  have hl := encode_length r
-  have htl : (r.encode.take n).length = n := by simp [List.length_take]; omega
+  have hl := encode_length r k o
+  have htl : ((r.encode k o).take n).length = n := by simp [List.length_take]; omega
+  have hA : (r.encode k o).take 4 = le 4 r.payload.length := by
+    simp [Record.encode, frame, List.take_left', le_length]
+  have c1 := isEmpty_of_length ((r.encode k o).take n) (by rw [htl]; exact h0)
   unfold next
-  rw [if_neg (by rw [List.isEmpty_iff, ← List.length_eq_zero_iff, htl]; omega)]
   by_cases h9 : n < headerLength
-  · rw [if_pos (by rw [htl]; exact h9)]
-  · rw [if_neg (by rw [htl]; exact h9)]
-    have h4 : (r.encode.take n).take 4 = le 4 r.payload.length := by
-      rw [List.take_take, Nat.min_eq_left (by simp only [headerLength] at h9; omega), encode_frame]
-      simp [frame, List.take_left', le_length]
-    rw [h4, readLE_le _ _ hlen, if_neg (by simp only [spec]; omega),
-      if_pos (by rw [htl]; simp only [headerLength] at hl ⊢; omega)]
+  · have c2 := atLeast_of_lt headerLength ((r.encode k o).take n) (by rw [htl]; exact h9)
+    simp only [c1, c2, Bool.not_false, Bool.false_eq_true, ↓reduceIte]
+  · have c2 := atLeast_of_le headerLength ((r.encode k o).take n) (by rw [htl]; omega)
+    have h4 : ((r.encode k o).take n).take 4 = le 4 r.payload.length := by
+      rw [List.take_take, Nat.min_eq_left (by simp only [headerLength] at h9; omega), hA]
+    have c3 := atLeast_of_lt (headerLength + r.payload.length + 1) ((r.encode k o).take n)
+      (by rw [htl]; omega)
+    have c4 : ¬ (r.payload.length > maxPayload) := by omega
+    simp only [c1, c2, c3, c4, h4, readLE_le _ _ hlen, spec_maxPayload, Bool.not_true,
+      Bool.not_false, Bool.false_eq_true, ↓reduceIte]
 
 theorem getD_zeros (xs : Bytes) (k i : Nat) (h : xs.length ≤ i) :
     (xs ++ List.replicate k 0).getD i 0 = 0 := by
@@ -702,137 +957,152 @@ theorem getD_zeros (xs : Bytes) (k i : Nat) (h : xs.length ≤ i) :
 
 /-- **A frame cut short and filled with zeros to its length** misses its end mark, wherever the
 cut: the octet where its length, whatever of it is left, puts the mark is a zero. -/
-theorem next_zeros (r : Record) (h : r.ok = true) (n : Nat) (h0 : 0 < n)
-    (hn : n < r.encode.length) :
-    next spec (r.encode.take n ++ List.replicate (r.encode.length - n) 0) = .bad .unterminated := by
+theorem next_zeros (r : Record) (h : r.ok = true) (k : Bytes) (o : Nat) (key : Option Bytes)
+    (offset n : Nat) (h0 : 0 < n) (hn : n < (r.encode k o).length) :
+    next spec key offset ((r.encode k o).take n ++ List.replicate ((r.encode k o).length - n) 0) =
+      .bad .unterminated := by
   have hp := payload_length r h
   have hlen : r.payload.length < 256 ^ 4 := by simp only [maxPayload] at hp; omega
-  have hl := encode_length r
-  have htl : (r.encode.take n).length = n := by simp [List.length_take]; omega
-  have hbl : (r.encode.take n ++ List.replicate (r.encode.length - n) 0).length =
-      r.encode.length := by
+  have hl := encode_length r k o
+  have htl : ((r.encode k o).take n).length = n := by simp [List.length_take]; omega
+  have hbl : ((r.encode k o).take n ++ List.replicate ((r.encode k o).length - n) 0).length =
+      (r.encode k o).length := by
     simp only [List.length_append, htl, List.length_replicate]; omega
-  have hA : r.encode.take 4 = le 4 r.payload.length := by
-    rw [encode_frame]; simp [frame, List.take_left', le_length]
+  have hA : (r.encode k o).take 4 = le 4 r.payload.length := by
+    simp [Record.encode, frame, List.take_left', le_length]
   obtain ⟨len, hlen4, hle, hat⟩ : ∃ len,
-      readLE ((r.encode.take n ++ List.replicate (r.encode.length - n) 0).take 4) = len ∧
-        len ≤ r.payload.length ∧ n ≤ headerLength + len := by
+      readLE (((r.encode k o).take n ++ List.replicate ((r.encode k o).length - n) 0).take 4) =
+        len ∧ len ≤ r.payload.length ∧ n ≤ headerLength + len := by
     by_cases h4 : 4 ≤ n
     · refine ⟨r.payload.length, ?_, Nat.le_refl _, by simp only [headerLength] at hl ⊢; omega⟩
       rw [List.take_append_of_le_length (by rw [htl]; exact h4), List.take_take,
         Nat.min_eq_left h4, hA, readLE_le _ _ hlen]
     · refine ⟨_, rfl, ?_, by simp only [headerLength]; omega⟩
-      have hA' : r.encode.take n = (le 4 r.payload.length).take n := by
+      have hA' : (r.encode k o).take n = (le 4 r.payload.length).take n := by
         rw [← hA, List.take_take, Nat.min_eq_left (by omega)]
       rw [List.take_append, htl, hA', List.take_replicate, readLE_zeros]
       have := readLE_take_le 4 n r.payload.length
       have e : ((le 4 r.payload.length).take n).take 4 = (le 4 r.payload.length).take n := by
         rw [List.take_take, Nat.min_eq_right (by omega)]
       rw [e]; exact this
-  have hz : (r.encode.take n ++ List.replicate (r.encode.length - n) 0).getD
+  have hz : ((r.encode k o).take n ++ List.replicate ((r.encode k o).length - n) 0).getD
       (headerLength + len) 0 = 0 := getD_zeros _ _ _ (by rw [htl]; exact hat)
-  generalize r.encode.take n ++ List.replicate (r.encode.length - n) 0 = bs at hbl hlen4 hz
-  have c1 : ¬ (bs.isEmpty = true) := by
-    rw [List.isEmpty_iff, ← List.length_eq_zero_iff, hbl]; omega
-  have c2 : ¬ (bs.length < headerLength) := by rw [hbl]; simp only [headerLength] at hl ⊢; omega
+  generalize (r.encode k o).take n ++ List.replicate ((r.encode k o).length - n) 0 = bs
+    at hbl hlen4 hz
+  have c1 := isEmpty_of_length bs (by rw [hbl]; omega)
+  have c2 := atLeast_of_le headerLength bs (by rw [hbl]; simp only [headerLength] at hl ⊢; omega)
   have c3 : ¬ (len > maxPayload) := by omega
-  have c4 : ¬ (bs.length < headerLength + len + 1) := by rw [hbl]; omega
+  have c4 := atLeast_of_le (headerLength + len + 1) bs (by rw [hbl]; omega)
   have c5 : ((0 : Byte) != endMark) = true := by decide
   unfold next
-  simp only [spec, hlen4, hz, c1, c2, c3, c4, c5, Bool.true_and, Bool.false_eq_true, ↓reduceIte]
+  simp only [hlen4, hz, c1, c2, c3, c4, c5, spec_maxPayload, spec_ended, Bool.not_true,
+    Bool.true_and, Bool.false_eq_true, ↓reduceIte]
 
 /-- **A frame cut after its length and filled to its length** with octets that do not end in the
 end mark misses it. -/
-theorem next_fill (r : Record) (h : r.ok = true) (n : Nat) (h4 : 4 ≤ n) (z : Bytes) (b : Byte)
-    (hz : n + z.length + 1 = r.encode.length) (hb : b ≠ endMark) :
-    next spec (r.encode.take n ++ z ++ [b]) = .bad .unterminated := by
+theorem next_fill (r : Record) (h : r.ok = true) (k : Bytes) (o : Nat) (key : Option Bytes)
+    (offset n : Nat) (h4 : 4 ≤ n) (z : Bytes) (b : Byte)
+    (hz : n + z.length + 1 = (r.encode k o).length) (hb : b ≠ endMark) :
+    next spec key offset ((r.encode k o).take n ++ z ++ [b]) = .bad .unterminated := by
   have hp := payload_length r h
   have hlen : r.payload.length < 256 ^ 4 := by simp only [maxPayload] at hp; omega
-  have hl := encode_length r
-  have htl : (r.encode.take n).length = n := by simp [List.length_take]; omega
-  have hbl : (r.encode.take n ++ z ++ [b]).length = r.encode.length := by
+  have hl := encode_length r k o
+  have htl : ((r.encode k o).take n).length = n := by simp [List.length_take]; omega
+  have hbl : ((r.encode k o).take n ++ z ++ [b]).length = (r.encode k o).length := by
     simp only [List.length_append, htl, List.length_singleton]; omega
-  have hA : r.encode.take 4 = le 4 r.payload.length := by
-    rw [encode_frame]; simp [frame, List.take_left', le_length]
-  have h4' : (r.encode.take n ++ z ++ [b]).take 4 = le 4 r.payload.length := by
+  have hA : (r.encode k o).take 4 = le 4 r.payload.length := by
+    simp [Record.encode, frame, List.take_left', le_length]
+  have h4' : ((r.encode k o).take n ++ z ++ [b]).take 4 = le 4 r.payload.length := by
     rw [List.append_assoc, List.take_append_of_le_length (by rw [htl]; exact h4), List.take_take,
       Nat.min_eq_left h4, hA]
-  have hgb : (r.encode.take n ++ z ++ [b]).getD (headerLength + r.payload.length) 0 = b := by
-    rw [show headerLength + r.payload.length = (r.encode.take n ++ z).length by
+  have hgb : ((r.encode k o).take n ++ z ++ [b]).getD (headerLength + r.payload.length) 0 = b := by
+    rw [show headerLength + r.payload.length = ((r.encode k o).take n ++ z).length by
       simp only [List.length_append, htl, headerLength] at hl ⊢; omega]
     simp [List.getD_eq_getElem?_getD]
-  have hl4 : readLE ((r.encode.take n ++ z ++ [b]).take 4) = r.payload.length := by
+  have hl4 : readLE (((r.encode k o).take n ++ z ++ [b]).take 4) = r.payload.length := by
     rw [h4', readLE_le _ _ hlen]
-  generalize r.encode.take n ++ z ++ [b] = bs at hbl hl4 hgb
-  have c1 : ¬ (bs.isEmpty = true) := by
-    rw [List.isEmpty_iff, ← List.length_eq_zero_iff, hbl]; omega
-  have c2 : ¬ (bs.length < headerLength) := by rw [hbl]; simp only [headerLength] at hl ⊢; omega
+  generalize (r.encode k o).take n ++ z ++ [b] = bs at hbl hl4 hgb
+  have c1 := isEmpty_of_length bs (by rw [hbl]; omega)
+  have c2 := atLeast_of_le headerLength bs (by rw [hbl]; simp only [headerLength] at hl ⊢; omega)
   have c3 : ¬ (r.payload.length > maxPayload) := by omega
-  have c4 : ¬ (bs.length < headerLength + r.payload.length + 1) := by rw [hbl]; omega
+  have c4 := atLeast_of_le (headerLength + r.payload.length + 1) bs (by rw [hbl]; omega)
   have c5 : (b != endMark) = true := by simp [hb]
   unfold next
-  simp only [spec, hl4, hgb, c1, c2, c3, c4, c5, Bool.true_and, Bool.false_eq_true, ↓reduceIte]
+  simp only [hl4, hgb, c1, c2, c3, c4, c5, spec_maxPayload, spec_ended, Bool.not_true,
+    Bool.true_and, Bool.false_eq_true, ↓reduceIte]
 
 /-- **A torn append reads as a torn tail**: after the records, any proper prefix of a frame is
-taken for a torn tail at the offset where it starts. -/
-theorem scan_torn (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format)
-    (r : Record) (hr : r.ok = true) (n : Nat) (h0 : 0 < n) (hn : n < r.encode.length) :
-    scan (encodeAll (.format :: cs) ++ r.encode.take n) =
-      ⟨.format :: cs, .torn (encodeAll (.format :: cs)).length⟩ :=
-  scan_stop cs hcs _ .short (next_short r hr n h0 hn) rfl
-    (by have := encode_le r hr; rw [List.length_take]; omega)
+taken for a torn tail at the offset where it starts, when it is quiet. -/
+theorem scan_torn (k : Bytes) (hk : k.length = keyLength) (cs : List Record) (hcs : Appends cs)
+    (r : Record) (hr : r.ok = true) (k' : Bytes) (o n : Nat) (h0 : 0 < n)
+    (hn : n < (r.encode k' o).length)
+    (hq : Quiet k (journal k cs).length ((r.encode k' o).take n)) :
+    scan (journal k cs ++ (r.encode k' o).take n) =
+      ⟨.format k :: cs, .torn (journal k cs).length⟩ :=
+  scan_stop k hk cs hcs _ .short (next_short r hr k' o _ _ n h0 hn) rfl
+    (by have := encode_le r hr k' o; rw [List.length_take]; omega) hq
 
-/-- **A torn append filled with zeros reads as a torn tail**, wherever the cut. -/
-theorem scan_torn_zeros (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format)
-    (r : Record) (hr : r.ok = true) (n : Nat) (h0 : 0 < n) (hn : n < r.encode.length) :
-    scan (encodeAll (.format :: cs) ++
-        (r.encode.take n ++ List.replicate (r.encode.length - n) 0)) =
-      ⟨.format :: cs, .torn (encodeAll (.format :: cs)).length⟩ :=
-  scan_stop cs hcs _ .unterminated (next_zeros r hr n h0 hn) rfl
-    (by have := encode_le r hr; simp only [List.length_append, List.length_take,
-      List.length_replicate]; omega)
+/-- **A torn append filled with zeros reads as a torn tail**, wherever the cut, when it is
+quiet. -/
+theorem scan_torn_zeros (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
+    (hcs : Appends cs) (r : Record) (hr : r.ok = true) (k' : Bytes) (o n : Nat) (h0 : 0 < n)
+    (hn : n < (r.encode k' o).length)
+    (hq : Quiet k (journal k cs).length
+      ((r.encode k' o).take n ++ List.replicate ((r.encode k' o).length - n) 0)) :
+    scan (journal k cs ++
+        ((r.encode k' o).take n ++ List.replicate ((r.encode k' o).length - n) 0)) =
+      ⟨.format k :: cs, .torn (journal k cs).length⟩ :=
+  scan_stop k hk cs hcs _ .unterminated (next_zeros r hr k' o _ _ n h0 hn) rfl
+    (by have := encode_le r hr k' o; simp only [List.length_append, List.length_take,
+      List.length_replicate]; omega) hq
 
 /-- **A torn append cut after its length and filled with anything not ending in the end mark
-reads as a torn tail.** -/
-theorem scan_torn_fill (cs : List Record) (hcs : ∀ r ∈ cs, r.ok = true ∧ r ≠ .format)
-    (r : Record) (hr : r.ok = true) (n : Nat) (h4 : 4 ≤ n) (z : Bytes) (b : Byte)
-    (hz : n + z.length + 1 = r.encode.length) (hb : b ≠ endMark) :
-    scan (encodeAll (.format :: cs) ++ (r.encode.take n ++ z ++ [b])) =
-      ⟨.format :: cs, .torn (encodeAll (.format :: cs)).length⟩ :=
-  scan_stop cs hcs _ .unterminated (next_fill r hr n h4 z b hz hb) rfl
-    (by have := encode_le r hr; simp only [List.length_append, List.length_take,
-      List.length_singleton]; omega)
+reads as a torn tail**, when it is quiet. -/
+theorem scan_torn_fill (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
+    (hcs : Appends cs) (r : Record) (hr : r.ok = true) (k' : Bytes) (o n : Nat) (h4 : 4 ≤ n)
+    (z : Bytes) (b : Byte) (hz : n + z.length + 1 = (r.encode k' o).length) (hb : b ≠ endMark)
+    (hq : Quiet k (journal k cs).length ((r.encode k' o).take n ++ z ++ [b])) :
+    scan (journal k cs ++ ((r.encode k' o).take n ++ z ++ [b])) =
+      ⟨.format k :: cs, .torn (journal k cs).length⟩ :=
+  scan_stop k hk cs hcs _ .unterminated (next_fill r hr k' o _ _ n h4 z b hz hb) rfl
+    (by have := encode_le r hr k' o; simp only [List.length_append, List.length_take,
+      List.length_singleton]; omega) hq
 
 /-- A journal whose format record the crash cut short reads as a torn tail at its start. -/
-theorem scan_torn_format (n : Nat) (h0 : 0 < n) (hn : n < Record.format.encode.length) :
-    scan (Record.format.encode.take n) = ⟨[], .torn 0⟩ :=
-  scan_stop_first _ .short (next_short .format rfl n h0 hn) rfl
-    (by rw [List.length_take, ← format_encode_length]; omega)
+theorem scan_torn_format (k : Bytes) (hk : k.length = keyLength) (n : Nat) (h0 : 0 < n)
+    (hn : n < ((Record.format k).encode k 0).length) :
+    scan (((Record.format k).encode k 0).take n) = ⟨[], .torn 0⟩ :=
+  scan_stop_first _ .short (next_short (.format k) (by simp [Record.ok, hk]) k 0 _ _ n h0 hn) rfl
+    (by rw [List.length_take, ← format_encode_length k hk 0]; omega)
 
 /-- So does one whose format record the crash cut short and filled with zeros. -/
-theorem scan_torn_format_zeros (n : Nat) (h0 : 0 < n) (hn : n < Record.format.encode.length) :
-    scan (Record.format.encode.take n ++ List.replicate (Record.format.encode.length - n) 0) =
-      ⟨[], .torn 0⟩ :=
-  scan_stop_first _ .unterminated (next_zeros .format rfl n h0 hn) rfl
+theorem scan_torn_format_zeros (k : Bytes) (hk : k.length = keyLength) (n : Nat) (h0 : 0 < n)
+    (hn : n < ((Record.format k).encode k 0).length) :
+    scan (((Record.format k).encode k 0).take n ++
+        List.replicate (((Record.format k).encode k 0).length - n) 0) = ⟨[], .torn 0⟩ :=
+  scan_stop_first _ .unterminated
+    (next_zeros (.format k) (by simp [Record.ok, hk]) k 0 _ _ n h0 hn) rfl
     (by simp only [List.length_append, List.length_take, List.length_replicate]
-        rw [← format_encode_length]; omega)
+        rw [← format_encode_length k hk 0]; omega)
 
 /-- And so does one whose format record the crash cut after its length and filled with anything
 not ending in the end mark. -/
-theorem scan_torn_format_fill (n : Nat) (h4 : 4 ≤ n) (z : Bytes) (b : Byte)
-    (hz : n + z.length + 1 = Record.format.encode.length) (hb : b ≠ endMark) :
-    scan (Record.format.encode.take n ++ z ++ [b]) = ⟨[], .torn 0⟩ :=
-  scan_stop_first _ .unterminated (next_fill .format rfl n h4 z b hz hb) rfl
+theorem scan_torn_format_fill (k : Bytes) (hk : k.length = keyLength) (n : Nat) (h4 : 4 ≤ n)
+    (z : Bytes) (b : Byte) (hz : n + z.length + 1 = ((Record.format k).encode k 0).length)
+    (hb : b ≠ endMark) :
+    scan (((Record.format k).encode k 0).take n ++ z ++ [b]) = ⟨[], .torn 0⟩ :=
+  scan_stop_first _ .unterminated
+    (next_fill (.format k) (by simp [Record.ok, hk]) k 0 _ _ n h4 z b hz hb) rfl
     (by simp only [List.length_append, List.length_take, List.length_singleton]
-        rw [← format_encode_length]; omega)
+        rw [← format_encode_length k hk 0]; omega)
 
 /-! ## Every rule of reading matters -/
 
 /-- A version of the rules of reading with one of them changed. -/
 inductive Mutant
   | none
-  /-- the CRC-32C not checked -/
-  | crcUnchecked
+  /-- the tag not checked -/
+  | tagUnchecked
   /-- a torn tail one octet longer -/
   | tornLonger
   /-- a torn tail one octet shorter -/
@@ -845,8 +1115,6 @@ inductive Mutant
   | endUnchecked
   /-- before any record, a torn tail as long as the largest frame -/
   | tornAtStart
-  /-- a journal that need not begin with its format -/
-  | formatNotFirst
   /-- the format more than once -/
   | formatAgain
   /-- octets after a commit let be -/
@@ -855,53 +1123,79 @@ inductive Mutant
   | unchecked
   /-- a frame that checks but holds no record taken for a torn tail -/
   | notARecordTorn
+  /-- a torn tail taken whatever checks after its first octet -/
+  | laterUnchecked
+  /-- the last sixteen octets of any first frame taken for its key -/
+  | unshaped
   deriving DecidableEq
 
 def rulesOf : Mutant → Rules
   | .none => spec
-  | .crcUnchecked => { crc := false }
+  | .tagUnchecked => { tagged := false }
   | .tornLonger => { maxFrame := maxFrame + 1 }
   | .tornShorter => { maxFrame := maxFrame - 1 }
   | .lengthLonger => { maxPayload := maxPayload + 1 }
   | .lengthShorter => { maxPayload := maxPayload - 1 }
   | .endUnchecked => { ended := false }
   | .tornAtStart => { firstFrame := maxFrame }
-  | .formatNotFirst => { formatFirst := false }
   | .formatAgain => { formatOnce := false }
   | .inexact => { exact := false }
   | .unchecked => { checked := false }
   | .notARecordTorn => { strict := false }
+  | .laterUnchecked => { quiet := false }
+  | .unshaped => { shaped := false }
 
 def names : List (String × Mutant) :=
-  [("crc-unchecked", .crcUnchecked), ("torn-longer", .tornLonger),
+  [("tag-unchecked", .tagUnchecked), ("torn-longer", .tornLonger),
    ("torn-shorter", .tornShorter), ("length-longer", .lengthLonger),
    ("length-shorter", .lengthShorter), ("end-unchecked", .endUnchecked),
-   ("torn-at-start", .tornAtStart), ("format-not-first", .formatNotFirst),
-   ("format-again", .formatAgain), ("inexact", .inexact), ("unchecked", .unchecked),
-   ("not-a-record-torn", .notARecordTorn)]
+   ("torn-at-start", .tornAtStart), ("format-again", .formatAgain), ("inexact", .inexact),
+   ("unchecked", .unchecked), ("not-a-record-torn", .notARecordTorn),
+   ("later-unchecked", .laterUnchecked), ("key-unshaped", .unshaped)]
+
+/-- A key for the examples. -/
+def sampleKey : Bytes := (List.range 16).map (BitVec.ofNat 8 ·)
 
 /-- A commit for the examples. -/
 def sample : Commit :=
   ⟨1, ascii "<a@b.example>", [⟨ascii "local.test", 1⟩], 100, 200, 12345⟩
 
+/-- The premise `Appends` can hold: of the sample's commit and a start. -/
+theorem appends_witness : Appends [.commit sample, .start] := by
+  intro r hr
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl
+  · exact ⟨by decide, rfl⟩
+  · exact ⟨rfl, rfl⟩
+
+/-- The premise `Quiet` can hold: of an octet alone, after which nothing starts. -/
+theorem quiet_witness : Quiet sampleKey 0 [0] := rfl
+
+/-- A journal of the sample key's format alone, and a frame appended after it. -/
+def after (type : Nat) (payload : Bytes) : Bytes :=
+  let j := journal sampleKey []
+  j ++ frame sampleKey j.length type payload
+
 /-- A journal that tells the rules with one changed from the rules. None makes the kernel compute
-a CRC-32C over more than a small frame. -/
+a tag over more than a small frame. -/
 def witness : Mutant → Bytes
-  | .none => encodeAll [.format]
-  | .crcUnchecked =>
-    let j := encodeAll [.format, .commit sample]
+  | .none => journal sampleKey []
+  | .tagUnchecked =>
+    let j := journal sampleKey [.commit sample]
     j.set (j.length - 20) (BitVec.ofNat 8 120)
-  | .tornLonger => encodeAll [.format] ++ List.replicate (maxFrame + 1) 0
-  | .tornShorter => encodeAll [.format] ++ List.replicate maxFrame 0
-  | .lengthLonger => encodeAll [.format] ++ le 4 (maxPayload + 1) ++ List.replicate (maxFrame + 1) 0
-  | .lengthShorter => encodeAll [.format] ++ le 4 maxPayload ++ List.replicate (maxFrame + 1) 0
-  | .endUnchecked => encodeAll [.format] ++ ((Record.commit sample).encode.dropLast ++ [0])
+  | .tornLonger => journal sampleKey [] ++ List.replicate (maxFrame + 1) 0
+  | .tornShorter => journal sampleKey [] ++ List.replicate maxFrame 0
+  | .lengthLonger =>
+    journal sampleKey [] ++ le 4 (maxPayload + 1) ++ List.replicate (maxFrame + 1) 0
+  | .lengthShorter => journal sampleKey [] ++ le 4 maxPayload ++ List.replicate (maxFrame + 1) 0
+  | .endUnchecked => (after commitType sample.payload).dropLast ++ [0]
   | .tornAtStart => List.replicate (firstFrame + 1) 0
-  | .formatNotFirst => encodeAll [.commit sample]
-  | .formatAgain => encodeAll [.format, .format]
-  | .inexact => encodeAll [.format] ++ frame commitType (sample.payload ++ [0])
-  | .unchecked => encodeAll [.format] ++ frame commitType { sample with messageId := [] }.payload
-  | .notARecordTorn => encodeAll [.format] ++ frame 3 sample.payload
+  | .formatAgain => after formatType (magic ++ sampleKey)
+  | .inexact => after commitType (sample.payload ++ [0])
+  | .unchecked => after commitType { sample with messageId := [] }.payload
+  | .notARecordTorn => after 4 sample.payload
+  | .laterUnchecked => journal sampleKey [] ++ 0 :: Record.start.encode sampleKey (firstFrame + 1)
+  | .unshaped => frame sampleKey 0 commitType (magic ++ sampleKey)
 
 /-- **Each rule of reading matters**: with it changed, its witness reads otherwise. -/
 theorem mutants_differ : ∀ m, m ≠ .none →
@@ -935,25 +1229,22 @@ theorem hexValue_hex16 (n : Nat) (h : n < 2 ^ 64) : hexValue (hex16 n) = some n 
   simp
 
 /-- **The names the store gives read back as what they name.** -/
-theorem parseName_names (seq : Nat) (h : seq < 2 ^ 64) :
-    parseName journalName = some .journal ∧ parseName (finalName seq) = some (.final seq) ∧
-      parseName (tempName seq) = some (.temp seq) := by
-  refine ⟨by decide, ?_, ?_⟩ <;>
-  · have hl : (hex16 seq).length = 16 := hexOf_length _ _
-    simp only [parseName, finalName, tempName, journalName]
+theorem parseName_bytes (n : Name) (h : n.valid = true) : parseName n.bytes = some n := by
+  cases n with
+  | journal => decide
+  | final s | temp s | quarantine s | tail s =>
+    simp only [Name.valid, decide_eq_true_eq] at h
+    have hl : (hex16 s).length = 16 := hexOf_length _ _
+    simp only [Name.bytes, parseName, finalName, tempName, quarantineName, tailName, journalName]
     rw [if_neg (by intro e; rw [beq_iff_eq] at e; have := congrArg List.length e
                    simp [ascii, hl] at this)]
-    simp [ascii, hexValue_hex16 seq h]
+    simp [ascii, hexValue_hex16 s h]
 
-/-- **Different articles get different names**, their numbers below 2 ^ 64. -/
-theorem names_injective (a b : Nat) (ha : a < 2 ^ 64) (hb : b < 2 ^ 64) :
-    (finalName a = finalName b → a = b) ∧ (tempName a = tempName b → a = b) := by
-  refine ⟨fun e => ?_, fun e => ?_⟩
-  · have h1 := (parseName_names a ha).2.1
-    rw [e, (parseName_names b hb).2.1] at h1
-    exact (Name.final.inj (Option.some.inj h1)).symm
-  · have h1 := (parseName_names a ha).2.2
-    rw [e, (parseName_names b hb).2.2] at h1
-    exact (Name.temp.inj (Option.some.inj h1)).symm
+/-- **Different files get different names**: of any kind, their numbers below 2 ^ 64. -/
+theorem names_injective (n m : Name) (hn : n.valid = true) (hm : m.valid = true)
+    (e : n.bytes = m.bytes) : n = m := by
+  have h := parseName_bytes n hn
+  rw [e, parseName_bytes m hm] at h
+  exact (Option.some.inj h).symm
 
 end DN.News.Journal

@@ -592,7 +592,8 @@ class Sources(unittest.TestCase):
 
     def test_every_source_file_declares_its_licence(self) -> None:
         """`NOTICE` says the sources carry an SPDX identifier; this is what makes that true."""
-        kept = ("migration/",)  # the preserved snapshot keeps the headers it was taken with
+        # The preserved snapshot and the corpora keep the headers they were taken with.
+        kept = ("migration/", "tests/corpus/")
         suffixes = (".lean", ".rs", ".py", ".sh", ".c", ".h", ".sml")
         listed = run(["git", "ls-files", *(f"*{suffix}" for suffix in suffixes)]).stdout.split()
         ours = [name for name in listed if not name.startswith(kept)]

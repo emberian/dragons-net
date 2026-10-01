@@ -12,6 +12,10 @@
     "inn": {
       "url": "https://github.com/InterNetNews/inn",
       "note": "INN's test articles, taken byte for byte as the article lane's corpus."
+    },
+    "siphash": {
+      "url": "https://github.com/veorq/SipHash",
+      "note": "The reference implementation of SipHash; its test vectors are taken byte for byte as the journal lane's."
     }
   },
   "files": [
@@ -1470,6 +1474,22 @@
       "source_sha256": "2e5c602489e2dc6382f686cb843cfb64628718f1d33e7c9b423469e5ddad7397",
       "destination": "tests/corpus/inn-articles/LICENSE",
       "changes": "Unchanged: INN's licence, which covers the test articles beside it."
+    },
+    {
+      "source_repository": "siphash",
+      "source_revision": "32d067603b93b47828700880649198e0bfbbcffa",
+      "source_path": "vectors.h",
+      "source_sha256": "212c44114a63c6d84710b8627f3bc5ce155698accf2ea7bbff1c4b69c9f48d31",
+      "destination": "tests/corpus/siphash/vectors.h",
+      "changes": "Unchanged test vectors, under CC0 1.0 (tests/corpus/siphash/LICENSE_CC0), one of the three licences the authors offer."
+    },
+    {
+      "source_repository": "siphash",
+      "source_revision": "32d067603b93b47828700880649198e0bfbbcffa",
+      "source_path": "LICENSE_CC0",
+      "source_sha256": "5537d4d10b76b81b6e8dfd8b644480a4b1efa332fbb0cdb61126c5be781ef7b4",
+      "destination": "tests/corpus/siphash/LICENSE_CC0",
+      "changes": "Unchanged licence text, under CC0 1.0 (tests/corpus/siphash/LICENSE_CC0), one of the three licences the authors offer."
     }
   ],
   "removed": [
