@@ -128,7 +128,10 @@ happened; it knows nothing of articles.
   kind, is retried; each stops the store accepting articles for the rest of the run (POST then
   answers 403), since after a failed write the journal may end in part of a frame, which only the
   next start truncates, and after a failed sync Linux may have dropped what it could not write, so
-  that no later sync is trusted. What the store has, it keeps serving.
+  that no later sync is trusted. What the store has, it keeps serving. A process started again after
+  a failed sync, without a loss of power, reads what Linux kept in memory and may never write: what
+  is proved does not cover that run, whose next loss of power may leave the store refused until it
+  is repaired (#21).
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -157,15 +160,19 @@ happened; it knows nothing of articles.
   zeros, junk, parts of it out of order (Zheng et al., FAST 2013, found failures under power loss,
   shorn and unserializable writes among them, on thirteen of fifteen SSDs). Filled with zeros or
   with octets not ending in the end mark, it loses its end mark whatever the article it commits;
-  that no crash leaves a frame whose tag checks where it was not written is assumed — it takes the
-  key, which neither a crash's junk nor an article's author has. A frame that checks but is no
-  record a correct store writes — a format of another version among them — is corruption wherever it
-  is, and so is a second format. At most one append is in flight, and the next starts only after its
-  sync completed. The journal is bounded by the number of articles the store holds, and the
-  directory by those, the files set aside below and two names for each POST in flight, so recovery
-  is bounded work without a checkpoint.
-  Expiry, when it comes, brings compaction and checkpoints, and has to keep the Message-IDs of what
-  it removes, or a cutoff by date, since an article accepted once is rejected ever after.
+  that no crash leaves a frame whose tag checks where it was not written is assumed — past the
+  format it takes the key, which neither a crash's junk nor an article's author has; at the start,
+  where a format carries its own key, it takes a file system and a device that show a file no octets
+  of another after a crash — ext4 writes data before the metadata that points to it with
+  `data=ordered` and `data=journal`, and warns that `data=writeback` may show incorrect data; Zheng
+  et al. saw no write land elsewhere — and junk that makes such a frame only by chance. A frame that
+  checks but is no record a correct store writes — a format of another version among them — is
+  corruption wherever it is, and so is a second format. At most one append is in flight, and the
+  next starts only after its sync completed. The journal is bounded by the number of articles the
+  store holds, and the directory by those, the files set aside below and two names for each POST in
+  flight, so recovery is bounded work without a checkpoint. Expiry, when it comes, brings compaction
+  and checkpoints, and has to keep the Message-IDs of what it removes, or a cutoff by date, since an
+  article accepted once is rejected ever after.
 - Recovery first syncs the journal and the directory, so that what it reads is what a loss of power
   keeps — a process killed before its syncs leaves its writes in the page cache, where the next one
   would read them as done (PostgreSQL syncs its data directory at start for the same reason) — then
@@ -295,14 +302,15 @@ its index.
     leaves each name, independently, holding what it held at the directory's last sync or anything
     it has held since, and each file, independently, with the octets no operation touched since its
     last sync followed by any octets, up to the most it has held since, which are assumed never to
-    make a frame whose tag checks where it was not written; a file no name is left holding is freed;
-    so a synced file's data and a name whose directory was synced survive; an operation that fails
-    may have done any part of what it was asked, an append any first part of its octets and anything
-    else all or nothing, and after a failed sync no later sync of that file or of the directory is
-    trusted — recovery after a crash at any point of any run, operations failing or not, yields
-    every article answered 240, possibly some whose commit record was written but not answered, and
-    never one refused before its record was written or a partial one; recovery is idempotent. What
-    the host does when an operation fails is tested.
+    make a frame whose tag checks where it was not written, as above; a file no name is left holding
+    is freed; so a synced file's data and a name whose directory was synced survive; an operation
+    that fails may have done any part of what it was asked, an append any first part of its octets
+    and anything else all or nothing, and after a failed sync no later sync of that file or of the
+    directory is trusted until power is lost — recovery after a crash at any point of any run,
+    operations failing or not, yields every article answered 240, possibly some whose commit record
+    was written but not answered, and never one refused before its record was written or a partial
+    one; recovery is idempotent. A process started again after a failed sync without a loss of power
+    is not covered, as above. What the host does when an operation fails is tested.
 - Proved of the program: the CRC-32C and SipHash-2-4 functions it prints compute what
   `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the framers; no run
   of the program fails, by the analysis of [0004](0004-safety-analysis.md). The analysis now costs

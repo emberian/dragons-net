@@ -18,8 +18,8 @@ synced, survive; anything else may survive whole, in part, as junk or not at all
 systems are known to allow, so what holds after every crash here holds after theirs. An operation
 that fails may have done any part of what it was asked: an append, any first part of its octets;
 anything else, all of it or nothing; and once a sync of a file or of the directory has failed, no
-later sync of it is trusted until the next start, as Linux may have dropped what it could not
-write.
+later sync of it is trusted until power is lost, as Linux may have marked as clean what it could
+not write, so that a process started again before then reads what was never written.
 
 Proven: a crash may lose nothing (`crash_nothing_lost`); a sync, while trusted, is a barrier, after
 which a crash leaves the file as it is (`leaves_sync`), and so is a sync of the directory for names
@@ -56,7 +56,7 @@ structure Data where
   high : Nat
   /-- every append ever made to the file, at the offset where it was made -/
   written : List (Nat × Bytes)
-  /-- whether a sync still makes the file durable: not once one has failed, until the next start -/
+  /-- whether a sync still makes the file durable: not once one has failed, until power is lost -/
   trusted : Bool
   deriving DecidableEq
 
@@ -238,7 +238,7 @@ structure Fs where
   /-- the number the next file created gets -/
   next : Ino
   /-- whether a sync of the directory still makes its names durable: not once one has failed,
-  until the next start -/
+  until power is lost -/
   dirTrusted : Bool
   deriving DecidableEq
 
