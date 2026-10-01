@@ -1076,7 +1076,7 @@ theorem lookup_filter (q : Ino → Bool) (i : Ino) :
       · simp [hq]
     · have hne : (i == j) = false := by simpa using hi
       have hl : ∀ l : List (Ino × Data), List.lookup i ((j, d) :: l) = List.lookup i l :=
-        fun l => by simp [List.lookup, hne]
+        fun l => by simp [List.lookup_cons, hne]
       cases hq : q j
       · simp only [List.filter_cons, hq, Bool.false_eq_true, ↓reduceIte, hl, ih]
       · simp only [List.filter_cons, hq, ↓reduceIte, hl, ih]

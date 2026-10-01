@@ -166,22 +166,32 @@ happened; it knows nothing of articles.
   is bounded work without a checkpoint.
   Expiry, when it comes, brings compaction and checkpoints, and has to keep the Message-IDs of what
   it removes, or a cutoff by date, since an article accepted once is rejected ever after.
-- After reading the journal, recovery lists the directory. A temporary name is removed. A final name
-  without a record is removed too when the journal ended cleanly: an article answered 240 has its
-  record synced, and when no tail was cut every synced record reads back. When recovery truncated a
-  torn tail after a record, the last record may have been one answered 240 and damaged since, which
-  no reading can tell from an append cut short, so a final name without a record is set aside under
-  the quarantine name `q` and the same digits, never read and never removed, and the truncated
-  octets are kept, after their offset in eight octets, in a file named `j` and a sequence number of
-  its own. Then the directory is synced. Each start reports what is set aside; taking it back, or
-  removing it, is repair (#21). A name of any other shape makes the store corrupt.
+- Recovery first syncs the journal and the directory, so that what it reads is what a loss of power
+  keeps — a process killed before its syncs leaves its writes in the page cache, where the next one
+  would read them as done (PostgreSQL syncs its data directory at start for the same reason) — then
+  reads the journal, lists the directory and acts in this order. When the journal ends in a torn
+  tail after a record, the last record may have been one answered 240 and damaged since, which no
+  reading can tell from an append cut short: the tail's octets are kept, after their offset in eight
+  octets, in a file named `j` and a sequence number of its own, synced with the directory, and then
+  the tail is truncated and the truncation synced. Then names are tidied: a temporary name is
+  removed, and a final name without a record is set aside under the quarantine name `q` and the same
+  digits, never read and never removed — or removed, when that quarantine name exists already, or
+  when the journal ended cleanly and no `j` file is numbered above it: sequence numbers are given in
+  order, so a file numbered above every kept tail was made after them, and an article answered 240
+  since has its record synced, which then reads back. Then the directory is synced. No file is taken
+  before the truncation is synced, so a record a crash brings back from a tail whose truncation is
+  not yet durable still has its file, and reads as one written but not answered. An action of
+  recovery that fails stops it: the server does not start, and the next start recovers again. Each
+  start reports what is set aside; taking it back, or removing it, is repair (#21). A name of any
+  other shape makes the store corrupt.
 - A store that is corrupt is refused, and the server does not start and says why: a frame that does
   not check where what follows is no torn append's; a sequence number in two records; an article
   number in a group not above the one an earlier record gave it there (RFC 3977 §6); a record naming
   a file that is missing or of another size; a group the configuration lacks; files in the directory
-  and no journal. A journal is created only in an empty directory, and created again the same way
-  when nothing is left of it but a format cut short and no other name is there. The store is never
-  repaired silently; repair, when it comes, is a separate operation (#21).
+  and no journal; no sequence number left to give. A journal is created only in an empty directory,
+  and created again the same way when nothing is left of it but a format cut short and no other name
+  is there. The store is never repaired silently; repair, when it comes, is a separate operation
+  (#21).
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.
@@ -225,8 +235,9 @@ groups and the path identity to the program, which checks them: group names as R
 allows, none of them reserved, and the path identity as a domain name. Each opened connection
 carries whether it may post. The host also hands the program its wall clock, in UTC and not checked
 to move forward, and random octets: the run's value, which Message-IDs carry, and sixteen more that
-key a journal the program creates, written only to that journal and used for nothing else; and it
-logs each connection's address with the run and its index.
+key a journal the program creates, written only to that journal and used for nothing else, the
+program refusing to start without sixteen; and it logs each connection's address with the run and
+its index.
 
 ### Which articles are accepted, and what the server adds
 

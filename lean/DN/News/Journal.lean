@@ -34,12 +34,13 @@ format's shape does.
 Proven: a journal of records reads back as those records (`scan_encoded`); after them, a frame cut
 short reads as a torn tail where it starts, whether the crash left a proper prefix of it
 (`scan_torn`), that prefix and zeros to the frame's length (`scan_torn_zeros`), or its length and
-any octets to the frame's length but the end mark last (`scan_torn_fill`), whatever its tag, when
-no frame that checks starts in what is left after its first octet (`Quiet`); so does the format's
-frame cut short while it is alone (`scan_torn_format`, `scan_torn_format_zeros`,
-`scan_torn_format_fill`); and a frame that does not check, a record after it framed where it lies,
-is corruption (`scan_damaged`). That the octets a crash leaves never make a frame whose tag checks
-where it was not written is assumed: it takes the key.
+any octets to the frame's length but the end mark last (`scan_torn_fill`), whatever its tag, when no
+frame that checks starts in what is left after its first octet (`Quiet`); so does the format's frame
+cut short while it is alone (`scan_torn_format`, `scan_torn_format_zeros`, `scan_torn_format_fill`);
+a frame that does not check, a record after it framed where it lies, is corruption (`scan_damaged`);
+and reading looks at no octet past a frame it reads, so a journal read up to its torn tail reads the
+same records and ends cleanly (`next_take`, `scan_take`). That the octets a crash leaves never make
+a frame whose tag checks where it was not written is assumed: it takes the key.
 -/
 
 namespace DN.News.Journal
@@ -417,15 +418,22 @@ def anyChecks (r : Rules) (key : Bytes) : Nat → Bytes → Bool
   | _, [] => false
   | offset, b :: rest => checks r key offset (b :: rest) || anyChecks r key (offset + 1) rest
 
-/-- What stops reading at `offset`, the start of `bs`, `key` the journal's once its format has been
-read: a torn tail if a torn append can leave the frame, `bs` fits the append that can have been
-cut — the format's before the format, the largest frame after — and no frame that checks starts in
-it after its first octet, as none does after the last thing written; corruption otherwise. -/
+/-- Whether reading that stops at `offset`, the start of `bs`, `key` the journal's once its format
+has been read stops in a torn tail: if a torn append can leave the frame, `bs` fits the append that
+can have been cut — the format's before the format, the largest frame after — and no frame that
+checks starts in it after its first octet, as none does after the last thing written. -/
+def tornHere (r : Rules) (offset : Nat) (bs : Bytes) (key : Option Bytes) (why : Why) : Bool :=
+  (why.torn || !r.strict) && bs.length ≤ (if key.isSome then r.maxFrame else r.firstFrame) &&
+    !(r.quiet && key.any fun k => anyChecks r k (offset + 1) bs.tail)
+
+/-- What stops reading at `offset`: a torn tail where `tornHere` says so, corruption otherwise. -/
 def stop (r : Rules) (offset : Nat) (bs : Bytes) (key : Option Bytes) (why : Why) : End :=
-  if (why.torn || !r.strict) && bs.length ≤ (if key.isSome then r.maxFrame else r.firstFrame) &&
-      !(r.quiet && key.any fun k => anyChecks r k (offset + 1) bs.tail) then
-    .torn offset
-  else .corrupt offset why
+  if tornHere r offset bs key why then .torn offset else .corrupt offset why
+
+theorem stop_cases (r : Rules) (offset : Nat) (bs : Bytes) (key : Option Bytes) (why : Why) :
+    stop r offset bs key why = .torn offset ∨ stop r offset bs key why = .corrupt offset why := by
+  unfold stop
+  cases tornHere r offset bs key why <;> simp
 
 /-- Reading from `offset` with the journal's `key` once known, `fuel` records at most; each record
 takes more than `headerLength` octets, so `scanWith` gives fuel enough and the first case is never
@@ -875,7 +883,7 @@ theorem scan_stop (k : Bytes) (hk : k.length = keyLength) (cs : List Record) (hc
     scan (journal k cs ++ t) = ⟨.format k :: cs, .torn (journal k cs).length⟩ := by
   rw [scan_stop_with k hk cs hcs t w hw]
   simp only [Quiet] at hq
-  simp [stop, hwt, ht, hq]
+  simp [stop, tornHere, hwt, ht, hq]
 
 /-- Before any record, what does not check for a reason a torn append can leave, and is no longer
 than the format's frame, reads as a torn tail at the start. -/
@@ -885,7 +893,7 @@ theorem scan_stop_first (t : Bytes) (w : Why) (hw : next spec none 0 t = .bad w)
   obtain ⟨f, hfe⟩ : ∃ f, t.length + 1 = f + 1 := ⟨_, rfl⟩
   rw [hfe]
   simp only [scanFrom, hw]
-  simp [stop, hwt, ht]
+  simp [stop, tornHere, hwt, ht]
 
 /-- A record framed where it lies, anywhere in what follows `xs`, is a frame that checks. -/
 theorem anyChecks_encode (k : Bytes) (r : Record) (hr : r.ok = true) (rest : Bytes) :
@@ -923,7 +931,7 @@ theorem scan_damaged (k : Bytes) (hk : k.length = keyLength) (cs : List Record)
       ⟨.format k :: cs, .corrupt (journal k cs).length w⟩ := by
   rw [scan_stop_with k hk cs hcs _ w hw]
   have hl := anyChecks_encode k r hr rest xs ((journal k cs).length + 1)
-  simp only [stop, List.tail_cons, Option.isSome_some, Option.any_some, hl, spec_quiet,
+  simp only [stop, tornHere, List.tail_cons, Option.isSome_some, Option.any_some, hl, spec_quiet,
     Bool.and_true, Bool.not_true, Bool.and_false, Bool.false_eq_true, ↓reduceIte]
 
 /-- A proper prefix of a frame is short: its length says more than there is. -/
@@ -1096,6 +1104,174 @@ theorem scan_torn_format_fill (k : Bytes) (hk : k.length = keyLength) (n : Nat) 
     (by simp only [List.length_append, List.length_take, List.length_singleton]
         rw [← format_encode_length k hk 0]; omega)
 
+/-! ## What reading looks at -/
+
+/-- **Reading a frame looks at no octet past it**: a frame read as a record is read the same from
+any prefix that holds it, and what follows it is cut to that prefix. -/
+theorem next_take (r : Rules) (key : Option Bytes) (offset : Nat) (bs : Bytes) (rec : Record)
+    (taken : Nat) (rest : Bytes) (h : next r key offset bs = .record rec taken rest) (m : Nat)
+    (hm : taken ≤ m) :
+    0 < taken ∧ taken ≤ bs.length ∧ rest = bs.drop taken ∧
+      next r key offset (bs.take m) = .record rec taken (rest.take (m - taken)) := by
+  unfold next at h
+  by_cases c1 : bs.isEmpty = true
+  · rw [if_pos c1] at h; cases h
+  rw [if_neg c1] at h
+  by_cases c2 : (!atLeast headerLength bs) = true
+  · rw [if_pos c2] at h; cases h
+  rw [if_neg c2] at h
+  dsimp only at h
+  generalize hl : readLE (bs.take 4) = len at h
+  by_cases c3 : len > r.maxPayload
+  · rw [if_pos c3] at h; cases h
+  rw [if_neg c3] at h
+  by_cases c4 : (!atLeast (headerLength + len + 1) bs) = true
+  · rw [if_pos c4] at h; cases h
+  rw [if_neg c4] at h
+  by_cases c5 : (r.ended && bs.getD (headerLength + len) 0 != endMark) = true
+  · rw [if_pos c5] at h; cases h
+  rw [if_neg c5] at h
+  generalize hb : (bs.drop 12).take (1 + len) = body at h
+  rcases body with _ | ⟨t, payload⟩
+  · cases h
+  generalize ht : readLE ((bs.drop 4).take 8) = stored at h
+  by_cases c6 : (r.tagged && tagWrong (key <|> keyIn r t.toNat payload) stored offset t.toNat
+      payload) = true
+  · dsimp only at h; rw [if_pos c6] at h; cases h
+  dsimp only at h
+  rw [if_neg c6] at h
+  generalize hr : recordOf r t.toNat payload = found at h
+  rcases found with _ | rec'
+  · cases h
+  dsimp only at h
+  simp only [Next.record.injEq] at h
+  obtain ⟨rfl, rfl, rfl⟩ := h
+  simp only [Bool.not_eq_true', atLeast_eq, decide_eq_false_iff_not, Decidable.not_not] at c4
+  refine ⟨by omega, by omega, rfl, ?_⟩
+  simp only [headerLength] at c4 hm ⊢
+  have hm4 : 4 ≤ m := by omega
+  unfold next
+  have d1 : (bs.take m).isEmpty = false := by
+    obtain ⟨k, rfl⟩ : ∃ k, m = k + 1 := ⟨m - 1, by omega⟩
+    cases bs with
+    | nil => simp at c4
+    | cons _ _ => rfl
+  have d2 : atLeast 13 (bs.take m) = true := by
+    rw [atLeast_eq]; simp only [List.length_take, decide_eq_true_eq]; omega
+  have d3 : (bs.take m).take 4 = bs.take 4 := by rw [List.take_take, Nat.min_eq_left hm4]
+  have d4 : atLeast (13 + len + 1) (bs.take m) = true := by
+    rw [atLeast_eq]; simp only [List.length_take, decide_eq_true_eq]; omega
+  have d5 : (bs.take m).getD (13 + len) 0 = bs.getD (13 + len) 0 := by
+    simp only [List.getD_eq_getElem?_getD, List.getElem?_take]
+    rw [if_pos (by omega)]
+  have d6 : ((bs.take m).drop 12).take (1 + len) = (bs.drop 12).take (1 + len) := by
+    rw [List.drop_take, List.take_take, Nat.min_eq_left (by omega)]
+  have d7 : ((bs.take m).drop 4).take 8 = (bs.drop 4).take 8 := by
+    rw [List.drop_take, List.take_take, Nat.min_eq_left (by omega)]
+  have d8 : (bs.take m).drop (13 + len + 1) = (bs.drop (13 + len + 1)).take (m - (13 + len + 1)) :=
+    List.drop_take
+  simp only [headerLength] at c2 c5 hb
+  simp only [headerLength, d1, d2, d3, hl, c3, d4, d5, d6, d7, ht, hb, d8, Bool.not_true,
+    Bool.false_eq_true, ↓reduceIte] at c5 ⊢
+  simp only [Bool.not_eq_true] at c5 c6
+  simp only [c5, c6, Bool.false_eq_true, ↓reduceIte, hr]
+
+/-- Reading stops in a torn tail no earlier than where it started. -/
+theorem scanFrom_torn_ge (r : Rules) :
+    ∀ (fuel : Nat) (bs : Bytes) (off : Nat) (key : Option Bytes) (acc rs : List Record) (x : Nat),
+      scanFrom r fuel bs off key acc = ⟨rs, .torn x⟩ → off ≤ x
+  | 0, _, _, _, _, _, _, h => by simp [scanFrom] at h
+  | fuel + 1, bs, off, key, acc, rs, x, h => by
+    cases hn : next r key off bs with
+    | done => simp [scanFrom, hn] at h
+    | bad w =>
+      simp only [scanFrom, hn, Scan.mk.injEq] at h
+      rcases stop_cases r off bs key w with e | e <;> rw [e] at h <;> simp at h
+      omega
+    | record rec taken rest =>
+      simp only [scanFrom, hn] at h
+      split at h
+      · simp at h
+      · have := scanFrom_torn_ge r fuel rest (off + taken) _ _ rs x h
+        omega
+
+/-- Reading up to a torn tail reads the same records and ends cleanly there. -/
+theorem scanFrom_take (r : Rules) :
+    ∀ (fuel : Nat) (bs : Bytes) (off : Nat) (key : Option Bytes) (acc rs : List Record) (x : Nat),
+      scanFrom r fuel bs off key acc = ⟨rs, .torn x⟩ → ∀ fuel', (bs.take (x - off)).length < fuel' →
+        scanFrom r fuel' (bs.take (x - off)) off key acc = ⟨rs, .clean⟩
+  | 0, _, _, _, _, _, _, h, _, _ => by simp [scanFrom] at h
+  | fuel + 1, bs, off, key, acc, rs, x, h, fuel', hf => by
+    obtain ⟨f, rfl⟩ : ∃ f, fuel' = f + 1 := ⟨fuel' - 1, by omega⟩
+    cases hn : next r key off bs with
+    | done => simp [scanFrom, hn] at h
+    | bad w =>
+      simp only [scanFrom, hn, Scan.mk.injEq] at h
+      rcases stop_cases r off bs key w with e | e <;> rw [e] at h
+      · obtain ⟨rfl, hx⟩ := h
+        simp only [End.torn.injEq] at hx
+        subst hx
+        simp [scanFrom, next]
+      · simp at h
+    | record rec taken rest =>
+      simp only [scanFrom, hn] at h
+      split at h
+      · simp at h
+      · rename_i hfa
+        have hat := scanFrom_torn_ge r fuel rest (off + taken) _ _ rs x h
+        obtain ⟨hpos, hlt, hrest, htake⟩ := next_take r key off bs rec taken rest hn (x - off)
+          (by omega)
+        have ih := scanFrom_take r fuel rest (off + taken) _ _ rs x h f
+        simp only [scanFrom, htake, hfa, Bool.false_eq_true, ↓reduceIte]
+        have e : x - off - taken = x - (off + taken) := by omega
+        rw [e]
+        apply ih
+        subst hrest
+        simp only [List.length_take, List.length_drop] at hf ⊢
+        omega
+
+/-- Reading stops in a torn tail before the end of what it reads. -/
+theorem scanFrom_torn_lt (r : Rules) :
+    ∀ (fuel : Nat) (bs : Bytes) (off : Nat) (key : Option Bytes) (acc rs : List Record) (x : Nat),
+      scanFrom r fuel bs off key acc = ⟨rs, .torn x⟩ → x < off + bs.length
+  | 0, _, _, _, _, _, _, h => by simp [scanFrom] at h
+  | fuel + 1, bs, off, key, acc, rs, x, h => by
+    cases hn : next r key off bs with
+    | done => simp [scanFrom, hn] at h
+    | bad w =>
+      simp only [scanFrom, hn, Scan.mk.injEq] at h
+      have hpos : 0 < bs.length := by
+        cases bs with
+        | nil => simp [next] at hn
+        | cons _ _ => simp
+      rcases stop_cases r off bs key w with e | e <;> rw [e] at h <;> simp at h
+      omega
+    | record rec taken rest =>
+      simp only [scanFrom, hn] at h
+      split at h
+      · simp at h
+      · obtain ⟨_, hlt, hrest, _⟩ := next_take r key off bs rec taken rest hn taken (Nat.le_refl _)
+        have := scanFrom_torn_lt r fuel rest (off + taken) _ _ rs x h
+        subst hrest
+        simp only [List.length_drop] at this
+        omega
+
+/-- A journal's torn tail starts within it. -/
+theorem scan_torn_le (bs : Bytes) (rs : List Record) (x : Nat) (h : scan bs = ⟨rs, .torn x⟩) :
+    x ≤ bs.length := by
+  simp only [scan, scanWith] at h
+  have := scanFrom_torn_lt spec _ bs 0 none [] rs x h
+  omega
+
+/-- **Reading a journal up to its torn tail reads cleanly**: the octets before the tail hold the
+same records, and nothing after them. -/
+theorem scan_take (bs : Bytes) (rs : List Record) (x : Nat) (h : scan bs = ⟨rs, .torn x⟩) :
+    scan (bs.take x) = ⟨rs, .clean⟩ := by
+  simp only [scan, scanWith] at h ⊢
+  have := scanFrom_take spec _ bs 0 none [] rs x h ((bs.take x).length + 1)
+    (by rw [Nat.sub_zero]; omega)
+  simpa using this
+
 /-! ## Every rule of reading matters -/
 
 /-- A version of the rules of reading with one of them changed. -/
@@ -1239,6 +1415,56 @@ theorem parseName_bytes (n : Name) (h : n.valid = true) : parseName n.bytes = so
     rw [if_neg (by intro e; rw [beq_iff_eq] at e; have := congrArg List.length e
                    simp [ascii, hl] at this)]
     simp [ascii, hexValue_hex16 s h]
+
+theorem digitValue_lt (b : Byte) (d : Nat) (h : digitValue b = some d) : d < 16 := by
+  unfold digitValue at h
+  split at h
+  · simp only [Option.some.injEq] at h; omega
+  · split at h
+    · simp only [Option.some.injEq] at h; omega
+    · simp at h
+
+theorem foldlM_hexStep_lt : ∀ (ds : Bytes) (acc v : Nat), ds.foldlM hexStep acc = some v →
+    v < (acc + 1) * 16 ^ ds.length
+  | [], acc, v, h => by simp only [List.foldlM_nil, pure, Option.some.injEq] at h; subst h; simp
+  | d :: ds, acc, v, h => by
+    simp only [List.foldlM_cons] at h
+    cases hd : hexStep acc d with
+    | none => simp [hd] at h
+    | some a =>
+      simp only [hd, Option.bind_eq_bind, Option.bind_some] at h
+      have ih := foldlM_hexStep_lt ds a v h
+      simp only [hexStep, Option.map_eq_some_iff] at hd
+      obtain ⟨dv, hdv, rfl⟩ := hd
+      have := digitValue_lt d dv hdv
+      have hle : (16 * acc + dv + 1) * 16 ^ ds.length ≤ (acc + 1) * 16 ^ (d :: ds).length := by
+        rw [List.length_cons, Nat.pow_succ, Nat.mul_comm (16 ^ ds.length) 16, ← Nat.mul_assoc]
+        exact Nat.mul_le_mul_right _ (by omega)
+      omega
+
+/-- **Every name the store reads carries a number below 2 ^ 64.** -/
+theorem parseName_valid (b : Bytes) (n : Name) (h : parseName b = some n) : n.valid = true := by
+  have hv : ∀ ds v, hexValue ds = some v → v < 2 ^ 64 := by
+    intro ds v hd
+    simp only [hexValue] at hd
+    split at hd
+    · rename_i hl
+      have := foldlM_hexStep_lt ds 0 v hd
+      rw [hl] at this
+      simpa using this
+    · simp at hd
+  unfold parseName at h
+  split at h
+  · simp only [Option.some.injEq] at h; subst h; rfl
+  · split at h
+    · repeat' (split at h)
+      all_goals
+        try simp only [Option.map_eq_some_iff, Functor.map] at h
+      all_goals first
+        | (obtain ⟨v, hv', rfl⟩ := h
+           simp [Name.valid, hv _ v hv'])
+        | simp at h
+    · simp at h
 
 /-- **Different files get different names**: of any kind, their numbers below 2 ^ 64. -/
 theorem names_injective (n m : Name) (hn : n.valid = true) (hm : m.valid = true)
