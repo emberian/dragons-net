@@ -196,9 +196,9 @@ happened; it knows nothing of articles.
   number in a group not above the one an earlier record gave it there (RFC 3977 §6); a record naming
   a file that is missing or of another size; a group the configuration lacks; files in the directory
   and no journal; no sequence number left to give. A journal is created only in an empty directory,
-  and created again the same way when nothing is left of it but a format cut short and no other name
-  is there. The store is never repaired silently; repair, when it comes, is a separate operation
-  (#21).
+  and made again — cut to nothing, its format written and synced — when nothing is left of it but a
+  format cut short and no other name is there. The store is never repaired silently; repair, when it
+  comes, is a separate operation (#21).
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.

@@ -27,8 +27,8 @@ it wrote and that file's CRC-32C (`spool_crash`); what the crash left is a spool
 gone with every other file, left with no format, or read as its records — so the next start begins
 from a spool. A restart, its syncs trusted, is read as a crash that lost nothing, and what the start
 has synced is a spool again (`spool_restart`), assuming only what is assumed past the journal's
-format. That recovery's own actions keep a spool, so that a crash during them is like any other, is
-for the next layer to prove.
+format. That recovery's own actions keep a spool, so that a crash during them is like any other,
+`DN.News.RecoveryRun` proves.
 -/
 
 namespace DN.News.Spool
@@ -712,6 +712,20 @@ theorem crash_spool_unformatted (cfg : Config) (hkey : cfg.key.length = keyLengt
     fun c hcm => by simp [hans] at hcm,
     fun c hcm => by simp [Phase.kept, Phase.back, commitsOf] at hcm⟩
 
+/-- The commits of the records kept and one more allowed are among those of the records kept and
+all allowed. -/
+theorem commits_snoc (rs back : List Record) (r : Record) (hr : r ∈ back) :
+    ∀ c ∈ commitsOf (rs ++ [r] ++ []), c ∈ commitsOf (rs ++ back) := by
+  intro c hc
+  simp only [List.append_nil, commitsOf_append, List.mem_append] at hc ⊢
+  rcases hc with hc | hc
+  · exact Or.inl hc
+  · refine Or.inr ?_
+    simp only [commitsOf, List.mem_filterMap] at hc ⊢
+    obtain ⟨q, hq, hqc⟩ := hc
+    simp only [List.mem_singleton] at hq
+    exact ⟨q, hq ▸ hr, hqc⟩
+
 /-- **A crash of the spool**, under what is assumed of the journal: recovery does not find the store
 corrupt; it finds every article answered 240, and only commits whose records the store appended,
 each with the file the store wrote for it; and what the crash left is a spool again, with the
@@ -811,16 +825,7 @@ theorem spool_crash (cfg : Config) (hkey : cfg.key.length = keyLength) (s : Fs) 
           (fun c hcm => hcm) hrules ij _ hij hdt hf hap
         exact ⟨st, ops, .found k rs back, hrec, hrv, hsp, harts, hnx,
           fun c hcm => hcm, Or.inr (Or.inr ⟨k, rs, back, rfl, hkey'⟩)⟩
-      · have hsub : ∀ c ∈ commitsOf (rs ++ [r] ++ []), c ∈ commitsOf (rs ++ back) := by
-          intro c hcm
-          simp only [List.append_nil, commitsOf_append, List.mem_append] at hcm ⊢
-          rcases hcm with hcm | hcm
-          · exact Or.inl hcm
-          · refine Or.inr ?_
-            simp only [commitsOf, List.mem_filterMap] at hcm ⊢
-            obtain ⟨q, hq, hqc⟩ := hcm
-            simp only [List.mem_singleton] at hq
-            exact ⟨q, hq ▸ hr, hqc⟩
+      · have hsub := commits_snoc rs back r hr
         obtain ⟨st, ops, hrec, hrv, hsp, harts, hkey', hnx⟩ := crash_spool_found cfg hkey s t v h
           hc k rs back (rs ++ [r]) [] (by rw [hp]; exact ⟨rfl, rfl⟩) hsub
           (fun c hcm => by rw [commitsOf_append]; exact List.mem_append_left _ hcm)

@@ -98,7 +98,7 @@ proofs() {
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 213
+  "$lean" --run scripts/Audit.lean --regressions 215
 }
 
 # Tests that run the built code, and the Rust crates.
