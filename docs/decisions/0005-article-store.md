@@ -89,6 +89,9 @@ happened; it knows nothing of articles.
   flight. The bytes to write are copied out of the heap inside `dn_emit`, and what is read is
   copied in inside `dn_next`, so the host still touches the heap only inside a call; a job moves at
   most 16,384 octets.
+- At most one sync of the directory is in flight: the next starts only once the program has
+  learned how the last ended, so that a failed one stops the store before any later one is
+  trusted.
 - The workers are a few threads with a queue, and a completed job wakes the loop through an
   `eventfd` in the same `poll`. They are the host's own code: a pool is the norm for this, a library
   for it would outweigh the host, and `io_uring` would gain nothing here.
@@ -128,7 +131,9 @@ happened; it knows nothing of articles.
   kind, is retried; each stops the store accepting articles for the rest of the run (POST then
   answers 403), since after a failed write the journal may end in part of a frame, which only the
   next start truncates, and after a failed sync Linux may have dropped what it could not write, so
-  that no later sync is trusted. What the store has, it keeps serving. A process started again after
+  that no later sync is trusted. Articles in flight when the store stops are refused once their
+  jobs in flight have completed; one whose record is appended and not yet synced is not answered,
+  and its connection is closed. What the store has, it keeps serving. A process started again after
   a failed sync, without a loss of power, reads what Linux kept in memory and may never write: what
   is proved does not cover that run, whose next loss of power may leave the store refused until it
   is repaired (#21).

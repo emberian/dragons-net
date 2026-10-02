@@ -6,8 +6,8 @@ import DN.News.Spool
 
 The host's operations on the spool of `DN.News.Spool`, each with what has to hold before it for the
 spool to stay one — the preconditions recovery's plan (`DN.News.RecoveryRun`) and the store's POST
-meet, as PoWER (LeBlanc et al., OSDI 2025) states a store's crash safety: whatever it does, a crash
-then recovers as `spool_crash` says.
+(`DN.News.StoreOps`) meet, as PoWER (LeBlanc et al., OSDI 2025) states a store's crash safety:
+whatever it does, a crash then recovers as `spool_crash` says.
 
 Proven, each operation keeping a spool: a name removed or a file moved to another name, neither the
 journal's nor a placed commit's, the new one of a shape recovery reads (`spool_remove`,
