@@ -4,30 +4,27 @@ import DN.News.Journal
 /-!
 # DN.News.Recovery
 
-How the store recovers when it starts, as docs/decisions/0005-article-store.md ("On disk") fixes
-it. Recovery first syncs the journal and the directory, so that what it reads is what a loss of
-power keeps, then reads them: each name with the octets of its file. From that it finds either the
+How the store recovers at start, as docs/decisions/0005-article-store.md ("On disk") fixes it. After
+syncing the journal and the directory it reads each name with its file's octets and finds either the
 corruption that keeps the store from starting, or the store it starts with — the journal's key, its
-articles as the journal's commits give them, the files set aside, the next sequence number and
-where the journal ends — and what it does to the directory first. The octets of a torn tail after
-the journal's records are kept under a sequence number of their own and the directory synced; then
-the tail is truncated and the truncation synced; and only then are names tidied: temporary files
-removed, and a final file no record names set aside — or removed, when it is set aside already, or
-when the journal ended cleanly and no tail kept is numbered above it, so that no cut tail can have
-held its record. An action that fails stops recovery, and the store does not start.
+articles as the commits give them, the files set aside, the next sequence number, where the journal
+ends — and its actions: a torn tail's octets kept under a number of their own and the directory
+synced; the tail truncated and the truncation synced; then names tidied — temporary files removed,
+and a final file no record names set aside, or removed when set aside already or when the journal
+ended cleanly and no kept tail is numbered above it, so no cut tail can have held its record. A
+failed action stops recovery, and the store does not start.
 
-Proven: what recovery starts with is sound — every article's file in the directory it read and of
-its size, no sequence number twice, article numbers rising in every group, every group carried —
-(`recover_sound`), its articles are the journal's commits (`recover_articles`), and its next
-sequence number is above every number a record or a name carries (`recover_next`); it takes files
-only from temporary names and from final names no record has, and gives files only names no file
-holds (`recover_safe`); it changes the journal only by cutting it where its torn tail starts, or by
-making again a journal with no record (`recover_journal`); it takes no file before the cut
-(`recover_order`), and removes a final file no record names only when no cut tail can have held its
-record (`recover_removes`); once its actions are done, the journal ends where the store puts its
-next record (`recover_journalEnd`); and whatever a crash leaves of its actions, each taken whole,
-the next start finds the same articles (`recover_partly`, `recover_again`). A cut or a creation of
-the journal a crash leaves in part is reasoned about with the frames written in the journal.
+Proven: what recovery starts with is sound — every article's file in the directory with its size, no
+sequence number twice, article numbers rising in every group, every group carried (`recover_sound`);
+its articles are the journal's commits (`recover_articles`); its next sequence number is above every
+number a record or a name carries (`recover_next`); it takes files only from temporary names and
+final names no record has, and gives only names no file holds (`recover_safe`); it changes the
+journal only by cutting its torn tail or making again one with no record (`recover_journal`); it
+takes no file before the cut (`recover_order`), and removes a final file no record names only when
+no cut tail can have held its record (`recover_removes`); afterwards the journal ends where the next
+record goes (`recover_journalEnd`); whatever a crash leaves of its actions, each taken whole, the
+next start finds the same articles (`recover_partly`, `recover_again`). A cut or creation of the
+journal a crash leaves in part is reasoned about with the frames written in it.
 -/
 
 namespace DN.News.Recovery

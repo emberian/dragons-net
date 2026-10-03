@@ -4,34 +4,29 @@ import DN.News.RecoveryRun
 /-!
 # DN.News.StoreOps
 
-The store's program once it has started, on the file system of `DN.News.FsModel`, as
-docs/decisions/0005-article-store.md says it accepts an article: a sequence number reserved; the
-article written to a file under the temporary name, the file synced, moved to the final name and the
-directory synced; its commit record appended to the journal and the journal synced; and only then
-240. A failure known before the record is written refuses the article with 441 and removes its file;
-a failed sync of any kind, or a failed write of the journal, stops the store accepting, after which
-articles in flight are refused and a record in flight is not answered. Any number of articles may be
-in flight, their steps in any order, and records are appended one at a time. Steps come in the order
-their operations take effect. A failure the program has not yet learned of changes only the file it
-failed on or whether the directory's syncs are trusted, so other operations commute with it; one
-that does not, a sync of the directory after a failed one, 0005 rules out by keeping one sync of the
-journal or of the directory in flight at a time. That argument is not proven here.
+The store's program after its start, on the file system of `DN.News.FsModel`, accepting an article
+as docs/decisions/0005-article-store.md says: a number reserved; the file written under its
+temporary name, synced, moved to its final name and the directory synced; the commit appended and
+the journal synced; only then 240. A failure known before the record gives 441 and removes the file;
+a failed sync of any kind, or a failed write of the journal, stops acceptance: articles in flight
+are refused, a record in flight is not answered. Any number of articles may be in flight, in any
+order; records are appended one at a time; steps come in the order their operations take effect. A
+failure the program has not learned of changes only its own file or the trust in the directory's
+syncs, so other operations commute with it; the one that does not, a sync of the directory after a
+failed one, 0005 rules out by keeping one sync of the journal or of the directory in flight at a
+time. That argument is not proven.
 
-Proven: from a store started by recovery (`running_started`), every step — and whatever its
-operation leaves when it fails — keeps the store running (`running_step`): a spool whose journal
-holds the records the program keeps and at most one record in flight past them, every article in
-flight apart from the others and from the commits in place, its file as its stage says, the syncs of
-the journal and the directory trusted until one fails, and no record appended for an article refused
-(`Running`). So a crash at any point, under what is assumed of the journal, recovers without
-corruption, finding every article answered, and only commits a run appended for an article it did
-not refuse, each with the octets written for it (`running_crash`); and a restart, until a sync of
-the journal or the directory has failed and while numbers last, starts as `start_safe` says
-(`running_restart`). The program's part is taken as given, each part shown needed by examples: a
-commit appended only once its article's file is placed, one at a time, with its own number, the
-file's size, a record the journal can hold and its article numbers allocated above each group's last
-in groups the store carries (`Allocated`); 240 only once the journal is synced; and no article
-accepted once a sync or a write of the journal has failed. The file's CRC-32C, which reads check and
-recovery does not, is taken as given so that every article recovered has it.
+Proven: from a store recovery started (`running_started`), every step and every failure keeps it
+`Running` (`running_step`). So a crash anywhere, under what is assumed of the journal, recovers
+without corruption, with every answered article and only commits a run appended for an article it
+did not refuse, each with its octets (`running_crash`); a restart before a sync of the journal or
+the directory failed, while numbers last, starts as `start_safe` says (`running_restart`).
+
+Assumed, each shown needed by an example but acceptance after a failed sync: a commit only once its
+file is placed, one at a time, with its own number, the file's size, a record the journal can hold
+and article numbers allocated in groups the store carries (`Allocated`); 240 only after the
+journal's sync; no article accepted after a failed sync or write of the journal. The file's CRC-32C
+is assumed: reads check it, recovery does not.
 -/
 
 namespace DN.News.StoreOps

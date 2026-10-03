@@ -4,34 +4,32 @@ import DN.News.FrameSpec
 /-!
 # DN.News.FsModel
 
-The file system the store runs on, as docs/decisions/0005-article-store.md ("What is proved")
-models it: one directory whose names each hold a file, the files' data, the operations the host
-carries out on them, what an operation that fails may have done, and what a crash may leave, in
-the vocabulary of Pillai et al. (OSDI 2014) and Bornholt et al. (ASPLOS 2016).
+The file system the store runs on, as docs/decisions/0005-article-store.md models it in the
+vocabulary of Pillai et al. (OSDI 2014) and Bornholt et al. (ASPLOS 2016): one directory whose
+names hold files, the operations the host carries out, what a failed operation may have done, and
+what a crash may leave.
 
-Until a sync, what the program sees and what a crash keeps differ. A crash leaves each name,
-independently, holding the file it held at the directory's last sync or any file it has held since
-— nothing among them if it held nothing — and each file, independently, with the octets no
-operation has touched since its last sync, then any octets at all, up to the most it has held
-since; a file no name is left holding is freed. So synced data, and a name its directory has
-synced, survive; anything else may survive whole, in part, as junk or not at all — more than file
-systems are known to allow, so what holds after every crash here holds after theirs. An operation
-that fails may have done any part of what it was asked: an append, any first part of its octets;
-anything else, all of it or nothing; and once a sync of a file or of the directory has failed, no
-later sync of it is trusted until power is lost, as Linux may have marked as clean what it could
-not write, so that a process started again before then reads what was never written.
+A crash leaves each name, independently, holding what it held at the directory's last sync or any
+file it has held since — nothing among them if it held nothing — and each file, independently, with
+the octets no operation touched since its last sync, then any octets, up to the most it has held
+since; a file no name is left holding is freed. So synced data and a name its directory synced
+survive; the rest may survive whole, in part, as junk or not at all — more than file systems are
+known to allow, so what holds here holds on them. A failed operation may have done any part of its
+work: an append, any first part of its octets; anything else, all or nothing. Once a sync of a file
+or of the directory has failed, no later sync of it is trusted until power is lost: Linux may have
+marked as clean what it could not write, so a process started again before then reads what was never
+written.
 
-Proven: a crash may lose nothing (`crash_nothing_lost`); a sync, while trusted, is a barrier, after
-which a crash leaves the file as it is (`leaves_sync`), and so is a sync of the directory for names
-(`settle_leaves`); after a sync, a crash leaves an append as the octets before it and any after
-them, no more than were appended (`leaves_append`), and a cut likewise (`leaves_truncate`); a crash
-leaves each name and each file as their own rules say (`crash_lookup`, `crash_data`); with its names
-and the files they hold settled, a crash only frees the files no name holds (`crash_prune`), and a
-crash of what a crash left changes nothing (`crash_twice`); what the program finds under a name
-after each operation (`lookup_create`, `lookup_rename`, `rename_same`, `lookup_remove`); no
-operation but a sync of the directory, failing or not, takes away what a crash may leave a name
-holding (`step_widens`, `fails_widens`); operations, failures and crashes keep the file system well
-formed (`step_ok`, `fails_ok`, `crash_ok`); and the crashes `choices` lists are crashes
+Proven: a crash may lose nothing (`crash_nothing_lost`); a trusted sync is a barrier for a file
+(`leaves_sync`) and a sync of the directory for names (`settle_leaves`); after a sync a crash leaves
+an append as the octets before it and any after them, no more than were appended (`leaves_append`),
+and a cut likewise (`leaves_truncate`); each name and file follows its own rule (`crash_lookup`,
+`crash_data`); with its names and the files they hold settled, a crash only frees the files no name
+holds (`crash_prune`), and a crash of what a crash left changes nothing (`crash_twice`); what the
+program finds under a name after each operation (`lookup_create`, `lookup_rename`, `rename_same`,
+`lookup_remove`); no operation but a sync of the directory, failing or not, takes away what a crash
+may leave a name holding (`step_widens`, `fails_widens`); operations, failures and crashes keep the
+file system well formed (`step_ok`, `fails_ok`, `crash_ok`); the crashes `choices` lists are crashes
 (`choices_allowed`).
 -/
 

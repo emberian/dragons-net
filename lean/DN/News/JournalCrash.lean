@@ -5,33 +5,31 @@ import DN.News.Journal
 /-!
 # DN.News.JournalCrash
 
-The journal on the file system of `DN.News.FsModel`, as docs/decisions/0005-article-store.md says
-the store writes it: a file created, or cut to nothing, takes its format, appended and synced; then
-records are appended where those kept end, each synced before the next and each run's first a
-start; after a crash, the next start syncs it and cuts away a torn tail, syncing the cut, or makes
-it again when no format is left. Between operations it is in one of four states: `Creating` while
-its format is written and `Unformatted` once a crash left it none, `Steady` once its format is kept
-and `Found` once a crash left it so, before any cut.
+The journal on the file system of `DN.News.FsModel` as docs/decisions/0005-article-store.md says the
+store writes it: created, or cut to nothing, it takes its format, appended and synced; records are
+appended where the kept ones end, each synced before the next, each run's first a start; after a
+crash the next start syncs it and cuts away a torn tail, syncing the cut, or makes it again when no
+format is left. Between operations it is `Creating` while its format is written, `Unformatted` once
+a crash left it none, `Steady` once its format is kept, and `Found` once a crash left it so, before
+any cut.
 
-Two things are assumed of what a crash leaves. Past a format kept, a frame whose tag checks under
-the journal's key is one an append wrote where it lies (`Unforged`, computed by `unforged`): the tag
-takes the key, which neither a crash's junk nor an article's author has, and the offset, so a frame
-moved elsewhere does not check. At the start of a journal whose format is not kept, a frame that
-checks under the key it carries is a format an append wrote there (`FormatWritten`): that key is
-the frame's own, so this rests on the file system and the device showing no file another's octets
-after a crash, and on junk making such a frame only by chance. A restart of the process while syncs
-are trusted is a crash that loses nothing (`sync_after`); it needs only the assumption past the
-format, of octets the program wrote. After a failed sync a restart is not covered, as Linux may
-have marked as clean pages it could not write.
+Assumed of what a crash leaves: past a kept format, a frame whose tag checks under the journal's key
+is one an append wrote where it lies (`Unforged`, computed by `unforged`) — the tag takes the key,
+which neither a crash's junk nor an article's author has, and the offset; at the start of a journal
+with no format kept, a frame checking under the key it carries is a format an append wrote there
+(`FormatWritten`) — resting on the file system and the device showing no file another's octets
+after a crash, and on junk making such a frame only by chance. A restart while syncs are trusted is
+a crash that loses nothing (`sync_after`), needing only the first assumption; after a failed sync it
+is not covered.
 
-Proven: a crash reads, never as corruption, as the records kept and perhaps one more, written whole
+Proven: a crash never reads as corruption — it reads as the kept records and perhaps one more, whole
 where they end and allowed there (`steady_crash`), or, while the format is written, as nothing, a
-torn tail at the start or a format a creation wrote (`creating_crash`); and the store's operations,
-their failures, crashes and restarts keep the four states — after a record appended, only it can be
-left whole where the records end (`steady_append`), and after the records kept are synced nothing
-can (`steady_sync_same`); what a crash left is cut back to `Steady` or `Creating` (`found_cut`,
-`unformatted_again`). Under them: a frame whose tag checks within what an append wrote is that
-append's record whole (`frame_encode`), and a frame is its record's alone (`encode_inj`).
+torn tail at the start or a format a creation wrote (`creating_crash`); operations, failures,
+crashes and restarts keep the four states — after a record appended only it can be left whole where
+the records end (`steady_append`), after the kept records are synced nothing can
+(`steady_sync_same`), and what a crash left is cut back to `Steady` or `Creating` (`found_cut`,
+`unformatted_again`). Underneath, a frame whose tag checks within what an append wrote is that
+append's record, whole (`frame_encode`), and a frame is its record's alone (`encode_inj`).
 -/
 
 namespace DN.News.JournalCrash

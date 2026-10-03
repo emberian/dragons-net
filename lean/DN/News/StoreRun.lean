@@ -15,9 +15,10 @@ corruption under the next start's configuration, with every article answered 240
 a run appended for an article it did not refuse, each with its octets and CRC-32C (`store_safe`);
 a running store keeps every answered article, its file in place (`store_serves`).
 
-Assumed: `CrashAssumed`, `StartAssumed` (after a crash it holds of itself); the program's and the
-host's part, as in `DN.News.StoreOps`. Not covered: a start after a failed sync of the journal or
-the directory without a loss of power; a start without a group an article carries.
+Assumed: `CrashAssumed`, `StartAssumed` (after a crash it holds of itself, so it is assumed only of
+a start after the process ended without a loss of power); the program's and the host's part, as in
+`DN.News.StoreOps`. Not covered: a start after a failed sync of the journal or the directory without
+a loss of power; a start without a group an article carries.
 -/
 
 namespace DN.News.StoreRun

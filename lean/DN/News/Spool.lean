@@ -6,29 +6,19 @@ import DN.News.Recovery
 # DN.News.Spool
 
 The spool directory on the file system of `DN.News.FsModel`, as docs/decisions/0005-article-store.md
-says the store keeps it, and what recovery (`DN.News.Recovery`) finds after a crash of it or a
-restart. Recovery reads the directory as each name that holds a file, with the octets the program
-sees there (`image`).
+says the store keeps it, and what recovery (`DN.News.Recovery`) finds after a crash or a restart; it
+reads each name that holds a file with the octets the program sees (`image`).
 
-The store's knowledge and history is a `View`: where the journal is (`Phase`), the articles answered
-240, the commits whose records it appended, the octets it wrote for each sequence number, and a
-bound on the numbers. The spool as the store keeps it is `Spool`: every name of a shape recovery
-reads, numbered below the bound, with room for one more; no file before a journal; the journal's
-file in the state `DN.News.JournalCrash` gives its phase, under no other name; no other file while
-the journal has no format or its name is not settled, and no article answered then; the file of
-every commit kept, or that a crash may leave whole where the records end, in place — its final name
-and its octets settled, of the size and CRC-32C its commit gives (`Placed`); the rules across
-commits that recovery checks kept, with or without that commit; and every article answered kept,
-every commit kept appended.
+What the store knows is a `View`: where the journal is (`Phase`), the articles answered 240, the
+commits it appended, the octets written for each number, a bound on numbers; `Spool` is the
+directory as the store keeps it, its journal in the state `DN.News.JournalCrash` gives its phase.
 
-Proven: a crash of a spool, under what is assumed of the journal (`Assumed`), recovers without
-corruption, finding every article answered and only commits the store appended, each with the file
-it wrote and that file's CRC-32C (`spool_crash`); what the crash left is a spool again — the journal
-gone with every other file, left with no format, or read as its records — so the next start begins
-from a spool. A restart, its syncs trusted, is read as a crash that lost nothing, and what the start
-has synced is a spool again (`spool_restart`), assuming only what is assumed past the journal's
-format. That recovery's own actions keep a spool, so that a crash during them is like any other,
-`DN.News.RecoveryRun` proves.
+Proven: a crash of a spool, under `Assumed`, recovers without corruption, with every answered
+article and only appended commits, each with the file written for it and its CRC-32C
+(`spool_crash`), and leaves a spool — the journal gone with every other file, with no format, or
+read as its records. A restart with trusted syncs reads as a crash that lost nothing, and what the
+start has synced is a spool (`spool_restart`), assuming only what is assumed past the format. That
+recovery's own actions keep a spool is `DN.News.RecoveryRun`'s.
 -/
 
 namespace DN.News.Spool

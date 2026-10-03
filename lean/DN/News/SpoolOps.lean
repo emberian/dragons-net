@@ -4,28 +4,26 @@ import DN.News.Spool
 /-!
 # DN.News.SpoolOps
 
-The host's operations on the spool of `DN.News.Spool`, each with what has to hold before it for the
-spool to stay one — the preconditions recovery's plan (`DN.News.RecoveryRun`) and the store's POST
-(`DN.News.StoreOps`) meet, as PoWER (LeBlanc et al., OSDI 2025) states a store's crash safety:
-whatever it does, a crash then recovers as `spool_crash` says.
+The host's operations on the spool of `DN.News.Spool`, each with what has to hold before it — what
+recovery's plan (`DN.News.RecoveryRun`) and the store's POST (`DN.News.StoreOps`) meet — as PoWER
+(LeBlanc et al., OSDI 2025) states crash safety: whatever an operation does, a crash then recovers
+as `spool_crash` says.
 
-Proven, each operation keeping a spool: a name removed or a file moved to another name, neither the
-journal's nor a placed commit's, the new one of a shape recovery reads (`spool_remove`,
-`spool_rename`); a new file under a name, once the journal has its format and its name is settled
-(`spool_create`), and the journal created where there is none (`spool_create_journal`); the
-directory synced, and a sync of it that failed (`spool_syncDir`, `spool_untrustDir`); an operation
-on a file that is not the journal's — an append, a cut or a sync is one — when the files of the
-commits stay placed, as they do through a sync, a failed sync, or an operation on another file
-(`spool_file`, `placed_settled`, `placed_other`); an operation on the journal's file that leaves it
-in a phase whose rules the spool keeps (`spool_journal`); opening, reading, a size and the list of
-names, which change nothing (`step_pure`); every failure an operation may have (`failures_cases`,
-`spool_whole`, `spool_file_untrust`, `spool_journal_untrust`, `spool_untrustDir`); and what the
-store learns: the octets a POST writes, a commit appended, an article answered once its commit is
-kept, a journal read cleanly after a crash (`spool_files`, `spool_appended`, `spool_answer`,
-`spool_found_clean`). A file synced under a commit's final name is placed once the directory is
-synced (`placed_syncDir`), and a file just created is neither the journal's nor a placed commit's
-(`fresh_apart`). Under them, a change keeps a spool when it keeps what the spool asks of the
-journal, the other names and the placed files (`spool_frame`).
+Proven, each keeping a spool: removing or moving a name neither the journal's nor a placed commit's,
+to a name of a shape recovery reads (`spool_remove`, `spool_rename`); creating a file once the
+journal has its format and its name is settled (`spool_create`), or the journal where there is none
+(`spool_create_journal`); syncing the directory, or failing to (`spool_syncDir`,
+`spool_untrustDir`); an operation on a file that is not the journal's — an append, a cut or a sync —
+when the commits' files stay placed, as they do through a sync, a failed sync or an operation on
+another file (`spool_file`, `placed_settled`, `placed_other`); an operation on the journal into a
+phase the spool allows (`spool_journal`); reads, which change nothing (`step_pure`); every failure
+(`failures_cases`, `spool_whole`, `spool_file_untrust`, `spool_journal_untrust`); what the store
+learns — the octets a POST writes, a commit appended, an answer once its commit is kept, a clean
+read after a crash (`spool_files`, `spool_appended`, `spool_answer`, `spool_found_clean`). A file
+synced under a commit's final name is placed once the directory is synced (`placed_syncDir`), and a
+new file is neither the journal's nor a placed commit's (`fresh_apart`). Underneath, a change keeps
+a spool when it keeps what the spool asks of the journal, the other names and the placed files
+(`spool_frame`).
 -/
 
 namespace DN.News.SpoolOps

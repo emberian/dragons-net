@@ -4,31 +4,28 @@ import DN.News.SpoolOps
 /-!
 # DN.News.RecoveryRun
 
-How the host starts the store on the file system of `DN.News.FsModel`, as
-docs/decisions/0005-article-store.md says: it syncs the journal and the directory, reads the
-directory, makes each action recovery (`DN.News.Recovery`) plans as operations of the file system,
-and then appends the run's start record to the journal and syncs it. A file kept is created, written
-and synced; the journal cut is truncated and synced; created, or made again, it is created or cut to
-nothing, takes its format and is synced; names are moved and removed, and the directory synced. An
-operation that fails stops the start.
+The host's start on the file system of `DN.News.FsModel`, as docs/decisions/0005-article-store.md
+says: the journal and the directory synced, the directory read, each action recovery
+(`DN.News.Recovery`) plans made as file operations — a kept file created, written and synced; the
+journal truncated and synced, or created or cut to nothing, formatted and synced; names moved and
+removed, the directory synced — then the run's start record appended and synced. A failed operation
+stops the start.
 
-Proven: from a spool whose journal's and directory's syncs are trusted — what a crash leaves, or a
-restart's spool before any of them failed — while numbers last and under what is assumed of the
-journal (`RestartAssumed`), recovery reads what a crash that lost nothing would leave, and finds
-every article answered and only commits appended, each with its file; every point of the start is a
-spool with those syncs still trusted, and whatever any of its operations leaves when it fails is a
-spool, with them trusted unless it was one of those syncs, its bound on numbers at most one past the
-spool's — so that a crash there, and a restart unless a sync of the journal or the directory failed,
-is like any other; and once the start is done, the store has started — the journal synced and
-trusted, holding the records recovery read and then the run's start under recovery's key, the start
-where recovery says the journal ends, nothing appended past it, every name settled in a directory
-whose syncs are trusted, and every number of a name or a record below the next one recovery gives
-(`start_safe`; after a crash, `crash_start`). Recovery's actions are shown one by one: a torn tail
-kept (`safe_keep`) and cut (`safe_cut`), the journal made again or created (`safe_again`,
-`safe_new`), names tidied (`safe_tidy`), the start record (`safe_record`); the start's syncs bring
-the journal to what a crash that lost nothing leaves of it (`spool_startSync`). That the files
-recovery sets aside are kept as it plans is tested, not proven. A restart after a sync of the
-journal or the directory failed is not covered, as `DN.News.JournalCrash` says.
+Proven: from a spool whose journal's and directory's syncs are trusted (after a crash, or a restart
+before any of them failed), while numbers last and under `RestartAssumed`, recovery reads what a
+crash that lost nothing would leave, with every answered article and only appended commits, each
+with its file; every point of the start is a spool with those syncs trusted, and whatever a failed
+operation leaves is a spool, with those syncs trusted unless it was one of them, its bound on
+numbers at most one higher — so a crash there, and a restart unless such a sync failed, is like any
+other; the finished start leaves the journal synced and trusted, holding recovery's records and then
+the start under recovery's key, written where recovery says the journal ends, nothing appended past
+it, every name settled in a directory whose syncs are trusted, and every number below recovery's
+next (`start_safe`; after a crash, `crash_start`). Each action is shown apart: a torn tail kept
+(`safe_keep`) and cut (`safe_cut`), the journal made again or created (`safe_again`, `safe_new`),
+names tidied (`safe_tidy`), the start record (`safe_record`); the start's syncs bring the journal to
+what a crash that lost nothing leaves of it (`spool_startSync`). Tested, not proven: that the files
+recovery sets aside are kept as it plans. Not covered: a restart after a sync of the journal or the
+directory failed, as `DN.News.JournalCrash` says.
 -/
 
 namespace DN.News.RecoveryRun

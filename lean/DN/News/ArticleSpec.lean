@@ -5,45 +5,36 @@ import DN.News.CommandSpec
 /-!
 # DN.News.ArticleSpec
 
-Which proto-articles a POST accepts and what the server adds to one it accepts, written from RFC
-5536, RFC 5537 §3.5 and docs/decisions/0005-article-store.md ("Which articles are accepted, and
-what the server adds"), with nothing of the code that decides it.
+Which proto-articles a POST accepts and what the server adds, written from RFC 5536, RFC 5537 §3.5
+and docs/decisions/0005-article-store.md, apart from the code that decides it.
 
-An article comes from the block framer: lines that end in CRLF, dots unstuffed, no terminator.
-Its header section is the lines before the first empty line, which has to be there (RFC 3977
-§3.6); a line that starts with white space goes on with the field before it. The checks go in a
-fixed order and the first that fails gives the reason:
+An article comes from the block framer: CRLF lines, dots unstuffed, no terminator. Its header
+section ends at the first empty line, which has to be there (RFC 3977 §3.6); a line starting with
+white space continues the field before it. The checks go in order, the first that fails giving the
+reason:
 
-1. the header section's shape: some header, the empty line after it, the bounds of 0005 on the
-   section and on a line, and every line a field's first or a continuation of one;
-2. each field, in order: its name not one RFC 5537 §3.5 step 2 or 0005 refuses — the marks of an
-   injection (Injection-Info, Xref), the trace fields of injecting agents older than RFC 5536,
-   the fields deprecated for Netnews (RFC 5536 §3.3, RFC 3798 §2.1), and Control, Supersedes and
-   Approved; every line of its body holding a character other than white space (RFC 5536 §2.2);
-   its grammar (`DN.News.AbnfRules`);
-3. no field that may appear once appearing twice (RFC 5536 §3 to §3.2, RFC 5322 §3.6, RFC 8315
-   §2, and three of MIME's by 0005); From, Newsgroups and Subject present (RFC 5537 §3.4.1); no
-   POSTED in Path; no message identifier longer than 250 octets in any field that holds one (RFC
-   5536 §3.1.3); a Sender when From names several mailboxes (RFC 5322 §3.6.2); no distribution
-   "All" (RFC 5536 §3.2.4);
-4. every date meaning a date (RFC 5322 §3.3), a Received's included, and Date and Injection-Date
-   neither more than 24 hours ahead of the wall clock nor more than 72 hours behind it (RFC 5537
-   §3.5 step 3);
-5. the groups: at most 16 (0005), none reserved (RFC 5536 §3.1.4), one at least that the server
-   carries (RFC 5537 §3.5 step 4).
+1. the header section's shape: a header, the empty line, 0005's bounds on the section and a line,
+   every line a field's first or a continuation;
+2. each field: its name not one RFC 5537 §3.5 step 2 or 0005 refuses (Injection-Info, Xref, the
+   trace fields of injecting agents older than RFC 5536, the fields RFC 5536 §3.3 and RFC 3798 §2.1
+   deprecate for Netnews, Control, Supersedes, Approved); no line of its body of white space alone
+   (RFC 5536 §2.2); its grammar (`DN.News.AbnfRules`);
+3. no field that may appear once twice (RFC 5536 §3 to §3.2, RFC 5322 §3.6, RFC 8315 §2, three of
+   MIME's by 0005); From, Newsgroups and Subject present (RFC 5537 §3.4.1); no POSTED in Path; no
+   message identifier past 250 octets (RFC 5536 §3.1.3); a Sender when From names several mailboxes
+   (RFC 5322 §3.6.2); no distribution "All" (RFC 5536 §3.2.4);
+4. every date one that means one (RFC 5322 §3.3), a Received's included; Date and Injection-Date at
+   most 24 hours ahead of the wall clock and 72 behind (RFC 5537 §3.5 step 3);
+5. the groups: at most 16 (0005), none reserved (RFC 5536 §3.1.4), one at least carried (RFC 5537
+   §3.5 step 4).
 
-An article accepted gets what RFC 5537 §3.5 steps 5 to 11 add: Path first, with the server's
-identity and `!.POSTED` before what it held or before the tail entry `not-for-mail`; then the
-article's fields as they were; then Message-ID and Date if it had none; Injection-Info; and
-Injection-Date, unless it had one or had both Message-ID and Date. Whether the store already
-holds the message identifier is the store's to say.
-
-Not checked, by decision: the order RFC 5322 §3.6 gives blocks of trace and resent fields and the
-rules within a block, which are mail transport's; the syntax of MIME's fields (see
-`scripts/gen_abnf.py`).
-
-Every rule and bound is a field of `Rules`, and each is shown to matter by a version of the rules
-with it changed (`Mutant`).
+An accepted article gets what RFC 5537 §3.5 steps 5 to 11 add: Path first, the server's identity
+and `!.POSTED` before what it held or before `not-for-mail`; the fields as they were; Message-ID and
+Date if absent; Injection-Info; Injection-Date unless it had one or had both Message-ID and Date.
+Whether the store holds the message identifier is the store's to say. Not checked, by decision: the
+order and rules RFC 5322 §3.6 gives blocks of trace and resent fields, which are mail transport's;
+the syntax of MIME's fields (see `scripts/gen_abnf.py`). Every rule and bound is a field of
+`Rules`, each shown to matter by a version with it changed (`Mutant`).
 -/
 
 namespace DN.News.ArticleSpec

@@ -6,41 +6,33 @@ import DN.News.SipHash
 # DN.News.Journal
 
 The store's journal and the names of its files, as docs/decisions/0005-article-store.md ("On
-disk") fixes them: how a record is framed, tagged and what it holds, the names of the store's
-files, and how a journal is read back — its records in order, and how it ends: cleanly, in a torn
-tail the next start truncates, or in corruption that keeps the store from starting. The CRC-32C a
-commit gives of its article's file is defined here too.
+disk") fixes them: how a record is framed, tagged and what it holds, the names, and how a journal
+reads back — its records, then a clean end, a torn tail the next start truncates, or corruption.
+The CRC-32C of an article's file is defined here too.
 
-A record is framed as `length ‖ tag ‖ type ‖ payload ‖ end`: the payload's length, four octets,
-least significant first; the tag, eight octets, SipHash-2-4 under the journal's key of the frame's
-offset, the type and the payload; the type, one octet; the payload; and the end mark, one octet.
-The journal's first record names its format and carries the key. Each start of the store appends a
-start record, with no payload, before anything else, and each other record is the commit of an
-article: its number in the store, its message identifier, each group it goes to with the number it
-has there, the size of its header section and of its file, and the file's CRC-32C. The start's
-frame is the shortest (`start_shortest`): appended where a torn tail was truncated, it cannot leave
-whole any frame cut away there.
+A frame is `length ‖ tag ‖ type ‖ payload ‖ end`: the payload's length, four octets, least
+significant first; the tag, eight octets, SipHash-2-4 under the journal's key of the frame's offset,
+the type and the payload; the type, one octet; the payload; the end mark. The first record is the
+format, carrying the key; each start appends a start record, the shortest frame
+(`start_shortest`), so it cannot leave whole a frame cut away where a torn tail was truncated; every
+other record commits an article.
 
-Reading stops at the first frame that does not check. If it is short, its length past any
-payload's, its end mark missing or its tag wrong — what an append the crash cut short can leave —
-what is left is no longer than the one append that can have been cut, the format's frame while no
-record has been read and the largest frame after, and no frame that checks starts in it after its
-first octet, as none does after the last thing written, it is a torn tail, which the next start
-truncates. Anything else is corruption, and so is, wherever it is, a frame that checks but holds no
-record, a format of another version among them, and a format again. Before its format a journal
-has no key, so its first frame is checked with the key it carries, which only a frame of the
-format's shape does.
+Reading stops at the first frame that does not check. It is a torn tail if what is left fits the
+one append that can have been cut — the format's frame while no record has been read, the largest
+after — and no frame that checks starts in it after its first octet; otherwise it is corruption, as
+is, wherever it is, a frame that checks but holds no record a correct store writes, or a second
+format. Before its format a journal has no key, so its first frame is checked with the key it
+carries.
 
-Proven: a journal of records reads back as those records (`scan_encoded`); after them, a frame cut
-short reads as a torn tail where it starts, whether the crash left a proper prefix of it
-(`scan_torn`), that prefix and zeros to the frame's length (`scan_torn_zeros`), or its length and
-any octets to the frame's length but the end mark last (`scan_torn_fill`), whatever its tag, when no
-frame that checks starts in what is left after its first octet (`Quiet`); so does the format's frame
-cut short while it is alone (`scan_torn_format`, `scan_torn_format_zeros`, `scan_torn_format_fill`);
-a frame that does not check, a record after it framed where it lies, is corruption (`scan_damaged`);
-and reading looks at no octet past a frame it reads, so a journal read up to its torn tail reads the
-same records and ends cleanly (`next_take`, `scan_take`). That the octets a crash leaves never make
-a frame whose tag checks where it was not written is assumed: it takes the key.
+Proven: records read back as themselves (`scan_encoded`); after them, a frame cut short — a proper
+prefix, that prefix and zeros to the frame's length, or its length and octets to the frame's length
+not ending in the end mark — reads as a torn tail where it starts, whatever its tag, when no frame
+that checks starts in it after its first octet (`scan_torn`, `scan_torn_zeros`, `scan_torn_fill`,
+`Quiet`), and so does the format's frame alone (`scan_torn_format`, `scan_torn_format_zeros`,
+`scan_torn_format_fill`); a frame that does not check, with a record after it framed where it lies,
+is corruption (`scan_damaged`); reading looks at no octet past a frame, so a journal read up to its
+torn tail reads the same records and ends cleanly (`next_take`, `scan_take`). Assumed: no crash
+leaves a frame whose tag checks where it was not written; it takes the key.
 -/
 
 namespace DN.News.Journal
