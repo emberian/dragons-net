@@ -140,6 +140,26 @@ theorem safe_then (P : Fs → Prop) (F : Op → Fs → Prop) (Q : Fs → Prop) (
     Safe P F s (a ++ b) ∧ Q (s.run (a ++ b)) :=
   ⟨safe_append P F s a b h1 h2.1, by rw [run_append]; exact h2.2⟩
 
+/-- Every point of a run of operations has what `Safe` says of points. -/
+theorem safe_point (P : Fs → Prop) (F : Op → Fs → Prop) : ∀ (s : Fs) (l : List Op) (n : Nat),
+    Safe P F s l → n ≤ l.length → P (s.run (l.take n))
+  | _, [], _, h, _ => by simpa using h
+  | _, _ :: _, 0, h, _ => h.1
+  | s, op :: l, n + 1, h, hn => safe_point P F (s.step op).1 l n h.2.2 (by simp at hn; omega)
+
+/-- Whatever an operation of a run leaves when it fails has what `Safe` says of failures. -/
+theorem safe_fail (P : Fs → Prop) (F : Op → Fs → Prop) : ∀ (s : Fs) (l : List Op) (n : Nat)
+    (hn : n < l.length) (t : Fs), Safe P F s l → (s.run (l.take n)).Fails t l[n] → F l[n] t
+  | _, [], _, hn, _, _, _ => by simp at hn
+  | _, _ :: _, 0, _, t, h, ht => h.2.1 t ht
+  | s, op :: l, n + 1, hn, t, h, ht =>
+    safe_fail P F (s.step op).1 l n (by simp at hn; omega) t h.2.2 ht
+
+theorem run_take_succ (s : Fs) (l : List Op) (n : Nat) (hn : n < l.length) :
+    s.run (l.take (n + 1)) = ((s.run (l.take n)).step l[n]).1 := by
+  rw [List.take_succ_eq_append_getElem hn, run_append]
+  rfl
+
 theorem planOps_append : ∀ (s : Fs) (as bs : List Action),
     planOps s (as ++ bs) = planOps s as ++ planOps (s.run (planOps s as)) bs
   | _, [], _ => rfl

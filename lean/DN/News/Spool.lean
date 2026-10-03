@@ -306,6 +306,27 @@ structure Spool (cfg : Config) (s : Fs) (v : View) : Prop where
   answered : ∀ c ∈ v.answered, c ∈ commitsOf v.phase.kept
   appended : ∀ c ∈ commitsOf (v.phase.kept ++ v.phase.back), c ∈ v.appended
 
+/-- Groups added keep every group a commit names carried. -/
+theorem unknownGroup_mono (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) (cs : List Commit)
+    (h : unknownGroup? cfg cs = none) : unknownGroup? cfg' cs = none := by
+  simp only [unknownGroup?, Option.map_eq_none_iff, List.find?_eq_none] at h ⊢
+  intro g hm
+  have := h g hm
+  simp only [List.contains_eq_mem, Bool.not_eq_eq_eq_not, Bool.not_true, decide_eq_false_iff_not,
+    Decidable.not_not] at this ⊢
+  exact hg this
+
+theorem rules_mono (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) (cs : List Commit)
+    (h : Rules cfg cs) : Rules cfg' cs :=
+  ⟨h.1, h.2.1, unknownGroup_mono cfg cfg' hg cs h.2.2⟩
+
+/-- **A spool is one under any key, and with groups added.** -/
+theorem spool_config (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) (s : Fs) (v : View)
+    (h : Spool cfg s v) : Spool cfg' s v :=
+  ⟨h.ok, h.names, h.room, h.empty, h.journal, h.alone, h.quiet, h.placed,
+    ⟨rules_mono cfg cfg' hg _ h.rules.1, fun r hr => rules_mono cfg cfg' hg _ (h.rules.2 r hr)⟩,
+    h.seqs, h.answered, h.appended⟩
+
 /-- **Assumed of a crash of the spool**, of the journal's file: once its format is kept, what
 `Unforged` assumes; while it is written, what `FormatWritten` assumes. -/
 def Assumed (v : View) (s t : Fs) : Prop :=

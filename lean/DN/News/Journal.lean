@@ -840,6 +840,25 @@ theorem journal_split (k : Bytes) (cs : List Record) :
       encodeFrom k ((Record.format k).encode k 0).length cs := by
   simp [journal, encodeFrom]
 
+/-- A journal begins with its format's frame. -/
+theorem format_prefix_journal (k : Bytes) (cs : List Record) :
+    (Record.format k).encode k 0 <+: journal k cs := by
+  rw [journal_split]
+  exact List.prefix_append _ _
+
+/-- Octets begin with the format's frame of at most one key of sixteen octets. -/
+theorem format_key_unique (k k' bs : Bytes) (hk : k.length = keyLength)
+    (hk' : k'.length = keyLength) (h : (Record.format k).encode k 0 <+: bs)
+    (h' : (Record.format k').encode k' 0 <+: bs) : k = k' := by
+  have hl : ((Record.format k).encode k 0).length = ((Record.format k').encode k' 0).length := by
+    rw [format_encode_length k hk, format_encode_length k' hk']
+  have he := (List.prefix_of_prefix_length_le h h' (Nat.le_of_eq hl)).eq_of_length hl
+  have h1 := next_format k hk []
+  rw [he, next_format k' hk' []] at h1
+  injection h1 with h1
+  injection h1 with h1
+  exact h1.symm
+
 /-- **A journal of records reads back as those records**, ending cleanly: its format, then its
 commits and starts. -/
 theorem scan_encoded (k : Bytes) (hk : k.length = keyLength) (cs : List Record)

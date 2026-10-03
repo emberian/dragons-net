@@ -1436,8 +1436,8 @@ theorem running_format (cfg : Config) (s : Fs) (p : Prog) (h : Hist) (hr : Runni
   rw [hd] at hd'
   cases hd'
   have hk : d.kept = journal p.key p.records := hholds.kept
-  rw [hk, journal_split]
-  exact List.prefix_append _ _
+  rw [hk]
+  exact format_prefix_journal _ _
 
 /-! ## The premises can hold -/
 
@@ -1673,6 +1673,67 @@ theorem after_step (cfg : Config) (x : St) (c : Cmd) (h : c.Allowed cfg x) :
     obtain ⟨y, hq, hs⟩ := h
     exact .drop _ _ _ q y hq hs
 
+/-- `Cmd.Allowed`, computed. -/
+def Cmd.allowed (cfg : Config) (x : St) : Cmd → Bool
+  | .reserve _ => decide (x.prog.next + 2 < 2 ^ 64)
+  | .create q => match x.prog.posts q with
+    | some ⟨_, _, .reserved⟩ => true
+    | _ => false
+  | .write q _ => match x.prog.posts q with
+    | some ⟨_, _, .writing _⟩ => true
+    | _ => false
+  | .sync q => match x.prog.posts q with
+    | some ⟨o, w, .writing _⟩ => w == o.length
+    | _ => false
+  | .rename q => match x.prog.posts q with
+    | some ⟨_, _, .synced _⟩ => true
+    | _ => false
+  | .place q => match x.prog.posts q with
+    | some ⟨_, _, .final _⟩ => x.prog.trusting
+    | _ => false
+  | .commit q c => match x.prog.posts q with
+    | some ⟨o, _, .placed _⟩ => x.prog.committing.isNone && x.prog.accepting && c.seq == q &&
+        c.fileSize == o.length && (crc32c o).toNat == c.fileCrc && (Record.commit c).ok &&
+        c.groups.all fun g => cfg.groups.contains g.name &&
+          decide (highIn (commitsOf x.prog.records) g.name < g.number)
+    | _ => false
+  | .publish => x.prog.committing.isSome && x.prog.accepting
+  | .refuse q => (x.prog.posts q).isSome
+  | .clean q _ | .drop q => match x.prog.posts q with
+    | some ⟨_, _, .refused⟩ => true
+    | _ => false
+
+theorem allowed_sound (cfg : Config) (x : St) (c : Cmd) (h : c.allowed cfg x = true) :
+    c.Allowed cfg x := by
+  cases c with
+  | reserve o => exact of_decide_eq_true (p := x.prog.next + 2 < 2 ^ 64) h
+  | publish =>
+    simp only [Cmd.allowed, Bool.and_eq_true, Option.isSome_iff_exists] at h
+    obtain ⟨⟨c, hc⟩, ha⟩ := h
+    exact ⟨c, hc, ha⟩
+  | refuse q =>
+    simp only [Cmd.allowed, Option.isSome_iff_exists] at h
+    obtain ⟨y, hy⟩ := h
+    exact ⟨y, hy⟩
+  | create q | write q _ | sync q | rename q | place q | commit q _ | clean q _ | drop q =>
+    simp only [Cmd.Allowed]
+    cases hq : x.prog.posts q with
+    | none => simp [Cmd.allowed, hq] at h
+    | some y =>
+      obtain ⟨o, w, st⟩ := y
+      cases st <;> simp [Cmd.allowed, hq] at h
+      all_goals first
+        | exact ⟨_, rfl, rfl⟩
+        | exact ⟨_, _, rfl, rfl⟩
+        | exact ⟨_, _, rfl, rfl, h⟩
+        | obtain ⟨⟨⟨⟨⟨⟨hc, ha⟩, hs⟩, hz⟩, hcrc⟩, hok⟩, hg⟩ := h
+          exact ⟨_, _, rfl, rfl, hc, ha, hs, hz, hcrc, hok, hg⟩
+
+/-- Whether each command of a run is allowed where it is run. -/
+def allowedRun (cfg : Config) : St → List Cmd → Bool
+  | _, [] => true
+  | x, c :: cs => c.allowed cfg x && allowedRun cfg (x.after c) cs
+
 /-- The premise `Cmd.Allowed` can hold: the commit of article 2, its file in place. -/
 theorem allowed_witness :
     (Cmd.commit 2 (articleOf 2)).Allowed sampleConfig ⟨wSpool, wPlaced, wHist⟩ :=
@@ -1874,11 +1935,12 @@ theorem liteCrashes_crash (s : Fs) (hs : s.Ok) (t : Fs) (ht : t ∈ liteCrashes 
         · cases hds
       · cases hds
 
-/-- Whether every crash `liteCrashes` lists recovers with every article answered, and only commits
-appended for articles not refused, each with the octets written for it and their CRC-32C. -/
-def recoversAll (u : St) : Bool :=
+/-- Whether every crash `liteCrashes` lists recovers under `cfg` with every article answered, and
+only commits appended for articles not refused, each with the octets written for it and their
+CRC-32C. -/
+def recoversAll (cfg : Config) (u : St) : Bool :=
   (liteCrashes u.fs).all fun t =>
-    match recover sampleConfig (image t) with
+    match recover cfg (image t) with
     | .ok (st, _) => u.hist.answered.all (st.articles.contains ·) &&
         st.articles.all fun c =>
           u.hist.appended.any (fun a => a.2 == c && !u.hist.refused.contains (a.1, c.seq)) &&
@@ -1914,17 +1976,17 @@ def written2 : List Cmd :=
 
 /-- **Articles in flight together**: three reserved and created, written in parts in turn, one
 refused, its name removed and forgotten, the other two moved, placed and committed one at a time,
-the second placed while the first's record is in flight. Every crash listed at every point, and of
-whatever each operation leaves when it fails and the cleaning after, recovers with every article
-answered and only commits appended for articles not refused, each file the octets written; and
-both articles end answered. -/
+the second placed while the first's record is in flight, each command a step where it is run. Every
+crash listed at every point, and of whatever each operation leaves when it fails and the cleaning
+after, recovers with every article answered and only commits appended for articles not refused,
+each file the octets written; and both articles end answered. -/
 def regression_922 : Bool :=
   let script : List Cmd :=
     [.reserve body, .reserve bodyB, .reserve body, .create 1, .create 2, .create 3, .write 1 5,
       .write 2 3, .write 3 4, .write 1 100, .sync 1, .refuse 3, .clean 3 false, .drop 3,
       .write 2 100, .sync 2, .rename 2, .rename 1, .place 1, .commit 1 (commitFor 1 1 body),
       .place 2, .publish, .commit 2 (commitFor 2 2 bodyB), .publish]
-  (runOn startSt script).all recoversAll &&
+  allowedRun sampleConfig startSt script && (runOn startSt script).all (recoversAll sampleConfig) &&
     (script.foldl St.after startSt).hist.answered == [commitFor 1 1 body, commitFor 2 2 bodyB]
 
 /-- 240 given with the record appended and not yet synced. -/
@@ -1943,12 +2005,14 @@ synced after the move, one giving another size, one with an article number not a
 last, one in a group the store does not carry, one the journal cannot hold, one naming a number
 whose file is not in place, two records appended before either is synced, 240 before the journal's
 sync, and the store going on accepting after the record's write failed — each leaves a crash that
-recovery refuses or that loses an article answered; with all kept, none does. -/
+recovery refuses or that loses an article answered, the first seven by a command `Cmd.Allowed`
+rules out; with all kept, every command allowed, none does. -/
 def regression_923 : Bool :=
   let c1 := commitFor 1 1 body
   let fine := written2 ++ [.place 1, .commit 1 c1, .publish, .place 2,
     .commit 2 (commitFor 2 2 bodyB), .publish]
-  let broken (cs : List Cmd) := !(runOn startSt (written2 ++ cs)).all recoversAll
+  let broken (cs : List Cmd) := !allowedRun sampleConfig startSt (written2 ++ cs) &&
+    !(runOn startSt (written2 ++ cs)).all (recoversAll sampleConfig)
   broken [.commit 1 c1, .publish] &&
     broken [.place 1, .commit 1 (commitFor 1 1 bodyB), .publish] &&
     broken [.place 1, .commit 1 c1, .publish, .place 2, .commit 2 (commitFor 2 1 bodyB),
@@ -1957,9 +2021,10 @@ def regression_923 : Bool :=
     broken [.place 1, .commit 1 { c1 with groups := [] }, .publish] &&
     broken [.reserve body, .place 1, .commit 1 (commitFor 3 1 body), .publish] &&
     broken [.place 1, .place 2, .commit 1 c1, .commit 2 (commitFor 2 2 bodyB), .publish] &&
-    !((runOn startSt (written2 ++ [.place 1, .commit 1 c1])).map answerEarly).all recoversAll &&
+    !((runOn startSt (written2 ++ [.place 1, .commit 1 c1])).map answerEarly).all
+      (recoversAll sampleConfig) &&
     !(runOn (goOn ((written2 ++ ([.place 1, .place 2] : List Cmd)).foldl St.after startSt) c1)
-      [.commit 2 (commitFor 2 2 bodyB), .publish]).all recoversAll &&
-    (runOn startSt fine).all recoversAll
+      [.commit 2 (commitFor 2 2 bodyB), .publish]).all (recoversAll sampleConfig) &&
+    allowedRun sampleConfig startSt fine && (runOn startSt fine).all (recoversAll sampleConfig)
 
 end DN.News.StoreOps

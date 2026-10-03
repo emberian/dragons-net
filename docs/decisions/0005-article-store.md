@@ -134,9 +134,9 @@ happened; it knows nothing of articles.
   that no later sync is trusted. Articles in flight when the store stops are refused once their
   jobs in flight have completed; one whose record is appended and not yet synced is not answered,
   and its connection is closed. What the store has, it keeps serving. A process started again after
-  a failed sync, without a loss of power, reads what Linux kept in memory and may never write: what
-  is proved does not cover that run, whose next loss of power may leave the store refused until it
-  is repaired (#21).
+  a failed sync of the journal or the directory, without a loss of power, reads what Linux kept in
+  memory and may never write: what is proved does not cover that run, whose next loss of power may
+  leave the store refused until it is repaired (#21).
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -314,8 +314,11 @@ its index.
     directory is trusted until power is lost — recovery after a crash at any point of any run,
     operations failing or not, yields every article answered 240, possibly some whose commit record
     was written but not answered, and never one refused before its record was written or a partial
-    one; recovery is idempotent. A process started again after a failed sync without a loss of power
-    is not covered, as above. What the host does when an operation fails is tested.
+    one (`store_safe` in `DN.News.StoreRun`: runs from an empty directory — starts, each with its
+    own key and the last start's groups or more, the program's steps, crashes, the process ending —
+    while numbers last); recovery is idempotent. A restart after a failed sync of the journal or the
+    directory without a loss of power is not covered, as above. What the host does when an
+    operation fails is tested.
 - Proved of the program: the CRC-32C and SipHash-2-4 functions it prints compute what
   `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the framers; no run
   of the program fails, by the analysis of [0004](0004-safety-analysis.md). The analysis now costs
