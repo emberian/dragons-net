@@ -14,7 +14,8 @@ main() {
   cd "$(dirname "$0")/.."
   bash scripts/check.sh guard
   local venv=.deps/lint pins
-  pins=$(sha256sum scripts/requirements-lint.txt)
+  # The venv is made again when the pins or the Python it is made from change.
+  pins=$(sha256sum scripts/requirements-lint.txt && python3 --version)
   # shellcheck disable=SC2312 # a failed read compares unequal, which rebuilds the venv
   if [[ ! -f $venv/pins || "$(cat "$venv/pins")" != "$pins" ]]; then
     rm -rf "$venv"
@@ -32,7 +33,10 @@ main() {
   editorconfig=$(python3 -P scripts/bootstrap_tool.py editorconfig-checker)
   deny=$(python3 -P scripts/bootstrap_tool.py cargo-deny)
   machete=$(python3 -P scripts/bootstrap_tool.py cargo-machete)
-  local sources=(':!:migration/**' ':!:rfcs/**')
+  # The preserved snapshot, the RFCs, INN's test articles and SipHash's vectors are kept as their
+  # sources have them.
+  local sources=(':!:migration/**' ':!:rfcs/**' ':!:tests/corpus/inn-articles/**'
+    ':!:tests/corpus/siphash/**')
 
   "$actionlint" -shellcheck "$shellcheck"
   # Online audits, such as impostor commits, need a token; offline ones always run.

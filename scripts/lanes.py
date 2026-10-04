@@ -208,6 +208,23 @@ class Lines:
         return line
 
 
+def pinned_python(requirements: Path) -> Path:
+    """The Python of a virtual environment holding exactly the wheels `requirements` pins by
+    digest, built once under .deps and again whenever the pins or the Python it is made from
+    change, as scripts/lint.sh builds the linters'."""
+    venv = ROOT / ".deps" / requirements.stem
+    stamp = venv / "pins"
+    pins = f"{digest(requirements)} {sys.version}"
+    if not (stamp.is_file() and stamp.read_text().strip() == pins):
+        shutil.rmtree(venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
+                        "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
+                       check=True)
+        stamp.write_text(pins + "\n")
+    return venv / "bin/python"
+
+
 def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
     """The documents quote what this run measured: each file has to carry each phrase."""
     for name, phrases in quotes.items():

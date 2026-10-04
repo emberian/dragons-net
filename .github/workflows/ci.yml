@@ -158,6 +158,10 @@ jobs:
           retention-days: 90
           path: |
             build/evidence/
+            build/abnf/report.json
+            build/article/report.json
+            build/journal/report.json
+            build/store/report.json
             build/native/report.json
             build/native/region.pnk
             build/native/region.S

@@ -153,7 +153,7 @@ class Conn:
     reading: bool = False
     # a send was left partly untaken and the host has not reported the connection ready since
     blocked: bool = False
-    # when the program began waiting for the rest of a line
+    # when the program began waiting for the rest of a line; a line answered starts it again
     since: int | None = None
 
     def pending(self) -> bytes:
@@ -228,6 +228,7 @@ class Judge:
                 elif kind == "closed":
                     del self.conns[idx]
         due = {idx: self.due(c, t.now) for idx, (_, c) in self.conns.items()}
+        replied = {idx: c.replies for idx, (_, c) in self.conns.items()}
         acted: set[int] = set()
         sends = []
         for action in t.actions:
@@ -271,9 +272,10 @@ class Judge:
         for idx, (gen, c) in self.conns.items():
             if not c.pending() and self.takes_commands(c) and not self.owed(c) and not c.reading:
                 raise Violation("stalled", f"{idx}/{gen} does not read with nothing to answer")
+            # A line answered ends the wait for it, even when the next one begins in the same batch.
             if not self.waiting(c):
                 c.since = None
-            elif c.since is None:
+            elif c.since is None or c.replies != replied[idx]:
                 c.since = t.now
         self.check_deadline(t)
 

@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 import itertools
 from pathlib import Path
 import queue
+import random
 import subprocess
 import sys
 import threading
@@ -369,9 +370,39 @@ HELP = ascii_lines("HELP")
 Scenario = tuple[str, list[Client], bool, Identity]
 
 
+DRAWN, DRAWN_SEED = 300, 20261002
+PIECES = (b"HELP\r\n", b"HEL", b"P\r\n", b"HE", b"  ", b"\t", b"\r\n", b"\r", b"\n", b"STAT 1\r\n",
+          b"QUIT\r\n", b"FOO" + b"x" * 600 + b"\r\n")
+GAPS = (0, 1, 2, 10_000, 179_999, 180_000, 180_001, 1_800_000)
+
+
+def drawn() -> Iterator[Client]:
+    """Clients drawn at random, the same on every run: pieces of lines sent after gaps that land on
+    and around the deadlines, now and then reading slowly, pausing, ending their input or reset."""
+    rng = random.Random(DRAWN_SEED)  # noqa: S311 -- a fixed seed, so that every run draws the same clients
+    for _ in range(DRAWN):
+        at = rng.choice((1, 5))
+        sends = []
+        for _ in range(rng.randint(1, 6)):
+            at += rng.choice(GAPS)
+            sends.append((at, b"".join(rng.choice(PIECES) for _ in range(rng.randint(1, 3)))))
+        client = Client(1, sends)
+        if rng.random() < 0.2:
+            client.take, client.slow, client.pace = rng.choice((1, 7, 60)), 5, rng.choice((1, 1_000))
+        if rng.random() < 0.1:
+            client.pause = (at, at + rng.choice(GAPS[3:]))
+        if rng.random() < 0.15:
+            client.shut = at + rng.choice(GAPS)
+        elif rng.random() < 0.05:
+            client.reset = at + rng.choice(GAPS)
+        yield client
+
+
 def scenarios() -> Iterator[Scenario]:
     for name, clients, ghosts in plain_scenarios():
         yield name, clients, ghosts, IDENTITY
+    for k, client in enumerate(drawn()):
+        yield f"drawn client {k} of seed {DRAWN_SEED}", [client], False, IDENTITY
     commands = [Client(1, [(5, ascii_lines(*CASES, "QUIT"))])]
     pipeline = [Client(1, [(5, ascii_lines(*["HELP", "CAPABILITIES"] * 20, "QUIT"))], take=100)]
     for label, identity in (("the longest", LONGEST), ("the shortest", SHORTEST)):
@@ -417,6 +448,12 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
     yield "a line finished just in time", [Client(1, [(5, HELP), (10, b"HEL"), (180_009, b"P\r\n")])], False
     yield "a line finished too late", [Client(1, [(5, HELP), (10, b"HEL"), (180_010, b"P\r\n")])], False
     yield "a line a byte a minute", [Client(1, [(5, HELP)] + [(6 + 60_000 * k, b"H") for k in range(5)])], False
+    yield "a line answered and the next begun in one batch", [
+        Client(1, [(5, HELP), (10, b"HEL"), (11, b"P\r\nHE")])], False
+    yield "a white-space line and the next begun in one batch", [
+        Client(1, [(5, HELP), (10, b"  "), (11, b"\r\nHE")])], False
+    yield "an empty line and the next begun in one batch", [
+        Client(1, [(5, HELP), (10, b"\r"), (11, b"\nHE")])], False
     yield "a line begun while output is untaken", [
         Client(1, [(5, b"HELP\r\nHE")], take=10, slow=5, pace=60_000)], False
     yield "a reset", [Client(1, [(5, HELP)], reset=6, take=10)], False

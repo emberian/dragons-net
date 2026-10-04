@@ -117,7 +117,7 @@ most 30 s in all, at most 5 s of silence).
 | message-id | 250 octets | INN `NNTP_MAXLEN_MSGID` |
 | first command after the greeting | 10 s | INN `initialtimeout`; RFC 3977 §3.1 allows it |
 | inactivity: no command answered and no output taken | 1800 s | INN `clienttimeout`; RFC 3977 asks for at least 180 |
-| one command line, from its first octet to its line end | 180 s | ours: a deadline bytes do not renew, no shorter than RFC 3977's minimum |
+| one command line, while the program waits for the rest of it (below) | 180 s | ours: a deadline bytes do not renew, no shorter than RFC 3977's minimum |
 | closing after QUIT | 30 s in all, 5 s of silence | nginx `lingering_time`, `lingering_timeout` |
 | connections | 64 | ours, for the slice; set at build time |
 
@@ -128,13 +128,16 @@ per client belong with the operational limits of
 [#21](https://github.com/emberian/dragons-net/issues/21), as do a 400 greeting at the limit and a
 400 to the next command when the server shuts down.
 
-Backpressure: while a connection has output the kernel has not taken, the program asks the host
-not to read from it, and processes no further command already received from it. When the output
-is taken, the program resumes: it first answers the commands it holds, then asks for input again.
-The command-line deadline runs from when the program begins reading a line, and only while it is
-waiting for the rest of that line; the inactivity deadline counts output taken as activity, so a
-client that reads slowly is not closed while it reads, and one that stops reading is closed when
-the inactivity deadline passes.
+Backpressure: while a connection has output the kernel has not taken, the program asks the host not
+to read from it, and processes no further command already received from it. When the output is
+taken, the program resumes: it first answers the commands it holds, then asks for input again. The
+command-line deadline runs while the program waits for the rest of a line — everything sent taken, a
+line begun — from when that waiting began. A line answered ends it, and the next line's deadline
+starts once the reply is taken. A line ignored, empty or white space, ends it only if no other line
+begins in the same input; otherwise the next line's deadline runs on from when the program began
+waiting for the ignored one. The inactivity deadline counts output taken as activity, so a client
+that reads slowly is not closed while it reads, and one that stops reading is closed when the
+inactivity deadline passes.
 
 After a QUIT, the host sends the 205, shuts down the sending side, reads and drops what still
 arrives, and closes when the client closes or the lingering limits pass. When the client shuts

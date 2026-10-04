@@ -1,6 +1,6 @@
 # NNTP implementation plan
 
-The first slice answers over sockets on loopback; [decision 0003](decisions/0003-nntp-slice.md) fixes what the first slice answers, how it frames input, its limits and what of it is proved. The framing is built: `DN.News.FrameSpec` states it over the whole stream, `DN.News.Framer` proves the framers give it however the input is cut into chunks, and `DN.News.FramerCode` proves the functions printed from them make exactly the framers' steps; the compiled code is held against the model and an independent reference ([details](baseline.md#framers)). The session's `main` runs the line framer's statements in place, where they are tested with the session, not proven. The session is specified: `DN.News.CommandSpec` says which reply each line gets and `DN.News.SessionSpec` how a connection is greeted, answered, held back and closed, held against an independent reference on a simulated host ([details](baseline.md#session-model)). The session's program (`DN.Server.Session`) is compiled, held against that model turn by turn, and proven in the model never to fail ([details](baseline.md#session-program)); `native/nntp_host.c` serves it over sockets, checked from outside with `nntplib`, raw clients and recorded transcripts, with the report of each run's turns held against the session's judge, the model and the sockets ([details](baseline.md#nntp-server)). Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)) is next. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
+The first slice answers over sockets on loopback: [decision 0003](decisions/0003-nntp-slice.md) fixes what it answers, how it frames input, its limits and what of it is proved; the baseline says what of its [framing](baseline.md#framers), [session](baseline.md#session-model), [program](baseline.md#session-program) and [server](baseline.md#nntp-server) is proved and what is only tested. Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)) is next: [decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. This plan separates a first useful implementation from later extensions without treating optional protocol features as already supported.
 
 ## Initial profile
 
@@ -38,15 +38,21 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 
 | RFC | Role | Plan |
 | --- | --- | --- |
-| 5536 | Netnews article format | Required for article ingestion/storage |
-| 5537 | Netnews architecture and procedures | Required as injection/relay roles are added |
+| 5536 | Netnews article format | Required for article ingestion/storage; its grammar is taken from the text ([details](baseline.md#header-field-grammar)) |
+| 5322 | Internet Message Format | The syntax RFC 5536 restricts: addresses, dates, comments, message identifiers |
+| 5234 | ABNF and its core rules | The notation of every grammar here |
+| 3986 | URI generic syntax | IPv4 and IPv6 addresses in a Path diagnostic |
+| 2045, 2231 | MIME parameters and tokens | The `token` and `parameter` of Archive, User-Agent and Injection-Info; MIME's own fields are checked by RFC 5536's general rules only |
+| 5537 | Netnews architecture and procedures | The duties of an injecting agent (§3.5), which the article specification follows ([details](baseline.md#article-acceptance)); relaying and serving roles as they are added |
+| 7143 | iSCSI | Its CRC-32C (§13.1), which checks every article's file, and the examples it prints (appendix A.4) ([details](baseline.md#journal)) |
+| 3798 | Message disposition notification | Its Disposition-Notification-To, which it deprecates for Netnews (as RFC 8098, which obsoletes it, still does), is refused |
 | 4643 | Authentication | Add with an explicit access-control and transport-security design |
 | 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |
 | 8143 | TLS update to RFC 4642 | Implicit TLS on port 563 is preferred over STARTTLS |
 | 4644 | Streaming feeds | Add after durable IHAVE ingestion and deduplication work |
 | 6048 | LIST extensions | Add according to actual client/feed needs |
 | 8054 | Compression | Later; include resource and decompression limits |
-| 8315 | Cancel locks | Later; cancellation policy is separate from basic article delivery |
+| 8315 | Cancel locks | The syntax of Cancel-Lock and Cancel-Key is checked with the other header fields; acting on them is later, as cancellation policy is separate from basic article delivery |
 | 4707 | Netnews Administration System (Experimental) | Reference only; not planned |
 | 2980 | Historical extensions | Compatibility reference; not a substitute for RFC 3977 |
 

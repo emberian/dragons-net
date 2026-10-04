@@ -1,0 +1,351 @@
+; SPDX-License-Identifier: AGPL-3.0-or-later AND BSD-3-Clause
+; The grammar of a Netnews article's header fields, written by scripts/gen_abnf.py from
+; the RFCs in rfcs/; each rule says where it comes from. The core rules of RFC 5234
+; appendix B are not repeated.
+;
+; This code was derived from IETF RFC 5536, RFC 8315, RFC 5322, RFC 5234, RFC 3986, RFC 2045 and
+; RFC 2231, changed where a rule's note says. Please reproduce this note if possible.
+;
+; Copyright (c) 2009, 2018 IETF Trust and the persons identified as authors of the code (RFC 5536,
+; RFC 8315). Copyright (C) The IETF Trust (2008) (RFC 5322, RFC 5234). Copyright (C) The Internet
+; Society (2005) (RFC 3986). All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without modification, is permitted
+; pursuant to, and subject to the license terms contained in, the Revised BSD License set forth in
+; Section 4.c of the IETF Trust's Legal Provisions Relating to IETF Documents
+; (https://trustee.ietf.org/license-info).
+;
+; RFC 2231: Copyright (C) The Internet Society (1997). All Rights Reserved.
+;
+; This document and translations of it may be copied and furnished to others, and derivative works
+; that comment on or otherwise explain it or assist in its implementation may be prepared, copied,
+; published and distributed, in whole or in part, without restriction of any kind, provided that the
+; above copyright notice and this paragraph are included on all such copies and derivative works.
+; However, this document itself may not be modified in any way, such as by removing the copyright
+; notice or references to the Internet Society or other Internet organizations, except as needed for
+; the purpose of developing Internet standards in which case the procedures for copyrights defined
+; in the Internet Standards process must be followed, or as required to translate it into languages
+; other than English.
+
+; RFC 5322
+addr-spec = local-part "@" domain
+; RFC 5322
+address = mailbox / group
+; RFC 5322
+address-list = address *("," address)
+; RFC 5536
+alphanum = alpha / digit
+; RFC 5322
+angle-addr = [cfws] "<" addr-spec ">" [cfws]
+; RFC 5536
+approved = "Approved:" sp mailbox-list crlf
+; RFC 5536
+archive = "Archive:" sp [cfws] ("no" / "yes") *([cfws] ";" [cfws] archive-param) [cfws] crlf
+; RFC 5536
+archive-param = parameter
+; RFC 5536
+argument = 1*%x21-7E
+; RFC 5536
+article-locator = 1*(%x21-27 / %x29-3A / %x3C-7E)
+; RFC 5322
+atext = alpha / digit / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "/" / "=" / "?" / "^" / "_" / "`" / "{" / "|" / "}" / "~"
+; RFC 5322
+atom = [cfws] 1*atext [cfws]
+; RFC 2231 section 7
+attribute = 1*attribute-char
+; RFC 2231 section 7
+attribute-char = %x21 / %x23-24 / %x26 / %x2B / %x2D-2E / %x30-39 / %x41-5A / %x5E-7E
+; RFC 8315
+base64-char = alpha / digit / "+" / "/"
+; RFC 8315
+base64-octet = alpha / digit / "+" / "/" / "="
+; RFC 8315
+base64-terminal = 2base64-char "==" / 3base64-char "="
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+bcc = "Bcc:" sp [address-list / cfws] crlf
+; RFC 8315
+c-key = scheme ":" c-key-string
+; RFC 8315
+c-key-list = [cfws] c-key *(cfws c-key) [cfws]
+; RFC 8315
+c-key-string = c-lock-string / obs-c-key-string
+; RFC 8315
+c-lock = scheme ":" c-lock-string
+; RFC 8315
+c-lock-list = [cfws] c-lock *(cfws c-lock) [cfws]
+; RFC 8315
+c-lock-string = *(4base64-char) [base64-terminal]
+; RFC 8315
+cancel-key = "Cancel-Key:" sp c-key-list crlf
+; RFC 8315
+cancel-lock = "Cancel-Lock:" sp c-lock-list crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+cc = "Cc:" sp address-list crlf
+; RFC 5322
+ccontent = ctext / quoted-pair / comment
+; RFC 5322
+cfws = 1*([fws] comment) [fws] / fws
+; RFC 2231 section 7
+charset = 1*attribute-char
+; RFC 5322
+comment = "(" *([fws] ccontent) [fws] ")"
+; RFC 5536
+comments = "Comments:" sp unstructured crlf
+; RFC 5536
+component = 1*component-char
+; RFC 5536
+component-char = alpha / digit / "+" / "-" / "_"
+; RFC 5536
+control = "Control:" sp *wsp control-command *wsp crlf
+; RFC 5536
+control-command = verb *(1*wsp argument)
+; RFC 5322
+ctext = %x21-27 / %x2A-5B / %x5D-7E
+; RFC 5322
+date = day month year
+; RFC 5322
+date-time = [day-of-week ","] date time [cfws]
+; RFC 5322
+day = [fws] 1*2digit fws
+; RFC 5322
+day-name = "Mon" / "Tue" / "Wed" / "Thu" / "Fri" / "Sat" / "Sun"
+; RFC 5322
+day-of-week = [fws] day-name
+; RFC 3986
+dec-octet = digit / %x31-39 digit / "1" 2digit / "2" %x30-34 digit / "25" %x30-35
+; RFC 5536
+diag-deprecated = "!" ipv4address [fws]
+; RFC 5536
+diag-identity = path-identity / ipv4address / ipv6address
+; RFC 5536
+diag-keyword = 1*alpha
+; RFC 5536
+diag-match = "!"
+; RFC 5536
+diag-other = "!." diag-keyword ["." diag-identity] [fws]
+; RFC 5322
+display-name = phrase
+; RFC 5536
+dist-list = *wsp dist-name *([fws] "," [fws] dist-name) *wsp
+; RFC 5536 section 3.2.4, grouped as its text intends
+dist-name = (alpha / digit) *(alpha / digit / "+" / "-" / "_")
+; RFC 5536
+distribution = "Distribution:" sp dist-list crlf
+; RFC 5322
+domain = dot-atom / domain-literal
+; RFC 5322
+domain-literal = [cfws] "[" *([fws] dtext) [fws] "]" [cfws]
+; RFC 5322
+dot-atom = [cfws] dot-atom-text [cfws]
+; RFC 5322
+dot-atom-text = 1*atext *("." 1*atext)
+; RFC 5322
+dtext = %x21-5A / %x5E-7E
+; RFC 5536
+expires = "Expires:" sp date-time crlf
+; RFC 2231 section 7
+ext-octet = "%" 2(digit / "A" / "B" / "C" / "D" / "E" / "F")
+; RFC 2231 section 7
+extended-initial-name = attribute [initial-section] "*"
+; RFC 2231 section 7
+extended-initial-value = [charset] "'" [language] "'" extended-other-values
+; RFC 2231 section 7
+extended-other-names = attribute other-sections "*"
+; RFC 2231 section 7
+extended-other-values = *(ext-octet / attribute-char)
+; RFC 2231 section 7, erratum 477, with the CFWS of RFC 5536 section 3.2.8
+extended-parameter = extended-initial-name [cfws] "=" [cfws] extended-initial-value [cfws] / extended-other-names [cfws] "=" [cfws] extended-other-values [cfws]
+; RFC 5322
+field-name = 1*ftext
+; RFC 5536
+followup-to = "Followup-To:" sp (newsgroup-list / poster-text) crlf
+; RFC 5536
+from = "From:" sp mailbox-list crlf
+; RFC 5322
+ftext = %x21-39 / %x3B-7E
+; RFC 5322
+fws = [*wsp crlf] 1*wsp
+; RFC 5322
+group = display-name ":" [group-list] ";" [cfws]
+; RFC 5322
+group-list = mailbox-list / cfws
+; RFC 3986
+h16 = 1*4hexdig
+; RFC 5322
+hour = 2digit
+; RFC 5536
+id-left = dot-atom-text
+; RFC 5536
+id-right = dot-atom-text / no-fold-literal
+; RFC 5322 section 3.6.4 with the msg-id of RFC 5536 section 3.1.3, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+in-reply-to = "In-Reply-To:" sp [cfws] msg-id *([cfws] msg-id) [cfws] crlf
+; RFC 2231 section 7
+initial-section = "*0"
+; RFC 5536
+injection-date = "Injection-Date:" sp date-time crlf
+; RFC 5536
+injection-info = "Injection-Info:" sp [cfws] path-identity [cfws] *(";" [cfws] parameter) [cfws] crlf
+; RFC 3986
+ipv4address = dec-octet "." dec-octet "." dec-octet "." dec-octet
+; RFC 3986
+ipv6address = 6(h16 ":") ls32 / "::" 5(h16 ":") ls32 / [h16] "::" 4(h16 ":") ls32 / [[h16 ":"] h16] "::" 3(h16 ":") ls32 / [*2(h16 ":") h16] "::" 2(h16 ":") ls32 / [*3(h16 ":") h16] "::" h16 ":" ls32 / [*4(h16 ":") h16] "::" ls32 / [*5(h16 ":") h16] "::" h16 / [*6(h16 ":") h16] "::"
+; RFC 5536
+keywords = "Keywords:" sp phrase *("," phrase) crlf
+; RFC 5536
+label = alphanum [*(alphanum / "-") alphanum]
+; RFC 2231 section 7
+language = 1*(alpha / digit / "-")
+; RFC 5536
+lines = "Lines:" sp *wsp 1*digit *wsp crlf
+; RFC 5322
+local-part = dot-atom / quoted-string
+; RFC 5536
+location = newsgroup-name ":" article-locator
+; RFC 3986
+ls32 = h16 ":" h16 / ipv4address
+; RFC 5322
+mailbox = name-addr / addr-spec
+; RFC 5322
+mailbox-list = mailbox *("," mailbox)
+; RFC 5536
+mdtext = %x21-3D / %x3F-5A / %x5E-7E
+; RFC 5536
+message-id = "Message-ID:" sp *wsp msg-id *wsp crlf
+; RFC 5322
+minute = 2digit
+; RFC 5322
+month = "Jan" / "Feb" / "Mar" / "Apr" / "May" / "Jun" / "Jul" / "Aug" / "Sep" / "Oct" / "Nov" / "Dec"
+; RFC 5536
+msg-id = "<" msg-id-core ">"
+; RFC 5536
+msg-id-core = id-left "@" id-right
+; RFC 5322
+name-addr = [display-name] angle-addr
+; RFC 5536
+newsgroup-list = *wsp newsgroup-name *([fws] "," [fws] newsgroup-name) *wsp
+; RFC 5536
+newsgroup-name = component *("." component)
+; RFC 5536
+newsgroups = "Newsgroups:" sp newsgroup-list crlf
+; RFC 5536
+no-fold-literal = "[" *mdtext "]"
+; RFC 8315
+obs-c-key-string = 1*base64-octet
+; RFC 5322
+obs-phrase = word *(word / "." / cfws)
+; RFC 8315
+obs-scheme = "sha1"
+; RFC 5536 section 2.1, section 3.1.1
+obs-zone = "GMT"
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+optional-field = field-name ":" sp unstructured crlf
+; RFC 5536
+organization = "Organization:" sp unstructured crlf
+; RFC 5536
+orig-date = "Date:" sp date-time crlf
+; RFC 2231 section 7, erratum 7326
+other-sections = "*" %x31-39 *digit
+; RFC 2231 section 7
+parameter = regular-parameter / extended-parameter
+; RFC 5536
+path = "Path:" sp *wsp path-list tail-entry *wsp crlf
+; RFC 5536
+path-diagnostic = diag-match / diag-other / diag-deprecated
+; RFC 5536
+path-identity = 1*(label ".") toplabel / path-nodot
+; RFC 5536
+path-list = *(path-identity [fws] [path-diagnostic] "!")
+; RFC 5536
+path-nodot = 1*(alphanum / "-" / "_")
+; RFC 5322
+phrase = 1*word / obs-phrase
+; RFC 5536
+poster-text = *wsp %x70.6F.73.74.65.72 *wsp
+; RFC 5536
+product = [cfws] token [[cfws] "/" product-version]
+; RFC 5536
+product-version = [cfws] token
+; RFC 5322
+qcontent = qtext / quoted-pair
+; RFC 5322
+qtext = %x21 / %x23-5B / %x5D-7E
+; RFC 5322
+quoted-pair = "\" (vchar / wsp)
+; RFC 5322
+quoted-string = [cfws] dquote *([fws] qcontent) [fws] dquote [cfws]
+; RFC 5322, erratum 3979, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+received = "Received:" sp [1*received-token / cfws] ";" date-time crlf
+; RFC 5322
+received-token = word / angle-addr / addr-spec / domain
+; RFC 5536
+references = "References:" sp [cfws] msg-id *(cfws msg-id) [cfws] crlf
+; RFC 2231 section 7, with the CFWS of RFC 5536 section 3.2.8
+regular-parameter = regular-parameter-name [cfws] "=" [cfws] value [cfws]
+; RFC 2231 section 7
+regular-parameter-name = attribute [section]
+; RFC 5536
+reply-to = "Reply-To:" sp address-list crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-bcc = "Resent-Bcc:" sp [address-list / cfws] crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-cc = "Resent-Cc:" sp address-list crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-date = "Resent-Date:" sp date-time crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-from = "Resent-From:" sp mailbox-list crlf
+; RFC 5322 section 3.6.6 with the msg-id of RFC 5536 section 3.1.3, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-msg-id = "Resent-Message-ID:" sp [cfws] msg-id [cfws] crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-sender = "Resent-Sender:" sp mailbox crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+resent-to = "Resent-To:" sp address-list crlf
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+return = "Return-Path:" sp return-path-address crlf
+; RFC 5322, renamed
+return-path-address = angle-addr / [cfws] "<" [cfws] ">" [cfws]
+; RFC 8315
+scheme = "sha256" / "sha512" / 1*scheme-char / obs-scheme
+; RFC 8315
+scheme-char = alpha / digit / "-" / "/"
+; RFC 5322
+second = 2digit
+; RFC 2231 section 7
+section = initial-section / other-sections
+; RFC 5536
+sender = "Sender:" sp mailbox crlf
+; RFC 5536
+server-name = path-identity
+; RFC 5536
+subject = "Subject:" sp unstructured crlf
+; RFC 5536
+summary = "Summary:" sp unstructured crlf
+; RFC 5536
+supersedes = "Supersedes:" sp *wsp msg-id *wsp crlf
+; RFC 5536
+tail-entry = path-nodot
+; RFC 5322
+time = time-of-day zone
+; RFC 5322
+time-of-day = hour ":" minute [":" second]
+; RFC 5322, with a space after the colon, as RFC 5536 section 2.2 asks of every field
+to = "To:" sp address-list crlf
+; RFC 2045 section 5.1, erratum 512
+token = 1*(%x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39 / %x41-5A / %x5E-7E)
+; RFC 5536
+toplabel = [label *"-"] alpha *"-" label / label *"-" alpha [*"-" label] / label 1*"-" label
+; RFC 5536
+unstructured = *wsp vchar *([fws] vchar) *wsp
+; RFC 5536
+user-agent = "User-Agent:" sp 1*product [cfws] crlf
+; RFC 2045 section 5.1
+value = token / quoted-string
+; RFC 5536
+verb = token
+; RFC 5322
+word = atom / quoted-string
+; RFC 5536
+xref = "Xref:" sp *wsp server-name 1*(fws location) *wsp crlf
+; RFC 5322
+year = fws 4*digit fws
+; RFC 5322, erratum 6639
+zone = fws ("+" / "-") 4digit / [fws] obs-zone
