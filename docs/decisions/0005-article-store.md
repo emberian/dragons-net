@@ -168,8 +168,11 @@ knows nothing of articles.
   warns that `data=writeback` may show incorrect data; Zheng et al. saw no write land elsewhere —
   and junk making such a frame only by chance. A frame that checks but is no record a correct store
   writes — a format of another version among them — is corruption wherever it is, and so is a second
-  format. At most one append is in flight; the next starts only after its sync completed. The
-  journal is bounded by the number of articles the store holds, and the directory by those, the
+  format. At most one append is in flight; the next starts only after its sync completed. An append
+  writes again the device block that holds the end of the record before it; the model assumes that a
+  loss of power never garbles that block, rather than pad each frame to a block: a device that did
+  would take that record with the append, which would read as a torn tail and be kept in a `j` file.
+  The journal is bounded by the number of articles the store holds, and the directory by those, the
   files set aside below and two names per POST in flight, so recovery is bounded work without a
   checkpoint. Expiry, when it comes, brings compaction and checkpoints, and must keep the
   Message-IDs of what it removes, or a cutoff by date, since an article accepted once is rejected
@@ -239,7 +242,8 @@ counting against it; 64 groups, names at most 64 octets (ours); 16 groups in an 
 field (ours: INN sets no limit); 1,000,000 octets per article as it arrives, with its terminator, as
 INN counts `maxartsize`, whose default it is; 65,536 octets for the header section and 998 for a
 header line (ours, the line limit of RFC 5322). A full store refuses new articles (441); it never
-drops old ones to make room.
+drops old ones to make room. Comments may nest as deep as these bounds allow: their depth is a
+count, as `DN.News.ArticleSpec` keeps it, not a stack.
 
 ### Configuration
 
@@ -271,7 +275,8 @@ refusing to start without sixteen; and it logs each connection's address with th
   5536 §3.3 makes obsolete and RFC 3798 deprecates for Netnews; anything past the bounds. The order
   RFC 5322 §3.6 gives blocks of trace and resent fields is mail transport's and is not checked.
 - Added, in RFC 5537 §3.5's order, Path first and the proto-article's fields after it as they were:
-  Message-ID, `<seq.random@path-identity>`, and Date from the wall clock, when absent; the Path tail
+  Message-ID, `<seq.random@path-identity>` (the article's sequence number in the store and the
+  run's random value), and Date from the wall clock, when absent; the Path tail
   entry and the `POSTED` entry for the path identity; Injection-Info with the path identity and a
   `logging-data` parameter naming the run and the connection; Injection-Date, unless the
   proto-article has one or had both Message-ID and Date. A present Injection-Date is kept. The body

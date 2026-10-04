@@ -257,6 +257,8 @@ def targeted() -> list[Case]:
         (c, plus(b"References: <c@d.example> (<" + b"x" * 300 + b">)"), ACCEPTED),
         (c, plus(b"In-Reply-To: <c@d.example> " + msg_id(250)), ACCEPTED),
         (c, plus(b"In-Reply-To: <c@d.example> " + msg_id(251)), refused("long-message-id", b"In-Reply-To")),
+        (c, plus(b"In-Reply-To: (\\() " + msg_id(251)), refused("long-message-id", b"In-Reply-To")),
+        (c, plus(b"References: (\\)" + msg_id(251) + b") <a@b.example>"), ACCEPTED),
         (c, plus(b"Resent-Message-ID: " + msg_id(251)), refused("long-message-id", b"Resent-Message-ID")),
         (c, plus(b"message-id: " + msg_id(251)), refused("long-message-id", b"message-id")),
         (c, without(b"From", b"From: a@b.example, c@d.example"), refused("no-sender")),
@@ -278,7 +280,7 @@ def targeted() -> list[Case]:
            b"Fri, 31 Apr 2026 12:00:00 +0000", b"Sun, 21 Sep 2026 14:12:20 +0000",
            b"Mon, 21 Sep 2026 24:00:00 +0000", b"Mon, 21 Sep 2026 14:60:00 +0000",
            b"Mon, 21 Sep 2026 14:12:61 +0000", b"Mon, 21 Sep 2026 14:12:20 +0060",
-           b"Mon, 21 Sep 1899 14:12:20 +0000"]
+           b"Mon, 21 Sep 1899 14:12:20 +0000", b"1 Jan 1899 00:00:00 +0000", b"31 Dec 1899 23:59:59 -0100"]
     for name in (b"Date", b"Injection-Date", b"Expires", b"Resent-Date"):
         for v in near + ([] if name in (b"Date", b"Injection-Date") else far):
             cases.append((c, plus(name + b": " + v), ACCEPTED))
@@ -305,6 +307,7 @@ def targeted() -> list[Case]:
         (c, without(b"Newsgroups", b"Newsgroups: local.test," + many), ACCEPTED),
         (c, without(b"Newsgroups", b"Newsgroups: local.test," + many + b",a.z"), refused("too-many-groups")),
         (c, without(b"Newsgroups", b"Newsgroups: alt.a,alt.b"), refused("no-known-group")),
+        (c, without(b"Newsgroups", b"Newsgroups: LOCAL.TEST"), refused("no-known-group")),
         (c, without(b"Newsgroups", b"Newsgroups: alt.a,local.other,local.test,local.other"), ACCEPTED),
         (c, without(b"Newsgroups", b"Newsgroups: local.test,\r\n local.other"), ACCEPTED),
     ]

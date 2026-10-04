@@ -15,10 +15,10 @@ import DN.News.RecoveryModel
 import DN.Compiler.Analyzer
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
-with its host, runs the framing, grammar, article, journal and session models, prints the
-differential fixtures, the programs and precedence cells the parser contract compares, generated
-programs and their recorded cases, and the corpus of stopping states. Printing is not a correctness
-certificate: see docs/assurance.md for the remaining connections. -/
+with its host, runs the framing, grammar, article, journal, recovery and session models,
+prints the differential fixtures, the programs and precedence cells the parser contract compares,
+generated programs and their recorded cases, and the corpus of stopping states. Printing is not a
+correctness certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
 
@@ -63,8 +63,9 @@ private def sessionModel (mutant : DN.News.SessionMutant.Mutant) : IO UInt32 := 
 private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 
 private def help : String :=
-  "Emit checked programs and layouts, run the framing, grammar and session models and the " ++
-    "safety analysis, and print differential fixtures, generated programs or the state corpus."
+  "Emit checked programs and layouts, run the framing, grammar, article, journal, recovery and " ++
+    "session models and the safety analysis, and print differential fixtures, generated " ++
+    "programs or the state corpus."
 
 /-- What the safety analysis says of a lowered `main`. -/
 private def analyzed (size : Nat) : Option PancakeProg → Except String String

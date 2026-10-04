@@ -1355,8 +1355,13 @@ theorem appends_witness : Appends [.commit sample, .start] := by
   · exact ⟨by decide, rfl⟩
   · exact ⟨rfl, rfl⟩
 
-/-- The premise `Quiet` can hold: of an octet alone, after which nothing starts. -/
-theorem quiet_witness : Quiet sampleKey 0 [0] := rfl
+/-- The premise `Quiet` holds of a tail of the kind it is for: the sample commit's frame after the
+format, cut after twenty octets. -/
+theorem quiet_witness :
+    Quiet sampleKey (journal sampleKey []).length
+      (((Record.commit sample).encode sampleKey (journal sampleKey []).length).take 20) := by
+  unfold Quiet
+  decide +kernel
 
 /-- A journal of the sample key's format alone, and a frame appended after it. -/
 def after (type : Nat) (payload : Bytes) : Bytes :=

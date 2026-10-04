@@ -534,8 +534,9 @@ def tail_cases(rng: random.Random) -> list[Case]:
 def later_cases(rng: random.Random, commits: list[Commit]) -> list[Case]:
     """A frame that does not check with one that does after it, where what is left would fit a
     torn append: corruption (`scan_damaged`), since an append the crash cut short is the last thing
-    written. A frame that is whole but would not check where it lies — under another key, or
-    copied from another place — does not count, and what is left is still a torn tail."""
+    written — a frame that checks but holds no record counts too. A frame that is whole but would
+    not check where it lies — under another key, or copied from another place — does not count, and
+    what is left is still a torn tail."""
     cases = []
     before: list[Item] = [START_RECORD, SAMPLE]
     head = journal(KEY, before)
@@ -549,6 +550,9 @@ def later_cases(rng: random.Random, commits: list[Commit]) -> list[Case]:
             cases.append(stopped(bytes(data), KEY, before, at, why_at(bytes(data), at), later=True))
     for n in (1, 5, 12, 13, 14, 40, 200):
         for fill in (bytes(n), rng.randbytes(n)):
+            for kind, body in ((4, b""), (COMMIT, b"\x00")):
+                unrecorded = head + fill + frame(KEY, at + n, kind, body)
+                cases.append(stopped(unrecorded, KEY, before, at, why_at(unrecorded, at), later=True))
             for item in (START_RECORD, SAMPLE):
                 whole = head + fill + encoded(KEY, at + n, item)
                 cases.append(stopped(whole, KEY, before, at, why_at(whole, at), later=True))

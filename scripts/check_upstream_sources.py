@@ -106,8 +106,9 @@ def compare_errata(applied: list[tuple[str, int]], corrected: dict[int, str],
 
 
 def grammar_errata() -> tuple[list[tuple[str, int]], dict[int, str]]:
-    """The errata scripts/gen_abnf.py applies, and the corrected rules it carries. Its directory
-    goes last on the path, so that none of its modules stands for one of the standard library."""
+    """The errata scripts/gen_abnf.py applies, and the corrected rules it carries. Importing it puts
+    its directory first on the path; no module there has the name of one of the standard library,
+    which a gate test holds."""
     sys.path.append(str(ROOT / "scripts"))
     import gen_abnf  # noqa: PLC0415 -- found only once its directory is on the path
     return gen_abnf.APPLIED_ERRATA, {number: text for _, number, text in gen_abnf.ERRATA.values()}

@@ -398,8 +398,8 @@ structure Context where
   identity : Bytes
   /-- the wall clock, seconds since 1970-01-01T00:00:00Z -/
   wall : Nat
-  /-- this article's number in the run and the run's random value, in hexadecimal digits: a
-  message identifier added is `<seq.random@identity>` -/
+  /-- the article's sequence number in the store, in decimal digits, and the run's random value,
+  in hexadecimal digits: a message identifier added is `<seq.random@identity>` -/
   seq : Nat
   random : Bytes
   /-- the run and the connection, for `logging-data` -/

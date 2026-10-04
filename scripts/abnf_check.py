@@ -49,6 +49,11 @@ INNER = ["date-time", "zone", "mailbox-list", "address-list", "msg-id", "path-id
          "unstructured", "ipv6address", "ipv4address", "parameter", "product"]
 # Bytes a changed case is given: the ones that separate, quote, fold or end, and some outside.
 BYTES = [0, 9, 10, 13, 32, 34, 40, 41, 44, 46, 58, 59, 60, 62, 64, 91, 92, 93, 127, 128]
+# Bytes a changed case writes again, to cross a repetition's upper bound: letters, digits and the
+# signs that end a run of them.
+REPEATED = frozenset(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=%:.")
+# Cases one past a repetition's upper bound that no change of a derivation makes.
+PAST_BOUNDS = [("ipv4address", b"256.1.1.1"), ("ipv6address", b"1:2:3:4:5:6:7:8:9")]
 
 # Defects planted in the reference's grammar text, each of which some case has to show. The rule
 # texts are scripts/netnews.abnf's, under its notice.
@@ -73,6 +78,18 @@ DEFECTS = [
      'regular-parameter = regular-parameter-name [cfws] "=" [cfws] value [cfws]',
      'regular-parameter = regular-parameter-name "=" [cfws] value [cfws]'),
     ("To without its space", 'to = "To:" sp address-list crlf', 'to = "To:" address-list crlf'),
+    ("a day of three digits", "day = [fws] 1*2digit fws", "day = [fws] 1*3digit fws"),
+    ("an hour of three digits", "hour = 2digit", "hour = 2*3digit"),
+    ("a minute of three digits", "minute = 2digit", "minute = 2*3digit"),
+    ("a second of three digits", "second = 2digit", "second = 2*3digit"),
+    ("a zone of five digits", 'zone = fws ("+" / "-") 4digit /', 'zone = fws ("+" / "-") 4*5digit /'),
+    ("an octet of 256 to 259", 'dec-octet = digit / %x31-39 digit / "1" 2digit / "2" %x30-34 digit / "25" %x30-35',
+     'dec-octet = digit / %x31-39 digit / "1" 2digit / "2" %x30-34 digit / "25" %x30-39'),
+    ("an IPv6 address of seven groups before its last",
+     'ipv6address = 6(h16 ":") ls32 /', 'ipv6address = 6*7(h16 ":") ls32 /'),
+    ("an escaped octet of three digits", 'ext-octet = "%" 2(digit', 'ext-octet = "%" 2*3(digit'),
+    ("a base64 end of three characters before ==", 'base64-terminal = 2base64-char "=="',
+     'base64-terminal = 2*3base64-char "=="'),
 ]
 # The rules DN.News.AbnfMutant breaks, by the name `dn-compiler abnf-model --mutant` takes.
 MUTANTS = ["case-sensitive", "first-alternative", "greedy-repetition", "bound-off-by-one",
@@ -111,8 +128,9 @@ def generated(abnfgen: str, rule: str, seed: int) -> list[bytes]:
 
 def changed(case: bytes, rng: random.Random) -> list[bytes]:
     """`case` changed where the rules of a field line are (RFC 5536 §2.2): without the space after
-    the name's colon, without its line end, with a bare LF for it, with a space before it; and
-    with a byte dropped, replaced or inserted at a few places."""
+    the name's colon, without its line end, with a bare LF for it, with a space before it; with a
+    byte dropped, replaced or inserted at a few places; and with a letter, a digit or a sign that
+    ends a run of them written twice and three times, which can take a run past its upper bound."""
     out = []
     colon = case.find(b":")
     if 0 < colon < len(case) - 1 and case[colon + 1:colon + 2] == b" ":
@@ -124,6 +142,9 @@ def changed(case: bytes, rng: random.Random) -> list[bytes]:
         if p < len(case):
             out += [case[:p] + case[p + 1:], case[:p] + b + case[p + 1:]]
         out.append(case[:p] + b + case[p:])
+    runs = [p for p, b in enumerate(case) if b in REPEATED]
+    for p in sorted(rng.sample(runs, min(2, len(runs)))):
+        out += [case[:p + 1] + case[p:], case[:p + 1] + case[p:p + 1] + case[p:]]
     return out
 
 
@@ -457,6 +478,7 @@ def check() -> Report:
     cases += nested()
     expected = examples()
     cases += [c for c, _, _ in expected]
+    cases += PAST_BOUNDS
     steps["cases"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     model_command = [str(lanes.DN_COMPILER), "abnf-model"]
     model = answers(model_command, cases, WORKERS)
@@ -474,6 +496,9 @@ def check() -> Report:
     if refused:
         rule, case = refused[0]
         raise LaneError(f"{len(refused)} derivations refused, first {rule} {case[:200]!r}")
+    past = [c for c in PAST_BOUNDS if said[c] != "0"]
+    if past:
+        raise LaneError(f"accepted past a repetition's bound: {past}")
     for (rule, data), want, _ in expected:
         if said[(rule, data)] != want:
             raise LaneError(f"the RFCs' example {rule} {data!r} is answered {said[(rule, data)]}, "
