@@ -162,6 +162,7 @@ jobs:
             build/article/report.json
             build/journal/report.json
             build/fs/report.json
+            build/runs/report.json
             build/store/report.json
             build/native/report.json
             build/native/region.pnk

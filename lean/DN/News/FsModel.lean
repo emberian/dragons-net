@@ -1257,13 +1257,16 @@ def Data.latest (d : Data) : Bytes :=
 
 /-- Octets a crash may leave a file holding, each once, at every length it may: what the program
 sees, what was last written at each place, the octets kept followed by zeros, and the file at its
-longest with what the program sees cut anywhere and zeros after. Not every crash: no junk, and
-quadratic in the file's length, so for small runs only. -/
+longest with what the program sees cut anywhere and zeros after; and, for each append made past what
+is kept, the octets kept, zeros up to that append and it whole: an earlier append lost, a later one
+written. Not every crash: no junk, and quadratic in the file's length, so for small runs only. -/
 def Data.cuts (d : Data) : List Bytes :=
-  ((List.range (d.high + 1 - d.kept.length)).flatMap fun k =>
+  (((List.range (d.high + 1 - d.kept.length)).flatMap fun k =>
     let n := d.kept.length + k
     [(d.seen ++ List.replicate d.high 0).take n, d.latest.take n, d.kept ++ List.replicate k 0,
-      (d.seen.take n ++ List.replicate d.high 0).take d.high])
+      (d.seen.take n ++ List.replicate d.high 0).take d.high]) ++
+    (d.written.filter fun (w : Nat × Bytes) => d.kept.length ≤ w.1).map fun (w : Nat × Bytes) =>
+      d.kept ++ List.replicate (w.1 - d.kept.length) (0 : Byte) ++ w.2)
     |>.eraseDups
 
 /-- **Crashes listed**: every choice for each name, once, and each of the octets `cuts` gives a

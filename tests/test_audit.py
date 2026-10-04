@@ -49,13 +49,17 @@ AUDIT_PROBES = {
         "def plain._unsafe_rec : Nat := 42\ndef plain : Nat := 0\nend DN.Probe\n"),
     "DN.Probe.MetaImport": "import Lean.Elab\n",
     "DN.Probe.Mistyped": (
-        "def DN.Probe.regression_9002 : Nat := 1\ndef DN.Probe.regression_9004 : Bool := false\n"),
+        "def DN.Probe.regression_9002 : Nat := 1\ndef DN.Probe.regression_9004 : Bool := false\n"
+        "def DN.Probe.regression_9008 : Nat → Bool := fun _ => true\n"
+        "def DN.Probe.regression_9009 : Unit → Nat := fun _ => 0\n"),
     "DN.Probe.Regressions": (
         "namespace DN.Probe\ndef count : Nat → Nat\n  | 0 => 0\n  | n + 1 => count n + 1\n"
         "def le_succ : (n : Nat) → n ≤ n + 1\n  | 0 => Nat.le_succ 0\n"
         "  | n + 1 => Nat.succ_le_succ (le_succ n)\n"
         "def regression_9001 : Bool := false\nprivate def regression_9003 : Bool := count 3 == 3\n"
-        "noncomputable def regression_9005 : Bool := Classical.choice ⟨true⟩\nend DN.Probe\n"),
+        "noncomputable def regression_9005 : Bool := Classical.choice ⟨true⟩\n"
+        "def regression_9006 (_ : Unit) : Bool := count 2 == 2\ndef regression_9007 (_ : Unit) : Bool := false\n"
+        "end DN.Probe\n"),
     "DN.Probe.NoTheorems": "def DN.Probe.value : Nat := 1\n",
     "DN.Probe.PartialDef": (
         "import Lean\nopen Lean\nrun_cmd Elab.Command.liftCoreM do\n  addDecl <| .defnDecl\n"
@@ -121,7 +125,9 @@ UNSOUND = [
     "hand-written recursion helper: DN.Probe.spoof._unsafe_rec",
     "hand-written recursion helper: DN.Probe.plain._unsafe_rec",
     "DN.Probe.MetaImport imports Lean.Elab",
-    "regression is not a Bool definition: DN.Probe.regression_9002",
+    "regression is not a Bool or Unit → Bool definition: DN.Probe.regression_9002",
+    "regression is not a Bool or Unit → Bool definition: DN.Probe.regression_9008",
+    "regression is not a Bool or Unit → Bool definition: DN.Probe.regression_9009",
     "partial definition: DN.Probe.loop",
     "stores another version of DN.Probe.copied",
 ]
@@ -279,7 +285,8 @@ class Audit(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("regression failed: DN.Probe.regression_9001", result.stderr)
             self.assertIn("regression could not run: DN.Probe.regression_9005", result.stderr)
-            self.assertIn(f"expected {regressions()} passing regressions, found {int(regressions()) + 1}",
+            self.assertIn("regression failed: DN.Probe.regression_9007", result.stderr)
+            self.assertIn(f"expected {regressions()} passing regressions, found {int(regressions()) + 2}",
                           result.stderr)
 
     def test_documented_counts_match_the_audit(self) -> None:

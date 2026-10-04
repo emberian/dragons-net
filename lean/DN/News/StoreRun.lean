@@ -541,7 +541,7 @@ loses all it may, and a start finds articles 1 and 3. Also starts after a torn a
 and after a failed sync of an article's file, each followed by a run that answers an article. Every
 start and command is checked against `Reach`; every listed crash at every point and failure
 recovers as `recoversAll` asks. -/
-def regression_924 : Bool :=
+def regression_924 (_ : Unit) : Bool :=
   let c1 := commitFor 1 1 body
   let placing : List Cmd := [.reserve body, .create 1, .write 1 100, .sync 1, .rename 1, .place 1]
   let first : List Cmd := placing ++ [.commit 1 c1, .publish, .reserve bodyB, .create 2, .write 2 5]
@@ -578,7 +578,7 @@ def regression_924 : Bool :=
 the number is free, and the next run answers another article as 1. Under a fresh number every crash
 recovers as `recoversAll` asks; under the refusing run's number a crash finds article 1 appended by
 the run that refused it. -/
-def regression_925 : Bool :=
+def regression_925 (_ : Unit) : Bool :=
   let first : List Cmd := [.reserve body, .create 1, .write 1 100, .refuse 1, .clean 1 false,
     .drop 1]
   let c1 := commitFor 1 1 bodyB
@@ -605,7 +605,7 @@ directory's sync is created again under another key, in another file; a run answ
 start under a third key with a group added keeps the journal's key; a run answers article 2 in that
 group; after a crash that loses all it may, a start finds both. Checked against `Reach` and
 `recoversAll` throughout. A start without that group finds the store corrupt. -/
-def regression_926 : Bool :=
+def regression_926 (_ : Unit) : Bool :=
   let more := ascii "local.more"
   let cfgB : Config := ⟨sampleConfig.groups, keyB⟩
   let cfgC : Config := ⟨sampleConfig.groups ++ [more], sampleKey⟩

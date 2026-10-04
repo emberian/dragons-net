@@ -891,7 +891,7 @@ def sound (s : Scan) : Bool :=
 tail, never corruption, and the assumption holds of every crash listed; one that changes an octet of
 the commit leaves a torn tail; a commit framed where it lies but never appended is what the
 assumption rules out. -/
-def regression_912 : Bool :=
+def regression_912 (_ : Unit) : Bool :=
   let k := sampleKey
   let rs := [Record.start, .commit (commitOf 1)]
   let x := (journal k rs).length
@@ -913,7 +913,7 @@ def regression_912 : Bool :=
 whole, and still after a start appended to that cut; once the cut is synced it never comes back,
 nor after a start appended where it was — but it may after a commit as long, which is why the cut
 is synced first and a run's first append is its start. -/
-def regression_913 : Bool :=
+def regression_913 (_ : Unit) : Bool :=
   let k := sampleKey
   let rs := [Record.start, .commit (commitOf 1)]
   let x := (journal k rs).length
@@ -943,7 +943,7 @@ def regression_913 : Bool :=
 /-- A format being written: a crash leaves nothing, a torn tail at the start, or the format; made
 again under another key after its end mark was lost, a crash may leave the format of either key,
 and the format of a key no creation wrote is what the assumption rules out. -/
-def regression_914 : Bool :=
+def regression_914 (_ : Unit) : Bool :=
   let k := sampleKey
   let k2 := sampleKey.map (· + 1)
   let f := journal k []

@@ -13,13 +13,14 @@ import DN.News.ArticleModel
 import DN.News.JournalModel
 import DN.News.RecoveryModel
 import DN.News.FsCases
+import DN.News.StoreCases
 import DN.Compiler.Analyzer
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
-with its host, runs the framing, grammar, article, journal, recovery and session models,
-prints the differential fixtures, the programs and precedence cells the parser contract compares,
-generated programs and their recorded cases, and the corpus of stopping states. Printing is not a
-correctness certificate: see docs/assurance.md for the remaining connections. -/
+with its host, runs the framing, grammar, article, journal, recovery, file system, store and session
+models, prints the differential fixtures, the programs and precedence cells the parser contract
+compares, generated programs and their recorded cases, and the corpus of stopping states. Printing
+is not a correctness certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
 
@@ -28,6 +29,7 @@ private def commands : List String :=
    "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
    "journal-model [--mutant NAME]", "recovery-model [--mutant NAME]", "fs-model [--mutant NAME]",
+   "store-model",
    "emit-layout", "emit-session", "emit-session-layout",
    "analyze-session",
    "emit-reply-cases", "emit-baseline",
@@ -64,9 +66,9 @@ private def sessionModel (mutant : DN.News.SessionMutant.Mutant) : IO UInt32 := 
 private def usage : String := "dn-compiler {" ++ "|".intercalate commands ++ "}"
 
 private def help : String :=
-  "Emit checked programs and layouts, run the framing, grammar, article, journal, recovery and " ++
-    "session models and the safety analysis, and print differential fixtures, generated " ++
-    "programs or the state corpus."
+  "Emit checked programs and layouts, run the framing, grammar, article, journal, recovery, " ++
+    "file system, store and session models and the safety analysis, and print differential " ++
+    "fixtures, generated programs or the state corpus."
 
 /-- What the safety analysis says of a lowered `main`. -/
 private def analyzed (size : Nat) : Option PancakeProg → Except String String
@@ -116,6 +118,10 @@ def main (args : List String) : IO UInt32 := do
       let input ← (← IO.getStdin).readToEnd
       output (DN.News.JournalModel.runAll (DN.News.Journal.rulesOf m) input)
     | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
+  | ["store-model"] =>
+    -- Runs of the store's program on directories a crash left, on standard input.
+    let input ← (← IO.getStdin).readToEnd
+    output (DN.News.StoreCases.runAll input)
   | ["fs-model"] =>
     -- Operations on the file system and what a crash may leave, on standard input.
     let input ← (← IO.getStdin).readToEnd

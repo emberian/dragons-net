@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import itertools
+import random
 import re
 import sys
 
@@ -34,6 +35,10 @@ class File:
     kept: bytes = b""
     most: int = 0
     trusted: bool = True
+    # since the last sync: the last octets written at each place, which a cut does not take back,
+    # and each append with where it was made
+    latest: bytes = b""
+    appends: list[tuple[int, bytes]] = field(default_factory=list)
 
 
 @dataclass
@@ -157,16 +162,21 @@ def do(d: Disk, op: Op) -> str:
         return "missing"
     match kind:
         case "append":
-            data.seen += unhex(args[1])
+            at, octets = len(data.seen), unhex(args[1])
+            data.seen += octets
             data.most = max(data.most, len(data.seen))
+            data.latest = data.latest[:at].ljust(at, b"\x00") + octets + data.latest[at + len(octets):]
+            data.appends.append((at, octets))
         case "truncate":
             n = nat(args[1])
             data.seen = data.seen[:n] + bytes(max(0, n - len(data.seen)))
             data.kept = data.kept[:n]
             data.most = max(data.most, n)
+            data.latest = data.latest.ljust(n, b"\x00")
         case "sync":
             if data.trusted:
                 data.kept, data.most = data.seen, len(data.seen)
+                data.latest, data.appends = data.seen, []
         case "read":
             at, n = nat(args[1]), nat(args[2])
             return f"bytes:{hexed(data.seen[at:at + n])}"
@@ -249,23 +259,60 @@ def may_leave(d: Disk, img: dict[bytes, bytes]) -> bool:
     return False
 
 
+def octets_by_kind(f: File) -> dict[str, list[bytes]]:
+    """Octets a crash may leave a file holding, by kind: what is kept, alone or followed by zeros or
+    0xff up to the most the file has held; what the program sees cut at each length, alone or followed
+    by zeros or 0xff; the last octets written at each place, which a cut does not take back, cut at
+    each length; an append made past what is kept whole, those before it zeros; and what the program
+    sees with one such append lost."""
+    k, most = len(f.kept), f.most
+    cuts = range(k, min(len(f.seen), most) + 1)
+    kinds = {
+        "kept": [f.kept, f.kept + bytes(most - k), f.kept + b"\xff" * (most - k)],
+        "cut": [f.seen[:m] for m in cuts],
+        "cut-then-zeros": [f.seen[:m] + bytes(most - m) for m in cuts],
+        "cut-then-junk": [f.seen[:m] + b"\xff" * (most - m) for m in cuts],
+        "latest": [f.latest[:m] for m in range(k, min(len(f.latest), most) + 1)],
+        "later-whole": [f.kept + bytes(at - k) + octets for at, octets in f.appends if at >= k],
+        "one-lost": [f.seen[:at] + bytes(len(octets)) + f.seen[at + len(octets):] for at, octets in f.appends
+                     if at >= k],
+    }
+    return {kind: list(dict.fromkeys(o for o in found if allowed(f, o))) for kind, found in kinds.items()}
+
+
+def octets_of(f: File) -> list[bytes]:
+    """Octets a crash may leave a file holding, each kind `octets_by_kind` lists."""
+    return list(dict.fromkeys(o for found in octets_by_kind(f).values() for o in found))
+
+
 def leavings(d: Disk) -> list[dict[bytes, bytes]]:
     """Images a crash may leave, a few for each file: what is kept, what the program sees, each
     length between, zeros or 0xff after what is kept, up to the most the file has held."""
-    def octets(f: File) -> list[bytes]:
-        out = [f.kept, f.seen, f.kept + bytes(f.most - len(f.kept)), f.kept + b"\xff" * (f.most - len(f.kept))]
-        out += [f.seen[:m] for m in range(len(f.kept), len(f.seen))]
-        return [o for o in dict.fromkeys(out) if allowed(f, o)]
     per_name = []
     for n, h in d.names.items():
         per_name.append([(n, f) for f in dict.fromkeys([h.synced, *h.since])])
     found = []
     for picked in itertools.islice(itertools.product(*per_name), 64):
         files = sorted({f for _, f in picked if f is not None})
-        for contents in itertools.islice(itertools.product(*(octets(d.files[f]) for f in files)), 64):
+        for contents in itertools.islice(itertools.product(*(octets_of(d.files[f]) for f in files)), 64):
             given = dict(zip(files, contents, strict=True))
             found.append({n: given[f] for n, f in picked if f is not None})
     return list({shown(i): i for i in found}.values())
+
+
+def leaving(d: Disk, rng: random.Random) -> dict[bytes, bytes]:
+    """An image a crash may leave: each name holding what it held at the last sync of the directory
+    or since, each file octets of a kind `octets_by_kind` lists, the kind drawn first."""
+    files: dict[int, bytes] = {}
+    out = {}
+    for n, h in d.names.items():
+        f = rng.choice(list(dict.fromkeys([h.synced, *h.since])))
+        if f is not None:
+            if f not in files:
+                kinds = [found for found in octets_by_kind(d.files[f]).values() if found]
+                files[f] = rng.choice(rng.choice(kinds))
+            out[n] = files[f]
+    return out
 
 
 def answer(line: str) -> str:

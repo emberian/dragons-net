@@ -1591,7 +1591,8 @@ def St.after (x : St) : Cmd → St
       | _ => x
     | none => x
   | .commit q c =>
-    ⟨(x.fs.step (.append x.prog.journal (commitFrame x.prog.key x.prog.records c))).1,
+    ⟨(x.fs.step (.append x.prog.journal
+        (commitFrame x.prog.key (x.prog.records ++ backOf x.prog) c))).1,
       { x.prog.set q none with committing := some c },
       { x.hist with appended := x.hist.appended ++ [(x.prog.run, c)] }⟩
   | .publish => match x.prog.committing with
@@ -1652,6 +1653,7 @@ theorem after_step (cfg : Config) (x : St) (c : Cmd) (h : c.Allowed cfg x) :
     exact .place _ _ _ q y i hq hs ht
   | commit q c =>
     obtain ⟨y, i, hq, hs, hc, ha, hseq, hsize, hcrc, hok, hg⟩ := h
+    simp only [St.after, backOf, hc, List.append_nil]
     exact .commit _ _ _ q y i c hq hs hc ha hseq hsize hcrc hok hg
   | publish =>
     obtain ⟨c, hc, ha⟩ := h
@@ -1793,7 +1795,8 @@ def St.fails (x : St) : Cmd → List St
   | .rename q => (x.fs.failures (.rename (tempName q) (finalName q))).map (x.refusedAt q)
   | .place q => (x.fs.failures .syncDir).map (x.untrustedAt q)
   | .commit q c =>
-    (sampleFails x.fs (.append x.prog.journal (commitFrame x.prog.key x.prog.records c))).map
+    (sampleFails x.fs
+        (.append x.prog.journal (commitFrame x.prog.key (x.prog.records ++ backOf x.prog) c))).map
       fun t => ⟨t, { x.prog.set q none with committing := some c, accepting := false },
         { x.hist with appended := x.hist.appended ++ [(x.prog.run, c)] }⟩
   | .publish => (x.fs.failures (.sync x.prog.journal)).map fun t =>
@@ -1838,7 +1841,7 @@ theorem fails_step (cfg : Config) (x : St) (c : Cmd) (h : c.Allowed cfg x) (u : 
     exact .placeFails _ _ _ q y t hq ht
   | commit q c =>
     obtain ⟨y, i, hq, hs, hc, ha, hseq, hsize, hcrc, hok, hg⟩ := h
-    simp only [St.fails, List.mem_map] at hu
+    simp only [St.fails, backOf, hc, List.append_nil, List.mem_map] at hu
     obtain ⟨t, ht, rfl⟩ := hu
     exact .commitFails _ _ _ q y i c t hq hs hc ha hseq hsize hcrc hok hg
       (sampleFails_fails _ _ _ ht)
@@ -1975,7 +1978,7 @@ the second placed while the first's record is in flight, each command a step whe
 crash listed at every point, and of whatever each operation leaves when it fails and the cleaning
 after, recovers with every article answered and only commits appended for articles not refused,
 each file the octets written; and both articles end answered. -/
-def regression_922 : Bool :=
+def regression_922 (_ : Unit) : Bool :=
   let script : List Cmd :=
     [.reserve body, .reserve bodyB, .reserve body, .create 1, .create 2, .create 3, .write 1 5,
       .write 2 3, .write 3 4, .write 1 100, .sync 1, .refuse 3, .clean 3 false, .drop 3,
@@ -2002,7 +2005,7 @@ whose file is not in place, two records appended before either is synced, 240 be
 sync, and the store going on accepting after the record's write failed — each leaves a crash that
 recovery refuses or that loses an article answered, the first seven by a command `Cmd.Allowed`
 rules out; with all kept, every command allowed, none does. -/
-def regression_923 : Bool :=
+def regression_923 (_ : Unit) : Bool :=
   let c1 := commitFor 1 1 body
   let fine := written2 ++ [.place 1, .commit 1 c1, .publish, .place 2,
     .commit 2 (commitFor 2 2 bodyB), .publish]

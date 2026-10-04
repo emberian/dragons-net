@@ -1492,7 +1492,7 @@ removed; a journal read cleanly beside a file no record names, removed; a journa
 made again; no journal, created; and, with nothing lost, a process stopped once the journal was
 synced and before its name was, and one stopped with a commit appended and not synced. Article 1
 answered stays at every point and failure of each, and each start leaves what recovery planned. -/
-def regression_920 : Bool :=
+def regression_920 (_ : Unit) : Bool :=
   let commit2 := (Record.commit (articleOf 2)).encode sampleKey (journal sampleKey wRecords).length
   let placed := postOne ++ [.create (tempName 2), .append 2 body, .sync 2,
     .rename (tempName 2) (finalName 2), .syncDir]
@@ -1506,7 +1506,7 @@ def regression_920 : Bool :=
 /-- Why a start needs its syncs trusted: once a sync of the journal has failed after a commit was
 appended, a restart reads the commit, but its own syncs make nothing durable, and a crash after the
 start may lose the article it started with; had the sync been done, none could. -/
-def regression_921 : Bool :=
+def regression_921 (_ : Unit) : Bool :=
   let s := Fs.empty.run (started ++ posted 1 1 [.start])
   let failed := (s.onData 0 Data.untrust).1
   let synced := (s.step (.sync 0)).1

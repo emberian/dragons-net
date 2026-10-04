@@ -949,7 +949,7 @@ name, another file of its size moved onto its name, a file moved to a name recov
 journal removed or moved away; and the file of a commit appended and not synced removed — each
 leaves a crash after which recovery refuses the store, or finds the article's file not the one
 written. -/
-def regression_919 : Bool :=
+def regression_919 (_ : Unit) : Bool :=
   let answered := postOne
   let faultsAfter (ops : List FsModel.Op) := faults (Fs.empty.run (answered ++ ops))
   (faultsAfter [.rename (finalName 1) (quarantineName 1)]).contains (.missingFile 1) &&

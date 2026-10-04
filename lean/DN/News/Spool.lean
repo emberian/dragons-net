@@ -1414,7 +1414,7 @@ def postOne : List FsModel.Op := started ++ posted 1 1 [.start] ++ [.sync 0]
 
 /-- A commit appended and not synced, then synced: every crash at every point recovers, the commit's
 file whole; before the sync, with the commit or without it, and after it, with it always. -/
-def regression_915 : Bool :=
+def regression_915 (_ : Unit) : Bool :=
   let s := Fs.empty.run (started ++ posted 1 1 [.start])
   let r := recoveries s
   everyPoint postOne && r.contains (some []) && r.contains (some [articleOf 1]) &&
@@ -1422,13 +1422,13 @@ def regression_915 : Bool :=
 
 /-- A second POST in flight, its file written but not renamed, after the first answered: every crash
 at every point recovers, and once the first is answered, with the first article always. -/
-def regression_916 : Bool :=
+def regression_916 (_ : Unit) : Bool :=
   let ops := postOne ++ [.create (tempName 2), .append 2 body]
   everyPoint ops && recoveries (Fs.empty.run ops) == [some [articleOf 1]]
 
 /-- The journal created, its format synced and its name: every crash at every point recovers, with
 no article. -/
-def regression_917 : Bool :=
+def regression_917 (_ : Unit) : Bool :=
   let ops : List FsModel.Op := [.create journalName, .append 0 (journal sampleKey []), .sync 0,
     .syncDir]
   everyPoint ops && (points ops).all fun s => recoveries s == [some []]
@@ -1436,7 +1436,7 @@ def regression_917 : Bool :=
 /-- Why the order matters: once a commit is appended and synced before its file's rename, before the
 directory is synced after it, or before the file is synced, a crash may lose the file or part of it;
 and a file made before the journal's name is synced may be left with no journal. -/
-def regression_918 : Bool :=
+def regression_918 (_ : Unit) : Bool :=
   let commit := FsModel.Op.append 0 ((Record.commit (articleOf 1)).encode sampleKey
     (journal sampleKey [.start]).length)
   let beforeRename := started ++ [.create (tempName 1), .append 1 body, .sync 1, commit, .sync 0]

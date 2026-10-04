@@ -5,7 +5,7 @@ as decision 0005 ("On disk") fixes them, written apart from `DN.News.Journal` an
 cases `dn-compiler journal-model` answers, in the same form. SipHash-2-4 is written from the
 authors' paper as a loop over the message's words; the CRC-32C a byte at a time from a table of
 remainders, not a bit at a time as the specification does; asked as `crc-library`, it is
-google-crc32c's instead, a third implementation. Run by the Python of
+google-crc32c's instead, a third implementation, run by the Python of
 scripts/requirements-tests.txt, which pins that library.
 """
 from __future__ import annotations
@@ -13,8 +13,6 @@ from __future__ import annotations
 import re
 import struct
 import sys
-
-import google_crc32c
 
 
 def table() -> list[int]:
@@ -250,6 +248,7 @@ def answer(line: str) -> str:
         case ["crc", data]:
             return str(crc32c(unhex(data)))
         case ["crc-library", data]:
+            import google_crc32c  # noqa: PLC0415 -- only this line asks for it, so the rest imports without it
             return str(google_crc32c.value(unhex(data)))
         case ["siphash", key, data]:
             return str(siphash(key_of(key), unhex(data)))
