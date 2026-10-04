@@ -186,20 +186,26 @@ knows nothing of articles.
   digits, never read and never removed — or removed, when that quarantine name exists already, or
   when the journal ended cleanly and no `j` file is numbered above it: sequence numbers are given in
   order, so a file numbered above every kept tail was made after them, and an article answered 240
-  since has its record synced, which then reads back. Then the directory is synced. No file is taken
-  before the truncation is synced, so a record a crash brings back from a tail whose truncation is
-  not yet durable still has its file, and reads as written but not answered. An action of recovery
-  that fails stops it: the server does not start, and the next start recovers again. Each start
-  reports what is set aside; taking it back, or removing it, is repair (#21). A name of any other
-  shape makes the store corrupt.
+  since has its record synced, which then reads back. Then the directory is synced, if a name
+  changed. No file is taken before the truncation is synced, so a record a crash brings back from a
+  tail whose truncation is not yet durable still has its file, and reads as written but not
+  answered. An action of recovery that fails stops it: the server does not start, and the next
+  start recovers again. Each start reports what is set aside, in the directory's order and the tail
+  it kept last; taking it back, or removing it, is repair (#21). A name of any other shape makes the
+  store corrupt.
 - A corrupt store is refused: the server does not start and says why. Corrupt: a frame that does not
   check where what follows is no torn append's; a sequence number in two records; an article number
   in a group not above the one an earlier record gave it there (RFC 3977 §6); a record naming a file
-  that is missing or of another size; a group the configuration lacks; files and no journal; no
-  sequence number left to give. A journal is created only in an empty directory, and made again —
-  cut to nothing, its format written and synced — when nothing is left of it but a format cut short
-  and no other name is there. The store is never repaired silently; repair, when it comes, is a
-  separate operation (#21).
+  that is missing or of another size; a group the configuration lacks; files and no journal, a
+  format cut short beside another name among them; no sequence number left to give. It says the
+  first it finds, once the key is checked (see Configuration): a name of another shape, in the
+  directory's order; files and no journal; where reading the journal stops in corruption; then each
+  of these over the records in the journal's order, before the next — a sequence number a later
+  record repeats, an article number not above, a group the configuration lacks, a file missing or of
+  another size; last, no number left. A journal is created only in an empty directory, the
+  directory then synced, and made again — cut to nothing, its format written and synced — when
+  nothing is left of it but a format cut short and no other name is there. The store is never
+  repaired silently; repair, when it comes, is a separate operation (#21).
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.

@@ -119,9 +119,9 @@ def compilerModules : Array Name :=
     `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfRules, `DN.News.ArticleModel,
     `DN.News.ArticleSpec, `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec,
     `DN.News.Framer, `DN.News.FramerProg, `DN.News.Journal, `DN.News.JournalModel,
-    `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash,
-    `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
-    `DN.Server.Skeleton]
+    `DN.News.Recovery, `DN.News.RecoveryModel, `DN.News.RecoveryMutant, `DN.News.SessionModel,
+    `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash, `DN.Printed, `DN.Server.Layout,
+    `DN.Server.Session, `DN.Server.SessionLayout, `DN.Server.Skeleton]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do

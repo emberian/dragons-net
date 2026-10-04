@@ -127,6 +127,8 @@ tests() {
   python3 scripts/article_check.py
   # The store's journal and the names of its files, against an independent reference.
   python3 scripts/journal_check.py
+  # How the store recovers when it starts, against an independent reference.
+  python3 scripts/store_check.py
   # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2
