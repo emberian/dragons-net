@@ -33,7 +33,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import random
-import re
 import struct
 import subprocess
 import sys
@@ -438,14 +437,6 @@ def field(answer: str, n: int) -> str:
     return answer.split(" ")[n]
 
 
-def differing(asked: list[str], model: list[str], reference: list[str]) -> str | None:
-    """The first case the model and the reference answer otherwise, and both answers."""
-    for line, a, b in zip(asked, model, reference, strict=True):
-        if a != b:
-            return f"{line[:300]}: the model answers {a[:300]}, the reference {b[:300]}"
-    return None
-
-
 def unseen(answers: list[str]) -> list[str]:
     """The ways of finding a store corrupt that no answer shows."""
     seen = {field(a, 1) for a in answers if a.startswith("corrupt ")}
@@ -470,23 +461,6 @@ def again_problem(first: str, second: str) -> str | None:
     return None
 
 
-def section(text: str, start: str, end: str) -> str:
-    """The part of `text` from `start` to the first `end` after it."""
-    at = text.index(start)
-    return text[at:text.index(end, at + len(start))]
-
-
-def misstated(text: str, measured: dict[str, str]) -> list[str]:
-    """Each phrase of `measured` that `text` states after no number, or anywhere after another
-    number than the one measured."""
-    wrong = []
-    for phrase, value in measured.items():
-        stated = re.findall(rf"(\d[\d,]*) {re.escape(phrase)}", text)
-        if not stated or any(s != value for s in stated):
-            wrong.append(f"{phrase!r}: {', '.join(stated) or 'none'}, not {value}")
-    return wrong
-
-
 def check() -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     python = str(lanes.pinned_python(REQUIREMENTS))
@@ -501,7 +475,7 @@ def check() -> Report:
 
     def both(asked: list[str]) -> list[str]:
         model = C.answer_lines(model_command, asked, C.WORKERS)
-        problem = differing(asked, model, C.answer_lines(reference_command, asked, C.WORKERS))
+        problem = lanes.differing(asked, model, C.answer_lines(reference_command, asked, C.WORKERS))
         if problem:
             raise LaneError(problem)
         return model
@@ -530,8 +504,12 @@ def check() -> Report:
             if done.returncode == 0:
                 raise LaneError(f"{command[-1]} answered a line no case may be: {asked!r}")
     held = list(zip(lines, answers, strict=True)) + list(zip([ln for ln, _ in again], answered_again, strict=True))
-    where = {ln: f"again {k}" for k, (ln, _) in enumerate(again)}
-    where |= {c.line: f"{name} {k}" for name, family in families.items() for k, c in enumerate(family)}
+    where: dict[str, str] = {}
+    for name, family in families.items():
+        for k, c in enumerate(family):
+            where.setdefault(c.line, f"{name} {k}")
+    for k, (ln, _) in enumerate(again):
+        where.setdefault(ln, f"again {k}")
     caught = {}
     for mutant in MUTANTS:
         differs = C.first_difference([*model_command, "--mutant", mutant], held)
@@ -545,10 +523,10 @@ def check() -> Report:
                 "lists of actions": f"{len(families['actions']):,}", "that recover": f"{len(recovered):,}"}
     baseline = (lanes.ROOT / "docs/baseline.md").read_text()
     assurance = (lanes.ROOT / "docs/assurance.md").read_text()
-    wrong = misstated(section(baseline, "\n| Store |", "\n|") + section(baseline, "\n### Store\n", "\n### "),
-                      measured)
-    wrong += misstated(section(assurance, "\n| Recovery (`DN.News.Recovery`", "\n|"),
-                       {k: measured[k] for k in ("cases", "versions of recovery", "that recover")})
+    stated = lanes.section(baseline, "\n| Store |", "\n|") + lanes.section(baseline, "\n### Store\n", "\n### ")
+    wrong = lanes.misstated(stated, measured)
+    wrong += lanes.misstated(lanes.section(assurance, "\n| Recovery (`DN.News.Recovery`", "\n|"),
+                             {k: measured[k] for k in ("cases", "versions of recovery", "that recover")})
     if wrong:
         raise LaneError(f"the documents state otherwise than measured: {wrong}")
     seen = [field(a, 1) for a in answers if a.startswith("corrupt ")]

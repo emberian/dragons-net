@@ -12,6 +12,7 @@ import DN.News.AbnfModel
 import DN.News.ArticleModel
 import DN.News.JournalModel
 import DN.News.RecoveryModel
+import DN.News.FsCases
 import DN.Compiler.Analyzer
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
@@ -26,7 +27,7 @@ private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-frame-line",
    "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
-   "journal-model [--mutant NAME]", "recovery-model [--mutant NAME]",
+   "journal-model [--mutant NAME]", "recovery-model [--mutant NAME]", "fs-model [--mutant NAME]",
    "emit-layout", "emit-session", "emit-session-layout",
    "analyze-session",
    "emit-reply-cases", "emit-baseline",
@@ -114,6 +115,16 @@ def main (args : List String) : IO UInt32 := do
     | some m => do
       let input ← (← IO.getStdin).readToEnd
       output (DN.News.JournalModel.runAll (DN.News.Journal.rulesOf m) input)
+    | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
+  | ["fs-model"] =>
+    -- Operations on the file system and what a crash may leave, on standard input.
+    let input ← (← IO.getStdin).readToEnd
+    output (DN.News.FsCases.runAll .none input)
+  | ["fs-model", "--mutant", name] =>
+    match DN.News.FsMutant.names.lookup name with
+    | some m => do
+      let input ← (← IO.getStdin).readToEnd
+      output (DN.News.FsCases.runAll m input)
     | none => IO.eprintln s!"error: no mutant {name}" *> pure 2
   | ["recovery-model"] =>
     -- Directories on standard input, read as the store's recovery does.

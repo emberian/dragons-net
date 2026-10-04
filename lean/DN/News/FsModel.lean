@@ -384,6 +384,11 @@ def Fs.Settled (s : Fs) : Prop :=
   s.dirTrusted = true ∧ (∀ e ∈ s.dir, e.Settled) ∧ (∀ p ∈ s.files, p.2.Settled) ∧
     ∀ p ∈ s.files, s.holds p.1 = true
 
+/-- Each name that holds a file, with the octets the program sees there, in the directory's
+order. -/
+def Fs.image (s : Fs) : List (Bytes × Bytes) :=
+  s.dir.filterMap fun e => e.seen.bind fun i => (s.data i).map fun d => (e.name, d.seen)
+
 /-! ## What the program finds under a name -/
 
 /-- The entry a name has once `name` holds `b`. -/

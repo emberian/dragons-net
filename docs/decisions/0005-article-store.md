@@ -314,7 +314,7 @@ refusing to start without sixteen; and it logs each connection's address with th
     frame whose tag checks where it was not written, as above; a file no name is left holding is
     freed; so a synced file's data and a name whose directory was synced survive; a failed operation
     may have done any part of what it was asked, an append any first part of its octets and anything
-    else all or nothing, and after a failed sync no later sync of that file or of the directory is
+    else all or nothing, and after a failed sync of a file or of the directory no later sync of it is
     trusted until power is lost — recovery after a crash at any point of any run, operations failing
     or not, yields every article answered 240, possibly some whose commit record was written but not
     answered, and never one refused before its record was written or a partial one (`store_safe` in

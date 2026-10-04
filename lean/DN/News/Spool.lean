@@ -36,6 +36,9 @@ open DN.News.CommandSpec (ascii)
 def image (s : Fs) : Image :=
   s.dir.filterMap fun e => e.seen.bind fun i => (s.data i).map fun d => (e.name, d.seen)
 
+/-- It is the image of `DN.News.FsModel`. -/
+theorem image_fs (s : Fs) : image s = s.image := rfl
+
 theorem lookup_filterMap (name : Bytes) :
     ∀ (es : List Entry) (f : Entry → Option (Bytes × Bytes)),
       (∀ e p, f e = some p → p.1 = e.name) → (es.map Entry.name).Nodup →

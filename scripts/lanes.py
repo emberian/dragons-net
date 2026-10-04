@@ -234,6 +234,31 @@ def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
                 raise LaneError(f"{name} does not say {phrase!r}")
 
 
+def differing(asked: list[str], model: list[str], reference: list[str]) -> str | None:
+    """The first case the model and the reference answer otherwise, and both answers."""
+    for line, a, b in zip(asked, model, reference, strict=True):
+        if a != b:
+            return f"{line[:300]}: the model answers {a[:300]}, the reference {b[:300]}"
+    return None
+
+
+def section(text: str, start: str, end: str) -> str:
+    """The part of `text` from `start` to the first `end` after it."""
+    at = text.index(start)
+    return text[at:text.index(end, at + len(start))]
+
+
+def misstated(text: str, measured: dict[str, str]) -> list[str]:
+    """Each phrase of `measured` that `text` states after no number, or anywhere after another
+    number than the one measured."""
+    wrong = []
+    for phrase, value in measured.items():
+        stated = re.findall(rf"(\d[\d,]*) {re.escape(phrase)}", text)
+        if not stated or any(s != value for s in stated):
+            wrong.append(f"{phrase!r}: {', '.join(stated) or 'none'}, not {value}")
+    return wrong
+
+
 def require_platform(parser: argparse.ArgumentParser) -> None:
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         parser.error("the native lanes run on Linux x86-64")

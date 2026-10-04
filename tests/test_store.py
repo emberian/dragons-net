@@ -11,6 +11,7 @@ import unittest
 from gatekit import ROOT, script
 
 S = script("store_check")
+L = script("lanes")
 J = script("journal_check")
 START = J.START_RECORD
 
@@ -135,8 +136,8 @@ class Holding(unittest.TestCase):
         self.assertEqual(S.again_problem(self.FIRST, "corrupt bad-key"), "it does not recover")
 
     def test_the_first_answer_that_differs_is_told(self) -> None:
-        self.assertIsNone(S.differing(["a", "b"], ["1", "2"], ["1", "2"]))
-        said = S.differing(["a", "b", "c"], ["1", "2", "3"], ["1", "x", "y"])
+        self.assertIsNone(L.differing(["a", "b"], ["1", "2"], ["1", "2"]))
+        said = L.differing(["a", "b", "c"], ["1", "2", "3"], ["1", "x", "y"])
         self.assertEqual(said, "b: the model answers 2, the reference x")
 
     def test_a_fault_no_answer_shows_is_told(self) -> None:
@@ -145,14 +146,14 @@ class Holding(unittest.TestCase):
 
     def test_a_number_stated_otherwise_anywhere_is_told(self) -> None:
         measured = {"cases": "1,587", "that recover": "776"}
-        self.assertEqual(S.misstated("on 1,587 cases and 776 that recover; 1,587 cases", measured), [])
-        self.assertEqual(S.misstated("on 1,587 cases and 1,500 cases, 776 that recover", measured),
+        self.assertEqual(L.misstated("on 1,587 cases and 776 that recover; 1,587 cases", measured), [])
+        self.assertEqual(L.misstated("on 1,587 cases and 1,500 cases, 776 that recover", measured),
                          ["'cases': 1,587, 1,500, not 1,587"])
-        self.assertEqual(S.misstated("on 1,587 cases", measured), ["'that recover': none, not 776"])
+        self.assertEqual(L.misstated("on 1,587 cases", measured), ["'that recover': none, not 776"])
 
     def test_a_section_runs_to_the_next_heading(self) -> None:
         text = "a\n### Store\nbody\n### Next\nmore"
-        self.assertEqual(S.section(text, "\n### Store\n", "\n### "), "\n### Store\nbody")
+        self.assertEqual(L.section(text, "\n### Store\n", "\n### "), "\n### Store\nbody")
 
 
 class Names(unittest.TestCase):
