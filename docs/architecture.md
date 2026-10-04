@@ -29,6 +29,7 @@ The diagram describes the intended path. Today the region-digest, byte-copy, dec
 | Reactor models | `lean/DN/Dataplane` | Abstract invariants, not a verified connection to kernel completions |
 | Preserved native implementation | `migration/dataplane` | Source for porting; old product integration remains visible |
 | NNTP session | `lean/DN/News`, `DN.Server.Session` | The framing, the reply to each command line and the session specified in Lean, the framers proven; the session's program held against its model and proven in the model not to fail ([0004](decisions/0004-safety-analysis.md)) |
+| Article store | `lean/DN/News` (`ArticleSpec`, `Journal`, `FsModel`, `Recovery`, `StoreOps`, `StoreRun`) | Specified as [0005](decisions/0005-article-store.md) fixes it and proven in the model, a crash at any point of the store's runs included; held against independent references; no program or host yet |
 
 ## Host contract to develop
 
@@ -38,6 +39,6 @@ An OS-specific adapter should translate real completions into a small protocol-n
 
 ## Storage and offline exchange
 
-An immutable article body with a stable Message-ID and separate group indexes is a promising starting point. Per-group article numbers and crossposts are not equivalent to filenames in a directory. Define transaction/recovery behavior before exposing posting success. Limits, retention, and policy belong beside the store contract.
+An immutable article body with a stable Message-ID and separate group indexes is a promising starting point. Per-group article numbers and crossposts are not equivalent to filenames in a directory. Define transaction/recovery behavior before exposing posting success. Limits, retention, and policy belong beside the store contract. [Decision 0005](decisions/0005-article-store.md) fixes the local store: its files and journal, the point before which no acceptance is reported, recovery, and what of it is proved.
 
 NNTP transports commands over a reliable byte stream. Sneakernet needs an explicit batch export/import format and ingestion path; it is not supplied by a disconnected NNTP socket. Reuse the same validation and deduplication logic for network and offline ingestion. A 9P view can later expose the store without becoming its consistency mechanism.

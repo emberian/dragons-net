@@ -22,9 +22,11 @@ final names no record has, and gives only names no file holds (`recover_safe`); 
 journal only by cutting its torn tail or making again one with no record (`recover_journal`); it
 takes no file before the cut (`recover_order`), and removes a final file no record names only when
 no cut tail can have held its record (`recover_removes`); afterwards the journal ends where the next
-record goes (`recover_journalEnd`); whatever a crash leaves of its actions, each taken whole, the
-next start finds the same articles (`recover_partly`, `recover_again`). A cut or creation of the
-journal a crash leaves in part is reasoned about with the frames written in it.
+record goes (`recover_journalEnd`); whatever a crash leaves of its actions — of each nothing or all,
+a file renamed under both its names or neither, a tail kept with any of its octets — the next start
+finds the same articles, under any key of sixteen octets and the same groups while a number is left
+(`recover_partly`), and so does a start after all of them (`recover_again`). A cut or creation of
+the journal a crash leaves in part is reasoned about with the frames written in it.
 -/
 
 namespace DN.News.Recovery

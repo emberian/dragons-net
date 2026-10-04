@@ -132,7 +132,8 @@ knows nothing of articles.
   not yet synced is not answered, and its connection is closed. What the store has, it keeps
   serving. A process started again after a failed sync of the journal or the directory, without a
   loss of power, reads what Linux kept in memory and may never write: what is proved does not cover
-  that run, whose next loss of power may leave the store refused until repaired (#21).
+  that run, whose next loss of power may lose articles it served, or leave the store refused until
+  repaired (#21).
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -147,7 +148,7 @@ knows nothing of articles.
   four octets, 1 to 2,147,483,647 (RFC 3977 §6); then the size of the header section, no more than
   the file's, the size of the file and the file's CRC-32C (RFC 7143 §13.1), four octets each. Each
   start, once recovery is done, appends a start record, type 3 with no payload, and syncs it before
-  taking an article. The largest record is 1,390 octets, the format's 50 and a start's 14, less than
+  taking an article. The largest record is 1,390 octets, the format's 50; a start's is 14, less than
   any other's: appended where a torn tail was truncated, a start cannot leave whole a frame cut away
   there, and every other append lands where no frame has been. Recovery reads the journal from the
   start and stops at the first frame that does not check: short of its header or its length, with a
@@ -172,11 +173,12 @@ knows nothing of articles.
   writes again the device block that holds the end of the record before it; the model assumes that a
   loss of power never garbles that block, rather than pad each frame to a block: a device that did
   would take that record with the append, which would read as a torn tail and be kept in a `j` file.
-  The journal is bounded by the number of articles the store holds, and the directory by those, the
-  files set aside below and two names per POST in flight, so recovery is bounded work without a
-  checkpoint. Expiry, when it comes, brings compaction and checkpoints, and must keep the
-  Message-IDs of what it removes, or a cutoff by date, since an article accepted once is rejected
-  ever after.
+  The journal holds a record for each article the store holds and a start record of 14 octets for
+  each start, never removed, and the directory those articles' files, the files set aside below and
+  two names per POST in flight; recovery reads each once, so its work grows with the articles held
+  and the starts made, without a checkpoint. Expiry, when it comes, brings compaction and
+  checkpoints, and must keep the Message-IDs of what it removes, or a cutoff by date, since an
+  article accepted once is rejected ever after.
 - Recovery first syncs the journal and the directory, so that what it reads is what a loss of power
   keeps — a process killed before its syncs leaves its writes in the page cache, where the next
   would read them as done (PostgreSQL syncs its data directory at start for the same reason) — then
@@ -208,7 +210,10 @@ knows nothing of articles.
   another size; last, no number left. A journal is created only in an empty directory, the
   directory then synced, and made again — cut to nothing, its format written and synced — when
   nothing is left of it but a format cut short and no other name is there. The store is never
-  repaired silently; repair, when it comes, is a separate operation (#21).
+  repaired silently; repair, when it comes, is a separate operation (#21). A Message-ID in two
+  records is to be corruption too, which recovery does not check yet: the program refuses one the
+  store has or has reserved (Which articles are accepted), and the specification takes up both
+  with the index that reserves it.
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.
@@ -298,6 +303,9 @@ refusing to start without sixteen; and it logs each connection's address with th
 
 ### What is proved and what is tested
 
+The specifications, their proofs and the lanes that hold them against references written apart
+from them are done; what needs the program or the host comes with them, as marked.
+
 - Proved in Lean, of specifications:
   - which articles are accepted and what is added, each rule shown to matter by a version with it
     broken, as `DN.News.CommandSpec` does for command lines;
@@ -319,20 +327,30 @@ refusing to start without sixteen; and it logs each connection's address with th
     or not, yields every article answered 240, possibly some whose commit record was written but not
     answered, and never one refused before its record was written or a partial one (`store_safe` in
     `DN.News.StoreRun`: runs from an empty directory — starts, each with its own key and the last
-    start's groups or more, the program's steps, crashes, the process ending — while numbers last);
-    recovery is idempotent. A restart after a failed sync of the journal or the directory without a
-    loss of power is not covered, as above. What the host does when an operation fails is tested.
-- Proved of the program: the CRC-32C and SipHash-2-4 functions it prints compute what
-  `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the framers; no run
-  of the program fails, by the analysis of [0004](0004-safety-analysis.md). The analysis now costs
-  about 40 s and 7.4 GB; if the store's code takes it past 12 GB, the program is split into
-  functions and the analysis extended to calls.
-- Tested:
+    start's groups or more, the program's steps, crashes, the process ending — while numbers last),
+    of the program as `DN.News.StoreOps` models it, whose steps take its part as given: a commit
+    only once its file is placed, one at a time, with its own number, the file's size, a record the
+    journal can hold and article numbers allocated in groups the store carries (`Allocated`); 240
+    only after the journal's sync; no article accepted after a failed sync or write of the journal.
+    That the host's concurrent jobs come down to such steps is argued, not proven, and one process
+    runs at a time, as the lock is to ensure. After its actions a start finds the same articles
+    again (`recover_again`, while numbers last); that it then has nothing left to do is tested. A
+    restart after a failed sync of the journal or the directory without a loss of power is not
+    covered, as above.
+- To be proved of the program, once it is written: the CRC-32C and SipHash-2-4 functions it prints
+  compute what `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the
+  framers; no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The
+  analysis now costs about 40 s and 7.4 GB; if the store's code takes it past 12 GB, the program is
+  split into functions and the analysis extended to calls.
+- Tested against references written apart from the specifications ([baseline](../baseline.md)):
+  the grammar of header fields; acceptance, with the article corpus of INN's tests
+  (`tests/data/articles`, ISC licence) and our own expected outcomes for an injecting agent, and the
+  header fields RFC 5322, RFC 5537 and RFC 8315 print; the journal; the file system model; recovery,
+  with the table of corruptions `fn` keeps for its own store; and the store's program, held at every
+  point of runs drawn from a fixed seed to what a crash may leave there.
+- To be tested with the program and the host:
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;
-  - acceptance against the article corpus of INN's tests (`tests/data/articles`, ISC licence), with
-    our own expected outcomes for an injecting agent, and the header fields RFC 5322, RFC 5537 and
-    RFC 8315 print;
   - the host's worker pool, with failed and slow syncs, no space and short writes injected
     (`libfiu`);
   - process crashes: the server killed at each operation of a job, then restarted;
@@ -356,7 +374,8 @@ refusing to start without sixteen; and it logs each connection's address with th
 - `native/nntp_host.c` gains the worker pool, the lock, and `--spool`, `--group`,
   `--path-identity` and `--post-from`.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.
-- New lanes: the store's model against its reference and the corruption table; the crash lane on
+- New lanes: done — the grammar of header fields, acceptance, the journal, the file system model,
+  recovery against the table of corruptions, and the store's runs; to come — the crash lane on
   LazyFS, which needs `/dev/fuse` and the right to mount — in CI on the runner, locally in a
   container of its own; the `nntp` lane gains POST and restarts.
 - LazyFS, its two dependencies and libfiu are pinned by digest in `tools.lock.json` and built

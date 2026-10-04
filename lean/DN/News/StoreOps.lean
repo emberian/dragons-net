@@ -13,8 +13,8 @@ are refused, a record in flight is not answered. Any number of articles may be i
 order; records are appended one at a time; steps come in the order their operations take effect. A
 failure the program has not learned of changes only its own file or the trust in the directory's
 syncs, so other operations commute with it; the one that does not, a sync of the directory after a
-failed one, 0005 rules out by keeping one sync of the journal or of the directory in flight at a
-time. That argument is not proven.
+failed one, 0005 rules out by keeping one sync of the directory, and one append of the journal with
+its sync, in flight at a time. That argument is not proven.
 
 Proven: from a store recovery started (`running_started`), every step and every failure keeps it
 `Running` (`running_step`). So a crash anywhere, under what is assumed of the journal, recovers

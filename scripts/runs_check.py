@@ -18,8 +18,9 @@ storage systems, with tools written apart from the model:
 - events the program may not make are refused where it may not, for each thing `Cmd.allowed`
   checks;
 - the program broken in each of the nine ways `regression_923` sets out, and by a commit of another
-  CRC-32C, is caught by drawn scenarios, each at least three times, a scenario counting only when the
-  break makes an event the program may not make.
+  CRC-32C, is caught by drawn scenarios, each at least three times, a scenario counting for 240
+  before the journal's sync when it has a commit, and for the others only when the break makes an
+  event the program may not make.
 
 A scenario is drawn by a reading of 0005's program kept here: what it may do next, and what each
 event does to what it keeps (docs/baseline.md, "Store runs").

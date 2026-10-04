@@ -150,6 +150,10 @@ class Holding(unittest.TestCase):
         self.assertEqual(L.misstated("on 1,587 cases and 1,500 cases, 776 that recover", measured),
                          ["'cases': 1,587, 1,500, not 1,587"])
         self.assertEqual(L.misstated("on 1,587 cases", measured), ["'that recover': none, not 776"])
+        self.assertEqual(L.misstated("1,587 cases, 776 that recover; Twelve cases", measured),
+                         ["'cases': 1,587, Twelve, not 1,587"])
+        self.assertEqual(L.misstated("twenty-one ways, often ways, 21 ways", {"ways": "21"}), [])
+        self.assertEqual(L.misstated("twenty-two ways", {"ways": "21"}), ["'ways': twenty-two, not 21"])
 
     def test_a_section_runs_to_the_next_heading(self) -> None:
         text = "a\n### Store\nbody\n### Next\nmore"

@@ -18,7 +18,8 @@ a running store keeps every answered article, its file in place (`store_serves`)
 Assumed: `CrashAssumed`, `StartAssumed` (after a crash it holds of itself, so it is assumed only of
 a start after the process ended without a loss of power); the program's and the host's part, as in
 `DN.News.StoreOps`. Not covered: a start after a failed sync of the journal or the directory without
-a loss of power; a start without a group an article carries.
+a loss of power; a start without one of the last start's groups (recovery refuses one without a
+group an article carries).
 -/
 
 namespace DN.News.StoreRun

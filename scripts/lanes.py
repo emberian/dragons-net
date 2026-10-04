@@ -248,13 +248,31 @@ def section(text: str, start: str, end: str) -> str:
     return text[at:text.index(end, at + len(start))]
 
 
+NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+TENS_WORDS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def word_number(word: str) -> int | None:
+    """The number below a hundred a word names, as "Twelve" or "twenty-one" do, if it names one."""
+    w = word.lower()
+    if w in NUMBER_WORDS:
+        return NUMBER_WORDS.index(w)
+    tens, _, unit = w.partition("-")
+    if tens in TENS_WORDS and (not unit or unit in NUMBER_WORDS[1:10]):
+        return 20 + 10 * TENS_WORDS.index(tens) + (NUMBER_WORDS.index(unit) if unit else 0)
+    return None
+
+
 def misstated(text: str, measured: dict[str, str]) -> list[str]:
     """Each phrase of `measured` that `text` states after no number, or anywhere after another
-    number than the one measured."""
+    number than the one measured, in digits or in words."""
     wrong = []
     for phrase, value in measured.items():
-        stated = re.findall(rf"(\d[\d,]*) {re.escape(phrase)}", text)
-        if not stated or any(s != value for s in stated):
+        found = re.findall(rf"(?<![\w,-])(\d[\d,]*|[A-Za-z]+(?:-[a-z]+)?) {re.escape(phrase)}", text)
+        stated = [s for s in found if s[0].isdigit() or word_number(s) is not None]
+        number = int(value.replace(",", ""))
+        if not stated or any(s != value if s[0].isdigit() else word_number(s) != number for s in stated):
             wrong.append(f"{phrase!r}: {', '.join(stated) or 'none'}, not {value}")
     return wrong
 
