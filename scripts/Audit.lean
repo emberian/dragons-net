@@ -115,9 +115,14 @@ def compilerModules : Array Name :=
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
     `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
-    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example,
-    `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec, `DN.News.Framer,
-    `DN.News.FramerProg, `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec,
+    `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.News.Abnf,
+    `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfRules, `DN.News.ArticleModel,
+    `DN.News.ArticleSpec, `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec,
+    `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves, `DN.News.FsModel,
+    `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash, `DN.News.JournalModel,
+    `DN.News.Recovery, `DN.News.RecoveryModel, `DN.News.RecoveryMutant, `DN.News.RecoveryRun,
+    `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash,
+    `DN.News.Spool, `DN.News.SpoolOps, `DN.News.StoreCases, `DN.News.StoreOps, `DN.News.StoreRun,
     `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
     `DN.Server.Skeleton]
 
@@ -362,7 +367,7 @@ unsafe def main (args : List String) : IO UInt32 := do
   let mut theorems := 0
   let mut helpers := 0
   let mut regressions := 0
-  let mut cases : Array Name := #[]
+  let mut cases : Array (Name × Bool) := #[]
   for (name, info) in decls do
     if info matches .thmInfo _ then theorems := theorems + 1
     if info matches .axiomInfo _ then errors := errors.push s!"axiom declared: {name}"
@@ -386,9 +391,12 @@ unsafe def main (args : List String) : IO UInt32 := do
     if isRegression name then
       match info with
       | .defnInfo v =>
-        if v.type == mkConst ``Bool then cases := cases.push name
-        else errors := errors.push s!"regression is not a Bool definition: {name}"
-      | _ => errors := errors.push s!"regression is not a Bool definition: {name}"
+        -- One that takes `Unit` is not computed when its module is imported.
+        if v.type == mkConst ``Bool then cases := cases.push (name, true)
+        else if v.type.isArrow && v.type.bindingDomain! == mkConst ``Unit &&
+            v.type.bindingBody! == mkConst ``Bool then cases := cases.push (name, false)
+        else errors := errors.push s!"regression is not a Bool or Unit → Bool definition: {name}"
+      | _ => errors := errors.push s!"regression is not a Bool or Unit → Bool definition: {name}"
   if theorems == 0 then errors := errors.push "no theorems found"
   for (premise, users) in unwitnessed env decls inOurs do
     errors := errors.push s!"premise without a witness: {premise}, assumed by {users} theorem(s); \
@@ -398,8 +406,10 @@ unsafe def main (args : List String) : IO UInt32 := do
     IO.println s!"proof audit: {modules.size} modules, {decls.size} declarations, \
       {theorems} theorems checked, {helpers} recursion helpers; \
       allowed axioms: {", ".intercalate (allowedAxioms.toList.map toString)}"
-    for name in cases do
-      match env.evalConst Bool {} name (checkMeta := false) with
+    for (name, constant) in cases do
+      let result := if constant then env.evalConst Bool {} name (checkMeta := false)
+        else (env.evalConst (Unit → Bool) {} name (checkMeta := false)).map (· ())
+      match result with
       | .ok true => regressions := regressions + 1
       | .ok false => errors := errors.push s!"regression failed: {name}"
       | .error e => errors := errors.push s!"regression could not run: {name}: {e}"

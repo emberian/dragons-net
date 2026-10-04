@@ -89,5 +89,12 @@
     "sha256": "48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9",
     "binary": "cargo-machete-v0.9.2-x86_64-unknown-linux-musl/cargo-machete",
     "role": "Unused dependency detection; a dependency nobody uses is a dependency nobody reads"
+  },
+  "abnfgen": {
+    "version": "0.21",
+    "url": "https://www.quut.com/abnfgen/abnfgen-0.21.tar.gz",
+    "sha256": "5bf784e6010b4b67e38fa18632b7e2b221c1a7a43a0907be0379a4909f5e536e",
+    "binary": "abnfgen",
+    "role": "Generates cases from the grammar text of header fields for the grammar lane; built from source with the system's C compiler"
   }
 }

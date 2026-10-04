@@ -1,0 +1,11 @@
+# The environment the independent references of the grammar, article, journal and store lanes run
+# in, its libraries pinned to their wheels. The grammar library is pure Python with no
+# dependencies; its Rust backend's wheel is built for CPython 3.10 or later on Linux x86-64, which
+# is where the lanes run.
+abnf==2.9.0 --hash=sha256:8592e174c05cc6010f5250f2292b832993f92e2ae136d7618368ee89d649435e
+# Its Rust backend, the same library's second implementation of the same combinators, which it
+# uses when present: an order of magnitude faster on RFC 5322's white space and comments.
+abnf-rust==2.9.0 --hash=sha256:7107e92e6289008032c700cdda316b411d8af8035e8628816bae6ea8298c4018
+# The journal lane's third CRC-32C: the library's C extension over Google's crc32c library, which
+# its wheel bundles, built for CPython 3.12 on Linux x86-64.
+google-crc32c==1.8.0 --hash=sha256:14f87e04d613dfa218d6135e81b78272c3b904e2a7053b841481b38a7d901411

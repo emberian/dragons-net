@@ -208,6 +208,23 @@ class Lines:
         return line
 
 
+def pinned_python(requirements: Path) -> Path:
+    """The Python of a virtual environment holding exactly the wheels `requirements` pins by
+    digest, built once under .deps and again whenever the pins or the Python it is made from
+    change, as scripts/lint.sh builds the linters'."""
+    venv = ROOT / ".deps" / requirements.stem
+    stamp = venv / "pins"
+    pins = f"{digest(requirements)} {sys.version}"
+    if not (stamp.is_file() and stamp.read_text().strip() == pins):
+        shutil.rmtree(venv, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
+                        "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
+                       check=True)
+        stamp.write_text(pins + "\n")
+    return venv / "bin/python"
+
+
 def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
     """The documents quote what this run measured: each file has to carry each phrase."""
     for name, phrases in quotes.items():
@@ -215,6 +232,49 @@ def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
         for phrase in phrases:
             if phrase not in text:
                 raise LaneError(f"{name} does not say {phrase!r}")
+
+
+def differing(asked: list[str], model: list[str], reference: list[str]) -> str | None:
+    """The first case the model and the reference answer otherwise, and both answers."""
+    for line, a, b in zip(asked, model, reference, strict=True):
+        if a != b:
+            return f"{line[:300]}: the model answers {a[:300]}, the reference {b[:300]}"
+    return None
+
+
+def section(text: str, start: str, end: str) -> str:
+    """The part of `text` from `start` to the first `end` after it."""
+    at = text.index(start)
+    return text[at:text.index(end, at + len(start))]
+
+
+NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+TENS_WORDS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def word_number(word: str) -> int | None:
+    """The number below a hundred a word names, as "Twelve" or "twenty-one" do, if it names one."""
+    w = word.lower()
+    if w in NUMBER_WORDS:
+        return NUMBER_WORDS.index(w)
+    tens, _, unit = w.partition("-")
+    if tens in TENS_WORDS and (not unit or unit in NUMBER_WORDS[1:10]):
+        return 20 + 10 * TENS_WORDS.index(tens) + (NUMBER_WORDS.index(unit) if unit else 0)
+    return None
+
+
+def misstated(text: str, measured: dict[str, str]) -> list[str]:
+    """Each phrase of `measured` that `text` states after no number, or anywhere after another
+    number than the one measured, in digits or in words."""
+    wrong = []
+    for phrase, value in measured.items():
+        found = re.findall(rf"(?<![\w,-])(\d[\d,]*|[A-Za-z]+(?:-[a-z]+)?) {re.escape(phrase)}", text)
+        stated = [s for s in found if s[0].isdigit() or word_number(s) is not None]
+        number = int(value.replace(",", ""))
+        if not stated or any(s != value if s[0].isdigit() else word_number(s) != number for s in stated):
+            wrong.append(f"{phrase!r}: {', '.join(stated) or 'none'}, not {value}")
+    return wrong
 
 
 def require_platform(parser: argparse.ArgumentParser) -> None:

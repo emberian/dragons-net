@@ -2,8 +2,9 @@ Copyright (C) 2025-2026 the dn contributors.
 
 dn project code is licensed under GNU AGPL version 3 or later, unless an
 individual file or component states otherwise. See LICENSE. Source files carry
-an SPDX identifier; the files under migration keep the bytes they were taken
-with, so their headers are whatever the source had.
+an SPDX identifier; the files under migration and the corpora under tests/corpus
+keep the bytes they were taken with, so their headers are whatever the source
+had.
 
 This repository incorporates compiler and dataplane work extracted from the
 orb-compiler and orb directories of breadstuffs, and from drorb. Source
@@ -16,6 +17,22 @@ revision are recorded in backend/lock.json.
 
 RFC documents in rfcs retain their individual copyright and redistribution
 notices. Their inclusion does not relicense those documents under AGPL.
+
+The header field grammar in scripts/netnews.abnf and lean/DN/News/AbnfRules.lean,
+and the rule texts in scripts/gen_abnf.py and scripts/abnf_check.py, are derived
+from the ABNF of IETF RFCs 5536, 8315, 5322, 5234, 3986, 2045 and 2231. Those
+rules are IETF Code Components, under the Revised BSD License of the IETF
+Trust's Legal Provisions and, for RFC 2231, that document's own notice; the
+files carry the notices and an SPDX identifier that names both licenses.
+
+The articles in tests/corpus/inn-articles are INN's test data, unchanged and
+under INN's ISC licence, whose file that directory carries unchanged as LICENSE;
+docs/provenance.json records their source revision and digests.
+
+The SipHash-2-4 test vectors in tests/corpus/siphash/vectors.h are from the
+reference implementation of SipHash by its authors, unchanged and under CC0 1.0,
+whose text that directory carries unchanged as LICENSE_CC0; docs/provenance.json
+records their source revision and digests.
 
 The preserved snapshot under migration references third-party work that is not
 included here: the shims in its ffi directory call HACL* (F*-verified

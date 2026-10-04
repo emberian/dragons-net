@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 MARKER = "archive.sha256"
 MANIFEST = "tree.sha256"
-BUILT = ("lean4export", "nanoda", "cake", "polyml")
+BUILT = ("lean4export", "nanoda", "cake", "polyml", "abnfgen")
 # Built tools kept as the whole tree their build installs, because the binary alone is not
 # usable: Poly/ML needs its libraries and the basis library it loads at run time.
 INSTALLED = ("polyml",)
@@ -93,8 +93,10 @@ def fetch(pin: dict[str, str]) -> Path:
         archive.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=archive.parent) as temp:
             partial = Path(temp) / "download"
+            # Release downloads fail with 5xx for minutes at a time; curl doubles its wait from a
+            # second, so eight tries span about four minutes.
             subprocess.run(["curl", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2",
-                            "--fail", "--location", "--retry", "3",
+                            "--fail", "--location", "--retry", "8", "--retry-max-time", "600",
                             "--silent", "--show-error", "--output", str(partial), pin["url"]], check=True)
             partial.rename(archive)
     if digest(archive) != pin["sha256"]:
@@ -147,6 +149,12 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
                          "--enable-intinf-as-int"]
             subprocess.run(configure, cwd=source, check=True, stdout=sys.stderr)
             command = ["make", f"-j{jobs()}", "install", f"DESTDIR={prefix}"]
+            env = dict(os.environ)
+        elif name == "abnfgen":
+            # The archive ships a Makefile configured on its author's machine; configure writes
+            # one for this one.
+            subprocess.run(["./configure"], cwd=source, check=True, stdout=sys.stderr)
+            command = ["make", f"-j{jobs()}", "abnfgen"]
             env = dict(os.environ)
         elif name == "cake":
             command = ["make", "-C", str(source), "cake", "LDFLAGS=-Wl,-z,noexecstack"]

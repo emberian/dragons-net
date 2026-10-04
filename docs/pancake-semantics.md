@@ -5,7 +5,7 @@ semantics that lives in HOL4, in the CakeML sources. This document says exactly
 what it was compared against, clause by clause, what it leaves out, and which
 parts are checked by machine rather than by reading.
 
-The states a run stops in are compared against an independent implementation of these clauses on every run of the checks: `DN.Compiler.StateCorpus` prints a bounded corpus with what the model makes of each case, and `scripts/state_check.py` recomputes it and compares the result constructor, the locals, the memory, the external trace, the base address and the clock; the write-back clause is compared on its own, because an external call reads the region before it writes and so never reaches a failing write-back. That is a guard against drift in the half of the semantics no differential lane over computed values can reach; it is not a connection to the HOL source, which remains the open obligation below.
+The states a run stops in are compared against an independent implementation of these clauses on every run of the checks: `dn-compiler dump-states` prints the bounded corpus of `DN.Compiler.StateCorpus` with what the model makes of each case, and `scripts/state_check.py` recomputes it and compares the result constructor, the locals, the memory, the external trace, the base address and the clock; the write-back clause is compared on its own, because an external call reads the region before it writes and so never reaches a failing write-back. That is a guard against drift in the half of the semantics no differential lane over computed values can reach; it is not a connection to the HOL source, which remains the open obligation below.
 
 ## What it was compared against
 
@@ -30,17 +30,17 @@ runs on a schedule.
 | `src/n-bit/alignmentScript.sml` (`byte_align`) | HOL4 | `a9846eb` |
 
 `e8eca63` is the source revision of the release compiler the native lane runs;
-`ed31510` is the revision the curated backend patch applies to. The two differ in
-function calls (return shapes in `code` and `lookup_code`), in an exception
+`ed31510` is the revision the curated backend patch applies to. The two differ
+in function calls (return shapes in `code` and `lookup_code`), in an exception
 declaration, in the type of `code` — none of which this subset models — and in
-`Shift`, which it does. Every other clause below is the same text on both.
+`Shift`, which it does; every other clause below is the same text on both.
 
-`Shift` is the one clause that differs: at `e8eca63` it is `Shift sh e1 e2`, whose
-distance is an expression read through `w2n`, and at `ed31510` it is `Shift sh e n`,
-whose distance is a literal. The model follows `e8eca63`, the revision the native
-lane compiles with, and the gate only accepts a literal distance, so the emitted
-programs stay inside the form both grammars accept: the distance is printed bare,
-because at `ed31510` the parser takes a literal there and nothing else.
+At `e8eca63`, `Shift` is `Shift sh e1 e2`, whose distance is an expression read
+through `w2n`, and at `ed31510` it is `Shift sh e n`, whose distance is a
+literal. The model follows `e8eca63`, the revision the native lane compiles
+with, and the gate only accepts a literal distance, so the emitted programs stay
+inside the form both grammars accept: the distance is printed bare, because at
+`ed31510` the parser takes a literal there and nothing else.
 
 ## The modelled subset
 
