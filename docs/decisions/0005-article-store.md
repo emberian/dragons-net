@@ -142,10 +142,12 @@ knows nothing of articles.
   have dropped what it could not write, so no later sync is trusted. Articles in flight when the
   store stops are refused once their jobs in flight have completed; one whose record is appended and
   not yet synced is not answered, and its connection is closed. What the store has, it keeps
-  serving. A process started again after a failed sync of the journal or the directory, without a
-  loss of power, reads what Linux kept in memory and may never write: what is proved does not cover
-  that run, whose next loss of power may lose articles it served, or leave the store refused until
-  repaired (#21).
+  serving. A process started again after a failed sync, without a loss of power, would read what
+  Linux kept in memory and may never write, which what is proved does not cover: so the host marks
+  a failed sync with the boot it happened in (`sync-failed`, in the spool and in a run directory a
+  boot clears) before the program learns of it, refuses to start on a mark of this boot, or one it
+  cannot read whole, until the machine restarts or the store is repaired (#21), and removes a whole
+  mark of another boot. Not covered: a process killed between the failure and its mark.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -264,14 +266,15 @@ count, as `DN.News.ArticleSpec` keeps it, not a stack.
 
 ### Configuration
 
-The host is given the spool directory, the groups, the server's path identity and the networks
-allowed to post (by default loopback, until authentication, RFC 4643, is added), and hands the
-groups and the path identity to the program, which checks them: group names as RFC 5536 §3.1.4
-allows, none reserved, and the path identity as a domain name. Each opened connection carries
-whether it may post. The host also hands the program its wall clock, in UTC and not checked to move
-forward, and random octets: the run's value, which Message-IDs carry, and sixteen more that key a
-journal the program creates, written only to that journal and used for nothing else, the program
-refusing to start without sixteen; and it logs each connection's address with the run and its index.
+The host is given the spool directory, a run directory for the mark of a failed sync, the groups,
+the server's path identity and the networks allowed to post (by default loopback, until
+authentication, RFC 4643, is added), and hands the groups and the path identity to the program,
+which checks them: group names as RFC 5536 §3.1.4 allows, none reserved, and the path identity as a
+domain name. Each opened connection carries whether it may post. The host also hands the program its
+wall clock, in UTC and not checked to move forward, and random octets: the run's value, which
+Message-IDs carry, and sixteen more that key a journal the program creates, written only to that
+journal and used for nothing else, the program refusing to start without sixteen; and it logs each
+connection's address with the run and its index.
 
 ### Which articles are accepted, and what the server adds
 

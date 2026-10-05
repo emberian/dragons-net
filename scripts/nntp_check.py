@@ -41,8 +41,10 @@ import session_ref as ref
 
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
-HOSTS = [HOST, NATIVE / "session_calls.h", NATIVE / "call_checks.h", NATIVE / "cake_header.c",
-         NATIVE / "accept_policy.h", *lanes.RUNTIME]
+# The host's side of the store, linked with every build of the host.
+STORE = [NATIVE / "store.c"]
+HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "session_calls.h", NATIVE / "call_checks.h",
+         NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 REVISION, SOURCE = sessions.IDENTITY
 TEXTS = ref.texts(REVISION, SOURCE)
 GREETING = TEXTS["greeting"]
@@ -1264,13 +1266,13 @@ def planted(cake: str, source: str, build: Build, index: int, defect: Defect) ->
         text = lanes.plant(text, pattern, becomes, times, what, exact=not defect.program)
     name = f"defect-{index}"
     if defect.program:
-        return Build(lanes.whole_program(cake, name, text, OUT, HOST), build.stale, DEFECT_TIMEOUT)
+        return Build(lanes.whole_program(cake, name, text, OUT, HOST, STORE), build.stale, DEFECT_TIMEOUT)
     host = OUT / f"{name}.c"
     host.write_text(text)
     runtime = [NATIVE / "cake_header.c", NATIVE / "cake_runtime.c"]
 
     def linked(binary: str, program: str) -> Path:
-        return lanes.link(OUT / binary, [host, *runtime, OUT / program], includes=[OUT], check=False)
+        return lanes.link(OUT / binary, [host, *STORE, *runtime, OUT / program], includes=[OUT], check=False)
 
     # Only the check of actions for another generation runs the program that acts for the one before.
     stale = linked(f"{name}-stale", "stale.S") if CHECKS[defect.check] is stale_generation else build.stale
@@ -1298,8 +1300,8 @@ def check(cake: str) -> Report:
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
     stale = lanes.plant(source, *STALE, "the program, for acting for the generation before,", exact=True)
-    build = Build(lanes.whole_program(cake, "nntp", source, OUT, HOST),
-                  lanes.whole_program(cake, "stale", stale, OUT, HOST))
+    build = Build(lanes.whole_program(cake, "nntp", source, OUT, HOST, STORE),
+                  lanes.whole_program(cake, "stale", stale, OUT, HOST, STORE))
     results = {}
     for name, run in CHECKS.items():
         try:

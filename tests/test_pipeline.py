@@ -175,7 +175,7 @@ class CheckScript(unittest.TestCase):
                           "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
                           "python3 scripts/journal_check.py", "python3 scripts/fs_check.py",
                           "python3 scripts/store_check.py", "python3 scripts/runs_check.py",
-                          "python3 scripts/fiu_check.py"],
+                          "python3 scripts/fiu_check.py", "python3 scripts/host_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):

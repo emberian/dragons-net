@@ -15,7 +15,8 @@
  *
  * Every action is checked against the layout; one that breaks it ends the process with status 1.
  * A run the program stops because the host broke the contract ends it with status 3. SIGTERM or
- * SIGINT closes every socket and ends the run inside a call, with status 0.
+ * SIGINT closes every socket and ends the run inside a call, with status 0. `--spool` and the other
+ * options of store.c give the store; a store refused at start ends the host with status 4.
  *
  * `--address A` and `--port N` choose where it listens: by default 127.0.0.1 and a port the kernel
  * picks, printed as JSON on standard output. `--revision` and `--source` name the revision and the
@@ -31,6 +32,7 @@
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "session_calls.h"
+#include "store.h"
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -366,6 +368,8 @@ static void take_connections(unsigned char *a, uint64_t now) {
                                                    : ((struct sockaddr_in6 *)&peer)->sin6_port;
         conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
         event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
+        dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
+                    (uint64_t)dn_store_may_post(&peer));
     }
 }
 
@@ -394,6 +398,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     memcpy(a + DN_SESSION_NEXT_REV, revision, rl);
     dn_put_word(a + DN_SESSION_NEXT_SRC_LEN, sl);
     memcpy(a + DN_SESSION_NEXT_SRC, source, sl);
+    dn_store_fill(a);
     if (report_fd >= 0) trace_events(a, now);
     awaiting_emit = 1;
 }
@@ -512,10 +517,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(name, "--send-buffer")) send_buffer = (int)dn_parse_u64(value, 1 << 20);
         else if (!strcmp(name, "--clock-fd")) clock_fd = descriptor(value);
         else if (!strcmp(name, "--report-fd")) report_fd = descriptor(value);
-        else dn_harness("unknown option %s", name);
+        else if (!dn_store_option(name, value)) dn_harness("unknown option %s", name);
     }
     identity("--revision", revision, DN_SESSION_REV_MAX);
     identity("--source", source, DN_SESSION_SRC_MAX);
+    dn_store_start();
     if (clock_fd >= 0) now_virtual = 1;
     for (int i = 0; i < CONNS; ++i) conns[i].fd = -1;
     for (int i = 0; i < LINGERING; ++i) lingering[i].fd = -1;
