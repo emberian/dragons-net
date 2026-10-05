@@ -16,6 +16,9 @@ void dn_store_start(void);
 /* What the program is handed: the wall clock, the random octets, the path identity and the groups. */
 void dn_store_fill(unsigned char *next);
 
+/* The spool's directory, -1 without a store. */
+int dn_store_spool(void);
+
 /* Whether a client at `peer` may post: never without a spool. */
 int dn_store_may_post(const struct sockaddr_storage *peer);
 

@@ -42,9 +42,9 @@ import session_ref as ref
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
 # The host's side of the store, linked with every build of the host.
-STORE = [NATIVE / "store.c"]
-HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "session_calls.h", NATIVE / "call_checks.h",
-         NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
+STORE = [NATIVE / "store.c", NATIVE / "jobs.c"]
+HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "jobs.h", NATIVE / "session_calls.h",
+         NATIVE / "call_checks.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 REVISION, SOURCE = sessions.IDENTITY
 TEXTS = ref.texts(REVISION, SOURCE)
 GREETING = TEXTS["greeting"]

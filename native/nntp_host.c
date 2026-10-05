@@ -8,10 +8,11 @@
  *            connections taken in turn, input only from a connection that asked for it and has
  *            nothing untaken, at most one input a connection a batch, new connections only while
  *            an index is free. The poll waits until something is ready or the time the program
- *            asked to be woken at.
+ *            asked to be woken at; with a store, the first batch does not wait.
  *   dn_emit  carries out each action for the connection's current generation and writes back how
  *            much of each send the kernel took. A graceful close shuts down sending and reads and
- *            drops what still comes, for 30 s at most and 5 s of silence, outside the table.
+ *            drops what still comes, for 30 s at most and 5 s of silence, outside the table. File
+ *            jobs go to the workers of jobs.c; their completions come back with a later batch.
  *
  * Every action is checked against the layout; one that breaks it ends the process with status 1.
  * A run the program stops because the host broke the contract ends it with status 3. SIGTERM or
@@ -31,6 +32,7 @@
  * — or, when the program stops the run in that turn, `| stopped` and its code. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
+#include "jobs.h"
 #include "session_calls.h"
 #include "store.h"
 #include <arpa/inet.h>
@@ -65,7 +67,7 @@ struct lingering { int fd; uint64_t until, quiet_until, since; };
 
 static struct conn conns[CONNS];
 static struct lingering lingering[LINGERING];
-static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1;
+static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1, jobs_done = -1;
 static int accept_ready, started, awaiting_emit, carrying;
 static unsigned start;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
@@ -239,13 +241,14 @@ static int until(uint64_t at, int timeout) {
 /* Poll until something is ready to give out or `wake` has come. */
 static void wait_for(uint64_t wake) {
     for (;;) {
-        struct pollfd fds[3 + CONNS + LINGERING];
+        struct pollfd fds[4 + CONNS + LINGERING];
         int n = 0, conn_at[CONNS], linger_at[LINGERING];
         int paused = now_ms() < accept_paused_until;
         int listening = free_indexes() > 0 && !paused;
         fds[n++] = (struct pollfd){.fd = signals, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = listening ? listener : -1, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = clock_fd, .events = POLLIN};
+        fds[n++] = (struct pollfd){.fd = jobs_done, .events = POLLIN};
         int timeout = until(wake, -1);
         if (paused) timeout = until(accept_paused_until, timeout);
         for (int i = 0; i < CONNS; ++i) {
@@ -276,6 +279,7 @@ static void wait_for(uint64_t wake) {
             if (linger_at[i] >= 0) drain(&lingering[i], fds[linger_at[i]].revents);
         int news = fds[1].revents != 0;
         if (news) accept_ready = 1;
+        news |= dn_jobs_ready();
         for (int i = 0; i < CONNS; ++i) {
             if (conn_at[i] < 0) continue;
             conns[i].ready = fds[conn_at[i]].revents;
@@ -377,12 +381,14 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_session_call(c, clen, a, alen, DN_SESSION_NEXT_OFF, DN_SESSION_NEXT_LEN, "dn_next");
     if (awaiting_emit) dn_violation("dn_next: the program fetched again without handing over its answers");
     uint64_t wake = 0;
+    int first = !started;
     if (started) {
         wake = dn_word(a + DN_SESSION_NEXT_WAKE);
         if (report_fd >= 0) report(wake);
     }
     started = 1;
-    if (!carrying) wait_for(wake);
+    /* With a store, the first batch comes at once, so that the program recovers before any client. */
+    if (!carrying && !(first && dn_store_spool() >= 0)) wait_for(wake);
     uint64_t now = now_ms();
     turn_events = 0;
     for (unsigned k = 0; k < CONNS && turn_events < DN_SESSION_BATCH; ++k) give_out(a, (int)((start + k) % CONNS));
@@ -391,6 +397,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     carrying = 0;
     for (int i = 0; i < CONNS; ++i) carrying |= conns[i].ready != 0 || conns[i].lost;
     carrying |= accept_ready && free_indexes() > 0;
+    dn_jobs_give(a);
     dn_put_word(a + DN_SESSION_NEXT_COUNT, turn_events);
     dn_put_word(a + DN_SESSION_NEXT_CLOCK, now);
     size_t rl = strlen(revision), sl = strlen(source);
@@ -461,6 +468,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             else close(fd);
         }
     }
+    dn_jobs_take(a);
     if (turn_actions != count)
         dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, turn_actions);
     if (report_fd >= 0) trace_actions(a);
@@ -522,6 +530,7 @@ int main(int argc, char **argv) {
     identity("--revision", revision, DN_SESSION_REV_MAX);
     identity("--source", source, DN_SESSION_SRC_MAX);
     dn_store_start();
+    jobs_done = dn_jobs_start(dn_store_spool());
     if (clock_fd >= 0) now_virtual = 1;
     for (int i = 0; i < CONNS; ++i) conns[i].fd = -1;
     for (int i = 0; i < LINGERING; ++i) lingering[i].fd = -1;

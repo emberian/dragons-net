@@ -150,6 +150,8 @@ void dn_store_fill(unsigned char *next) {
     }
 }
 
+int dn_store_spool(void) { return spool; }
+
 int dn_store_may_post(const struct sockaddr_storage *peer) {
     if (spool < 0) return 0;
     const unsigned char *addr = peer->ss_family == AF_INET
