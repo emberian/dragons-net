@@ -4,17 +4,23 @@
  * files no other job in flight may name; the bytes it reads go back into the heap inside dn_next.
  * Names are made from a kind and a number as DN.News.Journal makes them, relative to the spool. A
  * signal's interruption is retried and never reported; a short write is written on, and one that
- * makes no progress fails as no space; a short read is reported as it is. */
+ * makes no progress fails as no space; a short read is reported as it is. A failed sync, or close,
+ * leaves the mark of store.c before the program learns of it. The test build fails each operation
+ * at a point of its name (faults.h); `dn/write-short` shortens a write to the number given, and
+ * `dn/sync-slow` delays a sync by that many milliseconds. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
+#include "faults.h"
 #include "host.h"
+#include "store.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
+#include <time.h>
 
 enum { JOBS = DN_SESSION_JOBS, OPS = DN_SESSION_JOB_OPS, DATA = DN_SESSION_JOB_DATA, PLACES = DN_SESSION_HANDLES,
        WORKERS = 2, NAME = 32 };
@@ -41,6 +47,12 @@ static struct file files[PLACES];
 static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t work = PTHREAD_COND_INITIALIZER;
+
+/* Whether a failure of the operation is a failed sync: a close is, as decision 0005 has it. */
+static int syncs(uint64_t code) {
+    return code == DN_SESSION_OP_DATA_SYNC || code == DN_SESSION_OP_SYNC || code == DN_SESSION_OP_SYNC_DIR ||
+           code == DN_SESSION_OP_CLOSE;
+}
 
 static int names_file(uint64_t code) { return code == DN_SESSION_OP_CREATE || code == DN_SESSION_OP_OPEN; }
 
@@ -154,7 +166,9 @@ static uint64_t class_of(int error) {
 /* Write all of `n` bytes at `offset`: a short write is written on, one of no byte fails as no space. */
 static int write_all(int fd, const unsigned char *p, uint64_t n, uint64_t offset) {
     while (n) {
-        ssize_t w = RETRIED(pwrite(fd, p, n, (off_t)offset));
+        uint64_t now = n;
+        if (DN_FAULT_INFO("dn/write-short", now) && now > n) now = n;
+        ssize_t w = RETRIED(DN_FAULT("dn/write") ? -1 : pwrite(fd, p, now, (off_t)offset));
         if (w < 0) return -1;
         if (w == 0) {
             errno = ENOSPC;
@@ -170,6 +184,7 @@ static int write_all(int fd, const unsigned char *p, uint64_t n, uint64_t offset
 /* A page of the directory's names, each a length octet and its bytes, without `.` and `..`. */
 static int list(DIR *dir, unsigned char *page, uint64_t room, uint64_t result[2]) {
     uint64_t used = 0, count = 0;
+    if (DN_FAULT("dn/list")) return -1;
     for (;;) {
         long at = telldir(dir);
         errno = 0;
@@ -198,6 +213,16 @@ static int list(DIR *dir, unsigned char *page, uint64_t room, uint64_t result[2]
     return 0;
 }
 
+/* A sync, made slower in the test build. */
+static int synced(const char *point, int fd, int (*sync)(int)) {
+    uint64_t ms;
+    if (DN_FAULT_INFO("dn/sync-slow", ms)) {
+        struct timespec t = {(time_t)(ms / 1000), (long)(ms % 1000) * 1000000};
+        while (nanosleep(&t, &t) && errno == EINTR) {}
+    }
+    return RETRIED(DN_FAULT(point) ? -1 : sync(fd));
+}
+
 /* Operation `i` of `j`, without the lock but where a place is given or taken back. */
 static int run(struct job *j, uint64_t i) {
     struct op *op = &j->ops[i];
@@ -211,7 +236,7 @@ static int run(struct job *j, uint64_t i) {
     case DN_SESSION_OP_OPEN_DIR: {
         DIR *dir = NULL;
         if (op->code == DN_SESSION_OP_OPEN_DIR) {
-            fd = RETRIED(openat(spool, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+            fd = RETRIED(DN_FAULT("dn/open-dir") ? -1 : openat(spool, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
             if (fd >= 0 && !(dir = fdopendir(fd))) {
                 int error = errno;
                 close(fd);
@@ -221,7 +246,8 @@ static int run(struct job *j, uint64_t i) {
         } else {
             name_of(op->name, op->number, name);
             int flags = op->code == DN_SESSION_OP_CREATE ? O_RDWR | O_CREAT | O_EXCL : O_RDWR;
-            fd = RETRIED(openat(spool, name, flags | O_CLOEXEC | O_NOFOLLOW, 0644));
+            fd = RETRIED(DN_FAULT(op->code == DN_SESSION_OP_CREATE ? "dn/create" : "dn/open")
+                             ? -1 : openat(spool, name, flags | O_CLOEXEC | O_NOFOLLOW, 0644));
         }
         if (fd < 0) return -1;
         int p = j->place[i];
@@ -235,32 +261,33 @@ static int run(struct job *j, uint64_t i) {
     }
     case DN_SESSION_OP_WRITE: return write_all(f->fd, j->data + op->at, op->length, op->offset);
     case DN_SESSION_OP_READ: {
-        ssize_t n = RETRIED(pread(f->fd, j->data + op->at, op->length, (off_t)op->offset));
+        ssize_t n = RETRIED(DN_FAULT("dn/read") ? -1 : pread(f->fd, j->data + op->at, op->length, (off_t)op->offset));
         if (n < 0) return -1;
         result[0] = (uint64_t)n;
         return 0;
     }
     case DN_SESSION_OP_SIZE: {
         struct stat s;
-        if (fstat(f->fd, &s)) return -1;
+        if (DN_FAULT("dn/size") || fstat(f->fd, &s)) return -1;
         result[0] = (uint64_t)s.st_size;
         return 0;
     }
-    case DN_SESSION_OP_DATA_SYNC: return RETRIED(fdatasync(f->fd));
-    case DN_SESSION_OP_SYNC: return RETRIED(fsync(f->fd));
-    case DN_SESSION_OP_TRUNCATE: return RETRIED(ftruncate(f->fd, (off_t)op->length));
-    case DN_SESSION_OP_SYNC_DIR: return RETRIED(fsync(spool));
+    case DN_SESSION_OP_DATA_SYNC: return synced("dn/data-sync", f->fd, fdatasync);
+    case DN_SESSION_OP_SYNC: return synced("dn/sync", f->fd, fsync);
+    case DN_SESSION_OP_TRUNCATE: return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
+    case DN_SESSION_OP_SYNC_DIR: return synced("dn/sync-dir", spool, fsync);
     case DN_SESSION_OP_LIST: return list(f->dir, j->data + op->at, op->length, result);
     case DN_SESSION_OP_RENAME:
         name_of(op->name, op->number, name);
         name_of(op->to_name, op->to_number, to);
-        return RETRIED(renameat(spool, name, spool, to));
+        return RETRIED(DN_FAULT("dn/rename") ? -1 : renameat(spool, name, spool, to));
     case DN_SESSION_OP_REMOVE:
         name_of(op->name, op->number, name);
-        return RETRIED(unlinkat(spool, name, 0));
+        return RETRIED(DN_FAULT("dn/remove") ? -1 : unlinkat(spool, name, 0));
     case DN_SESSION_OP_CLOSE: {
         /* Never retried: the descriptor is gone whatever close says. */
         int r = f->dir ? closedir(f->dir) : close(f->fd);
+        if (DN_FAULT("dn/close")) r = -1;
         pthread_mutex_lock(&lock);
         *f = (struct file){.fd = -1, .gen = f->gen + 1};
         pthread_mutex_unlock(&lock);
@@ -286,13 +313,14 @@ static void *worker(void *unused) {
             if (run(j, i)) {
                 j->done = i;
                 j->class = class_of(errno);
+                if (syncs(j->ops[i].code)) dn_store_mark_failed();
                 break;
             }
         pthread_mutex_lock(&lock);
         j->state = DONE;
         pthread_mutex_unlock(&lock);
         uint64_t one = 1;
-        if (write(wake, &one, sizeof one) != sizeof one) dn_harness("eventfd: %s", strerror(errno));
+        if (write(wake, &one, sizeof one) != sizeof one) dn_harness_now("eventfd: %s", strerror(errno));
     }
     return NULL;
 }

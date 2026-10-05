@@ -142,6 +142,10 @@ jobs:
           path: build
       - name: Unpack the build
         run: python3 scripts/build_archive.py unpack build/lean-build.tar
+      - name: Valgrind, for the host lane's check of races
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends valgrind
       - name: Gate tests, Rust crates and models
         run: |
           mkdir -p build/evidence

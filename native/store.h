@@ -19,6 +19,10 @@ void dn_store_fill(unsigned char *next);
 /* The spool's directory, -1 without a store. */
 int dn_store_spool(void);
 
+/* Leave the mark of a failed sync, of this boot, in the spool and the run directory; the host ends if
+ * it is left in neither. Safe from any thread. */
+void dn_store_mark_failed(void);
+
 /* Whether a client at `peer` may post: never without a spool. */
 int dn_store_may_post(const struct sockaddr_storage *peer);
 

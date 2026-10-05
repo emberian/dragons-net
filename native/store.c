@@ -9,10 +9,12 @@
 #define _GNU_SOURCE
 #include "store.h"
 #include "dn_session_layout.h"
+#include "faults.h"
 #include "host.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <sys/file.h>
 #include <sys/random.h>
 #include <time.h>
@@ -30,8 +32,10 @@ static const char *spool_path, *run_path, *identity, *groups[DN_SESSION_GROUPS_M
 static size_t group_count;
 static struct net nets[NETS];
 static size_t net_count;
-static int spool = -1;
+static int spool = -1, run = -1;
+static char boot[BOOT_ID + 1];
 static unsigned char random_octets[DN_SESSION_RANDOM_LEN];
+static pthread_mutex_t marking = PTHREAD_MUTEX_INITIALIZER;
 
 static void add_net(const char *text) {
     if (net_count == NETS) dn_harness("--post-from: more than %d networks", NETS);
@@ -67,7 +71,7 @@ __attribute__((noreturn, format(printf, 1, 2))) static void refuse(const char *f
     dn_end(4, format, args);
 }
 
-static void boot_id(char id[BOOT_ID + 1]) {
+static void boot_id(char id[static BOOT_ID + 1]) {
     int fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
     if (fd < 0) dn_harness("boot_id: %s", strerror(errno));
     ssize_t n = read(fd, id, BOOT_ID);
@@ -78,7 +82,7 @@ static void boot_id(char id[BOOT_ID + 1]) {
 
 /* A mark in `dir`: only a whole one of another boot is removed; one of this boot, or one that cannot
  * be read whole, refuses the start. */
-static void check_mark(int dir, const char *where, const char *boot) {
+static void check_mark(int dir, const char *where, const char *id) {
     int fd = openat(dir, MARK, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         if (errno == ENOENT) return;
@@ -89,7 +93,7 @@ static void check_mark(int dir, const char *where, const char *boot) {
     close(fd);
     if (n != BOOT_ID)
         refuse("%s/%s: a mark that cannot be read whole; once the machine has restarted, remove it", where, MARK);
-    if (!memcmp(seen, boot, BOOT_ID))
+    if (!memcmp(seen, id, BOOT_ID))
         refuse("%s/%s: a sync failed since the machine started; restart it, or repair the store", where, MARK);
     if (unlinkat(dir, MARK, 0) && errno != ENOENT) dn_harness("%s/%s: %s", where, MARK, strerror(errno));
 }
@@ -120,12 +124,10 @@ void dn_store_start(void) {
         if (errno == EWOULDBLOCK) refuse("%s: another process holds the spool", spool_path);
         dn_harness("flock %s: %s", spool_path, strerror(errno));
     }
-    char boot[BOOT_ID + 1];
     boot_id(boot);
     check_mark(spool, spool_path, boot);
-    int run = open_dir(run_path);
+    run = open_dir(run_path);
     check_mark(run, run_path, boot);
-    close(run);
     for (size_t got = 0; got < sizeof random_octets;) {
         ssize_t n = getrandom(random_octets + got, sizeof random_octets - got, 0);
         if (n < 0 && errno != EINTR) dn_harness("getrandom: %s", strerror(errno));
@@ -151,6 +153,28 @@ void dn_store_fill(unsigned char *next) {
 }
 
 int dn_store_spool(void) { return spool; }
+
+/* The mark in `dir`, unless the test build fails it at `point`; whether it was left. */
+static int leave_mark(int dir, const char *point) {
+    if (DN_FAULT(point)) return 0;
+    int fd = openat(dir, MARK, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0644);
+    if (fd < 0) return 0;
+    char line[BOOT_ID + 1];
+    memcpy(line, boot, BOOT_ID);
+    line[BOOT_ID] = '\n';
+    ssize_t n;
+    do n = write(fd, line, sizeof line);
+    while (n < 0 && errno == EINTR);
+    return !close(fd) && n == (ssize_t)sizeof line;
+}
+
+void dn_store_mark_failed(void) {
+    pthread_mutex_lock(&marking);
+    int left = leave_mark(spool, "dn/mark-spool") + leave_mark(run, "dn/mark-run");
+    pthread_mutex_unlock(&marking);
+    if (!left)
+        dn_harness_now("a sync failed, and its mark could be left neither in %s nor in %s", spool_path, run_path);
+}
 
 int dn_store_may_post(const struct sockaddr_storage *peer) {
     if (spool < 0) return 0;

@@ -148,10 +148,10 @@ def compile_object(source: Path, obj: Path, *, includes: Iterable[Path] = ()) ->
 
 
 def link(binary: Path, sources: Iterable[Path], *, includes: Iterable[Path] = (),
-         timeout: int = 120, check: bool = True) -> Path:
-    """Link with the hardening flags and debug information; `check` reads the protections back
-    off the binary, which a lane linking the same host many times needs to do once."""
-    loud([cc(), *HARDENING, "-g", *(f"-I{d}" for d in (NATIVE, *includes)), *map(str, sources),
+         timeout: int = 120, check: bool = True, flags: Iterable[str] = ()) -> Path:
+    """Link with the hardening flags, debug information and `flags`; `check` reads the protections
+    back off the binary, which a lane linking the same host many times needs to do once."""
+    loud([cc(), *HARDENING, "-g", *(f"-I{d}" for d in (NATIVE, *includes)), *map(str, sources), *flags,
           "-o", str(binary)], timeout=timeout, what=f"linking {binary.name}")
     if check:
         hardened(binary)

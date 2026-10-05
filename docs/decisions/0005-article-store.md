@@ -145,9 +145,10 @@ knows nothing of articles.
   serving. A process started again after a failed sync, without a loss of power, would read what
   Linux kept in memory and may never write, which what is proved does not cover: so the host marks
   a failed sync with the boot it happened in (`sync-failed`, in the spool and in a run directory a
-  boot clears) before the program learns of it, refuses to start on a mark of this boot, or one it
-  cannot read whole, until the machine restarts or the store is repaired (#21), and removes a whole
-  mark of another boot. Not covered: a process killed between the failure and its mark.
+  boot clears) before the program learns of it, ends when it can leave neither, refuses to start on
+  a mark of this boot, or one it cannot read whole, until the machine restarts or the store is
+  repaired (#21), and removes a whole mark of another boot. Not covered: a process killed between
+  the failure and its mark.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end

@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import errno
 import json
+import os
 from pathlib import Path
 import queue
 import re
@@ -50,9 +52,28 @@ OTHER_BOOT = "00000000-0000-0000-0000-000000000000"
 NAMED = ["--revision", "0123abc", "--source", "https://example.org/dn"]
 
 
-def build(binary: Path, store: Path = STORE, jobs: Path = JOBS) -> Path:
-    return lanes.link(binary, [DRIVER, HOST, store, jobs, *RUNTIME], includes=[OUT],
-                      check=(store, jobs) == (STORE, JOBS))
+@dataclass
+class Builds:
+    """The host with the stand-in, as the server is built and as its test build, with libfiu's points."""
+
+    plain: Path
+    fiu: Path
+
+
+def build(name: str, store: Path = STORE, jobs: Path = JOBS) -> Builds:
+    fiu = lanes.pinned_tool("libfiu")
+    sources = [DRIVER, HOST, store, jobs, *RUNTIME]
+    clean = (store, jobs) == (STORE, JOBS)
+    return Builds(lanes.link(OUT / name, sources, includes=[OUT], check=clean),
+                  lanes.link(OUT / f"{name}-fiu", sources, includes=[OUT, fiu], check=clean,
+                             flags=["-DFIU_ENABLE=1", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]))
+
+
+def fiu_environment(enable: str) -> dict[str, str]:
+    """libfiu's preload, enabling the points `enable` names as the host starts."""
+    fiu = lanes.pinned_tool("libfiu")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
+    return {**env, "LD_PRELOAD": str(fiu / "fiu_run_preload.so"), "LD_LIBRARY_PATH": str(fiu), "FIU_ENABLE": enable}
 
 
 def layout() -> dict[str, int]:
@@ -60,13 +81,14 @@ def layout() -> dict[str, int]:
     return {name: int(value) for name, value in found}
 
 
-def start(binary: Path, options: list[str], address: str) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
-    """The host, listening; its standard output, and its port."""
-    proc = subprocess.Popen([str(binary), *NAMED, "--address", address, *options], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def start(binary: Path, options: list[str], address: str, env: dict[str, str] | None = None,
+          wrap: tuple[str, ...] = (), wait: float = WAIT) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
+    """The host, listening, run under `wrap` with `env`; its standard output, and its port."""
+    proc = subprocess.Popen([*wrap, str(binary), *NAMED, "--address", address, *options], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     lines = lanes.Lines(proc.stdout)
     try:
-        first = lines.get(WAIT)
+        first = lines.get(wait)
     except queue.Empty:
         proc.kill()
         raise LaneError(f"the host said nothing in {WAIT} s with {options}") from None
@@ -77,16 +99,16 @@ def start(binary: Path, options: list[str], address: str) -> tuple[subprocess.Po
     return proc, lines, int(json.loads(first)["port"])
 
 
-def stopped(proc: subprocess.Popen[str], lines: lanes.Lines) -> list[str]:
+def stopped(proc: subprocess.Popen[str], lines: lanes.Lines, wait: float = WAIT) -> list[str]:
     """Stop the run; what the driver printed before, once the host ended as a stopped run does."""
     if proc.stdin is None:
         raise LaneError("the host has no input")
     proc.stdin.write("stop 7\n")
     proc.stdin.close()
     out = []
-    while (line := lines.get(WAIT)) is not None:
+    while (line := lines.get(wait)) is not None:
         out.append(line.strip())
-    status = proc.wait(timeout=WAIT)
+    status = proc.wait(timeout=wait)
     if status != 3:
         raise LaneError(f"the stopped run ended with status {status}")
     return out
@@ -204,7 +226,7 @@ def held(binary: Path) -> str:
     return "refused"
 
 
-def marks(binary: Path) -> dict[str, str]:
+def marks_at_start(binary: Path) -> dict[str, str]:
     seen = {}
     for where in ("spool", "run"):
         with tempfile.TemporaryDirectory() as temp:
@@ -278,18 +300,21 @@ class Op:
 class Jobs:
     """A host with a store, handed jobs by the driver; what each completion said, by slot."""
 
-    def __init__(self, binary: Path, options: list[str]) -> None:
-        self.w = layout()
-        self.proc, self.lines, _ = start(binary, options, "127.0.0.1")
+    def __init__(self, binary: Path, options: list[str], points: list[str] | None = None,
+                 wrap: tuple[str, ...] = (), wait: float = WAIT) -> None:
+        """`points` enables libfiu's points of failure in the test build as it starts, one command each."""
+        self.w, self.wait_s = layout(), wait
+        env = None if points is None else fiu_environment("\n".join(points))
+        self.proc, self.lines, self.port = start(binary, options, "127.0.0.1", env, wrap, wait)
         self.done: dict[int, list[int]] = {}
         self.ended = False
         self.fetch()
 
     def line(self) -> str | None:
         try:
-            return self.lines.get(WAIT)
+            return self.lines.get(self.wait_s)
         except queue.Empty:
-            raise LaneError(f"the host said nothing in {WAIT} s") from None
+            raise LaneError(f"the host said nothing in {self.wait_s} s") from None
 
     def fetch(self) -> None:
         """One batch: what it brought, up to its end, or that the host ended."""
@@ -309,18 +334,19 @@ class Jobs:
         except BrokenPipeError:
             self.ended = True
 
-    def hand(self, slot: int, gen: int, ops: list[Op], data: dict[int, bytes] | None = None) -> None:
-        self.hands([(slot, gen, ops, data or {})])
+    def hand(self, slot: int, gen: int, ops: list[Op], data: dict[int, bytes] | None = None, *,
+             fetch: bool = True) -> None:
+        self.hands([(slot, gen, ops, data or {})], fetch=fetch)
 
-    def hands(self, jobs: list[tuple[int, int, list[Op], dict[int, bytes]]]) -> None:
-        """Jobs handed over together, then a batch."""
+    def hands(self, jobs: list[tuple[int, int, list[Op], dict[int, bytes]]], *, fetch: bool = True) -> None:
+        """Jobs handed over together, then a batch unless `fetch` is false."""
         lines = []
         for slot, gen, ops, data in jobs:
             lines += [f"data {slot} {at} {chunk.hex()}" for at, chunk in data.items()]
             lines += [f"op {slot} {i} {' '.join(map(str, op.words(self.w)))}" for i, op in enumerate(ops)]
             lines.append(f"job {slot} {gen} {len(ops)}")
         self.send(*lines, "emit")
-        if not self.ended:
+        if fetch and not self.ended:
             self.fetch()
 
     def wait(self, slot: int) -> list[int]:
@@ -345,19 +371,19 @@ class Jobs:
         return (self.proc.stderr.read() if self.proc.stderr else "").strip()
 
     def stop(self) -> None:
-        stopped(self.proc, self.lines)
+        stopped(self.proc, self.lines, self.wait_s)
 
-    def broken(self, said: str) -> None:
-        """The host ended the run for a job that breaks the contract, saying `said`."""
+    def broken(self, said: str, wanted: int = 1) -> None:
+        """The host ended the run for a job that breaks the contract, saying `said`, with status `wanted`."""
         try:
-            status = self.proc.wait(timeout=WAIT)
+            status = self.proc.wait(timeout=self.wait_s)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait()
             raise LaneError(f"the host went on after a job that should break the contract ({said})") from None
         message = self.said()
-        if status != 1 or said not in message:
-            raise LaneError(f"status {status}, saying {message!r}, not status 1 saying {said!r}")
+        if status != wanted or said not in message:
+            raise LaneError(f"status {status}, saying {message!r}, not status {wanted} saying {said!r}")
 
     def __enter__(self) -> Self:
         return self
@@ -590,16 +616,150 @@ def breaches(binary: Path) -> dict[str, str]:
     return seen
 
 
-CHECKS: dict[str, Callable[[Path], object]] = {
-    "no store": no_store, "handed": handed, "posting": posting, "held": held, "marks": marks, "options": options,
-    "files": files, "truncated": truncated, "errors": errors, "listing": listing, "at once": at_once,
-    "breaches": breaches}
+def marks(store: Store) -> list[str]:
+    """Where a mark of this boot was left."""
+    return [w for w in ("spool", "run") if (getattr(store, w) / MARK).is_file()
+            and (getattr(store, w) / MARK).read_text().strip() == boot_id()]
+
+
+def failing(b: Builds, points: list[str], ops: Callable[[tuple[int, int]], list[Op]]) -> dict[str, object]:
+    """A file created, then a job of `ops` on it with `points` enabled from the start: its completion, what the
+    file holds, the marks left, and whether the host then refuses to start."""
+    data = b"hello world"
+    with tempfile.TemporaryDirectory() as temp:
+        store = Store(temp)
+        with Jobs(b.fiu, store.options(), points) as h:
+            pg = opened(h, 0, 1, "temp", 1)
+            h.hand(0, 2, ops(pg), {0: data})
+            done = h.wait(0)
+            h.stop()
+        held = store.spool / file_name("temp", 1)
+        holds = held.read_bytes() if held.exists() else None
+        left = marks(store)
+        if left:
+            refused(b.plain, store.options(), 4, "a sync failed since the machine started")
+    return {"done": done[1:3], "holds": holds, "marks": left, "refused after": bool(left)}
+
+
+def enabled(name: str, error: int, once: bool = False) -> str:
+    return f"enable name={name},failinfo={error}" + (",onetime" if once else "")
+
+
+def faults(b: Builds) -> dict[str, object]:
+    """Each failure the disk may give, injected at the test build's points: its class, the mark a failed sync
+    leaves and the refused start that follows, and the failures the host gets over."""
+    w = layout()
+    io, full, other = w["CLASS_IO"], w["CLASS_NO_SPACE"], w["CLASS_OTHER"]
+
+    def write(pg: tuple[int, int]) -> Op:
+        return Op("write", *pg, length=11)
+
+    cases: dict[str, tuple[list[str], Callable[[tuple[int, int]], list[Op]], dict[str, object]]] = {
+        "a data sync failing": ([enabled("dn/data-sync", errno.EIO)], lambda pg: [write(pg), Op("data-sync", *pg)],
+                                {"done": [1, io], "marks": ["spool", "run"]}),
+        "a sync failing": ([enabled("dn/sync", errno.EIO)], lambda pg: [write(pg), Op("sync", *pg)],
+                           {"done": [1, io], "marks": ["spool", "run"]}),
+        "the directory's sync failing": ([enabled("dn/sync-dir", errno.EIO)], lambda _pg: [Op("sync-dir")],
+                                         {"done": [0, io], "marks": ["spool", "run"]}),
+        "a close failing": ([enabled("dn/close", errno.EIO)], lambda pg: [Op("close", *pg)],
+                            {"done": [0, io], "marks": ["spool", "run"]}),
+        "no space": ([enabled("dn/write", errno.ENOSPC)], lambda pg: [write(pg)], {"done": [0, full], "marks": []}),
+        "an interrupted write": ([enabled("dn/write", errno.EINTR, once=True)], lambda pg: [write(pg)],
+                                 {"done": [1, 0], "holds": b"hello world"}),
+        "a short write": ([enabled("dn/write-short", 3, once=True)], lambda pg: [write(pg)],
+                          {"done": [1, 0], "holds": b"hello world"}),
+        "a write of no progress": ([enabled("dn/write-short", 0)], lambda pg: [write(pg)], {"done": [0, full]}),
+        "an interrupted sync": ([enabled("dn/sync", errno.EINTR, once=True)],
+                                lambda pg: [write(pg), Op("sync", *pg)], {"done": [2, 0], "marks": []}),
+        "another error": ([enabled("dn/rename", errno.EXDEV)],
+                          lambda _pg: [Op("rename", name="temp", number=1, to="final", to_number=1)],
+                          {"done": [0, other], "marks": []}),
+        "one mark left": ([enabled("dn/mark-spool", errno.EIO), enabled("dn/data-sync", errno.EIO)],
+                          lambda pg: [write(pg), Op("data-sync", *pg)], {"done": [1, io], "marks": ["run"]}),
+    }
+    seen: dict[str, object] = {}
+    for what, (points, ops, wanted) in cases.items():
+        got = failing(b, points, ops)
+        if any(got[k] != v for k, v in wanted.items()):
+            raise LaneError(f"{what}: {got}, not {wanted}")
+        seen[what] = {k: v.hex() if isinstance(v, bytes) else v for k, v in got.items() if k in wanted}
+    with tempfile.TemporaryDirectory() as temp, \
+            Jobs(b.fiu, Store(temp).options(), [enabled("dn/mark-spool", errno.EIO), enabled("dn/mark-run", errno.EIO),
+                                                enabled("dn/sync-dir", errno.EIO)]) as h:
+        h.hand(0, 1, [Op("sync-dir")], fetch=False)
+        h.broken("its mark could be left neither", 2)
+        seen["no mark left"] = "the host ended"
+    return seen
+
+
+def in_flight(b: Builds) -> str:
+    """A job handed in a slot whose job has not completed, held there by a slow sync."""
+    with tempfile.TemporaryDirectory() as temp, \
+            Jobs(b.fiu, Store(temp).options(), [enabled("dn/sync-slow", 2000)]) as h:
+        h.hand(0, 1, [Op("sync-dir")], fetch=False)
+        with socket.create_connection(("127.0.0.1", h.port), timeout=WAIT):
+            h.fetch()
+            if 0 in h.done:
+                raise LaneError("a sync slowed down by 2 s completed before a client was taken")
+            h.hand(0, 2, [Op("sync-dir")], fetch=False)
+            h.broken("still in flight")
+    return "refused"
+
+
+# Helgrind sees a race only in a schedule that shows it, so each scenario runs this many times.
+RACE_RUNS = 5
+HELGRIND = ("valgrind", "--tool=helgrind", "--error-exitcode=9", "-q")
+
+
+def race_run(binary: Path, points: list[str] | None, failing_sync: bool) -> None:
+    """Eight files created at once, then eight jobs at once writing, syncing and closing them, under
+    Helgrind; with `failing_sync`, every data sync fails, so that eight workers leave the mark at once."""
+    with tempfile.TemporaryDirectory() as temp:
+        store = Store(temp)
+        with Jobs(binary, store.options(), points, wrap=HELGRIND, wait=120) as h:
+            jobs = h.w["JOBS"]
+            h.hands([(slot, 1, [Op("create", name="final", number=slot)], {}) for slot in range(jobs)])
+            places = [ok(h.wait(slot), 1, f"job {slot}")[:2] for slot in range(jobs)]
+            h.hands([(slot, 2, [Op("write", p, g, length=4), Op("data-sync", p, g), Op("close", p, g)],
+                      {0: b"race"}) for slot, (p, g) in enumerate(places)])
+            for slot in range(jobs):
+                done = h.wait(slot)
+                if failing_sync and done[1:3] != [1, h.w["CLASS_IO"]]:
+                    raise LaneError(f"job {slot} with its sync failing: {done[1:3]}")
+                if not failing_sync:
+                    ok(done, 3, f"writes in job {slot}")
+            h.stop()
+        if failing_sync and marks(store) != ["spool", "run"]:
+            raise LaneError(f"eight syncs failing at once left marks in {marks(store)}")
+
+
+def races(b: Builds) -> dict[str, int]:
+    """Eight jobs at once and eight failed syncs marking at once, each run under Helgrind, which has to
+    find no race."""
+    for _ in range(RACE_RUNS):
+        race_run(b.plain, None, failing_sync=False)
+    for _ in range(RACE_RUNS):
+        race_run(b.fiu, [enabled("dn/data-sync", errno.EIO)], failing_sync=True)
+    return {"jobs at once": RACE_RUNS, "marks at once": RACE_RUNS}
+
+
+def on_plain(check: Callable[[Path], object]) -> Callable[[Builds], object]:
+    return lambda b: check(b.plain)
+
+
+# The checks, the quick ones first: a planted defect stops at the first that catches it.
+CHECKS: dict[str, Callable[[Builds], object]] = {
+    "no store": on_plain(no_store), "handed": on_plain(handed), "posting": on_plain(posting), "held": on_plain(held),
+    "marks": on_plain(marks_at_start), "options": on_plain(options), "files": on_plain(files),
+    "truncated": on_plain(truncated), "errors": on_plain(errors), "listing": on_plain(listing),
+    "at once": on_plain(at_once), "breaches": on_plain(breaches), "faults": faults, "in flight": in_flight,
+    "races": races}
 
 # Defects planted: (the file, the name, the text, what it becomes).
 DEFECTS = [
     (STORE, "the lock not taken", "if (flock(spool, LOCK_EX | LOCK_NB)) {", "if (0) {"),
-    (STORE, "a mark of this boot let through", "if (!memcmp(seen, boot, BOOT_ID))",
-     "if (0 && !memcmp(seen, boot, BOOT_ID))"),
+    (STORE, "a mark of this boot let through", "if (!memcmp(seen, id, BOOT_ID))",
+     "if (0 && !memcmp(seen, id, BOOT_ID))"),
     (STORE, "a mark cut short taken for another boot's", "if (n != BOOT_ID)\n        refuse(",
      "if (n < 0)\n        refuse("),
     (STORE, "a mark of another boot kept", "if (unlinkat(dir, MARK, 0) && errno != ENOENT)", "if (0)"),
@@ -616,26 +776,39 @@ DEFECTS = [
     (JOBS, "a file in flight named again", "if (f->busy && f->busy != k + 1)", "if (0 && f->busy != k + 1)"),
     (JOBS, "two syncs of the directory let through", "if (j->dir_sync && dir_syncs)", "if (0 && dir_syncs)"),
     (JOBS, "a name lost between pages", "            seekdir(dir, at);\n", "            (void)at;\n"),
-    (JOBS, "a job going on after a failure", "                j->class = class_of(errno);\n                break;\n",
-     "                j->class = class_of(errno);\n"),
+    (JOBS, "a job going on after a failure",
+     "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n                break;\n",
+     "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n"),
     (JOBS, "a name not found taken for another error", "    case ENOENT: return DN_SESSION_CLASS_NOT_FOUND;\n", ""),
     (JOBS, "a short read reported whole", "        result[0] = (uint64_t)n;\n", "        result[0] = op->length;\n"),
     (JOBS, "a closed file's place kept", "        *f = (struct file){.fd = -1, .gen = f->gen + 1};",
      "        f->gen++;"),
+    (JOBS, "a signal's interruption reported", "while (result_ < 0 && errno == EINTR);", "while (result_ < 0 && 0);"),
+    (JOBS, "a short write left short", "        n -= (uint64_t)w;\n", "        n = 0;\n"),
+    (JOBS, "a write of no progress taken as done", "        if (w == 0) {", "        if (0 && w == 0) {"),
+    (JOBS, "no mark on a failed sync", "                if (syncs(j->ops[i].code)) dn_store_mark_failed();",
+     "                if (0 && syncs(j->ops[i].code)) dn_store_mark_failed();"),
+    (JOBS, "a failed close not a failed sync", "           code == DN_SESSION_OP_CLOSE;", "           0;"),
+    (JOBS, "no space taken for another error", "    case ENOSPC:\n", ""),
+    (STORE, "one mark failing ending the host", "    if (!left)\n", "    if (left < 2)\n"),
+    (STORE, "no mark leaving the host going on", "    if (!left)\n", "    if (0 && !left)\n"),
+    (JOBS, "a completion marked without the lock",
+     "        pthread_mutex_lock(&lock);\n        j->state = DONE;\n        pthread_mutex_unlock(&lock);\n",
+     "        j->state = DONE;\n"),
 ]
 
 
 def check() -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
-    binary = build(OUT / "host", STORE)
-    results = {name: run(binary) for name, run in CHECKS.items()}
+    builds = build("host")
+    results = {name: run(builds) for name, run in CHECKS.items()}
     caught = {}
     for index, (source, name, text, becomes) in enumerate(DEFECTS):
         planted = OUT / f"defect-{index}.c"
         planted.write_text(lanes.plant(source.read_text(), text, becomes, 1, f"{source.name}, for a planted defect,",
                                        exact=True))
-        broken = build(OUT / f"defect-{index}", **{"store" if source == STORE else "jobs": planted})
+        broken = build(f"defect-{index}", **{"store" if source == STORE else "jobs": planted})
         for check_name, run in CHECKS.items():
             try:
                 run(broken)
