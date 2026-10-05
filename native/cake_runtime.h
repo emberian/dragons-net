@@ -19,11 +19,15 @@ void cml_exit(int code);
    stack or heap; unset, such an end is unexpected and the adapter aborts. */
 extern void (*dn_runtime_on_exit)(int code);
 
-/* The adapter provisions this much for each of the heap and the stack. */
+/* The adapter provisions this much for each of the heap and the stack, unless a host asks for a
+   larger heap. */
 #define DN_RUNTIME_SEGMENT_BYTES (1024u * 1024u)
 
 /* Give the generated code its heap and stack, without entering it. */
 void dn_runtime_setup(void);
+
+/* The same, with a heap of `heap_bytes`, at least the segment. */
+void dn_runtime_setup_heap(size_t heap_bytes);
 
 /* Give the generated code its heap and stack, then enter it. */
 void dn_runtime_init(void);

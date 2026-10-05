@@ -71,18 +71,25 @@ knows nothing of articles.
 
 ### File operations through the host
 
-- A new action, a file job: up to eight primitive operations, carried out in order by one of the
-  host's worker threads and stopped at the first that fails. Its completion comes back in a later
-  batch as an event naming the job, how many operations succeeded and, for a failed one, its class:
-  an I/O error, no space, a name that exists or does not, or another error. The program orders
-  what must be ordered by the operations inside a job and by starting a job only after the one it
-  depends on completed.
-- The operations: create a file under a new name, failing if it exists; open a named file; write
-  bytes at an offset, a short write being a failure; read bytes at an offset; report a file's size;
-  sync a file's data (`fdatasync`) or all of it (`fsync`); rename; remove a name; truncate; sync the
-  directory; list the directory's names a page at a time, without `.` and `..`; close. Names have
-  one fixed shape the host checks, and all are relative to the directory the host opened at start
-  (`openat`, `renameat`, `unlinkat`).
+- A new action, a file job: up to eight primitive operations, done in order by a worker thread and
+  stopped at the first that fails. Its completion, in a later batch, names the job, how many
+  operations succeeded, the failed one's class — an I/O error, no space, a name that exists or does
+  not, another — and two result words per operation: a file's place and generation, octets read, a
+  size, names listed. The program orders operations within a job, and jobs by starting one only
+  after those it depends on completed.
+- The operations: create a file under a new name, failing if it exists; open a file; write bytes at
+  an offset, all of them; read at an offset; report a size; `fdatasync`, `fsync`; rename; remove;
+  truncate; sync the directory; open the directory and list its names a page at a time; close. A
+  name is a kind and a number, made by the host into the name `DN.News.Journal` gives, relative to
+  the directory opened at start (`openat`, `renameat`, `unlinkat`).
+- A created or opened file stays open across jobs, in the host's table of sixteen places (four
+  POSTs, the journal, eight reads, spare), named by place and generation; the program closes it, the
+  host only what is left at the end. A file is synced through the descriptor it was written through:
+  Linux reports a failed write-back only to descriptors open at the time.
+- The host retries a call a signal interrupted; writes on after a short write, one without progress
+  failing as no space; reports a short read as it is. A failed close is a failed sync. Classes:
+  `EIO` an I/O error; `ENOSPC`, `EDQUOT` no space; `EEXIST`, `ENOENT` the name's; any other,
+  another.
 - Jobs are identified by a slot and a generation, like connections; at most eight are in flight.
   Bytes to write are copied out of the heap inside `dn_emit` and bytes read are copied in inside
   `dn_next`, so the host still touches the heap only inside a call; a job moves at most 16,384
@@ -376,7 +383,7 @@ from them are done; what needs the program or the host comes with them, as marke
 
 - The layout gains file jobs and their completions, the wall clock, the run's random value and a
   journal's key, the configuration, and whether a connection may post; the heap grows to 4 MiB, and
-  the theorem that the layout fits the heap moves with it.
+  the theorem that the layout fits the heap moves with it — done, unused yet.
 - `native/nntp_host.c` gains the worker pool, the lock, and `--spool`, `--group`,
   `--path-identity` and `--post-from`.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.

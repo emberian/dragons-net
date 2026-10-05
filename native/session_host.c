@@ -40,7 +40,7 @@ static void heap_intact(const char *call) {
     for (size_t off = DN_HEADER_BYTES; off < DN_SESSION_CONF_OFF; off += 8)
         if (dn_word(dn_heap_at(off)) != FILL)
             dn_violation("%s: the program wrote before its layout, at heap offset %zu", call, off);
-    for (size_t off = DN_SESSION_SIZE; off < DN_RUNTIME_SEGMENT_BYTES; off += 8)
+    for (size_t off = DN_SESSION_SIZE; off < DN_SESSION_HEAP_BYTES; off += 8)
         if (dn_word(dn_heap_at(off)) != FILL)
             dn_violation("%s: the program wrote past its layout, at heap offset %zu", call, off);
 }
@@ -129,6 +129,7 @@ static void batch(unsigned char *a) {
             dn_put_word(slot + DN_SESSION_EVENT_KIND, code);
             dn_put_word(slot + DN_SESSION_EVENT_IDX, number(idx));
             dn_put_word(slot + DN_SESSION_EVENT_GEN, number(gen));
+            dn_put_word(slot + DN_SESSION_EVENT_POST, 0);
             dn_put_word(slot + DN_SESSION_EVENT_LEN,
                         data ? unhex(data, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA) : 0);
         }
@@ -221,9 +222,9 @@ int main(void) {
     revision_len = unhex(rev, revision, sizeof revision);
     source_len = unhex(src, source, sizeof source);
     dn_expect_faults();
-    dn_runtime_setup();
+    dn_runtime_setup_heap(DN_SESSION_HEAP_BYTES);
     dn_runtime_header();
-    for (size_t off = DN_HEADER_BYTES; off < DN_RUNTIME_SEGMENT_BYTES; off += 8) dn_put_word(dn_heap_at(off), FILL);
+    for (size_t off = DN_HEADER_BYTES; off < DN_SESSION_HEAP_BYTES; off += 8) dn_put_word(dn_heap_at(off), FILL);
     dn_runtime_on_exit = on_exit_run;
     cml_main();
     dn_violation("the program returned to its host, which a build without --main_return cannot do");

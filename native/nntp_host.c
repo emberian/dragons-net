@@ -291,6 +291,7 @@ static void event(unsigned char *a, uint64_t kind, int idx, uint64_t gen, uint64
     dn_put_word(slot + DN_SESSION_EVENT_IDX, (uint64_t)idx);
     dn_put_word(slot + DN_SESSION_EVENT_GEN, gen);
     dn_put_word(slot + DN_SESSION_EVENT_LEN, len);
+    dn_put_word(slot + DN_SESSION_EVENT_POST, 0);
     ++turn_events;
 }
 
@@ -564,7 +565,7 @@ int main(int argc, char **argv) {
            (unsigned)ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port), CONNS);
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
 
-    dn_runtime_setup();
+    dn_runtime_setup_heap(DN_SESSION_HEAP_BYTES);
     dn_runtime_header();
     dn_runtime_on_exit = on_exit_run;
     cml_main();

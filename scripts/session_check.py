@@ -129,7 +129,8 @@ class Speaker:
                                      text=True, bufsize=1)
         self.lines = lanes.Lines(self.pipe(self.proc.stdout))
         self.complaints: list[str] = []
-        threading.Thread(target=self.listen, args=(self.pipe(self.proc.stderr),), daemon=True).start()
+        self.listener = threading.Thread(target=self.listen, args=(self.pipe(self.proc.stderr),), daemon=True)
+        self.listener.start()
         self.say(f"identity {identity[0].hex() or '-'} {identity[1].hex() or '-'}")
 
     def listen(self, stream: IO[str]) -> None:
@@ -137,7 +138,9 @@ class Speaker:
             self.complaints.append(line.rstrip("\n"))
 
     def why(self) -> str:
-        """What the process said on stderr last, if anything."""
+        """What the process said on stderr last, if anything: once it has ended, all it said."""
+        if self.proc.poll() is not None:
+            self.listener.join(timeout=TIMEOUT)
         return f", saying {self.complaints[-1]!r}" if self.complaints else ""
 
     def __enter__(self) -> Self:
