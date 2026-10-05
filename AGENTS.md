@@ -39,6 +39,7 @@ Read docs/reviews/README.md before reusing inherited compiler or reactor code;
 its unresolved identity/lifetime/contract obligations are not covered by green CI.
 The native lane is Linux x86-64. Run bash scripts/check_all.sh for the complete
 baseline, including differential compilation and actual TCP echo. It executes real generated code with no fallback.
+The LazyFS lane mounts FUSE and runs apart: scripts/lazyfs_check.py (docs/baseline.md).
 The backend proof lane is separate and pinned in backend/lock.json. Never infer a
 whole-program theorem from a successful compiler run, source digest, test, or
 theorem about a hand-transcribed model.

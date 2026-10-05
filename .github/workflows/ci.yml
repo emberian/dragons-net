@@ -20,8 +20,8 @@ env:
   PYTHONSAFEPATH: "1"
   LEAN_NUM_THREADS: "4"
 
-# One run, jobs in sequence. The build job runs code from the change without network;
-# the proof checks run on a fresh machine before any built code is executed.
+# One run, jobs in sequence, and the LazyFS lane beside them. The build job runs code from the change
+# without network; the proof checks run on a fresh machine before any built code is executed.
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -162,6 +162,7 @@ jobs:
             build/article/report.json
             build/journal/report.json
             build/fs/report.json
+            build/fiu/report.json
             build/runs/report.json
             build/store/report.json
             build/native/report.json
@@ -205,3 +206,35 @@ jobs:
             build/fuzz/programs.pnk
             build/fuzz/parser/*.pnk
             build/fuzz/minimized/
+
+  # LazyFS mounts a FUSE file system, which the runner allows through fusermount3; the lane runs
+  # beside the chain, needing neither the build nor the proofs.
+  lazyfs:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: FUSE 3 and its headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fuse3 libfuse3-dev
+      - name: LazyFS from its pinned source
+        run: python3 scripts/bootstrap_tool.py lazyfs
+      - name: What the crash lanes take of LazyFS
+        run: |
+          mkdir -p build/evidence
+          python3 scripts/lazyfs_check.py 2>&1 | tee build/evidence/lazyfs.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: lazyfs-evidence
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            build/evidence/
+            build/lazyfs/report.json

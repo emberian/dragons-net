@@ -44,7 +44,7 @@ from typing import Any
 
 # The jobs of `.github/workflows/ci.yml`. A run that is missing one, or that let
 # one fail, checked less than the name `checks` claims.
-REQUIRED_JOBS = ("lint", "build", "proofs", "test")
+REQUIRED_JOBS = ("lint", "build", "proofs", "test", "lazyfs")
 
 # What the checks read as their subject: the code under review and the tests that
 # ship with it, which a reviewer reads together with the code. Everything else is

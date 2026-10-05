@@ -296,6 +296,12 @@ def release_cake() -> str:
                 what="installing the release compiler").strip()
 
 
+def pinned_tool(name: str) -> Path:
+    """A tool of tools.lock.json, installed from its pin if it is not there yet."""
+    return Path(loud([sys.executable, str(ROOT / "scripts/bootstrap_tool.py"), name], timeout=3600,
+                     what=f"installing {name}").strip())
+
+
 def bootstrapped() -> str:
     """The compiler built from the patched source, if it is the one the record describes."""
     record = json.loads(RECORD.read_text())

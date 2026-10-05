@@ -96,5 +96,32 @@
     "sha256": "5bf784e6010b4b67e38fa18632b7e2b221c1a7a43a0907be0379a4909f5e536e",
     "binary": "abnfgen",
     "role": "Generates cases from the grammar text of header fields for the grammar lane; built from source with the system's C compiler"
+  },
+  "lazyfs": {
+    "version": "0.0.1+fa7d32e",
+    "revision": "fa7d32ee9710d55a7e529ac3c375f6616563c78b",
+    "url": "https://github.com/dsrhaslab/lazyfs/archive/fa7d32ee9710d55a7e529ac3c375f6616563c78b.tar.gz",
+    "sha256": "d6f5e82d580d0ec7f38c0e3a44ad0045a7ccf2b8cd68afdd61b1904900dc587f",
+    "binary": "lazyfs",
+    "role": "A FUSE file system that keeps unsynced data in a cache of its own and drops it on command, for the crash lanes; built from source with cmake and the system's libfuse 3, offline, with toml11 and spdlog from their pins"
+  },
+  "toml11": {
+    "version": "v3.7.1",
+    "url": "https://github.com/ToruNiina/toml11/archive/refs/tags/v3.7.1.tar.gz",
+    "sha256": "afeaa9aa0416d4b6b2cd3897ca55d9317084103077b32a852247d8efd4cf6068",
+    "role": "Source LazyFS's cache library is built with, the version its build fetches"
+  },
+  "spdlog": {
+    "version": "v1.10.0",
+    "url": "https://github.com/gabime/spdlog/archive/refs/tags/v1.10.0.tar.gz",
+    "sha256": "697f91700237dbae2326b90469be32b876b2b44888302afbc7aceb68bcfe8224",
+    "role": "Source LazyFS's cache library is built with, the version its build fetches"
+  },
+  "libfiu": {
+    "version": "1.2",
+    "url": "https://blitiri.com.ar/p/libfiu/files/1.2/libfiu-1.2.tar.gz",
+    "sha256": "353ab3b50709cdd91522d7e4bb7ff800b27a97f72b989e22ce426c6de2669674",
+    "binary": ".",
+    "role": "Named points of failure in the host's test build, enabled from outside; built from source with the system's C compiler: the library, its headers and the preload that enables points at start and on command"
   }
 }

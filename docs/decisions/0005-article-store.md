@@ -94,6 +94,11 @@ knows nothing of articles.
   outweigh the host, and `io_uring` would gain nothing here.
 - At start the host takes an exclusive lock on the spool directory and refuses a spool another
   process holds.
+- The host's test build carries a named point of failure before each file operation (libfiu's
+  `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
+  injection points and SQLite's test build do; built without `FIU_ENABLE`, the server has no point
+  and does not load libfiu. libfiu's preload that fails POSIX calls does not know `openat`,
+  `renameat` or `unlinkat`, which the host uses.
 
 ### On disk
 
@@ -346,13 +351,14 @@ from them are done; what needs the program or the host comes with them, as marke
   the grammar of header fields; acceptance, with the article corpus of INN's tests
   (`tests/data/articles`, ISC licence) and our own expected outcomes for an injecting agent, and the
   header fields RFC 5322, RFC 5537 and RFC 8315 print; the journal; the file system model; recovery,
-  with the table of corruptions `fn` keeps for its own store; and the store's program, held at every
-  point of runs drawn from a fixed seed to what a crash may leave there.
+  with the table of corruptions `fn` keeps for its own store; the store's program, held at every
+  point of runs drawn from a fixed seed to what a crash may leave there; and libfiu's points and
+  LazyFS, each held to what the tests below take of it.
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;
-  - the host's worker pool, with failed and slow syncs, no space and short writes injected
-    (`libfiu`);
+  - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
+    points of failure;
   - process crashes: the server killed at each operation of a job, then restarted;
   - power loss: the spool on LazyFS, a FUSE file system that keeps unsynced data in its own cache
     and drops it on command, cleared at each operation of a job, then restarted; LazyFS makes
@@ -375,9 +381,11 @@ from them are done; what needs the program or the host comes with them, as marke
   `--path-identity` and `--post-from`.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.
 - New lanes: done — the grammar of header fields, acceptance, the journal, the file system model,
-  recovery against the table of corruptions, and the store's runs; to come — the crash lane on
-  LazyFS, which needs `/dev/fuse` and the right to mount — in CI on the runner, locally in a
-  container of its own; the `nntp` lane gains POST and restarts.
+  recovery against the table of corruptions, the store's runs, and the tools the crash tests rest
+  on: libfiu's points and LazyFS, which needs `/dev/fuse` and the right to mount it, as a user in a
+  user namespace of its own or through `fusermount3` — in CI as a job of its own, locally in a
+  container of its own; to come — the crash lane on LazyFS; the `nntp` lane gains POST and
+  restarts.
 - LazyFS, its two dependencies and libfiu are pinned by digest in `tools.lock.json` and built
   offline, as the other tools built from source are; LazyFS also needs the system's libfuse 3.
 - `docs/nntp.md`, `docs/assurance.md` and `docs/baseline.md` move with the code.

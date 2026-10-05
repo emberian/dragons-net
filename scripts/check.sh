@@ -133,6 +133,8 @@ tests() {
   python3 scripts/store_check.py
   # The store's program, every point of its runs held to what a crash may leave there.
   python3 scripts/runs_check.py
+  # The points of failure the host's test build carries, held to what its tests take of libfiu.
+  python3 scripts/fiu_check.py
   # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2
