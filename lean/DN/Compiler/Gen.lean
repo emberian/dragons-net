@@ -235,7 +235,9 @@ def genData (c : Config) (plan : Plan) : Nat → Env → Env → G PExpr
     if c.loadByte then kinds := kinds ++ [4]
     match ← pick kinds with
     | 1 => return .binop (← pickOr .add c.ops) (← sub) (← sub)
-    | 2 => return .shr (← sub) (.const (← pick [0, 1, 7, 8, 31, 32, 35, 63, ← below 64]))
+    | 2 =>
+      let shift := if ← chance 1 2 then PExpr.shr else PExpr.shl
+      return shift (← sub) (.const (← pick [0, 1, 7, 8, 31, 32, 35, 63, ← below 64]))
     | 3 =>
       match ← genAddress c plan env 8 offset with
       | some a => return .loadw 1 a

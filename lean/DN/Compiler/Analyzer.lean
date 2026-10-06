@@ -86,12 +86,24 @@ def mul (a b : AVal) : AVal :=
   else if a.lo = a.hi then scale b a.lo a.res
   else AVal.top
 
+/-- `&` with a number in `[0, hi]` lies in `[0, hi]`, whatever the other operand. -/
 def and_ (a b : AVal) : AVal :=
-  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (min a.hi b.hi) none else AVal.top
+  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (min a.hi b.hi) none
+  else if !b.ptr && 0 ≤ b.lo then AVal.num 0 b.hi none
+  else if !a.ptr && 0 ≤ a.lo then AVal.num 0 a.hi none
+  else AVal.top
 
-/-- A logical shift right: any word when the distance is a number below a word, no value when
-it may be a word or more. -/
-def shiftR (b : AVal) : Option AVal :=
+/-- The largest number with no bit set above the highest of `hi`. -/
+def bitsUpTo (hi : Int) : Int := 2 ^ (hi.toNat.log2 + 1) - 1
+
+/-- `^` or `|` of numbers in `[0, hi]` sets no bit above the highest of the larger `hi`. -/
+def bitwise (a b : AVal) : AVal :=
+  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (bitsUpTo (max a.hi b.hi)) none
+  else AVal.top
+
+/-- A shift: any word when the distance is a number below a word, no value when it may be a word
+or more. -/
+def shift (b : AVal) : Option AVal :=
   if !b.ptr && 0 ≤ b.lo && b.hi < 64 then some AVal.top else none
 
 /-- Whether `a < b` in signed order, when the ranges decide it. -/
@@ -164,6 +176,8 @@ def evalA (size : Nat) (A : AState) : PancakeExp → Option AVal
       | .add => some (add a b)
       | .sub => some (sub a b)
       | .and_ => some (and_ a b)
+      | .xor => some (bitwise a b)
+      | .or_ => some (bitwise a b)
     | _, _ => none
   | .mul l r =>
     match evalA size A l, evalA size A r with
@@ -171,7 +185,11 @@ def evalA (size : Nat) (A : AState) : PancakeExp → Option AVal
     | _, _ => none
   | .shiftR l r =>
     match evalA size A l, evalA size A r with
-    | some _, some b => shiftR b
+    | some _, some b => shift b
+    | _, _ => none
+  | .shiftL l r =>
+    match evalA size A l, evalA size A r with
+    | some _, some b => shift b
     | _, _ => none
   | .cmp c l r =>
     match evalA size A l, evalA size A r with
@@ -561,5 +579,27 @@ def regression_837 : Bool := (check heap (call 56)).toBool
 def regression_838 : Bool := !(check heap (call 57)).toBool
 def regression_839 : Bool := (check heap (shifted 63)).toBool
 def regression_840 : Bool := !(check heap (shifted 64)).toBool
+
+/-- A byte stored at `off` past `x op y`, with `x` and `y` words cut to `[0, hx]` and `[0, hy]` by
+`&`: a word loaded from memory may be any. -/
+private def bitwiseAt (op : Binop) (hx hy off : Nat) : PancakeProg :=
+  .dec "x" (.op .and_ (.loadWord (at' 0)) (c hx)) (.dec "y" (.op .and_ (.loadWord (at' 8)) (c hy))
+    (.seq (.storeByte (.op .add (at' off) (.op op (.var "x") (.var "y"))) (c 0)) (.ret (c 0))))
+
+/-- A word shifted left by `k`. -/
+private def shiftedLeft (k : Nat) : PancakeProg :=
+  .dec "n" (.shiftL (.loadWord (at' 0)) (c k)) (.ret (.var "n"))
+
+-- `^` of numbers up to 15 stays up to 15, `|` of numbers up to 15 and 16 up to 31, and no further.
+def regression_927 : Bool := (check heap (bitwiseAt .xor 15 15 48)).toBool
+def regression_928 : Bool := !(check heap (bitwiseAt .xor 15 15 49)).toBool
+def regression_929 : Bool := (check heap (bitwiseAt .or_ 15 16 32)).toBool
+def regression_930 : Bool := !(check heap (bitwiseAt .or_ 15 16 33)).toBool
+def regression_931 : Bool := (check heap (shiftedLeft 63)).toBool
+def regression_932 : Bool := !(check heap (shiftedLeft 64)).toBool
+/-- An address cut by `&` to a number up to 15 is that number, no longer an address. -/
+def regression_933 : Bool :=
+  (check heap (.dec "x" (.op .and_ .base (c 15))
+    (.seq (.storeByte (.op .add (at' 48) (.var "x")) (c 0)) (.ret (c 0))))).toBool
 
 end DN.Compiler.Analyzer

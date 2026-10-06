@@ -36,7 +36,8 @@ from words import MASK, signed, word_op
 
 FIELDS = ("RESULT", "FLOCALS", "FMEM", "FCALLS", "FTRACE", "FCLOCK", "FBASE")
 # The lowered operators, by the source operator that computes them.
-OPERATORS = {"add": "+", "sub": "-", "and": "&", "mul": "*", "less": "<", "equal": "==", "shr": ">>>"}
+OPERATORS = {"add": "+", "sub": "-", "and": "&", "mul": "*", "less": "<", "equal": "==", "shr": ">>>",
+             "xor": "^", "or": "|", "shl": "<<"}
 
 
 def byte_align(a: int) -> int:

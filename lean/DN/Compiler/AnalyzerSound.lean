@@ -224,6 +224,21 @@ theorem toInt_of_nonneg {w : Word} (h : 0 ≤ w.toInt) : w.toInt = w.toNat := by
   have hlt := w.isLt
   split at this <;> omega
 
+/-- A word whose bits make a number below `2 ^ 63` is that number, signed. -/
+theorem toInt_of_toNat_lt {w : Word} (h : w.toNat < 2 ^ 63) : w.toInt = w.toNat := by
+  have := BitVec.toInt_eq_toNat_cond w
+  split at this <;> omega
+
+/-- `w1 &&& w2`, with `w2` a number in `[0, hi]`, is a number in `[0, hi]`. -/
+theorem and_within {w1 w2 : Word} {hi : Int} (l : 0 ≤ w2.toInt) (u : w2.toInt ≤ hi) :
+    0 ≤ (w1 &&& w2).toInt ∧ (w1 &&& w2).toInt ≤ hi := by
+  have e2 := toInt_of_nonneg l
+  have n : (w1 &&& w2).toNat ≤ w2.toNat := by rw [BitVec.toNat_and]; exact Nat.and_le_right
+  have r2 := toInt_range w2
+  simp only [wordMax] at r2
+  have e := toInt_of_toNat_lt (w := w1 &&& w2) (by omega)
+  omega
+
 theorem holds_and {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2) :
     (and_ a c).holds b (w1 &&& w2) := by
   unfold and_
@@ -248,6 +263,52 @@ theorem holds_and {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.hold
       omega
     · intro r h
       cases h
+  · split
+    · rename_i _ hc
+      simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+      simp only [AVal.holds, hc.1, Bool.false_eq_true, if_false] at h2
+      obtain ⟨l, u⟩ := and_within (w1 := w1) (by omega : 0 ≤ w2.toInt) h2.2.1
+      exact holds_num l u (fun r h => by cases h)
+    · split
+      · rename_i _ _ ha
+        simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at ha
+        simp only [AVal.holds, ha.1, Bool.false_eq_true, if_false] at h1
+        rw [BitVec.and_comm]
+        obtain ⟨l, u⟩ := and_within (w1 := w2) (by omega : 0 ≤ w1.toInt) h1.2.1
+        exact holds_num l u (fun r h => by cases h)
+      · exact holds_top b _
+
+/-- An operation that keeps every number below a power of two below it, `^` or `|`, of numbers in
+`[0, h1]` and `[0, h2]`, is a number in `[0, bitsUpTo (max h1 h2)]`. -/
+theorem bitwise_within {w1 w2 r : Word} {h1 h2 : Int} (l1 : 0 ≤ w1.toInt) (u1 : w1.toInt ≤ h1)
+    (l2 : 0 ≤ w2.toInt) (u2 : w2.toInt ≤ h2)
+    (hr : ∀ k, w1.toNat < 2 ^ k → w2.toNat < 2 ^ k → r.toNat < 2 ^ k) :
+    0 ≤ r.toInt ∧ r.toInt ≤ bitsUpTo (max h1 h2) := by
+  have e1 := toInt_of_nonneg l1
+  have e2 := toInt_of_nonneg l2
+  have r1 := toInt_range w1
+  have r2 := toInt_range w2
+  simp only [wordMin, wordMax] at r1 r2
+  have er := toInt_of_toNat_lt (hr 63 (by omega) (by omega))
+  have hm := @Nat.lt_log2_self (max h1 h2).toNat
+  have hk := hr ((max h1 h2).toNat.log2 + 1) (by omega) (by omega)
+  have cast : ((2 ^ ((max h1 h2).toNat.log2 + 1) : Nat) : Int) =
+      (2 : Int) ^ ((max h1 h2).toNat.log2 + 1) := by push_cast; rfl
+  unfold bitsUpTo
+  rw [← cast]
+  omega
+
+theorem holds_bitwise {b w1 w2 r : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2)
+    (hr : ∀ k, w1.toNat < 2 ^ k → w2.toNat < 2 ^ k → r.toNat < 2 ^ k) :
+    (bitwise a c).holds b r := by
+  unfold bitwise
+  split
+  · rename_i hc
+    simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+    obtain ⟨⟨⟨hpa, hpc⟩, la⟩, lc⟩ := hc
+    simp only [AVal.holds, hpa, hpc, Bool.false_eq_true, if_false] at h1 h2
+    obtain ⟨l, u⟩ := bitwise_within (by omega) h1.2.1 (by omega) h2.2.1 hr
+    exact holds_num l u (fun r h => by cases h)
   · exact holds_top b _
 
 theorem ltKnown_sound {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2) :
@@ -404,6 +465,12 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
       · exact ⟨_, by simp only [eval, e1, e2], holds_add h1 h2⟩
       · exact ⟨_, by simp only [eval, e1, e2], holds_and h1 h2⟩
       · exact ⟨_, by simp only [eval, e1, e2], holds_sub h1 h2⟩
+      · refine ⟨w1 ^^^ w2, by simp only [eval, e1, e2], holds_bitwise h1 h2 fun k a b => ?_⟩
+        rw [BitVec.toNat_xor]
+        exact Nat.xor_lt_two_pow a b
+      · refine ⟨w1 ||| w2, by simp only [eval, e1, e2], holds_bitwise h1 h2 fun k a b => ?_⟩
+        rw [BitVec.toNat_or]
+        exact Nat.or_lt_two_pow a b
     · cases hv
   | mul l r ihl ihr =>
     intro v hv
@@ -423,7 +490,7 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
     · rename_i a c hl hr
       obtain ⟨w1, e1, _⟩ := ihl a hl
       obtain ⟨w2, e2, h2⟩ := ihr c hr
-      unfold shiftR at hv
+      unfold shift at hv
       split at hv
       · rename_i hc
         simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
@@ -433,6 +500,30 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
         simp only [AVal.holds, hp, Bool.false_eq_true, if_false] at h2
         have t := toInt_of_nonneg (w := w2) (by omega)
         refine ⟨w1 >>> w2.toNat, ?_, holds_top _ _⟩
+        simp only [eval, e1, e2]
+        have : ¬ (w2.toNat ≠ 0 && w2.toNat ≥ 64) = true := by
+          simp only [Bool.and_eq_true, decide_eq_true_eq]
+          omega
+        simp only [this, Bool.false_eq_true, ↓reduceIte]
+      · cases hv
+    · cases hv
+  | shiftL l r ihl ihr =>
+    intro v hv
+    simp only [evalA] at hv
+    split at hv
+    · rename_i a c hl hr
+      obtain ⟨w1, e1, _⟩ := ihl a hl
+      obtain ⟨w2, e2, h2⟩ := ihr c hr
+      unfold shift at hv
+      split at hv
+      · rename_i hc
+        simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+        obtain ⟨⟨hp, lo⟩, hi⟩ := hc
+        simp only [Option.some.injEq] at hv
+        subst hv
+        simp only [AVal.holds, hp, Bool.false_eq_true, if_false] at h2
+        have t := toInt_of_nonneg (w := w2) (by omega)
+        refine ⟨w1 <<< w2.toNat, ?_, holds_top _ _⟩
         simp only [eval, e1, e2]
         have : ¬ (w2.toNat ≠ 0 && w2.toNat ≥ 64) = true := by
           simp only [Bool.and_eq_true, decide_eq_true_eq]

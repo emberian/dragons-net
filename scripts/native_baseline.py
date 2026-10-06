@@ -193,7 +193,7 @@ def differential(cake: str) -> dict[str, Any]:
     values and against `reference`."""
     fixture = json.loads((OUT / "baseline.json").read_text())
     cases, values = fixture["cases"], fixture["values"]
-    if len(cases) != 113 or len(values) != 192:
+    if len(cases) != 183 or len(values) != 192:
         raise LaneError("unexpected differential fixture coverage")
     expected = [[reference(case["expression"], a, b) for a, b in values] for case in cases]
     for i, row in enumerate(expected):

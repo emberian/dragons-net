@@ -8,9 +8,9 @@ import DN.Compiler.Lower
 The form in which a lowered program is compared with the tree CakeML's parser builds from its
 printed source (`scripts/parser_contract.py`). The parser builds `a + b + c` as one n-ary `Add`
 and `a * b * c` nested to the left, and wraps every statement in a sequence; `Lower` builds
-whatever the syntax tree held. In the canonical form a chain of `+`, `*` or `&` is nested to the
-right and statements are lists, and `canon_eval` shows that it identifies only expressions that
-evaluate alike, so the comparison cannot hide a difference behind a rearrangement.
+whatever the syntax tree held. In the canonical form a chain of `+`, `*`, `&`, `^` or `|` is
+nested to the right and statements are lists, and `canon_eval` shows that it identifies only
+expressions that evaluate alike, so the comparison cannot hide a difference behind a rearrangement.
 -/
 
 namespace DN.Compiler.Canon
@@ -36,11 +36,14 @@ def canon : PancakeExp → PancakeExp
   | .op .add l r => opChain .add (canon l) (canon r)
   | .op .and_ l r => opChain .and_ (canon l) (canon r)
   | .op .sub l r => .op .sub (canon l) (canon r)
+  | .op .xor l r => opChain .xor (canon l) (canon r)
+  | .op .or_ l r => opChain .or_ (canon l) (canon r)
   | .mul l r => mulChain (canon l) (canon r)
   | .cmp c l r => .cmp c (canon l) (canon r)
   | .loadByte a => .loadByte (canon a)
   | .loadWord a => .loadWord (canon a)
   | .shiftR l r => .shiftR (canon l) (canon r)
+  | .shiftL l r => .shiftL (canon l) (canon r)
   | .const w => .const w
   | .var x => .var x
   | .base => .base
@@ -52,6 +55,8 @@ def binopWord : Binop → Word → Word → Word
   | .add => (· + ·)
   | .and_ => (· &&& ·)
   | .sub => (· - ·)
+  | .xor => (· ^^^ ·)
+  | .or_ => (· ||| ·)
 
 theorem eval_op (s : PancakeState σ) (o : Binop) (l r : PancakeExp) :
     eval s (.op o l r) =
@@ -71,7 +76,7 @@ theorem eval_opChain (s : PancakeState σ) (o : Binop)
       cases eval s a <;> cases eval s b <;> cases eval s y <;> simp [hassoc]
     · simp only [opChain, if_neg h]
   | .const _, _ | .var _, _ | .base, _ | .mul _ _, _ | .cmp _ _ _, _ | .loadByte _, _
-  | .loadWord _, _ | .shiftR _ _, _ => rfl
+  | .loadWord _, _ | .shiftR _ _, _ | .shiftL _ _, _ => rfl
 
 theorem eval_mulChain (s : PancakeState σ) :
     ∀ x y, eval s (mulChain x y) = eval s (.mul x y)
@@ -79,7 +84,7 @@ theorem eval_mulChain (s : PancakeState σ) :
     simp only [mulChain, eval, eval_mulChain s b y]
     cases eval s a <;> cases eval s b <;> cases eval s y <;> simp [BitVec.mul_assoc]
   | .op _ _ _, _ | .const _, _ | .var _, _ | .base, _ | .cmp _ _ _, _ | .loadByte _, _
-  | .loadWord _, _ | .shiftR _ _, _ => rfl
+  | .loadWord _, _ | .shiftR _ _, _ | .shiftL _ _, _ => rfl
 
 /-- **The canonical form loses nothing.** Two expressions with the same canonical form
 evaluate alike in every state, so equal canonical trees mean equal values. -/
@@ -91,6 +96,12 @@ theorem canon_eval (s : PancakeState σ) : ∀ e, eval s (canon e) = eval s e
     rw [canon, eval_opChain s .and_ (fun _ _ _ => BitVec.and_assoc ..)]
     simp only [eval, canon_eval s l, canon_eval s r]
   | .op .sub l r => by simp only [canon, eval, canon_eval s l, canon_eval s r]
+  | .op .xor l r => by
+    rw [canon, eval_opChain s .xor (fun _ _ _ => BitVec.xor_assoc ..)]
+    simp only [eval, canon_eval s l, canon_eval s r]
+  | .op .or_ l r => by
+    rw [canon, eval_opChain s .or_ (fun _ _ _ => BitVec.or_assoc ..)]
+    simp only [eval, canon_eval s l, canon_eval s r]
   | .mul l r => by
     rw [canon, eval_mulChain]
     simp only [eval, canon_eval s l, canon_eval s r]
@@ -98,6 +109,7 @@ theorem canon_eval (s : PancakeState σ) : ∀ e, eval s (canon e) = eval s e
   | .loadByte a => by simp only [canon, eval, canon_eval s a]
   | .loadWord a => by simp only [canon, eval, canon_eval s a]
   | .shiftR l r => by simp only [canon, eval, canon_eval s l, canon_eval s r]
+  | .shiftL l r => by simp only [canon, eval, canon_eval s l, canon_eval s r]
   | .const _ => rfl
   | .var _ => rfl
   | .base => rfl
@@ -114,6 +126,8 @@ def expJson : PancakeExp → Json
   | .op .add l r => Json.arr #["Add", expJson l, expJson r]
   | .op .and_ l r => Json.arr #["And", expJson l, expJson r]
   | .op .sub l r => Json.arr #["Sub", expJson l, expJson r]
+  | .op .xor l r => Json.arr #["Xor", expJson l, expJson r]
+  | .op .or_ l r => Json.arr #["Or", expJson l, expJson r]
   | .mul l r => Json.arr #["Mul", expJson l, expJson r]
   | .cmp .less l r => Json.arr #["Less", expJson l, expJson r]
   | .cmp .equal l r => Json.arr #["Equal", expJson l, expJson r]
@@ -121,6 +135,7 @@ def expJson : PancakeExp → Json
   | .loadByte a => Json.arr #["MemLoadByte", expJson a]
   | .loadWord a => Json.arr #["MemLoad", expJson a]
   | .shiftR l r => Json.arr #["Lsr", expJson l, expJson r]
+  | .shiftL l r => Json.arr #["Lsl", expJson l, expJson r]
 
 /-- A program as a list of statements: sequences flattened, `skip` dropped, and a declaration
 holding the statements in its scope. -/

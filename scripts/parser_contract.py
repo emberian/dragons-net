@@ -53,8 +53,8 @@ TURNED = (("lds/left: lds 1 ld8 x", "and it does"), ("sub/right: a - x - y", MIS
 # external calls pass only in a whole program; the gate refuses calls, so those are covered by the
 # table's cells only.
 STATEMENTS = {"dec", "assign", "store", "storebyte", "if", "while", "return", "extcall"}
-EXPRESSIONS = {"Const", "Var", "Add", "And", "Sub", "Mul", "Less", "NotLess", "Equal", "MemLoad",
-               "MemLoadByte", "Lsr", "BaseAddr"}
+EXPRESSIONS = {"Const", "Var", "Add", "And", "Xor", "Or", "Sub", "Mul", "Less", "NotLess", "Equal", "MemLoad",
+               "MemLoadByte", "Lsr", "Lsl", "BaseAddr"}
 # The function the compiler adds to a program that has no `main` of its own.
 ADDED_MAIN = {"params": [], "body": [["return", ["Const", 0]]]}
 
@@ -121,15 +121,15 @@ def expression(form: Any) -> list[Any]:
         return ["Var", args[1]]
     if head == "BaseAddr" and not args:
         return ["BaseAddr"]
-    if (head in ("Add", "And") and len(args) >= 2) or (head == "Mul" and len(args) == 2):
+    if (head in ("Add", "And", "Xor", "Or") and len(args) >= 2) or (head == "Mul" and len(args) == 2):
         operands = [operand for arg in args for operand in chain(head, expression(arg))]
         return right_nested(head, operands)
     if head in ("Sub", "Less", "NotLess", "Equal") and len(args) == 2:
         return [head, expression(args[0]), expression(args[1])]
-    if head == "Lsr" and len(args) == 2:
+    if head in ("Lsr", "Lsl") and len(args) == 2:
         # One pinned parser keeps the distance as an expression, the other as a number.
         distance = ["Const", int(args[1], 0)] if isinstance(args[1], str) else expression(args[1])
-        return ["Lsr", expression(args[0]), distance]
+        return [head, expression(args[0]), distance]
     if head == "MemLoad" and len(args) == 2 and args[0] == "1":
         return ["MemLoad", expression(args[1])]
     if head == "MemLoadByte" and len(args) == 1:

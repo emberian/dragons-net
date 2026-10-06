@@ -1,0 +1,90 @@
+{
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   0
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 2
+ },
+ "name": "shl-as-shr",
+ "native": {
+  "changed": [],
+  "result": 0,
+  "status": 0
+ },
+ "origin": {
+  "input": 0,
+  "program": "dn_fuzz_59",
+  "seed": 2
+ },
+ "original": {
+  "input": {
+   "data": {},
+   "fill": [
+    9604273813383465457,
+    255
+   ]
+  },
+  "plan": {
+   "entries": [],
+   "params": [
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 0
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "var",
+     "x1",
+     256
+    ],
+    [
+     "return",
+     [
+      "<<",
+      "x1",
+      11
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_59",
+   "params": [
+    "p"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "params": []
+ },
+ "printed": "export fun dn_min(1 dn_result) {\n  st dn_result, (1) >>> 1;\n  return 0;\n}\n",
+ "program": {
+  "body": [
+   [
+    "return",
+    [
+     "<<",
+     1,
+     1
+    ]
+   ]
+  ],
+  "name": "dn_min",
+  "params": []
+ },
+ "reduction": {
+  "asked": 73,
+  "taken": 7
+ },
+ "source": "export fun dn_min(1 dn_result) {\n  st dn_result, (1) << 1;\n  return 0;\n}\n"
+}
