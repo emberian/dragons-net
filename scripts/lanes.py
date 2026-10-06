@@ -148,10 +148,10 @@ def compile_object(source: Path, obj: Path, *, includes: Iterable[Path] = ()) ->
 
 
 def link(binary: Path, sources: Iterable[Path], *, includes: Iterable[Path] = (),
-         timeout: int = 120, check: bool = True) -> Path:
-    """Link with the hardening flags and debug information; `check` reads the protections back
-    off the binary, which a lane linking the same host many times needs to do once."""
-    loud([cc(), *HARDENING, "-g", *(f"-I{d}" for d in (NATIVE, *includes)), *map(str, sources),
+         timeout: int = 120, check: bool = True, flags: Iterable[str] = ()) -> Path:
+    """Link with the hardening flags, debug information and `flags`; `check` reads the protections
+    back off the binary, which a lane linking the same host many times needs to do once."""
+    loud([cc(), *HARDENING, "-g", *(f"-I{d}" for d in (NATIVE, *includes)), *map(str, sources), *flags,
           "-o", str(binary)], timeout=timeout, what=f"linking {binary.name}")
     if check:
         hardened(binary)
@@ -171,9 +171,10 @@ def plant(text: str, pattern: str, becomes: str, times: int, what: str, *, exact
     return planted
 
 
-def whole_program(cake: str, name: str, source: str, out: Path, host: Path) -> Path:
+def whole_program(cake: str, name: str, source: str, out: Path, host: Path, extra: Iterable[Path] = ()) -> Path:
     """Compile a whole program without `--main_return`, make its bitmaps label global for the heap
-    header (native/cake_header.c), and link it with `host`; `out` holds the layout's header."""
+    header (native/cake_header.c), and link it with `host` and the `extra` sources; `out` holds the
+    layout's header."""
     pnk = out / f"{name}.pnk"
     pnk.write_text(source)
     asm = assemble(cake, pnk, main_return=False)
@@ -181,7 +182,7 @@ def whole_program(cake: str, name: str, source: str, out: Path, host: Path) -> P
     if text.count("\ncake_bitmaps:\n") != 1:
         raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
     asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
-    return link(out / name, [host, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm], includes=[out])
+    return link(out / name, [host, *extra, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm], includes=[out])
 
 
 class Lines:
@@ -294,6 +295,12 @@ def release_cake() -> str:
     """The pinned release compiler, installed from its archive if it is not there yet."""
     return loud([sys.executable, str(ROOT / "scripts/bootstrap_tool.py"), "cake"], timeout=7200,
                 what="installing the release compiler").strip()
+
+
+def pinned_tool(name: str) -> Path:
+    """A tool of tools.lock.json, installed from its pin if it is not there yet."""
+    return Path(loud([sys.executable, str(ROOT / "scripts/bootstrap_tool.py"), name], timeout=3600,
+                     what=f"installing {name}").strip())
 
 
 def bootstrapped() -> str:

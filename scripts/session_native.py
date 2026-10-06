@@ -43,7 +43,8 @@ LIMIT = 2 ** 62
 RUNS, STEPS, SEED = 200, 60, 20_260_928
 
 # Defects planted in the printed program: (name, a pattern, what it becomes, how many times, and
-# what the message that catches it says).
+# what the message that catches it says). `{past}`, the first word past the layout, and `{stop}`,
+# the word of the stop's code, are the layout's.
 TRACE = "differs at turn"
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
@@ -81,15 +82,15 @@ DEFECTS = [
     ("a clock refused just below its limit", r"4611686018427387904 <= now", "4611686018427387903 <= now", 1,
      "at the edge 'a clock just below its limit'"),
     ("a word to read of two", r"st slot \+ 32, wants;", "st slot + 32, wants * 2;", 1, "word to read is 2"),
-    ("a store past the program's layout", r"st @base \+ \d+, now;", "st @base + 200000, now;", 1,
+    ("a store past the program's layout", r"st @base \+ \d+, now;", "st @base + {past}, now;", 1,
      "wrote past its layout"),
     ("a store before the program's first area", r"(st @base \+ 64, \d+;)", r"\1\n  st @base + 48, 7;", 1,
      "wrote before its layout"),
     ("a slot not cleared", r"\n\s*st @base \+ \d+ \+ \(c \* 560\), 0;", "", 1, "holds an action for"),
     ("a send not counted", r"(aj = aj \+ 1;\s*\}\s*)m = m \+ 1;", r"\1", 1, "actions counted"),
     ("a length read back unchecked", r"\(512 < ol\)", "0", 1, "a send of 1000 bytes"),
-    ("a store past the layout as the run stops", r"st @base \+ 45000, 7;",
-     "st @base + 200000, 1;\n      st @base + 45000, 7;", 1, "the end of the run: the program wrote past its layout"),
+    ("a store past the layout as the run stops", r"st @base \+ {stop}, 7;",
+     "st @base + {past}, 1;\n      st @base + {stop}, 7;", 1, "the end of the run: the program wrote past its layout"),
 ]
 
 
@@ -383,8 +384,17 @@ def check(cake: str) -> Report:
     scripts_hold(binary, answers)
     random_hosts = wander(binary, RUNS)
     caught = {}
+    words = layout()
+    places = {"{past}": str(words["SIZE"]), "{stop}": str(words["OWN_OFF"] + words["OWN_STOP"])}
+
+    def placed(text: str) -> str:
+        for place, offset in places.items():
+            text = text.replace(place, offset)
+        return text
+
     for index, (name, pattern, becomes, times, sign) in enumerate(DEFECTS):
-        planted = lanes.whole_program(cake, f"defect-{index}", plant(source, pattern, becomes, times), OUT, HOST)
+        planted = lanes.whole_program(cake, f"defect-{index}", plant(source, placed(pattern), placed(becomes), times),
+                                      OUT, HOST)
         try:
             scenarios_hold(planted, scenarios, expected)
             scripts_hold(planted, answers)

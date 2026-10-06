@@ -18,14 +18,17 @@ static void *dn_runtime_memory;
 
 static void dn_runtime_free(void) { free(dn_runtime_memory); }
 
-void dn_runtime_setup(void) {
+void dn_runtime_setup_heap(size_t heap_bytes) {
     const size_t segment = DN_RUNTIME_SEGMENT_BYTES;
-    dn_runtime_memory = malloc(2 * segment);
+    if (heap_bytes < segment) abort();
+    dn_runtime_memory = malloc(heap_bytes + segment);
     if (!dn_runtime_memory || atexit(dn_runtime_free) != 0) abort();
     cml_heap = dn_runtime_memory;
-    cml_stack = (unsigned char *)dn_runtime_memory + segment;
-    cml_stackend = (unsigned char *)dn_runtime_memory + 2 * segment;
+    cml_stack = (unsigned char *)dn_runtime_memory + heap_bytes;
+    cml_stackend = (unsigned char *)dn_runtime_memory + heap_bytes + segment;
 }
+
+void dn_runtime_setup(void) { dn_runtime_setup_heap(DN_RUNTIME_SEGMENT_BYTES); }
 
 void dn_runtime_init(void) {
     dn_runtime_setup();

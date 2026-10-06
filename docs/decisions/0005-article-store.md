@@ -71,18 +71,25 @@ knows nothing of articles.
 
 ### File operations through the host
 
-- A new action, a file job: up to eight primitive operations, carried out in order by one of the
-  host's worker threads and stopped at the first that fails. Its completion comes back in a later
-  batch as an event naming the job, how many operations succeeded and, for a failed one, its class:
-  an I/O error, no space, a name that exists or does not, or another error. The program orders
-  what must be ordered by the operations inside a job and by starting a job only after the one it
-  depends on completed.
-- The operations: create a file under a new name, failing if it exists; open a named file; write
-  bytes at an offset, a short write being a failure; read bytes at an offset; report a file's size;
-  sync a file's data (`fdatasync`) or all of it (`fsync`); rename; remove a name; truncate; sync the
-  directory; list the directory's names a page at a time, without `.` and `..`; close. Names have
-  one fixed shape the host checks, and all are relative to the directory the host opened at start
-  (`openat`, `renameat`, `unlinkat`).
+- A new action, a file job: up to eight primitive operations, done in order by a worker thread and
+  stopped at the first that fails. Its completion, in a later batch, names the job, how many
+  operations succeeded, the failed one's class — an I/O error, no space, a name that exists or does
+  not, another — and two result words per operation: a file's place and generation, octets read, a
+  size, names listed. The program orders operations within a job, and jobs by starting one only
+  after those it depends on completed.
+- The operations: create a file under a new name, failing if it exists; open a file; write bytes at
+  an offset, all of them; read at an offset; report a size; `fdatasync`, `fsync`; rename; remove;
+  truncate; sync the directory; open the directory and list its names a page at a time; close. A
+  name is a kind and a number, made by the host into the name `DN.News.Journal` gives, relative to
+  the directory opened at start (`openat`, `renameat`, `unlinkat`).
+- A created or opened file stays open across jobs, in the host's table of sixteen places (four
+  POSTs, the journal, eight reads, spare), named by place and generation; the program closes it, the
+  host only what is left at the end. A file is synced through the descriptor it was written through:
+  Linux reports a failed write-back only to descriptors open at the time.
+- The host retries a call a signal interrupted; writes on after a short write, one without progress
+  failing as no space; reports a short read as it is. A failed close is a failed sync. Classes:
+  `EIO` an I/O error; `ENOSPC`, `EDQUOT` no space; `EEXIST`, `ENOENT` the name's; any other,
+  another.
 - Jobs are identified by a slot and a generation, like connections; at most eight are in flight.
   Bytes to write are copied out of the heap inside `dn_emit` and bytes read are copied in inside
   `dn_next`, so the host still touches the heap only inside a call; a job moves at most 16,384
@@ -94,6 +101,11 @@ knows nothing of articles.
   outweigh the host, and `io_uring` would gain nothing here.
 - At start the host takes an exclusive lock on the spool directory and refuses a spool another
   process holds.
+- The host's test build carries a named point of failure before each file operation (libfiu's
+  `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
+  injection points and SQLite's test build do; built without `FIU_ENABLE`, the server has no point
+  and does not load libfiu. libfiu's preload that fails POSIX calls does not know `openat`,
+  `renameat` or `unlinkat`, which the host uses.
 
 ### On disk
 
@@ -130,10 +142,13 @@ knows nothing of articles.
   have dropped what it could not write, so no later sync is trusted. Articles in flight when the
   store stops are refused once their jobs in flight have completed; one whose record is appended and
   not yet synced is not answered, and its connection is closed. What the store has, it keeps
-  serving. A process started again after a failed sync of the journal or the directory, without a
-  loss of power, reads what Linux kept in memory and may never write: what is proved does not cover
-  that run, whose next loss of power may lose articles it served, or leave the store refused until
-  repaired (#21).
+  serving. A process started again after a failed sync, without a loss of power, would read what
+  Linux kept in memory and may never write, which what is proved does not cover: so the host marks
+  a failed sync with the boot it happened in (`sync-failed`, in the spool and in a run directory a
+  boot clears) before the program learns of it, ends when it can leave neither, refuses to start on
+  a mark of this boot, or one it cannot read whole, until the machine restarts or the store is
+  repaired (#21), and removes a whole mark of another boot. Not covered: a process killed between
+  the failure and its mark.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -252,14 +267,15 @@ count, as `DN.News.ArticleSpec` keeps it, not a stack.
 
 ### Configuration
 
-The host is given the spool directory, the groups, the server's path identity and the networks
-allowed to post (by default loopback, until authentication, RFC 4643, is added), and hands the
-groups and the path identity to the program, which checks them: group names as RFC 5536 §3.1.4
-allows, none reserved, and the path identity as a domain name. Each opened connection carries
-whether it may post. The host also hands the program its wall clock, in UTC and not checked to move
-forward, and random octets: the run's value, which Message-IDs carry, and sixteen more that key a
-journal the program creates, written only to that journal and used for nothing else, the program
-refusing to start without sixteen; and it logs each connection's address with the run and its index.
+The host is given the spool directory, a run directory for the mark of a failed sync, the groups,
+the server's path identity and the networks allowed to post (by default loopback, until
+authentication, RFC 4643, is added), and hands the groups and the path identity to the program,
+which checks them: group names as RFC 5536 §3.1.4 allows, none reserved, and the path identity as a
+domain name. Each opened connection carries whether it may post. The host also hands the program its
+wall clock, in UTC and not checked to move forward, and random octets: the run's value, which
+Message-IDs carry, and sixteen more that key a journal the program creates, written only to that
+journal and used for nothing else, the program refusing to start without sixteen; and it logs each
+connection's address with the run and its index.
 
 ### Which articles are accepted, and what the server adds
 
@@ -346,13 +362,14 @@ from them are done; what needs the program or the host comes with them, as marke
   the grammar of header fields; acceptance, with the article corpus of INN's tests
   (`tests/data/articles`, ISC licence) and our own expected outcomes for an injecting agent, and the
   header fields RFC 5322, RFC 5537 and RFC 8315 print; the journal; the file system model; recovery,
-  with the table of corruptions `fn` keeps for its own store; and the store's program, held at every
-  point of runs drawn from a fixed seed to what a crash may leave there.
+  with the table of corruptions `fn` keeps for its own store; the store's program, held at every
+  point of runs drawn from a fixed seed to what a crash may leave there; and libfiu's points and
+  LazyFS, each held to what the tests below take of it.
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;
-  - the host's worker pool, with failed and slow syncs, no space and short writes injected
-    (`libfiu`);
+  - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
+    points of failure;
   - process crashes: the server killed at each operation of a job, then restarted;
   - power loss: the spool on LazyFS, a FUSE file system that keeps unsynced data in its own cache
     and drops it on command, cleared at each operation of a job, then restarted; LazyFS makes
@@ -370,14 +387,16 @@ from them are done; what needs the program or the host comes with them, as marke
 
 - The layout gains file jobs and their completions, the wall clock, the run's random value and a
   journal's key, the configuration, and whether a connection may post; the heap grows to 4 MiB, and
-  the theorem that the layout fits the heap moves with it.
-- `native/nntp_host.c` gains the worker pool, the lock, and `--spool`, `--group`,
-  `--path-identity` and `--post-from`.
+  the theorem that the layout fits the heap moves with it — done, unused yet.
+- The host gains the worker pool, the lock, and `--spool`, `--run-dir`, `--group`,
+  `--path-identity` and `--post-from` — done.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.
 - New lanes: done — the grammar of header fields, acceptance, the journal, the file system model,
-  recovery against the table of corruptions, and the store's runs; to come — the crash lane on
-  LazyFS, which needs `/dev/fuse` and the right to mount — in CI on the runner, locally in a
-  container of its own; the `nntp` lane gains POST and restarts.
+  recovery against the table of corruptions, the store's runs, and the tools the crash tests rest
+  on: libfiu's points and LazyFS, which needs `/dev/fuse` and the right to mount it, as a user in a
+  user namespace of its own or through `fusermount3` — in CI as a job of its own, locally in a
+  container of its own; to come — the crash lane on LazyFS; the `nntp` lane gains POST and
+  restarts.
 - LazyFS, its two dependencies and libfiu are pinned by digest in `tools.lock.json` and built
   offline, as the other tools built from source are; LazyFS also needs the system's libfuse 3.
 - `docs/nntp.md`, `docs/assurance.md` and `docs/baseline.md` move with the code.

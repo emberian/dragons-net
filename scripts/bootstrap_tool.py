@@ -25,10 +25,19 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 MARKER = "archive.sha256"
 MANIFEST = "tree.sha256"
-BUILT = ("lean4export", "nanoda", "cake", "polyml", "abnfgen")
+BUILT = ("lean4export", "nanoda", "cake", "polyml", "abnfgen", "lazyfs", "libfiu")
 # Built tools kept as the whole tree their build installs, because the binary alone is not
 # usable: Poly/ML needs its libraries and the basis library it loads at run time.
 INSTALLED = ("polyml",)
+# Built tools kept as these files of their source tree, side by side under the names given:
+# LazyFS with the cache library it loads from beside itself; libfiu as its library, under the
+# name a program links with and the one it loads, its headers and the preload that enables
+# points of failure from outside.
+KEPT = {"lazyfs": {"lazyfs": "lazyfs/build/lazyfs", "libpcache.so.0": "libs/libpcache/build/libpcache.so.0"},
+        "libfiu": {"libfiu.so": "libfiu/libfiu.so.1.2", "libfiu.so.0": "libfiu/libfiu.so.1.2",
+                   "fiu.h": "libfiu/fiu.h", "fiu-local.h": "libfiu/fiu-local.h",
+                   "fiu-control.h": "libfiu/fiu-control.h",
+                   "fiu_run_preload.so": "preload/run/fiu_run_preload.so"}}
 
 
 def jobs() -> int:
@@ -156,6 +165,32 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
             subprocess.run(["./configure"], cwd=source, check=True, stdout=sys.stderr)
             command = ["make", f"-j{jobs()}", "abnfgen"]
             env = dict(os.environ)
+        elif name == "lazyfs":
+            # Its cache library fetches toml11 and spdlog when it is configured: they are put from
+            # their pins where that fetch leaves them, which is also where LazyFS's own build looks
+            # for spdlog, and nothing may be fetched. Both are linked with the rpath they are kept
+            # with, beside each other.
+            cache_lib = source / "libs" / "libpcache"
+            for dep, fetched in (("toml11", "toml"), ("spdlog", "spdlog")):
+                unpack(lock[dep], fetch(lock[dep]), Path(temp) / dep)
+                (tree,) = [p for p in (Path(temp) / dep).iterdir() if p.is_dir()]
+                (cache_lib / "build" / "_deps").mkdir(parents=True, exist_ok=True)
+                tree.rename(cache_lib / "build" / "_deps" / f"{fetched}-src")
+            rpath = ["-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON", "-DCMAKE_INSTALL_RPATH=$ORIGIN"]
+            for step in (["cmake", "-S", str(cache_lib), "-B", str(cache_lib / "build"), *rpath,
+                          "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"],
+                         ["cmake", "--build", str(cache_lib / "build"), f"-j{jobs()}"],
+                         ["cmake", "-S", str(source / "lazyfs"), "-B", str(source / "lazyfs" / "build"),
+                          *rpath, "-DLAZYFS_BUILD_TESTS=OFF"]):
+                subprocess.run(step, cwd=source, check=True, stdout=sys.stderr)
+            command = ["cmake", "--build", str(source / "lazyfs" / "build"), f"-j{jobs()}"]
+            env = dict(os.environ)
+        elif name == "libfiu":
+            # The library and the preload that enables points; not the preloads that wrap POSIX
+            # calls, which the host's points of failure stand in for.
+            subprocess.run(["make", "-C", "libfiu", "libs"], cwd=source, check=True, stdout=sys.stderr)
+            command = ["make", "-C", "preload/run", "fiu_run_preload.so"]
+            env = dict(os.environ)
         elif name == "cake":
             command = ["make", "-C", str(source), "cake", "LDFLAGS=-Wl,-z,noexecstack"]
             env = dict(os.environ)
@@ -184,8 +219,10 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
                 shutil.copytree(prefix / target.relative_to(target.anchor), content, symlinks=True)
             else:
                 content.mkdir()
-                # The pin names the binary inside the source tree; only that file is kept.
-                shutil.copy2(source / pin["binary"], content)
+                # The pin names the binary inside the source tree; only that file is kept, or the
+                # files the tool is kept as.
+                for kept, built in KEPT.get(name, {Path(pin["binary"]).name: pin["binary"]}).items():
+                    shutil.copy2(source / built, content / kept)
             seal(content, pin)
             content.rename(target)
 
@@ -252,7 +289,8 @@ def main() -> None:
         # Only the binary was kept, so the path it had in its source tree is gone.
         print(target / Path(pin["binary"]).name)
     else:
-        print(target / pin["binary"])
+        # A pin with no binary is a source another tool is built with: its unpacked tree.
+        print(target / pin.get("binary", "."))
 
 
 if __name__ == "__main__":

@@ -36,6 +36,24 @@ __attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness(co
     dn_end(2, format, args);
 }
 
+/* The same from a thread other than the main one, which may hold a lock of stdio: the message is
+   written as it is and the process ends without flushing anything. */
+__attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness_now(const char *format, ...) {
+    char text[512];
+    va_list args;
+    va_start(args, format);
+    int n = vsnprintf(text, sizeof text - 1, format, args);
+    va_end(args);
+    size_t len = n < 0 ? 0 : (size_t)n < sizeof text - 1 ? (size_t)n : sizeof text - 2;
+    text[len++] = '\n';
+    for (size_t done = 0; done < len;) {
+        ssize_t w = write(STDERR_FILENO, text + done, len - done);
+        if (w <= 0 && errno != EINTR) break;
+        if (w > 0) done += (size_t)w;
+    }
+    _exit(2);
+}
+
 /* A call that faults is an outcome the host reports, not a crash to keep: without this, every
    expected fault is written out as a core dump. */
 static inline void dn_expect_faults(void) {

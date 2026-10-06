@@ -7,7 +7,19 @@
 #include "dn_session_layout.h"
 
 _Static_assert(DN_HEADER_BYTES <= DN_SESSION_CONF_OFF, "the layout overlaps the heap header");
-_Static_assert(DN_SESSION_SIZE <= DN_RUNTIME_SEGMENT_BYTES, "the layout does not fit the heap segment");
+_Static_assert(DN_SESSION_SIZE <= DN_SESSION_HEAP_BYTES, "the layout does not fit the heap");
+_Static_assert(DN_SESSION_HEAP_BYTES >= DN_RUNTIME_SEGMENT_BYTES, "the heap is smaller than the runtime's");
+_Static_assert(DN_SESSION_EVENT_POST + 8 <= DN_SESSION_EVENT_HEAD, "an event's posting word overruns its head");
+_Static_assert(DN_SESSION_NEXT_GROUPS + DN_SESSION_GROUPS_MAX * DN_SESSION_GROUP_SLOT <= DN_SESSION_NEXT_EVENTS,
+               "the groups overrun their area");
+_Static_assert(DN_SESSION_NEXT_DONE + DN_SESSION_JOBS * DN_SESSION_DONE_SLOT <= DN_SESSION_NEXT_LEN,
+               "the completions overrun their area");
+_Static_assert(DN_SESSION_EMIT_JOBS + DN_SESSION_JOBS * DN_SESSION_JOB_SLOT <= DN_SESSION_EMIT_LEN,
+               "the jobs overrun their area");
+_Static_assert(DN_SESSION_JOB_OPS_AT + DN_SESSION_JOB_OPS * DN_SESSION_OP_SLOT <= DN_SESSION_JOB_HEAD,
+               "a job's operations overrun its head");
+_Static_assert(DN_SESSION_DONE_RESULTS + DN_SESSION_JOB_OPS * 16 <= DN_SESSION_DONE_HEAD,
+               "a completion's results overrun its head");
 _Static_assert(DN_SESSION_EVENT_HEAD + DN_SESSION_DATA <= DN_SESSION_EVENT_SLOT, "an event's data overruns its slot");
 _Static_assert(DN_SESSION_ACTION_HEAD + DN_SESSION_DATA <= DN_SESSION_ACTION_SLOT,
                "an action's data overruns its slot");

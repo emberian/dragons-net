@@ -174,7 +174,8 @@ class CheckScript(unittest.TestCase):
                           "python3 scripts/state_check.py", "python3 scripts/session_check.py",
                           "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
                           "python3 scripts/journal_check.py", "python3 scripts/fs_check.py",
-                          "python3 scripts/store_check.py", "python3 scripts/runs_check.py"],
+                          "python3 scripts/store_check.py", "python3 scripts/runs_check.py",
+                          "python3 scripts/fiu_check.py", "python3 scripts/host_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -199,9 +200,13 @@ class CheckScript(unittest.TestCase):
         for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
             name, _, body = block.partition(":\n")
             jobs[name] = body
-        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test"])
-        for job, previous in zip(list(jobs)[1:], list(jobs), strict=False):
+        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test", "lazyfs"])
+        chain = ["lint", "build", "proofs", "test"]
+        for job, previous in zip(chain[1:], chain, strict=False):
             self.assertIn(f"needs: {previous}\n", jobs[job])
+        # The LazyFS lane mounts FUSE, so it runs beside the chain once the lint has passed.
+        self.assertIn("needs: lint\n", jobs["lazyfs"])
+        self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
         for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
             self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
