@@ -57,6 +57,10 @@ def mounted(point: Path) -> bool:
         return any(line.split()[4] == str(point) for line in table)
 
 
+# The arguments LazyFS keeps, its own program's name among them, besides `--config-path` and its value.
+LAZYFS_ARGS = 10
+
+
 class LazyFS:
     """LazyFS serving a directory of its own at a mount point, started and stopped by the lane."""
 
@@ -76,11 +80,16 @@ class LazyFS:
     def start(self) -> None:
         """Mount it, in the foreground so that its process is the lane's to watch, and hold the
         reading end of the pipe it answers on: it opens the other end before it reads a command,
-        and would wait for a reader until a clear of the cache came."""
+        and would wait for a reader until a clear of the cache came. LazyFS takes a configuration
+        path holding "-o" anywhere, in any case, for an option and falls back to its default
+        silently, so the path is given relative to its working directory; and it keeps only its
+        first ten other arguments, dropping the rest silently."""
+        command = [str(self.binary), str(self.point), "--config-path", self.config.name, "-f",
+                   "-o", "modules=subdir", "-o", f"subdir={self.root}"]
+        if len(command) - 2 > LAZYFS_ARGS:
+            raise LaneError(f"LazyFS would drop arguments of {command}")
         with self.output.open("ab") as out:
-            self.process = subprocess.Popen(
-                [str(self.binary), str(self.point), "--config-path", str(self.config), "-f",
-                 "-o", "modules=subdir", "-o", f"subdir={self.root}"], stdout=out, stderr=subprocess.STDOUT)
+            self.process = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT, cwd=self.config.parent)
         deadline = time.monotonic() + WAIT
         while not (mounted(self.point) and self.done.exists()):
             if self.process.poll() is not None or time.monotonic() > deadline:
@@ -259,7 +268,8 @@ def locks(fs: LazyFS) -> list[str]:
 
 def check() -> Report:
     binary = lanes.pinned_tool("lazyfs")
-    with tempfile.TemporaryDirectory(prefix="dn-lazyfs-") as temp:
+    # "-o" in the name, which LazyFS would take for an option were its configuration's path given whole.
+    with tempfile.TemporaryDirectory(prefix="dn-lazyfs-o-") as temp:
         fs = LazyFS(binary, Path(temp))
         fs.start()
         try:
