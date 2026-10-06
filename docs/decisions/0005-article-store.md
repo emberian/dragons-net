@@ -388,8 +388,8 @@ from them are done; what needs the program or the host comes with them, as marke
 - The layout gains file jobs and their completions, the wall clock, the run's random value and a
   journal's key, the configuration, and whether a connection may post; the heap grows to 4 MiB, and
   the theorem that the layout fits the heap moves with it — done, unused yet.
-- `native/nntp_host.c` gains the worker pool, the lock, and `--spool`, `--group`,
-  `--path-identity` and `--post-from`.
+- The host gains the worker pool, the lock, and `--spool`, `--run-dir`, `--group`,
+  `--path-identity` and `--post-from` — done.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.
 - New lanes: done — the grammar of header fields, acceptance, the journal, the file system model,
   recovery against the table of corruptions, the store's runs, and the tools the crash tests rest

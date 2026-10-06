@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -331,10 +332,16 @@ int dn_jobs_start(int dir) {
     for (int p = 0; p < PLACES; ++p) files[p].fd = -1;
     wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (wake < 0) dn_harness("eventfd: %s", strerror(errno));
+    /* Workers take no signal: the loop takes SIGTERM and SIGINT through its signalfd, which a worker
+       taking one would bypass, ending the process at once. */
+    sigset_t all, old;
+    sigfillset(&all);
+    if (pthread_sigmask(SIG_SETMASK, &all, &old)) dn_harness("pthread_sigmask");
     for (int w = 0; w < WORKERS; ++w) {
         pthread_t thread;
         if (pthread_create(&thread, NULL, worker, NULL) || pthread_detach(thread)) dn_harness("a worker thread");
     }
+    if (pthread_sigmask(SIG_SETMASK, &old, NULL)) dn_harness("pthread_sigmask");
     return wake;
 }
 

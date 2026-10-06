@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -375,12 +376,16 @@ class Jobs:
 
     def broken(self, said: str, wanted: int = 1) -> None:
         """The host ended the run for a job that breaks the contract, saying `said`, with status `wanted`."""
+        self.exited(said, wanted, f"a job that should break the contract ({said})")
+
+    def exited(self, said: str, wanted: int, after: str) -> None:
+        """The host ended after `after`, saying `said`, with status `wanted`."""
         try:
             status = self.proc.wait(timeout=self.wait_s)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait()
-            raise LaneError(f"the host went on after a job that should break the contract ({said})") from None
+            raise LaneError(f"the host went on after {after}") from None
         message = self.said()
         if status != wanted or said not in message:
             raise LaneError(f"status {status}, saying {message!r}, not status {wanted} saying {said!r}")
@@ -743,6 +748,22 @@ def races(b: Builds) -> dict[str, int]:
     return {"jobs at once": RACE_RUNS, "marks at once": RACE_RUNS}
 
 
+def signalled(b: Builds) -> list[str]:
+    """SIGTERM to a host with a store, idle and with a slow sync in flight: its loop takes it at the next
+    batch and stops serving, status 0, as without a store."""
+    seen = []
+    for what, binary, points, ops in (("idle", b.plain, None, []),
+                                      ("a sync in flight", b.fiu, [enabled("dn/sync-slow", 2000)], [Op("sync-dir")])):
+        with tempfile.TemporaryDirectory() as temp, Jobs(binary, Store(temp).options(), points) as h:
+            h.hand(0, 1, ops, fetch=False) if ops else h.send("emit")
+            h.proc.send_signal(signal.SIGTERM)
+            time.sleep(0.2)
+            h.send("next")
+            h.exited("stopped: a signal", 0, f"SIGTERM, {what}")
+        seen.append(what)
+    return seen
+
+
 def on_plain(check: Callable[[Path], object]) -> Callable[[Builds], object]:
     return lambda b: check(b.plain)
 
@@ -752,8 +773,8 @@ CHECKS: dict[str, Callable[[Builds], object]] = {
     "no store": on_plain(no_store), "handed": on_plain(handed), "posting": on_plain(posting), "held": on_plain(held),
     "marks": on_plain(marks_at_start), "options": on_plain(options), "files": on_plain(files),
     "truncated": on_plain(truncated), "errors": on_plain(errors), "listing": on_plain(listing),
-    "at once": on_plain(at_once), "breaches": on_plain(breaches), "faults": faults, "in flight": in_flight,
-    "races": races}
+    "at once": on_plain(at_once), "breaches": on_plain(breaches), "a signal": signalled, "faults": faults,
+    "in flight": in_flight, "races": races}
 
 # Defects planted: (the file, the name, the text, what it becomes).
 DEFECTS = [
@@ -792,6 +813,7 @@ DEFECTS = [
     (JOBS, "no space taken for another error", "    case ENOSPC:\n", ""),
     (STORE, "one mark failing ending the host", "    if (!left)\n", "    if (left < 2)\n"),
     (STORE, "no mark leaving the host going on", "    if (!left)\n", "    if (0 && !left)\n"),
+    (JOBS, "a worker taking signals", "    sigfillset(&all);\n", "    sigemptyset(&all);\n"),
     (JOBS, "a completion marked without the lock",
      "        pthread_mutex_lock(&lock);\n        j->state = DONE;\n        pthread_mutex_unlock(&lock);\n",
      "        j->state = DONE;\n"),
