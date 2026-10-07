@@ -354,8 +354,8 @@ from them are done; what needs the program or the host comes with them, as marke
     restart after a failed sync of the journal or the directory without a loss of power is not
     covered, as above.
 - To be proved of the program, once it is written: the CRC-32C and SipHash-2-4 functions it prints
-  compute what `DN.News.Journal` and `DN.News.SipHash` define, as `DN.News.FramerCode` proves the
-  framers; no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The
+  compute what `DN.News.Journal` and `DN.News.SipHash` define, through `DN.Compiler.Wp` (one
+  SipRound already is, in `DN.News.SipHashCode`); no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The
   analysis now costs about 40 s and 7.4 GB; if the store's code takes it past 12 GB, the program is
   split into functions and the analysis extended to calls.
 - Tested against references written apart from the specifications ([baseline](../baseline.md)):
