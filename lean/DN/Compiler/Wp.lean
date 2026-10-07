@@ -342,6 +342,13 @@ theorem wp_assign {x : String} {e : PancakeExp} {Q : Assn σ} {s : PancakeState 
   simp only [wp, he, hx]
   exact hq
 
+theorem wp_store {d e : PancakeExp} {Q : Assn σ} {s : PancakeState σ} {a val : Word}
+    {m : Word → Word} (hd : eval s d = some a) (he : eval s e = some val)
+    (hm : memStoreWord s.memory s.memaddrs a val = some m) (hq : Q { s with memory := m }) :
+    wp (.store d e) Q s := by
+  simp only [wp, hd, he, hm]
+  exact hq
+
 /-- What the loops ask can hold: a local counted down to zero, its invariant that it is bound. -/
 theorem vc_witness :
     vc (σ := Unit) (.while_ (fun s => ∃ w, s.locals "n" = some w) (.var "n")

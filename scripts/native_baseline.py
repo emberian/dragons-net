@@ -15,14 +15,16 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The path above is what makes these importable.
+import journal_check
 import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
 from words import MASK, signed, word_op
 
 OUT = ROOT / "build/baseline"
 FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
+            ("crc.pnk", "emit-crc"),
             ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
-HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c",
+HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
          NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
 
@@ -148,6 +150,7 @@ def documented(measured: dict[str, Any]) -> None:
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "copy_cases": ("README.md", "docs/baseline.md"),
               "render_cases": ("docs/baseline.md",),
+              "crc_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
                               "docs/decisions/0001-embedding.md"),
               "reply_inputs": ("docs/baseline.md",)}
@@ -341,6 +344,32 @@ def echo(cake: str) -> dict[str, Any]:
     return measured
 
 
+def crc(cake: str) -> dict[str, Any]:
+    """The CRC-32C against one computed a bit at a time, on RFC 7143's examples and drawn buffers, and
+    kernels with one constant of it changed, each refused."""
+    host = NATIVE / "crc_check.c"
+    examples = "".join(f"{data.hex()} {value}\n" for _, data, value in journal_check.vectors())
+    measured = measured_by(build(cake, "crc", host), stdin=examples)
+    text = (OUT / "crc.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: once a shift for the polynomial.
+    mutants = {
+        # the table's index cut to seven bits
+        "crc-mask": ("& 255", "& 127", 1),
+        # another polynomial
+        "crc-poly": ("2197175160", "2197175161", 8),
+        # another initial remainder
+        "crc-init": ("acc = 4294967295;", "acc = 4294967294;", 1),
+        # the table's words a half word apart
+        "crc-stride": ("(i * 8)", "(i * 4)", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the CRC mutation {name} no longer finds the text it changes")
+        refuses(cake, name, text.replace(old, new), host, 1, "CRC-32C of", stdin=examples)
+    measured["crc_mutants_rejected"] = len(mutants)
+    return measured
+
+
 def gates(cake: str) -> int:
     """The two gates every lane compiles through, seen refusing: a warning fails the build, and an
     export outside the project namespace is refused."""
@@ -376,6 +405,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     measured = differential(cake)
     render = build(cake, "render", NATIVE / "render_check.c")
     measured.update(measured_by(render))
+    measured.update(crc(cake))
     measured.update(replies(cake))
     measured.update(echo(cake))
     measured["gate_sensitivity_cases"] = gates(cake)
@@ -390,6 +420,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
         "echo_assembly_sha256": lanes.digest(OUT / "echo.S"),
         "render_source_sha256": lanes.digest(OUT / "render.pnk"),
         "render_assembly_sha256": lanes.digest(OUT / "render.S"),
+        "crc_source_sha256": lanes.digest(OUT / "crc.pnk"),
         "reply_source_sha256": lanes.digest(OUT / "reply.pnk"),
         "reply_cases_sha256": lanes.digest(OUT / "reply-cases.json"),
         "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),
