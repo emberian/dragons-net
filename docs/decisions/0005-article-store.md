@@ -232,8 +232,8 @@ knows nothing of articles.
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.
-- Recovery runs before the first connection: the host listens only once the program reports the
-  store ready.
+- Recovery runs before the first connection: the first batch comes at once, and the host listens
+  only from the `dn_emit` whose word says the store is ready.
 
 ### How an article's bytes flow
 
@@ -273,9 +273,10 @@ authentication, RFC 4643, is added), and hands the groups and the path identity 
 which checks them: group names as RFC 5536 §3.1.4 allows, none reserved, and the path identity as a
 domain name. Each opened connection carries whether it may post. The host also hands the program its
 wall clock, in UTC and not checked to move forward, and random octets: the run's value, which
-Message-IDs carry, and sixteen more that key a journal the program creates, written only to that
-journal and used for nothing else, the program refusing to start without sixteen; and it logs each
-connection's address with the run and its index.
+Message-IDs carry, sixteen more that key a journal the program creates, written only to that journal
+and used for nothing else, the program refusing to start without sixteen, and sixteen that key the
+index of Message-IDs, never written; and it logs each connection's address with the run and its
+index.
 
 ### Which articles are accepted, and what the server adds
 

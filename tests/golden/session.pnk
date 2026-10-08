@@ -1,91 +1,92 @@
 fun main() {
-  st @base + 64, 4;
-  st @base + 318712, 0;
-  st @base + 318720, 0;
-  st @base + 318728, 0;
-  st @base + 319016, 7449361033009901618;
-  st @base + 319024, 2338605630395477615;
-  st @base + 319032, 2318361380226691616;
-  st @base + 319040, 7598825393740607342;
-  st @base + 319048, 8247620832851617646;
-  st @base + 319056, 2334382411428685155;
-  st @base + 319064, 3544386825980245089;
-  st @base + 319072, 7811883199287608096;
-  st @base + 319080, 8391166443843581033;
-  st @base + 319088, 5283657245585444154;
-  st @base + 319096, 5568993466012159567;
-  st @base + 319104, 4707473570065108048;
-  st @base + 319112, 7021784858939574612;
-  st @base + 319120, 8387231022536617831;
-  st @base + 319128, 3472567839402626336;
-  st @base + 319136, 8367811718512386096;
-  st @base + 319144, 7812741938002819173;
-  st @base + 319152, 5782977106974832495;
-  st @base + 319160, 4992614335706120769;
-  st @base + 319168, 8032021936938360915;
-  st @base + 319176, 4703244593869448306;
-  st @base + 319184, 7022083123464314948;
-  st @base + 319192, 8461837382603072871;
-  st @base + 319200, 5190976215500284525;
-  st @base + 319208, 5284218841404034117;
-  st @base + 319216, 2329558737683615060;
-  st @base + 319224, 7306916068917079387;
-  st @base + 319232, 7092454105570101549;
-  st @base + 319240, 7021784763360703077;
-  st @base + 319248, 8387231022536617831;
-  st @base + 319256, 7310017434736992288;
-  st @base + 319264, 7023210127212879973;
-  st @base + 319272, 8243105118545798514;
-  st @base + 319280, 6146928745873175584;
-  st @base + 319288, 8295695712566853920;
-  st @base + 319296, 8026294580736587119;
-  st @base + 319304, 3472873946873881956;
-  st @base + 319312, 3749824369216593973;
-  st @base + 319320, 7308814907693085233;
-  st @base + 319328, 2337497328126489463;
-  st @base + 319336, 7234316346692756851;
-  st @base + 319344, 8020383377782999565;
-  st @base + 319352, 7308325599891841312;
-  st @base + 319360, 7526676510244697888;
-  st @base + 319368, 7022083123460469857;
-  st @base + 319376, 3821881958689760615;
-  st @base + 319384, 8029473307266920496;
-  st @base + 319392, 7020387719312338551;
-  st @base + 319400, 2319688287432565870;
-  st @base + 319408, 7286956557046020435;
-  st @base + 319416, 4702613488775688818;
-  st @base + 319424, 5283928854807855440;
-  st @base + 319432, 6147783254847542085;
-  st @base + 319440, 6076275369378862153;
-  st @base + 319448, 21569;
+  st @base + 64, 5;
+  st @base + 318736, 0;
+  st @base + 318744, 0;
+  st @base + 318752, 0;
+  st @base + 319040, 7449361033009901618;
+  st @base + 319048, 2338605630395477615;
+  st @base + 319056, 2318361380226691616;
+  st @base + 319064, 7598825393740607342;
+  st @base + 319072, 8247620832851617646;
+  st @base + 319080, 2334382411428685155;
+  st @base + 319088, 3544386825980245089;
+  st @base + 319096, 7811883199287608096;
+  st @base + 319104, 8391166443843581033;
+  st @base + 319112, 5283657245585444154;
+  st @base + 319120, 5568993466012159567;
+  st @base + 319128, 4707473570065108048;
+  st @base + 319136, 7021784858939574612;
+  st @base + 319144, 8387231022536617831;
+  st @base + 319152, 3472567839402626336;
+  st @base + 319160, 8367811718512386096;
+  st @base + 319168, 7812741938002819173;
+  st @base + 319176, 5782977106974832495;
+  st @base + 319184, 4992614335706120769;
+  st @base + 319192, 8032021936938360915;
+  st @base + 319200, 4703244593869448306;
+  st @base + 319208, 7022083123464314948;
+  st @base + 319216, 8461837382603072871;
+  st @base + 319224, 5190976215500284525;
+  st @base + 319232, 5284218841404034117;
+  st @base + 319240, 2329558737683615060;
+  st @base + 319248, 7306916068917079387;
+  st @base + 319256, 7092454105570101549;
+  st @base + 319264, 7021784763360703077;
+  st @base + 319272, 8387231022536617831;
+  st @base + 319280, 7310017434736992288;
+  st @base + 319288, 7023210127212879973;
+  st @base + 319296, 8243105118545798514;
+  st @base + 319304, 6146928745873175584;
+  st @base + 319312, 8295695712566853920;
+  st @base + 319320, 8026294580736587119;
+  st @base + 319328, 3472873946873881956;
+  st @base + 319336, 3749824369216593973;
+  st @base + 319344, 7308814907693085233;
+  st @base + 319352, 2337497328126489463;
+  st @base + 319360, 7234316346692756851;
+  st @base + 319368, 8020383377782999565;
+  st @base + 319376, 7308325599891841312;
+  st @base + 319384, 7526676510244697888;
+  st @base + 319392, 7022083123460469857;
+  st @base + 319400, 3821881958689760615;
+  st @base + 319408, 8029473307266920496;
+  st @base + 319416, 7020387719312338551;
+  st @base + 319424, 2319688287432565870;
+  st @base + 319432, 7286956557046020435;
+  st @base + 319440, 4702613488775688818;
+  st @base + 319448, 5283928854807855440;
+  st @base + 319456, 6147783254847542085;
+  st @base + 319464, 6076275369378862153;
+  st @base + 319472, 21569;
   var zt = 0;
   while zt < 64 {
-    st @base + 319456 + (zt * 1672), 0;
-    st @base + 319456 + (zt * 1672) + 88, 0;
+    st @base + 319480 + (zt * 1672), 0;
+    st @base + 319480 + (zt * 1672) + 88, 0;
     zt = zt + 1;
   }
   st @base + 128, 0;
+  st @base + 146504, 1;
   var going = 1;
   while going {
-    @dn_next(@base + 64, 8, @base + 128, 146352);
+    @dn_next(@base + 64, 8, @base + 128, 146368);
     var k = lds 1 (@base + 136);
     if 0 < ((k < 0) + (16 < k)) {
-      st @base + 318728, 1;
+      st @base + 318752, 1;
       return 1;
     } else {
     }
     var now = lds 1 (@base + 144);
-    if 0 < ((now < (lds 1 (@base + 318712))) + (4611686018427387904 <= now)) {
-      st @base + 318728, 7;
+    if 0 < ((now < (lds 1 (@base + 318736))) + (4611686018427387904 <= now)) {
+      st @base + 318752, 7;
       return 7;
     } else {
     }
-    st @base + 318712, now;
-    if (lds 1 (@base + 318720)) == 0 {
+    st @base + 318736, now;
+    if (lds 1 (@base + 318744)) == 0 {
       var rvl = lds 1 (@base + 152);
       var scl = lds 1 (@base + 224);
       if 0 < ((0 < ((rvl < 1) + (64 < rvl))) + (0 < ((scl < 1) + (200 < scl)))) {
-        st @base + 318728, 9;
+        st @base + 318752, 9;
         return 9;
       } else {
       }
@@ -93,7 +94,7 @@ fun main() {
       while ij < rvl {
         var cz = ld8 (@base + 160 + ij);
         if 0 < ((cz < 33) + (126 < cz)) {
-          st @base + 318728, 9;
+          st @base + 318752, 9;
           return 9;
         } else {
         }
@@ -103,7 +104,7 @@ fun main() {
       while ij < scl {
         var cz = ld8 (@base + 232 + ij);
         if 0 < ((cz < 33) + (126 < cz)) {
-          st @base + 318728, 9;
+          st @base + 318752, 9;
           return 9;
         } else {
         }
@@ -112,41 +113,41 @@ fun main() {
       var ik = 0;
       ik = 0;
       while ik < rvl {
-        st8 @base + 318744 + ik, ld8 (@base + 160 + ik);
+        st8 @base + 318768 + ik, ld8 (@base + 160 + ik);
         ik = ik + 1;
       }
       ik = 0;
       while ik < scl {
-        st8 @base + 318816 + ik, ld8 (@base + 232 + ik);
+        st8 @base + 318840 + ik, ld8 (@base + 232 + ik);
         ik = ik + 1;
       }
-      st @base + 318736, rvl;
-      st @base + 318808, scl;
-      st @base + 318720, 1;
+      st @base + 318760, rvl;
+      st @base + 318832, scl;
+      st @base + 318744, 1;
     } else {
     }
     var e = 0;
     while e < k {
-      var ev = @base + 5288 + (e * 552);
+      var ev = @base + 5304 + (e * 552);
       var ek = lds 1 ev;
       var ex = lds 1 (ev + 8);
       var eg = lds 1 (ev + 16);
       var el = lds 1 (ev + 24);
       if 0 < ((ex < 0) + (64 <= ex)) {
-        st @base + 318728, 3;
+        st @base + 318752, 3;
         return 3;
       } else {
       }
       if 0 < ((ek < 1) + (5 < ek)) {
-        st @base + 318728, 8;
+        st @base + 318752, 8;
         return 8;
       } else {
       }
-      var cb = @base + 319456 + (ex * 1672);
+      var cb = @base + 319480 + (ex * 1672);
       var lv = (lds 1 cb) & ((lds 1 (cb + 8)) == eg);
       if ek == 1 {
         if lds 1 cb {
-          st @base + 318728, 6;
+          st @base + 318752, 6;
           return 6;
         } else {
           st cb, 1;
@@ -165,45 +166,45 @@ fun main() {
           var ob = cb + 1160;
           var o = 0;
           var j = 0;
-          var rl = lds 1 (@base + 318736);
-          var sl = lds 1 (@base + 318808);
+          var rl = lds 1 (@base + 318760);
+          var sl = lds 1 (@base + 318832);
           if 0 < ((rl < 0) + (64 < rl)) {
-            st @base + 318728, 10;
+            st @base + 318752, 10;
             return 10;
           } else {
           }
           if 0 < ((sl < 0) + (200 < sl)) {
-            st @base + 318728, 10;
+            st @base + 318752, 10;
             return 10;
           } else {
           }
           j = 0;
           while j < 16 {
-            st8 ob + o + j, ld8 (@base + 319016 + j);
+            st8 ob + o + j, ld8 (@base + 319040 + j);
             j = j + 1;
           }
           o = o + 16;
           j = 0;
           while j < rl {
-            st8 ob + o + j, ld8 (@base + 318744 + j);
+            st8 ob + o + j, ld8 (@base + 318768 + j);
             j = j + 1;
           }
           o = o + rl;
           j = 0;
           while j < 35 {
-            st8 ob + o + j, ld8 (@base + 319032 + j);
+            st8 ob + o + j, ld8 (@base + 319056 + j);
             j = j + 1;
           }
           o = o + 35;
           j = 0;
           while j < sl {
-            st8 ob + o + j, ld8 (@base + 318816 + j);
+            st8 ob + o + j, ld8 (@base + 318840 + j);
             j = j + 1;
           }
           o = o + sl;
           j = 0;
           while j < 2 {
-            st8 ob + o + j, ld8 (@base + 319067 + j);
+            st8 ob + o + j, ld8 (@base + 319091 + j);
             j = j + 1;
           }
           o = o + 2;
@@ -213,7 +214,7 @@ fun main() {
       }
       if ek == 2 {
         if 0 < ((el < 0) + (512 < el)) {
-          st @base + 318728, 2;
+          st @base + 318752, 2;
           return 2;
         } else {
         }
@@ -227,7 +228,7 @@ fun main() {
             st cb + 72, el;
             st cb + 80, 0;
           } else {
-            st @base + 318728, 4;
+            st @base + 318752, 4;
             return 4;
           }
         } else {
@@ -247,7 +248,7 @@ fun main() {
             st cb + 16, 2;
             st cb + 56, 0;
           } else {
-            st @base + 318728, 4;
+            st @base + 318752, 4;
             return 4;
           }
         } else {
@@ -266,12 +267,12 @@ fun main() {
     var m = 0;
     var c = 0;
     while c < 64 {
-      st @base + 146488 + (c * 560), 0;
-      var cb = @base + 319456 + (c * 1672);
+      st @base + 146512 + (c * 560), 0;
+      var cb = @base + 319480 + (c * 1672);
       if lds 1 cb {
         var due = 0 < ((0 < (((((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) <= now)) + ((lds 1 (cb + 48)) <= now))) + ((((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) <= now)));
         if due {
-          var slot = @base + 146488 + (c * 560);
+          var slot = @base + 146512 + (c * 560);
           st slot, 3;
           st slot + 8, c;
           st slot + 16, lds 1 (cb + 8);
@@ -289,12 +290,12 @@ fun main() {
             var i = lds 1 (cb + 80);
             var sv = 1;
             if 0 < ((n < 0) + (512 < n)) {
-              st @base + 318728, 10;
+              st @base + 318752, 10;
               return 10;
             } else {
             }
             if 0 < ((i < 0) + (512 < i)) {
-              st @base + 318728, 10;
+              st @base + 318752, 10;
               return 10;
             } else {
             }
@@ -303,7 +304,7 @@ fun main() {
                 sv = 0;
               } else {
                 if 0 < (((lds 1 blk) < 0) + (512 < (lds 1 blk))) {
-                  st @base + 318728, 10;
+                  st @base + 318752, 10;
                   return 10;
                 } else {
                 }
@@ -432,7 +433,7 @@ fun main() {
                     eqk = l0 == 12;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319422 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319446 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -445,7 +446,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319434 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319458 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -458,7 +459,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319438 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319462 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -471,7 +472,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319442 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319466 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -484,7 +485,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319446 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319470 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -597,34 +598,34 @@ fun main() {
                       var ob = cb + 1160;
                       var o = 0;
                       var j = 0;
-                      var rl = lds 1 (@base + 318736);
-                      var sl = lds 1 (@base + 318808);
+                      var rl = lds 1 (@base + 318760);
+                      var sl = lds 1 (@base + 318832);
                       if 0 < ((rl < 0) + (64 < rl)) {
-                        st @base + 318728, 10;
+                        st @base + 318752, 10;
                         return 10;
                       } else {
                       }
                       if 0 < ((sl < 0) + (200 < sl)) {
-                        st @base + 318728, 10;
+                        st @base + 318752, 10;
                         return 10;
                       } else {
                       }
                       if r == 1 {
                         j = 0;
                         while j < 60 {
-                          st8 ob + o + j, ld8 (@base + 319069 + j);
+                          st8 ob + o + j, ld8 (@base + 319093 + j);
                           j = j + 1;
                         }
                         o = o + 60;
                         j = 0;
                         while j < rl {
-                          st8 ob + o + j, ld8 (@base + 318744 + j);
+                          st8 ob + o + j, ld8 (@base + 318768 + j);
                           j = j + 1;
                         }
                         o = o + rl;
                         j = 0;
                         while j < 5 {
-                          st8 ob + o + j, ld8 (@base + 319129 + j);
+                          st8 ob + o + j, ld8 (@base + 319153 + j);
                           j = j + 1;
                         }
                         o = o + 5;
@@ -632,31 +633,31 @@ fun main() {
                         if r == 2 {
                           j = 0;
                           while j < 123 {
-                            st8 ob + o + j, ld8 (@base + 319134 + j);
+                            st8 ob + o + j, ld8 (@base + 319158 + j);
                             j = j + 1;
                           }
                           o = o + 123;
                           j = 0;
                           while j < rl {
-                            st8 ob + o + j, ld8 (@base + 318744 + j);
+                            st8 ob + o + j, ld8 (@base + 318768 + j);
                             j = j + 1;
                           }
                           o = o + rl;
                           j = 0;
                           while j < 53 {
-                            st8 ob + o + j, ld8 (@base + 319257 + j);
+                            st8 ob + o + j, ld8 (@base + 319281 + j);
                             j = j + 1;
                           }
                           o = o + 53;
                           j = 0;
                           while j < sl {
-                            st8 ob + o + j, ld8 (@base + 318816 + j);
+                            st8 ob + o + j, ld8 (@base + 318840 + j);
                             j = j + 1;
                           }
                           o = o + sl;
                           j = 0;
                           while j < 5 {
-                            st8 ob + o + j, ld8 (@base + 319129 + j);
+                            st8 ob + o + j, ld8 (@base + 319153 + j);
                             j = j + 1;
                           }
                           o = o + 5;
@@ -664,7 +665,7 @@ fun main() {
                           if r == 3 {
                             j = 0;
                             while j < 9 {
-                              st8 ob + o + j, ld8 (@base + 319310 + j);
+                              st8 ob + o + j, ld8 (@base + 319334 + j);
                               j = j + 1;
                             }
                             o = o + 9;
@@ -672,7 +673,7 @@ fun main() {
                             if r == 4 {
                               j = 0;
                               while j < 27 {
-                                st8 ob + o + j, ld8 (@base + 319319 + j);
+                                st8 ob + o + j, ld8 (@base + 319343 + j);
                                 j = j + 1;
                               }
                               o = o + 27;
@@ -680,7 +681,7 @@ fun main() {
                               if r == 5 {
                                 j = 0;
                                 while j < 37 {
-                                  st8 ob + o + j, ld8 (@base + 319346 + j);
+                                  st8 ob + o + j, ld8 (@base + 319370 + j);
                                   j = j + 1;
                                 }
                                 o = o + 37;
@@ -688,14 +689,14 @@ fun main() {
                                 if r == 6 {
                                   j = 0;
                                   while j < 21 {
-                                    st8 ob + o + j, ld8 (@base + 319383 + j);
+                                    st8 ob + o + j, ld8 (@base + 319407 + j);
                                     j = j + 1;
                                   }
                                   o = o + 21;
                                 } else {
                                   j = 0;
                                   while j < 18 {
-                                    st8 ob + o + j, ld8 (@base + 319404 + j);
+                                    st8 ob + o + j, ld8 (@base + 319428 + j);
                                     j = j + 1;
                                   }
                                   o = o + 18;
@@ -730,10 +731,10 @@ fun main() {
           var wants = ((lds 1 (cb + 16)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)));
           if ((lds 1 (cb + 64)) == 0) == 0 {
             if (lds 1 (cb + 32)) == 0 {
-              var slot = @base + 146488 + (c * 560);
+              var slot = @base + 146512 + (c * 560);
               var ol = lds 1 (cb + 64);
               if 0 < ((ol < 0) + (512 < ol)) {
-                st @base + 318728, 10;
+                st @base + 318752, 10;
                 return 10;
               } else {
               }
@@ -755,7 +756,7 @@ fun main() {
             }
           } else {
             if 0 < (((lds 1 (cb + 16)) == 1) + (((lds 1 (cb + 16)) == 2) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72))))) {
-              var slot = @base + 146488 + (c * 560);
+              var slot = @base + 146512 + (c * 560);
               st slot, 2;
               st slot + 8, c;
               st slot + 16, lds 1 (cb + 8);
@@ -784,23 +785,23 @@ fun main() {
       }
       c = c + 1;
     }
-    st @base + 146480, m;
-    @dn_emit(@base + 64, 8, @base + 146480, 172232);
+    st @base + 146496, m;
+    @dn_emit(@base + 64, 8, @base + 146496, 172240);
     var sc = 0;
     while sc < 64 {
-      var cb = @base + 319456 + (sc * 1672);
+      var cb = @base + 319480 + (sc * 1672);
       if lds 1 (cb + 88) {
         st cb + 88, 0;
         if lds 1 cb {
-          var tk = lds 1 (@base + 146488 + (sc * 560) + 40);
+          var tk = lds 1 (@base + 146512 + (sc * 560) + 40);
           var al = lds 1 (cb + 64);
           if 0 < ((al < 0) + (512 < al)) {
-            st @base + 318728, 10;
+            st @base + 318752, 10;
             return 10;
           } else {
           }
           if 0 < ((tk < 0) + (al < tk)) {
-            st @base + 318728, 5;
+            st @base + 318752, 5;
             return 5;
           } else {
           }
@@ -834,7 +835,7 @@ fun main() {
     var rd = 0;
     var dt = 0;
     while dt < 64 {
-      var cb = @base + 319456 + (dt * 1672);
+      var cb = @base + 319480 + (dt * 1672);
       if lds 1 cb {
         if ((lds 1 (cb + 64)) == 0) & (0 < ((((lds 1 (cb + 80)) == (lds 1 (cb + 72))) == 0) + (((lds 1 (cb + 16)) == 0) == 0))) {
           rd = 1;

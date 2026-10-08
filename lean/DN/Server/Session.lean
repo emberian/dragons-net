@@ -467,7 +467,8 @@ def turn : List PStmt :=
    .dec "sc" (n 0), .while (eLt (v "sc") (n conns)) settle] ++
   wake
 
-/-- `main`: the version, the texts, an empty table, then the loop. -/
+/-- `main`: the version, the texts, an empty table, the host told to listen from the first turn,
+having no store to recover, then the loop. -/
 def main : PFun :=
   { name := "main", body :=
     [.store (at_ confOff) (n version), .store (at_ (ownOff + ownClock)) (n 0),
@@ -477,7 +478,7 @@ def main : PFun :=
      .while (eLt (v "zt") (n conns))
        [.store (atOff (record (v "zt")) cLive) (n 0), .store (atOff (record (v "zt")) cActed) (n 0),
         inc "zt"],
-     .store (at_ (nextOff + nextWake)) (n 0),
+     .store (at_ (nextOff + nextWake)) (n 0), .store (at_ (emitOff + emitListen)) (n 1),
      .dec "going" (n 1),
      .while (v "going") turn,
      .ret (n 0)] }

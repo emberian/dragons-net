@@ -9,6 +9,8 @@
  *   op S I W...   the ten words of operation I of job slot S
  *   job S GEN N   a job of N operations in slot S, handed with the next emit
  *   emit          hand over the jobs set, and no action
+ *   listen W      the word saying whether the host is to listen, from then on (1 at the start)
+ *   wake W        the time the next fetch asks to be woken at (else 0)
  *   peek S AT N   print `data` and N bytes of the last completion of slot S from AT, in hexadecimal
  *   stop CODE     stop the run with CODE
  * The symbols a compiled program defines are defined here, so the host and its runtime link. */
@@ -33,6 +35,7 @@ static unsigned char *job_slot(uint64_t s) {
 
 /* The data of each slot's last completion. */
 static unsigned char completed[DN_SESSION_JOBS][DN_SESSION_JOB_DATA];
+static uint64_t wake_next;
 
 static void hex(const unsigned char *p, uint64_t n) {
     printf(" ");
@@ -42,7 +45,8 @@ static void hex(const unsigned char *p, uint64_t n) {
 
 static void next(void) {
     unsigned char *a = at(DN_SESSION_NEXT_OFF);
-    dn_put_word(a + DN_SESSION_NEXT_WAKE, 0);
+    dn_put_word(a + DN_SESSION_NEXT_WAKE, wake_next);
+    wake_next = 0;
     ffidn_next(at(DN_SESSION_CONF_OFF), DN_SESSION_CONF_LEN, a, DN_SESSION_NEXT_LEN);
     uint64_t groups = dn_word(a + DN_SESSION_NEXT_GROUP_COUNT);
     if (groups > DN_SESSION_GROUPS_MAX) dn_violation("%" PRIu64 " groups", groups);
@@ -113,6 +117,10 @@ static void command(char *line) {
         dn_put_word(slot + DN_SESSION_JOB_KIND, DN_SESSION_JOB);
         dn_put_word(slot + DN_SESSION_JOB_GEN, w[2]);
         dn_put_word(slot + DN_SESSION_JOB_COUNT, w[3]);
+    } else if (n == 2 && !strcmp(word[0], "wake")) {
+        wake_next = w[1];
+    } else if (n == 2 && !strcmp(word[0], "listen")) {
+        dn_put_word(at(DN_SESSION_EMIT_OFF + DN_SESSION_EMIT_LISTEN), w[1]);
     } else if (n == 4 && !strcmp(word[0], "peek")) {
         if (w[1] >= DN_SESSION_JOBS || w[2] > DN_SESSION_JOB_DATA || w[3] > DN_SESSION_JOB_DATA - w[2])
             dn_harness("driver: peek out of range");
@@ -127,6 +135,7 @@ static void command(char *line) {
 void cml_main(void) {
     memset(at(DN_SESSION_CONF_OFF), 0, DN_SESSION_SIZE - DN_SESSION_CONF_OFF);
     dn_put_word(at(DN_SESSION_CONF_OFF), DN_SESSION_VERSION);
+    dn_put_word(at(DN_SESSION_EMIT_OFF + DN_SESSION_EMIT_LISTEN), 1);
     static char line[2 * DN_SESSION_JOB_DATA + 64];
     while (fgets(line, sizeof line, stdin)) {
         if (!strcmp(line, "next\n")) next();
