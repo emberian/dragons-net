@@ -366,7 +366,8 @@ from them are done; what needs the program or the host comes with them, as marke
   header fields RFC 5322, RFC 5537 and RFC 8315 print; the journal; the file system model; recovery,
   with the table of corruptions `fn` keeps for its own store; the store's program, held at every
   point of runs drawn from a fixed seed to what a crash may leave there; and libfiu's points and
-  LazyFS, each held to what the tests below take of it.
+  LazyFS, each held to what the tests below take of it. The program's journal scanner
+  (`DN.News.ScanProg`) is held to the journal's model on the journal lane's journals.
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;

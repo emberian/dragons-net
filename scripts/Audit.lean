@@ -121,9 +121,9 @@ def compilerModules : Array Name :=
     `DN.News.FrameSpec, `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves,
     `DN.News.FsModel, `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash,
     `DN.News.JournalModel, `DN.News.Recovery, `DN.News.RecoveryModel, `DN.News.RecoveryMutant,
-    `DN.News.RecoveryRun, `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec,
-    `DN.News.SipHash, `DN.News.SipProg, `DN.News.Spool, `DN.News.SpoolOps, `DN.News.StoreCases,
-    `DN.News.StoreOps, `DN.News.StoreRun,
+    `DN.News.RecoveryRun, `DN.News.ScanProg, `DN.News.SessionModel, `DN.News.SessionMutant,
+    `DN.News.SessionSpec, `DN.News.SipHash, `DN.News.SipProg, `DN.News.Spool, `DN.News.SpoolOps,
+    `DN.News.StoreCases, `DN.News.StoreOps, `DN.News.StoreRun,
     `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
     `DN.Server.Skeleton]
 

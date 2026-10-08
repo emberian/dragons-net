@@ -1,0 +1,705 @@
+export fun dn_scan_step(1 jsc) {
+  var jz = jsc - jsc;
+  var jsz = jz;
+  var jb = jz;
+  var jwl = jz;
+  var jp = jz;
+  var jky = jz;
+  var jw = jz;
+  var jrem = jz;
+  var jneed = jz;
+  var jx = jz;
+  var ji = jz;
+  var jq = jz;
+  var jf = jz;
+  var jr = jz;
+  var jwhy = jz;
+  var jpl = jz;
+  var jt = jz;
+  var jtag = jz;
+  var jmw = jz;
+  var jtorn = jz;
+  var jrec = jz;
+  var jpp = jz;
+  var jok = jz;
+  var jseq = jz;
+  var jml = jz;
+  var jgc = jz;
+  var jgi = jz;
+  var jnl = jz;
+  var jgp = jz;
+  var jnum = jz;
+  var jhs = jz;
+  var jfs = jz;
+  var jcrc = jz;
+  var ja = jz;
+  var jbb = jz;
+  var jga = jz;
+  var jgb = jz;
+  var jeq = jz;
+  var k = jz;
+  var p = jz;
+  var n = jz;
+  var r = jz;
+  var m = jz;
+  var v0 = jz;
+  var v1 = jz;
+  var v2 = jz;
+  var v3 = jz;
+  var off = jz;
+  var j = jz;
+  jsz = lds 1 jsc;
+  jb = lds 1 (jsc + 8);
+  jwl = lds 1 (jsc + 16);
+  jp = lds 1 (jsc + 24);
+  jky = lds 1 (jsc + 32);
+  jw = jsc + 1928;
+  jrem = jsz - jp;
+  if jrem == 0 {
+    st jsc + 48, 3;
+  } else {
+    jneed = jrem;
+    if 1390 < jneed {
+      jneed = jz + 1390;
+    } else {
+    }
+    if (jb + jwl) < (jp + jneed) {
+      jx = jp - jb;
+      ji = jz + 0;
+      if jx {
+        while (ji + jx) < jwl {
+          st8 jw + ji, ld8 (jw + jx + ji);
+          ji = ji + 1;
+        }
+      } else {
+      }
+      jwl = jwl - jx;
+      st jsc + 8, jp;
+      st jsc + 16, jwl;
+      jx = jsz - (jp + jwl);
+      if 16384 < jx {
+        jx = jz + 16384;
+      } else {
+      }
+      st jsc + 64, jx;
+      st jsc + 48, 1;
+    } else {
+      jq = jp;
+      jf = jw + (jp - jb);
+      jr = jrem;
+      jwhy = jz + 0;
+      if jr < 13 {
+        jwhy = jz + 1;
+      } else {
+        jpl = 0;
+        jpl = ((jpl) << 8) | (ld8 (jf + 3));
+        jpl = ((jpl) << 8) | (ld8 (jf + 2));
+        jpl = ((jpl) << 8) | (ld8 (jf + 1));
+        jpl = ((jpl) << 8) | (ld8 jf);
+        if 1376 < jpl {
+          jwhy = jz + 2;
+        } else {
+          if jr < (jpl + 14) {
+            jwhy = jz + 1;
+          } else {
+            if ((ld8 (jf + jpl + 13)) == 165) == 0 {
+              jwhy = jz + 3;
+            } else {
+              jt = ld8 (jf + 12);
+              if jky {
+                k = jsc + 520;
+              } else {
+                k = jz + 0;
+                if (jt == 1) & (jpl == 36) {
+                  if ((((((((((((((((((1 & ((ld8 (jf + 13)) == 100)) & ((ld8 (jf + 13 + 1)) == 114)) & ((ld8 (jf + 13 + 2)) == 97)) & ((ld8 (jf + 13 + 3)) == 103)) & ((ld8 (jf + 13 + 4)) == 111)) & ((ld8 (jf + 13 + 5)) == 110)) & ((ld8 (jf + 13 + 6)) == 115)) & ((ld8 (jf + 13 + 7)) == 45)) & ((ld8 (jf + 13 + 8)) == 110)) & ((ld8 (jf + 13 + 9)) == 101)) & ((ld8 (jf + 13 + 10)) == 116)) & ((ld8 (jf + 13 + 11)) == 32)) & ((ld8 (jf + 13 + 12)) == 106)) & ((ld8 (jf + 13 + 13)) == 111)) & ((ld8 (jf + 13 + 14)) == 117)) & ((ld8 (jf + 13 + 15)) == 114)) & ((ld8 (jf + 13 + 16)) == 110)) & ((ld8 (jf + 13 + 17)) == 97)) & ((ld8 (jf + 13 + 18)) == 108) {
+                    k = jf + 33;
+                  } else {
+                  }
+                } else {
+                }
+              }
+              if k == 0 {
+                jwhy = jz + 4;
+              } else {
+                p = jsc + 536;
+                st8 p, ((jq) >>> 0) & 255;
+                st8 p + 1, ((jq) >>> 8) & 255;
+                st8 p + 2, ((jq) >>> 16) & 255;
+                st8 p + 3, ((jq) >>> 24) & 255;
+                st8 p + 4, ((jq) >>> 32) & 255;
+                st8 p + 5, ((jq) >>> 40) & 255;
+                st8 p + 6, ((jq) >>> 48) & 255;
+                st8 p + 7, ((jq) >>> 56) & 255;
+                st8 p + 8, jt;
+                ji = jz + 0;
+                while ji < jpl {
+                  st8 p + 9 + ji, ld8 (jf + 13 + ji);
+                  ji = ji + 1;
+                }
+                n = jpl + 9;
+                m = 0;
+                m = ((m) << 8) | (ld8 (k + 7));
+                m = ((m) << 8) | (ld8 (k + 6));
+                m = ((m) << 8) | (ld8 (k + 5));
+                m = ((m) << 8) | (ld8 (k + 4));
+                m = ((m) << 8) | (ld8 (k + 3));
+                m = ((m) << 8) | (ld8 (k + 2));
+                m = ((m) << 8) | (ld8 (k + 1));
+                m = ((m) << 8) | (ld8 (k + 0));
+                v0 = m ^ 8317987319222330741;
+                v2 = m ^ 7816392313619706465;
+                m = 0;
+                m = ((m) << 8) | (ld8 (k + 8 + 7));
+                m = ((m) << 8) | (ld8 (k + 8 + 6));
+                m = ((m) << 8) | (ld8 (k + 8 + 5));
+                m = ((m) << 8) | (ld8 (k + 8 + 4));
+                m = ((m) << 8) | (ld8 (k + 8 + 3));
+                m = ((m) << 8) | (ld8 (k + 8 + 2));
+                m = ((m) << 8) | (ld8 (k + 8 + 1));
+                m = ((m) << 8) | (ld8 (k + 8 + 0));
+                v1 = m ^ 7237128888997146477;
+                v3 = m ^ 8387220255154660723;
+                off = 0;
+                while (off + 8) <= n {
+                  m = 0;
+                  m = ((m) << 8) | (ld8 (p + off + 7));
+                  m = ((m) << 8) | (ld8 (p + off + 6));
+                  m = ((m) << 8) | (ld8 (p + off + 5));
+                  m = ((m) << 8) | (ld8 (p + off + 4));
+                  m = ((m) << 8) | (ld8 (p + off + 3));
+                  m = ((m) << 8) | (ld8 (p + off + 2));
+                  m = ((m) << 8) | (ld8 (p + off + 1));
+                  m = ((m) << 8) | (ld8 (p + off + 0));
+                  v3 = v3 ^ m;
+                  v0 = v0 + v1;
+                  v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                  v0 = ((v0) << 32) | ((v0) >>> 32);
+                  v2 = v2 + v3;
+                  v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                  v0 = v0 + v3;
+                  v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                  v2 = v2 + v1;
+                  v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                  v2 = ((v2) << 32) | ((v2) >>> 32);
+                  v0 = v0 + v1;
+                  v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                  v0 = ((v0) << 32) | ((v0) >>> 32);
+                  v2 = v2 + v3;
+                  v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                  v0 = v0 + v3;
+                  v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                  v2 = v2 + v1;
+                  v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                  v2 = ((v2) << 32) | ((v2) >>> 32);
+                  v0 = v0 ^ m;
+                  off = off + 8;
+                }
+                j = n - off;
+                m = 0;
+                while 0 < j {
+                  j = j - 1;
+                  m = ((m) << 8) | (ld8 (p + off + j));
+                }
+                m = ((n) << 56) | m;
+                v3 = v3 ^ m;
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                v0 = v0 ^ m;
+                v2 = v2 ^ 255;
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                v0 = v0 + v1;
+                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                v0 = ((v0) << 32) | ((v0) >>> 32);
+                v2 = v2 + v3;
+                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                v0 = v0 + v3;
+                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                v2 = v2 + v1;
+                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                v2 = ((v2) << 32) | ((v2) >>> 32);
+                r = v0 ^ v1 ^ v2 ^ v3;
+                jtag = 0;
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 7));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 6));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 5));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 4));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 3));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 2));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4 + 1));
+                jtag = ((jtag) << 8) | (ld8 (jf + 4));
+                if (r == jtag) == 0 {
+                  jwhy = jz + 4;
+                } else {
+                }
+              }
+            }
+          }
+        }
+      }
+      if jwhy == 0 {
+        jrec = jz + 0;
+        jpp = jf + 13;
+        if jt == 1 {
+          if (jpl == 36) & ((((((((((((((((((((1 & ((ld8 jpp) == 100)) & ((ld8 (jpp + 1)) == 114)) & ((ld8 (jpp + 2)) == 97)) & ((ld8 (jpp + 3)) == 103)) & ((ld8 (jpp + 4)) == 111)) & ((ld8 (jpp + 5)) == 110)) & ((ld8 (jpp + 6)) == 115)) & ((ld8 (jpp + 7)) == 45)) & ((ld8 (jpp + 8)) == 110)) & ((ld8 (jpp + 9)) == 101)) & ((ld8 (jpp + 10)) == 116)) & ((ld8 (jpp + 11)) == 32)) & ((ld8 (jpp + 12)) == 106)) & ((ld8 (jpp + 13)) == 111)) & ((ld8 (jpp + 14)) == 117)) & ((ld8 (jpp + 15)) == 114)) & ((ld8 (jpp + 16)) == 110)) & ((ld8 (jpp + 17)) == 97)) & ((ld8 (jpp + 18)) == 108)) & ((ld8 (jpp + 19)) == 1)) {
+            jrec = jz + 1;
+          } else {
+          }
+        } else {
+          if jt == 2 {
+            jok = jz + 1;
+            ji = jz + 8;
+            if jpl < 8 {
+              jok = jz + 0;
+            } else {
+              jseq = 0;
+              jseq = ((jseq) << 8) | (ld8 (jpp + 7));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 6));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 5));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 4));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 3));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 2));
+              jseq = ((jseq) << 8) | (ld8 (jpp + 1));
+              jseq = ((jseq) << 8) | (ld8 jpp);
+            }
+            if jok {
+              if jpl < (ji + 1) {
+                jok = jz + 0;
+              } else {
+                jml = ld8 (jpp + ji);
+                ji = ji + 1;
+                if jpl < (ji + jml) {
+                  jok = jz + 0;
+                } else {
+                  st jsc + 88, jpp + ji;
+                  st jsc + 96, jml;
+                  ji = ji + jml;
+                }
+              }
+            } else {
+            }
+            if jok {
+              if jpl < (ji + 1) {
+                jok = jz + 0;
+              } else {
+                jgc = ld8 (jpp + ji);
+                ji = ji + 1;
+                if 16 < jgc {
+                  jok = jz + 0;
+                } else {
+                }
+              }
+            } else {
+            }
+            jgi = jz + 0;
+            while jok & (jgi < jgc) {
+              if jpl < (ji + 1) {
+                jok = jz + 0;
+              } else {
+                jnl = ld8 (jpp + ji);
+                ji = ji + 1;
+                if jpl < (ji + jnl) {
+                  jok = jz + 0;
+                } else {
+                  jgp = jsc + 136 + (jgi * 24);
+                  st jgp, jpp + ji;
+                  st jgp + 8, jnl;
+                  ji = ji + jnl;
+                  if jpl < (ji + 4) {
+                    jok = jz + 0;
+                  } else {
+                    jnum = 0;
+                    jnum = ((jnum) << 8) | (ld8 (jpp + ji + 3));
+                    jnum = ((jnum) << 8) | (ld8 (jpp + ji + 2));
+                    jnum = ((jnum) << 8) | (ld8 (jpp + ji + 1));
+                    jnum = ((jnum) << 8) | (ld8 (jpp + ji));
+                    st jgp + 16, jnum;
+                    ji = ji + 4;
+                    if 0 < ((0 < ((jnl < 1) + (64 < jnl))) + (0 < ((jnum < 1) + (2147483647 < jnum)))) {
+                      jok = jz + 0;
+                    } else {
+                    }
+                  }
+                }
+              }
+              jgi = jgi + 1;
+            }
+            if jok {
+              if jpl < (ji + 12) {
+                jok = jz + 0;
+              } else {
+                jhs = 0;
+                jhs = ((jhs) << 8) | (ld8 (jpp + ji + 3));
+                jhs = ((jhs) << 8) | (ld8 (jpp + ji + 2));
+                jhs = ((jhs) << 8) | (ld8 (jpp + ji + 1));
+                jhs = ((jhs) << 8) | (ld8 (jpp + ji));
+                jfs = 0;
+                jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 3));
+                jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 2));
+                jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 1));
+                jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4));
+                jcrc = 0;
+                jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 3));
+                jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 2));
+                jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 1));
+                jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8));
+                ji = ji + 12;
+              }
+            } else {
+            }
+            if jok & ((ji == jpl) == 0) {
+              jok = jz + 0;
+            } else {
+            }
+            if jok & (0 < ((0 < ((jseq == 0) + (jml < 1))) + (0 < ((0 < ((250 < jml) + (jgc < 1))) + (jfs < jhs))))) {
+              jok = jz + 0;
+            } else {
+            }
+            ja = jz + 0;
+            while jok & (ja < jgc) {
+              jbb = ja + 1;
+              while jbb < jgc {
+                jga = jsc + 136 + (ja * 24);
+                jgb = jsc + 136 + (jbb * 24);
+                if (lds 1 (jga + 8)) == (lds 1 (jgb + 8)) {
+                  jeq = jz + 1;
+                  jx = jz + 0;
+                  while jx < (lds 1 (jga + 8)) {
+                    if ((ld8 ((lds 1 jga) + jx)) == (ld8 ((lds 1 jgb) + jx))) == 0 {
+                      jeq = jz + 0;
+                    } else {
+                    }
+                    jx = jx + 1;
+                  }
+                  if jeq {
+                    jok = jz + 0;
+                  } else {
+                  }
+                } else {
+                }
+                jbb = jbb + 1;
+              }
+              ja = ja + 1;
+            }
+            if jok {
+              jrec = jz + 2;
+              st jsc + 80, jseq;
+              st jsc + 104, jgc;
+              st jsc + 112, jhs;
+              st jsc + 120, jfs;
+              st jsc + 128, jcrc;
+            } else {
+            }
+          } else {
+            if (jt == 3) & (jpl == 0) {
+              jrec = jz + 3;
+            } else {
+            }
+          }
+        }
+        if jrec == 0 {
+          jwhy = jz + 5;
+        } else {
+        }
+      } else {
+      }
+      if jwhy {
+        jmw = jwhy;
+        jtorn = jz + 0;
+        if jmw < 5 {
+          jx = jz + 50;
+          if jky {
+            jx = jz + 1390;
+          } else {
+          }
+          if jrem <= jx {
+            jtorn = jz + 1;
+            if jky {
+              jq = jp + 1;
+              while jtorn & (jq < jsz) {
+                jf = jw + (jq - jb);
+                jr = jsz - jq;
+                jwhy = jz + 0;
+                if jr < 13 {
+                  jwhy = jz + 1;
+                } else {
+                  jpl = 0;
+                  jpl = ((jpl) << 8) | (ld8 (jf + 3));
+                  jpl = ((jpl) << 8) | (ld8 (jf + 2));
+                  jpl = ((jpl) << 8) | (ld8 (jf + 1));
+                  jpl = ((jpl) << 8) | (ld8 jf);
+                  if 1376 < jpl {
+                    jwhy = jz + 2;
+                  } else {
+                    if jr < (jpl + 14) {
+                      jwhy = jz + 1;
+                    } else {
+                      if ((ld8 (jf + jpl + 13)) == 165) == 0 {
+                        jwhy = jz + 3;
+                      } else {
+                        jt = ld8 (jf + 12);
+                        k = jsc + 520;
+                        if k == 0 {
+                          jwhy = jz + 4;
+                        } else {
+                          p = jsc + 536;
+                          st8 p, ((jq) >>> 0) & 255;
+                          st8 p + 1, ((jq) >>> 8) & 255;
+                          st8 p + 2, ((jq) >>> 16) & 255;
+                          st8 p + 3, ((jq) >>> 24) & 255;
+                          st8 p + 4, ((jq) >>> 32) & 255;
+                          st8 p + 5, ((jq) >>> 40) & 255;
+                          st8 p + 6, ((jq) >>> 48) & 255;
+                          st8 p + 7, ((jq) >>> 56) & 255;
+                          st8 p + 8, jt;
+                          ji = jz + 0;
+                          while ji < jpl {
+                            st8 p + 9 + ji, ld8 (jf + 13 + ji);
+                            ji = ji + 1;
+                          }
+                          n = jpl + 9;
+                          m = 0;
+                          m = ((m) << 8) | (ld8 (k + 7));
+                          m = ((m) << 8) | (ld8 (k + 6));
+                          m = ((m) << 8) | (ld8 (k + 5));
+                          m = ((m) << 8) | (ld8 (k + 4));
+                          m = ((m) << 8) | (ld8 (k + 3));
+                          m = ((m) << 8) | (ld8 (k + 2));
+                          m = ((m) << 8) | (ld8 (k + 1));
+                          m = ((m) << 8) | (ld8 (k + 0));
+                          v0 = m ^ 8317987319222330741;
+                          v2 = m ^ 7816392313619706465;
+                          m = 0;
+                          m = ((m) << 8) | (ld8 (k + 8 + 7));
+                          m = ((m) << 8) | (ld8 (k + 8 + 6));
+                          m = ((m) << 8) | (ld8 (k + 8 + 5));
+                          m = ((m) << 8) | (ld8 (k + 8 + 4));
+                          m = ((m) << 8) | (ld8 (k + 8 + 3));
+                          m = ((m) << 8) | (ld8 (k + 8 + 2));
+                          m = ((m) << 8) | (ld8 (k + 8 + 1));
+                          m = ((m) << 8) | (ld8 (k + 8 + 0));
+                          v1 = m ^ 7237128888997146477;
+                          v3 = m ^ 8387220255154660723;
+                          off = 0;
+                          while (off + 8) <= n {
+                            m = 0;
+                            m = ((m) << 8) | (ld8 (p + off + 7));
+                            m = ((m) << 8) | (ld8 (p + off + 6));
+                            m = ((m) << 8) | (ld8 (p + off + 5));
+                            m = ((m) << 8) | (ld8 (p + off + 4));
+                            m = ((m) << 8) | (ld8 (p + off + 3));
+                            m = ((m) << 8) | (ld8 (p + off + 2));
+                            m = ((m) << 8) | (ld8 (p + off + 1));
+                            m = ((m) << 8) | (ld8 (p + off + 0));
+                            v3 = v3 ^ m;
+                            v0 = v0 + v1;
+                            v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                            v0 = ((v0) << 32) | ((v0) >>> 32);
+                            v2 = v2 + v3;
+                            v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                            v0 = v0 + v3;
+                            v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                            v2 = v2 + v1;
+                            v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                            v2 = ((v2) << 32) | ((v2) >>> 32);
+                            v0 = v0 + v1;
+                            v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                            v0 = ((v0) << 32) | ((v0) >>> 32);
+                            v2 = v2 + v3;
+                            v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                            v0 = v0 + v3;
+                            v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                            v2 = v2 + v1;
+                            v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                            v2 = ((v2) << 32) | ((v2) >>> 32);
+                            v0 = v0 ^ m;
+                            off = off + 8;
+                          }
+                          j = n - off;
+                          m = 0;
+                          while 0 < j {
+                            j = j - 1;
+                            m = ((m) << 8) | (ld8 (p + off + j));
+                          }
+                          m = ((n) << 56) | m;
+                          v3 = v3 ^ m;
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          v0 = v0 ^ m;
+                          v2 = v2 ^ 255;
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          v0 = v0 + v1;
+                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                          v2 = v2 + v3;
+                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                          v0 = v0 + v3;
+                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                          v2 = v2 + v1;
+                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                          r = v0 ^ v1 ^ v2 ^ v3;
+                          jtag = 0;
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 7));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 6));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 5));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 4));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 3));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 2));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4 + 1));
+                          jtag = ((jtag) << 8) | (ld8 (jf + 4));
+                          if (r == jtag) == 0 {
+                            jwhy = jz + 4;
+                          } else {
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                if jwhy == 0 {
+                  jtorn = jz + 0;
+                } else {
+                }
+                jq = jq + 1;
+              }
+            } else {
+            }
+          } else {
+          }
+        } else {
+        }
+        if jtorn {
+          st jsc + 48, 4;
+        } else {
+          st jsc + 48, 5;
+          st jsc + 56, jmw;
+        }
+      } else {
+        if (0 < (lds 1 (jsc + 40))) & (jrec == 1) {
+          st jsc + 48, 5;
+          st jsc + 56, 6;
+        } else {
+          if jrec == 1 {
+            st8 jsc + 520, ld8 (jpp + 20);
+            st8 jsc + 521, ld8 (jpp + 21);
+            st8 jsc + 522, ld8 (jpp + 22);
+            st8 jsc + 523, ld8 (jpp + 23);
+            st8 jsc + 524, ld8 (jpp + 24);
+            st8 jsc + 525, ld8 (jpp + 25);
+            st8 jsc + 526, ld8 (jpp + 26);
+            st8 jsc + 527, ld8 (jpp + 27);
+            st8 jsc + 528, ld8 (jpp + 28);
+            st8 jsc + 529, ld8 (jpp + 29);
+            st8 jsc + 530, ld8 (jpp + 30);
+            st8 jsc + 531, ld8 (jpp + 31);
+            st8 jsc + 532, ld8 (jpp + 32);
+            st8 jsc + 533, ld8 (jpp + 33);
+            st8 jsc + 534, ld8 (jpp + 34);
+            st8 jsc + 535, ld8 (jpp + 35);
+            st jsc + 32, 1;
+          } else {
+          }
+          st jsc + 40, (lds 1 (jsc + 40)) + 1;
+          st jsc + 72, jrec;
+          st jsc + 24, jp + jpl + 14;
+          st jsc + 48, 2;
+        }
+      }
+    }
+  }
+  return lds 1 (jsc + 48);
+}

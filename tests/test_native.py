@@ -60,8 +60,8 @@ class Emitted(unittest.TestCase):
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "crc", "sip", "reply", "skeleton", "frame-line", "frame-line-4",
-                     "frame-block-64", "frame-block-4", "session"):
+        for name in ("region", "echo", "render", "crc", "sip", "scan", "reply", "skeleton", "frame-line",
+                     "frame-line-4", "frame-block-64", "frame-block-4", "session"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
