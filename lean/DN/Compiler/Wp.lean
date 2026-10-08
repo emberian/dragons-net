@@ -107,6 +107,23 @@ def vc : AProg σ → Assn σ → Prop
         | none => False
   | _, _ => True
 
+/-! `vc` by statement, for proofs elsewhere to unfold it through: definitional, so that no other
+module makes and stores its equations. -/
+
+theorem vc_seq (c1 c2 : AProg σ) (Q : Assn σ) : vc (.seq c1 c2) Q = (vc c1 (wp c2 Q) ∧ vc c2 Q) :=
+  rfl
+
+theorem vc_assign (x : String) (e : PancakeExp) (Q : Assn σ) : vc (.assign x e) Q = True := rfl
+
+theorem vc_store (d e : PancakeExp) (Q : Assn σ) : vc (.store d e) Q = True := rfl
+
+theorem vc_while (inv : Assn σ) (e : PancakeExp) (body : AProg σ) (Q : Assn σ) :
+    vc (.while_ inv e body) Q = (ClockFree inv ∧ vc body inv ∧
+      ∀ s, inv s →
+        match eval s e with
+        | some w => if w = 0 then Q s else wp body inv s
+        | none => False) := rfl
+
 theorem restore_clockFree {Q : Assn σ} (hQ : ClockFree Q) (v : String) (old : Option Value) :
     ClockFree (fun t => Q (restore t v old)) :=
   fun t k h => hQ (restore t v old) k h
@@ -348,6 +365,38 @@ theorem wp_store {d e : PancakeExp} {Q : Assn σ} {s : PancakeState σ} {a val :
     wp (.store d e) Q s := by
   simp only [wp, hd, he, hm]
   exact hq
+
+/-! ## What statements leave alone -/
+
+/-- `t` is `s` but for the locals `xs`: the other locals and memory unchanged. -/
+def Frame (xs : List String) (s t : PancakeState σ) : Prop :=
+  (∀ y, y ∉ xs → t.locals y = s.locals y) ∧ t.memory = s.memory ∧ t.memaddrs = s.memaddrs ∧
+    t.be = s.be
+
+theorem frame_refl (xs : List String) (s : PancakeState σ) : Frame xs s s :=
+  ⟨fun _ _ => rfl, rfl, rfl, rfl⟩
+
+theorem frame_trans {xs : List String} {s t u : PancakeState σ} (h1 : Frame xs s t)
+    (h2 : Frame xs t u) : Frame xs s u :=
+  ⟨fun y hy => (h2.1 y hy).trans (h1.1 y hy), h2.2.1.trans h1.2.1, h2.2.2.1.trans h1.2.2.1,
+    h2.2.2.2.trans h1.2.2.2⟩
+
+theorem frame_set {xs : List String} {x : String} (hx : x ∈ xs) (s : PancakeState σ) (w : Value) :
+    Frame xs s { s with locals := setLocal s.locals x w } :=
+  ⟨fun _ hy => setLocal_ne _ _ (fun e => hy (e ▸ hx)), rfl, rfl, rfl⟩
+
+theorem frame_mono {xs ys : List String} {s t : PancakeState σ} (h : Frame xs s t)
+    (hxy : ∀ y, y ∈ xs → y ∈ ys) : Frame ys s t :=
+  ⟨fun y hy => h.1 y fun hx => hy (hxy y hx), h.2⟩
+
+/-- A frame keeps a buffer's octets. -/
+theorem frame_read {xs : List String} {s t : PancakeState σ} (h : Frame xs s t) (p : Word)
+    (n : Nat) :
+    readByteArray t.memory t.memaddrs t.be p n = readByteArray s.memory s.memaddrs s.be p n := by
+  rw [h.2.1, h.2.2.1, h.2.2.2]
+
+/-- A frame can hold: a state is itself but for any locals. -/
+theorem frame_witness : Frame (σ := Unit) ["x"] (bareState ()) (bareState ()) := frame_refl _ _
 
 /-- What the loops ask can hold: a local counted down to zero, its invariant that it is bound. -/
 theorem vc_witness :

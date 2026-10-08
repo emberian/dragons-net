@@ -20,20 +20,6 @@ static uint32_t reference(const unsigned char *p, size_t n) {
     return c ^ 0xFFFFFFFFu;
 }
 
-/* `n` bytes that end where a page without access begins, in a mapping of `size` bytes. */
-struct guarded {
-    unsigned char *map, *data;
-    size_t size;
-};
-
-static struct guarded before_guard(size_t n) {
-    size_t page = dn_page_size(), pages = (n + page - 1) / page + 1;
-    unsigned char *map = mmap(NULL, pages * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (map == MAP_FAILED) dn_harness("mmap: %s", strerror(errno));
-    dn_protect(map + (pages - 1) * page, PROT_NONE);
-    return (struct guarded){map, map + (pages - 1) * page - n, pages * page};
-}
-
 static uint64_t splitmix(uint64_t *state) {
     uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -44,7 +30,7 @@ static uint64_t splitmix(uint64_t *state) {
 /* One buffer: the CRC must be the reference's and `expected`, unless that is `UINT64_MAX`; the
    table must be built, and nothing else written. */
 static void check(unsigned char *table_page, const unsigned char *data, size_t n, uint64_t expected) {
-    struct guarded g = before_guard(n);
+    struct dn_span g = dn_before_guard(n);
     unsigned char *buffer = g.data;
     memcpy(buffer, data, n);
     memset(table_page, 0xa5, dn_page_size());
@@ -61,7 +47,7 @@ static void check(unsigned char *table_page, const unsigned char *data, size_t n
     for (size_t i = 2048; i < dn_page_size(); ++i)
         if (table_page[i] != 0xa5) dn_violation("a byte past the table changed");
     if (memcmp(buffer, data, n)) dn_violation("the buffer changed");
-    if (munmap(g.map, g.size)) dn_harness("munmap: %s", strerror(errno));
+    dn_unmap(g);
 }
 
 int main(void) {

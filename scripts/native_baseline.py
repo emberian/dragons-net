@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Differential compiler baseline and a real generated-code TCP echo smoke test."""
+"""Differential compiler baseline, kernels against independent references, and a TCP echo smoke test."""
 from __future__ import annotations
 
 import argparse
@@ -22,9 +22,10 @@ from words import MASK, signed, word_op
 
 OUT = ROOT / "build/baseline"
 FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
-            ("crc.pnk", "emit-crc"),
+            ("crc.pnk", "emit-crc"), ("sip.pnk", "emit-sip"),
             ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
 HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
+         NATIVE / "sip_check.c",
          NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
 
@@ -151,6 +152,7 @@ def documented(measured: dict[str, Any]) -> None:
               "copy_cases": ("README.md", "docs/baseline.md"),
               "render_cases": ("docs/baseline.md",),
               "crc_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
+              "sip_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
                               "docs/decisions/0001-embedding.md"),
               "reply_inputs": ("docs/baseline.md",)}
@@ -370,6 +372,33 @@ def crc(cake: str) -> dict[str, Any]:
     return measured
 
 
+def sip(cake: str) -> dict[str, Any]:
+    """SipHash-2-4 against the authors' algorithm, on their vectors and drawn keys and messages, and
+    kernels with one constant of it changed, each refused."""
+    host = NATIVE / "sip_check.c"
+    vectors = "".join(f"{journal_check.KEY.hex()} {bytes(range(i)).hex()} {tag}\n"
+                      for i, tag in enumerate(journal_check.sip_vectors()))
+    measured = measured_by(build(cake, "sip", host), stdin=vectors)
+    text = (OUT / "sip.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: once a round for a rotation.
+    mutants = {
+        # another rotation
+        "sip-rotation": ("<< 13", "<< 12", 8),
+        # another initial constant
+        "sip-init": ("8317987319222330741", "8317987319222330740", 1),
+        # the length below the top octet
+        "sip-length": ("<< 56", "<< 48", 1),
+        # another finalization constant
+        "sip-final": ("^ 255", "^ 254", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the SipHash mutation {name} no longer finds the text it changes")
+        refuses(cake, name, text.replace(old, new), host, 1, "SipHash of", stdin=vectors)
+    measured["sip_mutants_rejected"] = len(mutants)
+    return measured
+
+
 def gates(cake: str) -> int:
     """The two gates every lane compiles through, seen refusing: a warning fails the build, and an
     export outside the project namespace is refused."""
@@ -406,6 +435,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     render = build(cake, "render", NATIVE / "render_check.c")
     measured.update(measured_by(render))
     measured.update(crc(cake))
+    measured.update(sip(cake))
     measured.update(replies(cake))
     measured.update(echo(cake))
     measured["gate_sensitivity_cases"] = gates(cake)
@@ -421,6 +451,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
         "render_source_sha256": lanes.digest(OUT / "render.pnk"),
         "render_assembly_sha256": lanes.digest(OUT / "render.S"),
         "crc_source_sha256": lanes.digest(OUT / "crc.pnk"),
+        "sip_source_sha256": lanes.digest(OUT / "sip.pnk"),
         "reply_source_sha256": lanes.digest(OUT / "reply.pnk"),
         "reply_cases_sha256": lanes.digest(OUT / "reply-cases.json"),
         "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),

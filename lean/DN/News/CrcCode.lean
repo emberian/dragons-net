@@ -396,7 +396,7 @@ theorem fill_step (t : Word) (k : Nat) (hk : k < 256) (s : PancakeState σ) (hw 
 
 theorem fill_vc (t : Word) :
     vc (fillA (σ := σ) t) (fun s => s.locals "t" = some t ∧ TableAt s.memory s.memaddrs t) := by
-  refine ⟨trivial, fun s k h => h, by simp only [nShifts, vc, and_self],
+  refine ⟨trivial, fun s k h => h, by simp only [nShifts, vc_seq, vc_assign, vc_store, and_self],
     fun s ⟨k, hk, hw, hc⟩ => ?_⟩
   simp only [eval, hw.2.1, PancakeExp.c,
     signedLt_small (by omega : k < 2 ^ 63) (by decide : 256 < 2 ^ 63)]

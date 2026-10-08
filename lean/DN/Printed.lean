@@ -7,6 +7,7 @@ import DN.Server.Skeleton
 import DN.Server.Session
 import DN.News.FramerProg
 import DN.News.CrcProg
+import DN.News.SipProg
 
 /-!
 # DN.Printed
@@ -70,7 +71,7 @@ def framers : List (String × Except String Program) :=
 def named : List (String × Except String Program) :=
   [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
    ("reply", reply), ("skeleton", skeleton), ("session", session),
-   ("crc", checked News.CrcProg.crcKernel)] ++ framers
+   ("crc", checked News.CrcProg.crcKernel), ("sip", checked News.SipProg.sipKernel)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/

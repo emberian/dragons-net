@@ -26,7 +26,8 @@ open DN.Compiler
 
 private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-crc",
-   "emit-frame-line", "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4", "frame-model",
+   "emit-sip", "emit-frame-line", "emit-frame-line-4", "emit-frame-block-64", "emit-frame-block-4",
+   "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
    "journal-model [--mutant NAME]", "recovery-model [--mutant NAME]", "fs-model [--mutant NAME]",
    "store-model",
