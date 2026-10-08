@@ -219,16 +219,17 @@ knows nothing of articles.
   that is missing or of another size; a group the configuration lacks; files and no journal, a
   format cut short beside another name among them; no sequence number left to give. It says the
   first it finds, once the key is checked (see Configuration): a name of another shape, in the
-  directory's order; files and no journal; where reading the journal stops in corruption; then each
-  of these over the records in the journal's order, before the next — a sequence number a later
-  record repeats, an article number not above, a group the configuration lacks, a file missing or of
-  another size; last, no number left. A journal is created only in an empty directory, the
-  directory then synced, and made again — cut to nothing, its format written and synced — when
-  nothing is left of it but a format cut short and no other name is there. The store is never
-  repaired silently; repair, when it comes, is a separate operation (#21). A Message-ID in two
-  records is to be corruption too, which recovery does not check yet: the program refuses one the
-  store has or has reserved (Which articles are accepted), and the specification takes up both
-  with the index that reserves it.
+  directory's order; files and no journal; where reading the journal stops in corruption; more
+  commits than the store holds (Bounds), which is not corruption — a build with more room wrote them
+  — but keeps the store from starting too; then each of these over the records in the journal's
+  order, before the next — a sequence number a later record repeats, an article number not above, a
+  group the configuration lacks, a file missing or of another size; last, no number left. A journal
+  is created only in an empty directory, the directory then synced, and made again — cut to nothing,
+  its format written and synced — when nothing is left of it but a format cut short and no other
+  name is there. The store is never repaired silently; repair, when it comes, is a separate
+  operation (#21). A Message-ID in two records is to be corruption too, which recovery does not
+  check yet: the program refuses one the store has or has reserved (Which articles are accepted),
+  and the specification takes up both with the index that reserves it.
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.
@@ -339,21 +340,21 @@ from them are done; what needs the program or the host comes with them, as marke
     frame whose tag checks where it was not written, as above; a file no name is left holding is
     freed; so a synced file's data and a name whose directory was synced survive; a failed operation
     may have done any part of what it was asked, an append any first part of its octets and anything
-    else all or nothing, and after a failed sync of a file or of the directory no later sync of it is
-    trusted until power is lost — recovery after a crash at any point of any run, operations failing
-    or not, yields every article answered 240, possibly some whose commit record was written but not
-    answered, and never one refused before its record was written or a partial one (`store_safe` in
-    `DN.News.StoreRun`: runs from an empty directory — starts, each with its own key and the last
-    start's groups or more, the program's steps, crashes, the process ending — while numbers last),
-    of the program as `DN.News.StoreOps` models it, whose steps take its part as given: a commit
-    only once its file is placed, one at a time, with its own number, the file's size, a record the
-    journal can hold and article numbers allocated in groups the store carries (`Allocated`); 240
-    only after the journal's sync; no article accepted after a failed sync or write of the journal.
-    That the host's concurrent jobs come down to such steps is argued, not proven, and one process
-    runs at a time, as the lock is to ensure. After its actions a start finds the same articles
-    again (`recover_again`, while numbers last); that it then has nothing left to do is tested. A
-    restart after a failed sync of the journal or the directory without a loss of power is not
-    covered, as above.
+    else all or nothing, and after a failed sync of a file or of the directory no later sync of it
+    is trusted until power is lost — recovery after a crash at any point of any run, operations
+    failing or not, yields every article answered 240, possibly some whose commit record was written
+    but not answered, and never one refused before its record was written or a partial one
+    (`store_safe` in `DN.News.StoreRun`: runs from an empty directory — starts, each with its own
+    key and the last start's groups or more, the program's steps, crashes, the process ending —
+    while numbers last), of the program as `DN.News.StoreOps` models it, whose steps take its part
+    as given: a commit only once its file is placed, one at a time, with its own number, the file's
+    size, a record the journal can hold, room for it among the commits and article numbers allocated
+    in groups the store carries (`Allocated`); 240 only after the journal's sync; no article
+    accepted after a failed sync or write of the journal. That the host's concurrent jobs come down
+    to such steps is argued, not proven, and one process runs at a time, as the lock is to ensure.
+    After its actions a start finds the same articles again (`recover_again`, while numbers last);
+    that it then has nothing left to do is tested. A restart after a failed sync of the journal or
+    the directory without a loss of power is not covered, as above.
 - To be proved of the program, once it is written: the CRC-32C and SipHash-2-4 functions it prints
   compute what `DN.News.Journal` and `DN.News.SipHash` define, through `DN.Compiler.Wp` (both
   do: `DN.News.CrcCode`, `DN.News.SipHashCode`); no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The

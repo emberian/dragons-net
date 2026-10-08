@@ -16,7 +16,8 @@ storage systems, with tools written apart from the model:
   operation failing now and then; and runs start again on directories a crash left, what was done
   by then carried over;
 - events the program may not make are refused where it may not, for each thing `Cmd.allowed`
-  checks;
+  checks; a store as full as it may be takes no commit, and one an article short does, which no
+  drawn run reaches;
 - the program broken in each of the nine ways `regression_923` sets out, and by a commit of another
   CRC-32C, is caught by drawn scenarios, each at least three times, a scenario counting for 240
   before the journal's sync when it has a commit, and for the others only when the break makes an
@@ -70,7 +71,8 @@ class Post:
 class Prog:
     """What the program keeps: the run, the next sequence number, the last article number the
     records synced gave each group, the articles in flight, the commit appended and not yet synced,
-    whether it still accepts articles and still trusts syncs of the journal and the directory."""
+    whether it still accepts articles and still trusts syncs of the journal and the directory, and how
+    many commits the records synced hold."""
     run: int
     next: int
     highest: dict[bytes, int]
@@ -78,6 +80,7 @@ class Prog:
     committing: Commit | None = None
     accepting: bool = True
     trusting: bool = True
+    held: int = 0
 
 
 @dataclass
@@ -132,8 +135,8 @@ def frame_length(c: Commit) -> int:
 
 def allowed(p: Prog, groups: list[bytes], e: Event) -> bool:
     """Whether the program may make the event: each phase of 0005's after the one before, a commit
-    only for a file in place, one record at a time, while accepting, numbered above the group's
-    last."""
+    only for a file in place, one record at a time, while accepting and the store has room, numbered
+    above the group's last."""
     post = p.posts.get(e.q)
     stage = None if post is None else post.stage
     match e.kind:
@@ -154,7 +157,7 @@ def allowed(p: Prog, groups: list[bytes], e: Event) -> bool:
                 return False
             seq, _, gs, _, size, crc = e.commit
             return (seq == e.q and size == len(post.octets) and crc == J.crc32c(post.octets) and J.fits(e.commit)
-                    and all(n in groups and k > p.highest.get(n, 0) for n, k in gs))
+                    and p.held < R.CAPACITY and all(n in groups and k > p.highest.get(n, 0) for n, k in gs))
         case "publish":
             return p.committing is not None and p.accepting
         case "refuse":
@@ -211,6 +214,7 @@ def happen(p: Prog, h: History, e: Event, *, early: bool = False) -> None:
         case "publish" if p.committing is not None:
             for n, k in p.committing[2]:
                 p.highest[n] = max(p.highest.get(n, 0), k)
+            p.held += 1
             if not early:
                 h.answered.append(p.committing)
             p.committing = None
@@ -412,7 +416,7 @@ def start_state(image: dict[bytes, bytes], run: int, groups: list[bytes]) -> Pro
     for c in commits:
         for n, k in c[2]:
             highest[n] = max(highest.get(n, 0), k)
-    return Prog(run, nxt, highest)
+    return Prog(run, nxt, highest, held=len(commits))
 
 
 def after_start(image: dict[bytes, bytes], groups: list[bytes]) -> dict[bytes, bytes]:
@@ -576,6 +580,34 @@ def probes(rng: random.Random, image: dict[bytes, bytes], run: int, h: History, 
     return out
 
 
+def at_the_bound(model: list[str]) -> dict[str, str]:
+    """An article posted to a store of `R.CAPACITY` articles and to one an article short: the model and
+    the lane's reading of the program both refuse its commit, and both let it be, there."""
+    seen = {}
+    for held, taken in ((R.CAPACITY - 1, True), (R.CAPACITY, False)):
+        commits = [(s, b"<%d@f>" % s, [(GROUPS[0], s)], 0, 1, J.crc32c(b"\x00")) for s in range(1, held + 1)]
+        journal = J.frame(KEY, 0, J.FORMAT, J.MAGIC + KEY)
+        for c in commits:
+            journal += J.frame(KEY, len(journal), J.COMMIT, J.payload(c))
+        image = ordered({b"journal": journal, **{R.name_of("a", c[0]): b"\x00" for c in commits}})
+        q = held + 1
+        events = [Event("reserve", octets=b"x"), *(Event(k, q, m=1) for k in ("create", "write", "sync", "rename",
+                                                                                 "place")),
+                  Event("commit", q, commit=(q, b"<new@f>", [(GROUPS[0], q)], 0, 1, J.crc32c(b"x")))]
+        p, h = start_state(image, 1, GROUPS), History()
+        for e in events[:-1]:
+            if not allowed(p, GROUPS, e):
+                raise LaneError(f"with {held} articles the lane's reading refuses {e.text()}")
+            happen(p, h, e)
+        answer = C.answer_lines(model, [Segment(image, 1, events).line(GROUPS)])[0]
+        if allowed(p, GROUPS, events[-1]) != taken or answer.startswith("ok ") != taken or (
+                not taken and answer != f"not-allowed {len(events)}"):
+            raise LaneError(f"a commit to a store of {held} articles: the lane's reading allows it "
+                            f"{allowed(p, GROUPS, events[-1])}, the model answers {answer[:80]}")
+        seen[str(held)] = "taken" if taken else "refused"
+    return seen
+
+
 # Ways of breaking the program, each taking events it may make to events it may not, or none.
 def no_place(events: list[Event]) -> list[Event] | None:
     """A commit appended before the directory is synced after the file's move."""
@@ -723,6 +755,8 @@ def check() -> Report:
             restart, h, run = rng.choice(found.restarts)
             image = ordered(restart)
     steps["runs"], mark = round(time.monotonic() - mark, 1), time.monotonic()
+    bound = at_the_bound(model)
+    steps["bound"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     missed = [name for name in caught if caught[name] < CAUGHT]
     if missed:
         raise LaneError(f"drawn scenarios catch the program broken by {missed} fewer than {CAUGHT} times")
@@ -743,7 +777,7 @@ def check() -> Report:
                                                                                  "store_ref.py")], {
         "chains": chains, "runs": segments_run, "points": total.points, "images": total.images,
         "restarts": restarts, "failed_starts": failed_starts, "probed": probed, "broken_tried": tried,
-        "broken_caught": caught, "seconds_by_step": steps})
+        "broken_caught": caught, "at_the_bound": bound, "seconds_by_step": steps})
 
 
 def main() -> None:
