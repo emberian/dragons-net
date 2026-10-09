@@ -222,14 +222,15 @@ knows nothing of articles.
   directory's order; files and no journal; where reading the journal stops in corruption; more
   commits than the store holds (Bounds), which is not corruption — a build with more room wrote them
   — but keeps the store from starting too; then each of these over the records in the journal's
-  order, before the next — a sequence number a later record repeats, an article number not above, a
-  group the configuration lacks, a file missing or of another size; last, no number left. A journal
-  is created only in an empty directory, the directory then synced, and made again — cut to nothing,
-  its format written and synced — when nothing is left of it but a format cut short and no other
-  name is there. The store is never repaired silently; repair, when it comes, is a separate
-  operation (#21). A Message-ID in two records is to be corruption too, which recovery does not
-  check yet: the program refuses one the store has or has reserved (Which articles are accepted),
-  and the specification takes up both with the index that reserves it.
+  order, before the next — a sequence number a later record repeats, a group the configuration
+  lacks, an article number not above (so only in groups carried, whose highest numbers fit a table
+  of the bounds), a file missing or of another size; last, no number left. A journal is created only
+  in an empty directory, the directory then synced, and made again — cut to nothing, its format
+  written and synced — when nothing is left of it but a format cut short and no other name is there.
+  The store is never repaired silently; repair, when it comes, is a separate operation (#21). A
+  Message-ID in two records is to be corruption too, which recovery does not check yet: the program
+  refuses one the store has or has reserved (Which articles are accepted), and the specification
+  takes up both with the index that reserves it.
 - A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.

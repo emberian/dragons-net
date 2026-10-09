@@ -196,10 +196,10 @@ tail starts, if any. -/
 def recoverRecords (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
     (cs : List Commit) (cut : Option Nat) : Except Fault (Store × List Action) :=
   if capacity < cs.length then .error (.tooMany cs.length) else
-  match seqTwice? cs, notAbove? [] cs, unknownGroup? cfg cs, fileFault? img cs with
+  match seqTwice? cs, unknownGroup? cfg cs, notAbove? [] cs, fileFault? img cs with
   | some s, _, _, _ => .error (.seqTwice s)
-  | none, some (g, n), _, _ => .error (.numberNotAbove g n)
-  | none, none, some g, _ => .error (.unknownGroup g)
+  | none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
   | none, none, none, some f => .error f
   | none, none, none, none =>
     let next0 := nextSeq cs names
@@ -438,7 +438,7 @@ theorem recoverRecords_ok (cfg : Config) (img : Image) (names : List Name) (cont
   · simp at h
   · simp at h
   · simp at h
-  · rename_i h1 h2 h3 h4
+  · rename_i h1 h3 h2 h4
     dsimp only at h
     by_cases hlt : 2 ^ 64 ≤ (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names)
     · rw [if_pos hlt] at h

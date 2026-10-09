@@ -139,11 +139,11 @@ def recoverRecordsM (m : Mutant) (cfg : Config) (img : Image) (names : List Name
   if (if m = .capacityLate then decide (capacity + 1 < cs.length)
       else decide (capacity < cs.length)) then .error (.tooMany cs.length) else
   match (if m = .seqUnchecked then none else seqTwice? cs),
-      (if m = .numbersUnchecked then none else notAboveM m [] cs),
-      (if m = .groupsUnchecked then none else unknownGroup? cfg cs), fileFaultM m img cs with
+      (if m = .groupsUnchecked then none else unknownGroup? cfg cs),
+      (if m = .numbersUnchecked then none else notAboveM m [] cs), fileFaultM m img cs with
   | some s, _, _, _ => .error (.seqTwice s)
-  | none, some (g, n), _, _ => .error (.numberNotAbove g n)
-  | none, none, some g, _ => .error (.unknownGroup g)
+  | none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
   | none, none, none, some f => .error f
   | none, none, none, none =>
     let next0 := nextSeqM m cs names

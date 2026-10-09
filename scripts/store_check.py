@@ -233,13 +233,14 @@ def table() -> list[Case]:
         case([files[0], files[1], (named("a", 2), bytes(size))], corrupt("wrong-size 2"))
     case([files[0], (named("a", 1), bytes(2))], corrupt("wrong-size 1"))
     case([files[0], (named("q", 1), b"\x00"), files[2]], corrupt("missing-file 1"))
-    # Which wins when several kinds hold: two records, then article numbers, then groups, then
-    # files.
+    # Which wins when several kinds hold: two records, then groups, then article numbers, then files.
     cs = [commit(1, 2, group=b"other"), commit(1, 1)]
     j, _ = store(cs)
     case([(b"journal", j)], corrupt("seq-twice 1"))
     cs = [commit(1, 2), commit(2, 1, group=b"other", more=((test, 1),))]
     j, _ = store(cs)
+    case([(b"journal", j)], corrupt(f"unknown-group {b'other'.hex()}"))
+    j, _ = store([commit(1, 2), commit(2, 1)])
     case([(b"journal", j)], corrupt(f"number-not-above {test.hex()} 1"))
     j, _ = store([commit(1, 1, group=b"other")])
     case([(b"journal", j)], corrupt(f"unknown-group {b'other'.hex()}"))
