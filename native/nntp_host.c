@@ -8,11 +8,13 @@
  *            connections taken in turn, input only from a connection that asked for it and has
  *            nothing untaken, at most one input a connection a batch, new connections only while
  *            an index is free. The poll waits until something is ready or the time the program
- *            asked to be woken at; with a store, the first batch does not wait.
+ *            asked to be woken at; the first batch does not wait, so that the program can recover
+ *            its store before the host listens.
  *   dn_emit  carries out each action for the connection's current generation and writes back how
  *            much of each send the kernel took. A graceful close shuts down sending and reads and
  *            drops what still comes, for 30 s at most and 5 s of silence, outside the table. File
- *            jobs go to the workers of jobs.c; their completions come back with a later batch.
+ *            jobs go to the workers of jobs.c; their completions come back with a later batch. The
+ *            host listens from the first emit that says to, and keeps listening.
  *
  * Every action is checked against the layout; one that breaks it ends the process with status 1.
  * A run the program stops because the host broke the contract ends it with status 3. SIGTERM or
@@ -20,7 +22,7 @@
  * options of store.c give the store; a store refused at start ends the host with status 4.
  *
  * `--address A` and `--port N` choose where it listens: by default 127.0.0.1 and a port the kernel
- * picks, printed as JSON on standard output. `--revision` and `--source` name the revision and the
+ * picks, printed as JSON on standard output once it listens. `--revision` and `--source` name the revision and the
  * address of the source the replies give; `--send-buffer N` sets SO_SNDBUF on each connection, and
  * each sends its replies at once (TCP_NODELAY). Only for tests, and costing nothing unless given:
  * `--clock-fd N` takes the time from N instead of CLOCK_MONOTONIC — a line with a number of
@@ -68,8 +70,8 @@ struct lingering { int fd; uint64_t until, quiet_until, since; };
 static struct conn conns[CONNS];
 static struct lingering lingering[LINGERING];
 static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1, jobs_done = -1;
-static int accept_ready, started, awaiting_emit, carrying;
-static unsigned start;
+static int accept_ready, started, awaiting_emit, carrying, listening;
+static unsigned start, listen_port;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
 static int send_buffer, pausing;
 static const char *revision, *source;
@@ -244,9 +246,9 @@ static void wait_for(uint64_t wake) {
         struct pollfd fds[4 + CONNS + LINGERING];
         int n = 0, conn_at[CONNS], linger_at[LINGERING];
         int paused = now_ms() < accept_paused_until;
-        int listening = free_indexes() > 0 && !paused;
+        int taking = listening && free_indexes() > 0 && !paused;
         fds[n++] = (struct pollfd){.fd = signals, .events = POLLIN};
-        fds[n++] = (struct pollfd){.fd = listening ? listener : -1, .events = POLLIN};
+        fds[n++] = (struct pollfd){.fd = taking ? listener : -1, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = clock_fd, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = jobs_done, .events = POLLIN};
         int timeout = until(wake, -1);
@@ -387,8 +389,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
         if (report_fd >= 0) report(wake);
     }
     started = 1;
-    /* With a store, the first batch comes at once, so that the program recovers before any client. */
-    if (!carrying && !(first && dn_store_spool() >= 0)) wait_for(wake);
+    if (!carrying && !first) wait_for(wake);
     uint64_t now = now_ms();
     turn_events = 0;
     for (unsigned k = 0; k < CONNS && turn_events < DN_SESSION_BATCH; ++k) give_out(a, (int)((start + k) % CONNS));
@@ -408,6 +409,14 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_store_fill(a);
     if (report_fd >= 0) trace_events(a, now);
     awaiting_emit = 1;
+}
+
+/* Listen, and say where. */
+static void start_listening(void) {
+    if (listen(listener, CONNS)) dn_harness("listen: %s", strerror(errno));
+    listening = 1;
+    printf("{\"port\":%u,\"conns\":%d}\n", listen_port, CONNS);
+    if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
 }
 
 /* The actions of the turn, with what the kernel took of each send. */
@@ -471,6 +480,10 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_jobs_take(a);
     if (turn_actions != count)
         dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, turn_actions);
+    uint64_t listen_word = dn_word(a + DN_SESSION_EMIT_LISTEN);
+    if (listen_word > 1 || (listening && !listen_word))
+        dn_violation("dn_emit: listening %" PRIu64 ", having listened %d", listen_word, listening);
+    if (listen_word && !listening) start_listening();
     if (report_fd >= 0) trace_actions(a);
     awaiting_emit = 0;
 }
@@ -567,8 +580,8 @@ int main(int argc, char **argv) {
     if (where.ss_family == AF_INET6 && setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one))
         dn_harness("setsockopt: %s", strerror(errno));
     if (bind(listener, (struct sockaddr *)&where, where_len)) dn_harness("bind: %s", strerror(errno));
-    if (listen(listener, CONNS)) dn_harness("listen: %s", strerror(errno));
     if (getsockname(listener, (struct sockaddr *)&where, &where_len)) dn_harness("getsockname: %s", strerror(errno));
+    listen_port = ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port);
     /* Descriptors are handed out lowest first: with those open now, the table and the lingering
      * sockets have to fit under the limit. */
     struct rlimit files;
@@ -576,9 +589,6 @@ int main(int argc, char **argv) {
     int in_use = open_descriptors();
     if (files.rlim_cur < (rlim_t)in_use + CONNS + LINGERING)
         dn_harness("too few file descriptors: %llu, and %d open", (unsigned long long)files.rlim_cur, in_use);
-    printf("{\"port\":%u,\"conns\":%d}\n",
-           (unsigned)ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port), CONNS);
-    if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
 
     dn_runtime_setup_heap(DN_SESSION_HEAP_BYTES);
     dn_runtime_header();

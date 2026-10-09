@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Differential compiler baseline and a real generated-code TCP echo smoke test."""
+"""Differential compiler baseline, kernels against independent references, and a TCP echo smoke test."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 from pathlib import Path
+import random
 import re
 import signal
 import subprocess
@@ -15,14 +16,19 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The path above is what makes these importable.
+import abnf_check
+import journal_check
 import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
 from words import MASK, signed, word_op
 
 OUT = ROOT / "build/baseline"
 FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
+            ("crc.pnk", "emit-crc"), ("sip.pnk", "emit-sip"), ("scan.pnk", "emit-scan"),
+            ("dn_scan_layout.h", "emit-scan-layout"),
             ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
-HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c",
+HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
+         NATIVE / "sip_check.c", NATIVE / "scan_check.c",
          NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
 
@@ -148,6 +154,9 @@ def documented(measured: dict[str, Any]) -> None:
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "copy_cases": ("README.md", "docs/baseline.md"),
               "render_cases": ("docs/baseline.md",),
+              "crc_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
+              "sip_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
+              "scan_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
                               "docs/decisions/0001-embedding.md"),
               "reply_inputs": ("docs/baseline.md",)}
@@ -163,7 +172,7 @@ def build(cake: str, name: str, host: Path, binary: str | None = None) -> Path:
     """Compile `name`.pnk and link it with `host`."""
     assembly = lanes.assemble(cake, OUT / f"{name}.pnk", timeout=180)
     return lanes.link(OUT / (binary or f"{name}-check"), [host, NATIVE / "cake_runtime.c", assembly],
-                      timeout=60)
+                      includes=[OUT], timeout=60)
 
 
 def run(binary: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -193,7 +202,7 @@ def differential(cake: str) -> dict[str, Any]:
     values and against `reference`."""
     fixture = json.loads((OUT / "baseline.json").read_text())
     cases, values = fixture["cases"], fixture["values"]
-    if len(cases) != 113 or len(values) != 192:
+    if len(cases) != 183 or len(values) != 192:
         raise LaneError("unexpected differential fixture coverage")
     expected = [[reference(case["expression"], a, b) for a, b in values] for case in cases]
     for i, row in enumerate(expected):
@@ -341,6 +350,116 @@ def echo(cake: str) -> dict[str, Any]:
     return measured
 
 
+def crc(cake: str) -> dict[str, Any]:
+    """The CRC-32C against one computed a bit at a time, on RFC 7143's examples and drawn buffers, and
+    kernels with one constant of it changed, each refused."""
+    host = NATIVE / "crc_check.c"
+    examples = "".join(f"{data.hex()} {value}\n" for _, data, value in journal_check.vectors())
+    measured = measured_by(build(cake, "crc", host), stdin=examples)
+    text = (OUT / "crc.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: once a shift for the polynomial.
+    mutants = {
+        # the table's index cut to seven bits
+        "crc-mask": ("& 255", "& 127", 1),
+        # another polynomial
+        "crc-poly": ("2197175160", "2197175161", 8),
+        # another initial remainder
+        "crc-init": ("acc = 4294967295;", "acc = 4294967294;", 1),
+        # the table's words a half word apart
+        "crc-stride": ("(i * 8)", "(i * 4)", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the CRC mutation {name} no longer finds the text it changes")
+        refuses(cake, name, text.replace(old, new), host, 1, "CRC-32C of", stdin=examples)
+    measured["crc_mutants_rejected"] = len(mutants)
+    return measured
+
+
+def sip(cake: str) -> dict[str, Any]:
+    """SipHash-2-4 against the authors' algorithm, on their vectors and drawn keys and messages, and
+    kernels with one constant of it changed, each refused."""
+    host = NATIVE / "sip_check.c"
+    vectors = "".join(f"{journal_check.KEY.hex()} {bytes(range(i)).hex()} {tag}\n"
+                      for i, tag in enumerate(journal_check.sip_vectors()))
+    measured = measured_by(build(cake, "sip", host), stdin=vectors)
+    text = (OUT / "sip.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: once a round for a rotation.
+    mutants = {
+        # another rotation
+        "sip-rotation": ("<< 13", "<< 12", 8),
+        # another initial constant
+        "sip-init": ("8317987319222330741", "8317987319222330740", 1),
+        # the length below the top octet
+        "sip-length": ("<< 56", "<< 48", 1),
+        # another finalization constant
+        "sip-final": ("^ 255", "^ 254", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the SipHash mutation {name} no longer finds the text it changes")
+        refuses(cake, name, text.replace(old, new), host, 1, "SipHash of", stdin=vectors)
+    measured["sip_mutants_rejected"] = len(mutants)
+    return measured
+
+
+def scan(cake: str) -> dict[str, Any]:
+    """The journal scanner against the model on the journal lane's journals, each read in windows as
+    large as one read fills and in short reads, and scanners with one rule of reading changed, each
+    refused."""
+    host = NATIVE / "scan_check.c"
+    # the journal lane's fixed seed, so that both read the same journals
+    families, _ = journal_check.case_families(random.Random(journal_check.SEED))  # noqa: S311
+    journals = [c.line.split()[1] for family in families.values() for c in family if c.line.startswith("scan ")]
+    answers = abnf_check.answer_lines([str(lanes.DN_COMPILER), "journal-model"], [f"scan {j}" for j in journals],
+                                      abnf_check.WORKERS)
+    lines = "".join(f"{j} {most} {said}\n" for j, said in zip(journals, answers, strict=True)
+                    for most in (16384, 1 if len(j) <= 8192 else 997))
+    measured = measured_by(build(cake, "scan", host), stdin=lines)
+    text = (OUT / "scan.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: twice where a frame is checked
+    # both as the next and inside a tail.
+    mutants = {
+        # a tag never checked
+        "scan-tag": ("if (r == jtag) == 0 {", "if 0 {", 2),
+        # the end mark never checked
+        "scan-end": ("== 165) == 0 {", "== 166) == 0 {", 2),
+        # a payload one octet longer let through
+        "scan-length": ("if 1376 < jpl {", "if 1377 < jpl {", 2),
+        # a torn tail one octet longer than the largest frame
+        "scan-torn-longer": ("jx = jz + 1390;", "jx = jz + 1391;", 1),
+        # a torn tail before the format one octet shorter than its frame
+        "scan-torn-start": ("jx = jz + 50;", "jx = jz + 49;", 1),
+        # a frame that checks in the tail not seen
+        "scan-tail-unchecked": ("jtorn = jz + 0;", "jtorn = jtorn;", 2),
+        # a frame of no record taken for a torn append
+        "scan-not-a-record-torn": ("if jmw < 5 {", "if jmw < 6 {", 1),
+        # a second format let through
+        "scan-format-again": ("if (0 < (lds 1 (jsc + 40))) & (jrec == 1) {", "if 0 {", 1),
+        # a key taken from a frame of another type
+        "scan-key-unshaped": ("if (jt == 1) & (jpl == 36) {", "if jpl == 36 {", 1),
+        # octets after a commit let be
+        "scan-inexact": ("if jok & ((ji == jpl) == 0) {", "if 0 {", 1),
+        # a Message-ID of 251 octets
+        "scan-message-id": ("(250 < jml)", "(251 < jml)", 1),
+        # seventeen groups
+        "scan-groups": ("if 16 < jgc {", "if 17 < jgc {", 1),
+        # an article number past 2^31 - 1
+        "scan-number": ("(2147483647 < jnum)", "(2147483648 < jnum)", 1),
+        # two groups of one name
+        "scan-names-alike": ("if jeq {", "if 0 {", 1),
+        # a frame read with its last octet not in the window
+        "scan-need": ("jneed = jz + 1390;", "jneed = jz + 1389;", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the scanner mutation {name} no longer finds the text it changes")
+        said = "of 17 groups" if name == "scan-groups" else "scan of"
+        refuses(cake, name, text.replace(old, new), host, 1, said, stdin=lines)
+    measured["scan_mutants_rejected"] = len(mutants)
+    return measured
+
+
 def gates(cake: str) -> int:
     """The two gates every lane compiles through, seen refusing: a warning fails the build, and an
     export outside the project namespace is refused."""
@@ -376,6 +495,9 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     measured = differential(cake)
     render = build(cake, "render", NATIVE / "render_check.c")
     measured.update(measured_by(render))
+    measured.update(crc(cake))
+    measured.update(sip(cake))
+    measured.update(scan(cake))
     measured.update(replies(cake))
     measured.update(echo(cake))
     measured["gate_sensitivity_cases"] = gates(cake)
@@ -390,6 +512,9 @@ def baseline(cake: str, supplied: Path | None) -> Report:
         "echo_assembly_sha256": lanes.digest(OUT / "echo.S"),
         "render_source_sha256": lanes.digest(OUT / "render.pnk"),
         "render_assembly_sha256": lanes.digest(OUT / "render.S"),
+        "crc_source_sha256": lanes.digest(OUT / "crc.pnk"),
+        "sip_source_sha256": lanes.digest(OUT / "sip.pnk"),
+        "scan_source_sha256": lanes.digest(OUT / "scan.pnk"),
         "reply_source_sha256": lanes.digest(OUT / "reply.pnk"),
         "reply_cases_sha256": lanes.digest(OUT / "reply-cases.json"),
         "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),
@@ -402,8 +527,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cake", default=os.environ.get("CAKE"))
     parser.add_argument("--fixtures", type=Path,
-                        help="directory of previously emitted baseline.json, echo.pnk, render.pnk, "
-                             "reply.pnk and reply-cases.json")
+                        help="directory of previously emitted fixtures: "
+                             + ", ".join(name for name, _ in FIXTURES))
     args = parser.parse_args()
     lanes.require_platform(parser)
     cake = lanes.given_cake(parser, args.cake)

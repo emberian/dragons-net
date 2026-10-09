@@ -59,7 +59,7 @@ FOUND_CASES = ROOT / "tests/corpus/found"
 HOST = NATIVE / "fuzz_driver.c"
 # The run on every change: chosen so that it reaches every construct below; a choice, not a
 # derived bound.
-SEED, COUNT, VECTORS = 1, 300, 4
+SEED, COUNT, VECTORS = 2, 300, 4
 # What some call has to reach, as the interpreter counts it.
 REACHED = ("load word", "load byte", "store word", "store byte", "word in word address",
            "byte in word address", "word in byte address", "byte in byte address",
@@ -68,7 +68,7 @@ REACHED = ("load word", "load byte", "store word", "store byte", "word in word a
            "loop iteration", "declaration in an inner block", "return in a loop", "return in a branch",
            *(f"{edge} {size} of buffer {b}" for edge in ("first", "last") for size in ("byte", "word")
              for b in range(interp.BUFFERS)),
-           *(f"operator {op}" for op in ("+", "-", "*", "&", "<", "<=", "==", ">>>")))
+           *(f"operator {op}" for op in ("+", "-", "*", "&", "^", "|", "<", "<=", "==", ">>>", "<<")))
 # What some program has to use, as the type check counts it.
 USED = ("a name declared again in a sibling block", *(f"{n} parameters" for n in range(4)))
 Transform = Callable[[str], str] | None
@@ -93,6 +93,10 @@ MUTANTS: dict[str, Callable[[str], str]] = {
     "if-negated": lambda s: re.sub(r"(?m)^(\s*)if (.*) \{$", r"\1if (\2) == 0 {", s),
     # a shift distance printed one off
     "shift-off-by-one": shift_plus_one,
+    # `^` printed as `|`
+    "xor-as-or": lambda s: s.replace(" ^ ", " | "),
+    # a left shift printed as a right one
+    "shl-as-shr": lambda s: s.replace(") << ", ") >>> "),
 }
 # The host's own checks: a call that never returns, one that reads the page after its buffer, and
 # one that writes beside the result slot, each with what the host has to report.

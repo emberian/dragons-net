@@ -82,6 +82,7 @@ DEFECTS = [
     ("a clock refused just below its limit", r"4611686018427387904 <= now", "4611686018427387903 <= now", 1,
      "at the edge 'a clock just below its limit'"),
     ("a word to read of two", r"st slot \+ 32, wants;", "st slot + 32, wants * 2;", 1, "word to read is 2"),
+    ("a word to listen of two", r"st @base \+ {listen}, 1;", "st @base + {listen}, 2;", 1, "listening 2"),
     ("a store past the program's layout", r"st @base \+ \d+, now;", "st @base + {past}, now;", 1,
      "wrote past its layout"),
     ("a store before the program's first area", r"(st @base \+ 64, \d+;)", r"\1\n  st @base + 48, 7;", 1,
@@ -385,7 +386,8 @@ def check(cake: str) -> Report:
     random_hosts = wander(binary, RUNS)
     caught = {}
     words = layout()
-    places = {"{past}": str(words["SIZE"]), "{stop}": str(words["OWN_OFF"] + words["OWN_STOP"])}
+    places = {"{past}": str(words["SIZE"]), "{stop}": str(words["OWN_OFF"] + words["OWN_STOP"]),
+              "{listen}": str(words["EMIT_OFF"] + words["EMIT_LISTEN"])}
 
     def placed(text: str) -> str:
         for place, offset in places.items():

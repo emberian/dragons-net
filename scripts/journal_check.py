@@ -732,6 +732,18 @@ def corpus_digests() -> None:
                         f"{sorted(set(held.items()) ^ set(recorded.items()))}")
 
 
+def case_families(rng: random.Random) -> tuple[dict[str, list[Case]], int]:
+    """The cases by family, drawn from `rng`, and how many of the flips fall on a tag."""
+    commits = [SAMPLE, SMALLEST, LARGEST, *(random_commit(rng) for _ in range(400)),
+               *(random_commit(rng, most=20, groups=3, name=12) for _ in range(200))]
+    flips, on_tag = flip_cases(rng, commits)
+    return {"siphash": sip_cases(rng), "crc": crc_cases(rng), "encode": encode_cases(rng, commits),
+            "clean": clean_cases(rng, commits), "torn": torn_cases(rng, commits),
+            "parts": part_cases(rng, commits), "tails": tail_cases(rng), "later": later_cases(rng, commits),
+            "flips": flips, "refused": refused_cases(), "damaged": damaged_cases(rng, commits),
+            "names": name_cases(rng)}, on_tag
+
+
 def check() -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     corpus_digests()
@@ -745,14 +757,7 @@ def check() -> Report:
     if (len(encoded(KEY, 0, LARGEST)), len(format_frame(KEY)), len(encoded(KEY, 0, START_RECORD))) != \
             (MAX_FRAME, FIRST_FRAME, START_FRAME):
         raise LaneError("the largest commit, the format or a start does not fill the frame the bounds give")
-    commits = [SAMPLE, SMALLEST, LARGEST, *(random_commit(rng) for _ in range(400)),
-               *(random_commit(rng, most=20, groups=3, name=12) for _ in range(200))]
-    flips, on_tag = flip_cases(rng, commits)
-    families = {"siphash": sip_cases(rng), "crc": crc_cases(rng), "encode": encode_cases(rng, commits),
-                "clean": clean_cases(rng, commits), "torn": torn_cases(rng, commits),
-                "parts": part_cases(rng, commits), "tails": tail_cases(rng),
-                "later": later_cases(rng, commits), "flips": flips,
-                "refused": refused_cases(), "damaged": damaged_cases(rng, commits), "names": name_cases(rng)}
+    families, on_tag = case_families(rng)
     cases = [c for family in families.values() for c in family]
     lines = [c.line for c in cases]
     steps["cases"], mark = round(time.monotonic() - mark, 1), time.monotonic()
@@ -795,7 +800,7 @@ def check() -> Report:
     steps["mutants"] = round(time.monotonic() - mark, 1)
     lanes.require_quoted({
         "docs/baseline.md": [f"{len(cases):,} cases", f"{len(MUTANTS)} versions of the rules of reading",
-                             f"{len(vectors())} examples of RFC 7143", f"{on_tag:,} of the {len(flips):,}",
+                             f"{len(vectors())} examples of RFC 7143", f"{on_tag:,} of the {len(families['flips']):,}",
                              f"{len(families['parts']):,} frames torn into parts"],
         "docs/assurance.md": [f"{len(cases):,} cases", f"{len(MUTANTS)} versions of the rules of reading"]})
     return Report("checked", None, [REFERENCE, REQUIREMENTS], {

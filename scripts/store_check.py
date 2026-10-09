@@ -4,17 +4,17 @@
 ("On disk") fixes it, answered by `dn-compiler recovery-model` and by the independent
 scripts/recovery_ref.py, which have to give the same answer, to the byte, on every case:
 
-- a table of directories after the one `fn` keeps for its own store, each with the answer 0005
-  gives it: every corruption 0005 lists, at its boundary and beside it — a name of no shape the
-  store gives, files and no journal, a journal that does not read back or holds a frame of no
-  record, a sequence number in two records, an article number not above the group's last, a group
-  the configuration lacks, a file missing or of another size, no sequence number left — and a key
-  not of sixteen octets, which the configuration refuses; which is reported when several hold, of
-  one kind and of several; and the directories that recover — empty, a journal alone, a format cut
-  short or filled with zeros alone, commits and starts and their files, crossposts and a last
-  record whole but not answered, a torn commit, a torn start or zeros after the records, kept and
-  cut, temporary files, final files no record names removed or set aside, files set aside before,
-  tails kept below and above a final file;
+- a table of directories after the one `fn` keeps for its own store, each with the answer 0005 gives
+  it: every corruption 0005 lists, at its boundary and beside it — a name of no shape the store
+  gives, files and no journal, a journal that does not read back or holds a frame of no record, a
+  sequence number in two records, an article number not above the group's last, a group the
+  configuration lacks, a file missing or of another size, no sequence number left — more articles
+  than the store holds, and a key not of sixteen octets, which the configuration refuses; which is
+  reported when several hold, of one kind and of several; and the directories that recover — empty,
+  a journal alone, a format cut short or filled with zeros alone, commits and starts and their
+  files, crossposts and a last record whole but not answered, a torn commit, a torn start or zeros
+  after the records, kept and cut, temporary files, final files no record names removed or set
+  aside, files set aside before, tails kept below and above a final file;
 - directories drawn at random from a fixed seed, with starts among their records and some breaking
   a rule across records, and the same damaged at random;
 - actions drawn at random done on small directories (`apply`), names taken and not;
@@ -52,16 +52,18 @@ KEY = J.KEY
 OTHER_KEY = bytes(range(16, 32))
 GROUPS = [b"local.test", b"local.more"]
 LIMIT = 2**64
+# The most articles the store holds (0005, "Bounds").
+CAPACITY = 4096
 # The versions of recovery with one rule changed, by the name `dn-compiler recovery-model --mutant`
 # takes.
 MUTANTS = ["seq-unchecked", "numbers-unchecked", "numbers-equal", "groups-unchecked", "size-unchecked",
            "missing-unchecked", "names-ignored", "journal-among-files", "remade-among-files",
            "next-records-only", "torn-no-bump", "tail-dropped", "tidy-first", "aside-never",
            "aside-always", "aside-at-tail", "temp-kept", "tidy-unsynced", "exhausted-late",
-           "key-unchecked", "tail-unprefixed", "aside-over-quarantine", "key-from-config"]
+           "key-unchecked", "tail-unprefixed", "aside-over-quarantine", "key-from-config", "capacity-late"]
 # Why recovery finds a store corrupt, as both print it.
 FAULTS = ["bad-name", "no-journal", "journal", "seq-twice", "number-not-above", "unknown-group",
-          "missing-file", "wrong-size", "exhausted", "bad-key"]
+          "missing-file", "wrong-size", "exhausted", "bad-key", "too-many"]
 # Lines both have to refuse to answer.
 REFUSED = ["recover", "recover - - - -", "recover 0g - -", "recover - local -", "recover - 6a,,6b -",
            "recover - - 6a", "recover - - 6a=00;6a=01", "recover - - 6a=00;", "recover - - 6A=00",
@@ -231,17 +233,30 @@ def table() -> list[Case]:
         case([files[0], files[1], (named("a", 2), bytes(size))], corrupt("wrong-size 2"))
     case([files[0], (named("a", 1), bytes(2))], corrupt("wrong-size 1"))
     case([files[0], (named("q", 1), b"\x00"), files[2]], corrupt("missing-file 1"))
-    # Which wins when several kinds hold: two records, then article numbers, then groups, then
-    # files.
+    # Which wins when several kinds hold: two records, then groups, then article numbers, then files.
     cs = [commit(1, 2, group=b"other"), commit(1, 1)]
     j, _ = store(cs)
     case([(b"journal", j)], corrupt("seq-twice 1"))
     cs = [commit(1, 2), commit(2, 1, group=b"other", more=((test, 1),))]
     j, _ = store(cs)
+    case([(b"journal", j)], corrupt(f"unknown-group {b'other'.hex()}"))
+    j, _ = store([commit(1, 2), commit(2, 1)])
     case([(b"journal", j)], corrupt(f"number-not-above {test.hex()} 1"))
     j, _ = store([commit(1, 1, group=b"other")])
     case([(b"journal", j)], corrupt(f"unknown-group {b'other'.hex()}"))
     case([(b"journal", j), (b"x", b"")], corrupt(f"bad-name {b'x'.hex()}"))
+    # More articles than the store holds: before the rules across records, after the journal's own
+    # corruption; as many as it holds go on to the rules.
+    many = [commit(k + 1, k + 1) for k in range(CAPACITY + 1)]
+    j, _ = store(many)
+    case([(b"journal", j)], corrupt(f"too-many {CAPACITY + 1}"))
+    damaged = bytearray(j)
+    damaged[len(fmt) + 20] ^= 1
+    case([(b"journal", bytes(damaged))], corrupt(f"journal {len(fmt)} tag"))
+    j, _ = store([*many[:-1], commit(1, CAPACITY + 1)])
+    case([(b"journal", j)], corrupt(f"too-many {CAPACITY + 1}"))
+    j, _ = store(many[:-1])
+    case([(b"journal", j)], corrupt("missing-file 1"))
     # A journal that does not read back.
     j, files = store([commit(1, 1), commit(2, 2)])
     changed = bytearray(j)

@@ -24,10 +24,11 @@ The offset of every word is a multiple of eight, so a word lies on a word bounda
   length, whether the connection may post, and the bytes; then the number of completions and a
   slot per file job, kind zero if none: a kind, the job's generation, the operations that
   succeeded, the error's class, two result words per operation, and the bytes read.
-- The array `dn_emit` hands over: the number of actions, then a slot for each connection, which
-  holds its action if it has one and kind zero if not: a kind, an index, a generation, a length,
-  whether to read once the bytes are taken, how many of them the kernel took (written back by the
-  host), and the bytes; then a slot per file job, kind zero if none: a kind, the job's generation,
+- The array `dn_emit` hands over: the number of actions, whether the host is to listen (zero until
+  the program has recovered its store, then one), then a slot for each connection, which holds its
+  action if it has one and kind zero if not: a kind, an index, a generation, a length, whether to
+  read once the bytes are taken, how many of them the kernel took (written back by the host), and
+  the bytes; then a slot per file job, kind zero if none: a kind, the job's generation,
   the number of operations, the operations, and the data.
 - The program's own area: the host's clock at the last batch, whether the identity was taken in,
   the code the program stopped with, its copy of the identity, the fixed texts of the replies, and
@@ -38,7 +39,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 4
+def version : Nat := 5
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -63,10 +64,11 @@ def nextRevLen : Nat := 24
 def nextRev : Nat := 32
 def nextSrcLen : Nat := nextRev + revMax
 def nextSrc : Nat := nextSrcLen + 8
-/-- The run's random octets: the value Message-IDs carry, then the key a journal the program
-creates is tagged under. -/
+/-- The run's random octets: the value Message-IDs carry, the key a journal the program creates is
+tagged under, then the key of the index of Message-IDs (SipHash-2-4's). -/
 def runValueLen : Nat := 8
-def randomLen : Nat := runValueLen + News.Journal.keyLength
+def indexKeyLen : Nat := 16
+def randomLen : Nat := runValueLen + News.Journal.keyLength + indexKeyLen
 /-- The longest path identity and group name, and the most groups (`ArticleSpec.Context.ok`). -/
 def identityMax : Nat := 200
 def groupMax : Nat := 64
@@ -110,9 +112,11 @@ def doneSlot : Nat := doneHead + jobData
 def nextLen : Nat := nextDone + jobs * doneSlot
 
 def emitOff : Nat := nextOff + nextLen
-/-- Within the `dn_emit` array: the number of actions, then a slot for each connection. -/
+/-- Within the `dn_emit` array: the number of actions, whether the host is to listen, then a slot
+for each connection. -/
 def emitCount : Nat := 0
-def emitActions : Nat := 8
+def emitListen : Nat := 8
+def emitActions : Nat := 16
 /-- An action: kind, index, generation, length, whether to read, how many bytes were taken. -/
 def actionKind : Nat := 0
 def actionIdx : Nat := 8
@@ -270,8 +274,9 @@ def header : String :=
      ("EVENT_KIND", eventKind), ("EVENT_IDX", eventIdx), ("EVENT_GEN", eventGen),
      ("EVENT_LEN", eventLen), ("EVENT_HEAD", eventHead), ("EVENT_SLOT", eventSlot),
      ("NEXT_LEN", nextLen), ("EMIT_OFF", emitOff), ("EMIT_COUNT", emitCount),
-     ("EMIT_ACTIONS", emitActions), ("ACTION_KIND", actionKind), ("ACTION_IDX", actionIdx),
-     ("ACTION_GEN", actionGen), ("ACTION_LEN", actionLen), ("ACTION_READ", actionRead),
+     ("EMIT_LISTEN", emitListen), ("EMIT_ACTIONS", emitActions), ("ACTION_KIND", actionKind),
+     ("ACTION_IDX", actionIdx), ("ACTION_GEN", actionGen), ("ACTION_LEN", actionLen),
+     ("ACTION_READ", actionRead),
      ("ACTION_TAKEN", actionTaken), ("ACTION_HEAD", actionHead), ("ACTION_SLOT", actionSlot),
      ("EMIT_LEN", emitLen), ("OWN_OFF", ownOff), ("OWN_STOP", ownStop), ("TABLE_OFF", tableOff),
      ("CONN_SLOT", connSlot), ("C_OUT_LEN", cOutLen), ("C_HELD_LEN", cHeldLen),

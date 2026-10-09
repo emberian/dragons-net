@@ -16,12 +16,13 @@ associative (the pretty-printer flattens their same-op chains); `lt` is the
 SIGNED `<` (`Cmp Less`, C1 §2) and `and_` is bitwise `&`. The three added for the
 fused serve (`eq`/`le`/`sub` = `== <= -`) are the comparators + subtraction the
 real stages use (parse's `start3 + 5 <= len`, `len - start3`; the folds' `b ==
-47`); each was checked against `cake --pancake` on the hand-authored serve.pnk. -/
-inductive POp | add | mul | lt | and_ | eq | le | sub
+47`); each was checked against `cake --pancake` on the hand-authored serve.pnk. `xor`/`or_`
+(`^ |`) are associative, as `add`. -/
+inductive POp | add | mul | lt | and_ | eq | le | sub | xor | or_
   deriving DecidableEq, Repr
 
 /-- Every operator once, in the order the generator and the baseline draw them. -/
-def POp.all : List POp := [.add, .sub, .mul, .and_, .lt, .le, .eq]
+def POp.all : List POp := [.add, .sub, .mul, .and_, .lt, .le, .eq, .xor, .or_]
 
 theorem POp.mem_all (op : POp) : op ∈ POp.all := by cases op <;> decide
 
@@ -34,6 +35,7 @@ inductive PExpr
   | loadw (shape : Nat) (addr : PExpr) -- `lds <shape> <addr>` (word/shaped load)
   | loadb (addr : PExpr)             -- `ld8 <addr>` (byte load)
   | shr (l r : PExpr)                -- `l >>> r` (logical shift right)
+  | shl (l r : PExpr)                -- `l << r` (shift left)
   deriving Repr
 
 /-- DN.Compiler statements (the emitted subset). -/
@@ -69,11 +71,11 @@ hand-written `.pnk`, while `mul` under `add` still gets its parens). -/
 
 def opSym : POp → String
   | .add => "+" | .mul => "*" | .lt => "<" | .and_ => "&"
-  | .eq => "==" | .le => "<=" | .sub => "-"
+  | .eq => "==" | .le => "<=" | .sub => "-" | .xor => "^" | .or_ => "|"
 
 def isAssoc : POp → Bool
   | .add => true | .mul => true | .lt => false | .and_ => false
-  | .eq => false | .le => false | .sub => false
+  | .eq => false | .le => false | .sub => false | .xor => true | .or_ => true
 
 /-- Non-recursive parenthesisation decision for a binop operand: inspects only
 the child's head constructor and the already-rendered string `s`. A `binop`
@@ -87,13 +89,14 @@ def wrapOperand (parentOp : POp) (child : PExpr) (s : String) : String :=
   | .loadw _ _     => "(" ++ s ++ ")"
   | .loadb _       => "(" ++ s ++ ")"
   | .shr _ _       => "(" ++ s ++ ")"
+  | .shl _ _       => "(" ++ s ++ ")"
   | _              => s
 
 /-- Non-recursive parenthesisation for a load's address operand. -/
 def wrapAtom (child : PExpr) (s : String) : String :=
   match child with
   | .binop _ _ _ => "(" ++ s ++ ")"
-  | .loadw _ _ | .loadb _ | .shr _ _ => "(" ++ s ++ ")"
+  | .loadw _ _ | .loadb _ | .shr _ _ | .shl _ _ => "(" ++ s ++ ")"
   | _ => s
 
 /-- The expression pretty-printer. All recursive calls are on strict subterms
@@ -109,6 +112,7 @@ def ppExpr : PExpr → String
   -- The left operand is parenthesised because the shift level sits between `&` and `+`;
   -- the distance is printed bare, which is the only form both pinned grammars accept.
   | .shr l r    => "(" ++ ppExpr l ++ ") >>> " ++ ppExpr r
+  | .shl l r    => "(" ++ ppExpr l ++ ") << " ++ ppExpr r
 
 mutual
 /-- Render one statement as a list of indented lines. -/
@@ -164,6 +168,8 @@ def eAnd (l r : PExpr) : PExpr := .binop .and_ l r
 def eEq  (l r : PExpr) : PExpr := .binop .eq  l r
 def eLe  (l r : PExpr) : PExpr := .binop .le  l r
 def eSub (l r : PExpr) : PExpr := .binop .sub l r
+def eXor (l r : PExpr) : PExpr := .binop .xor l r
+def eOr  (l r : PExpr) : PExpr := .binop .or_ l r
 def v (s : String) : PExpr := .var s
 def n (k : Nat) : PExpr := .const k
 /-- `base + k`, dropping the `+ 0` at offset zero so a base-relative load reads

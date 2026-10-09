@@ -96,7 +96,7 @@ def expression (p : Profile) (scope : List String) : PExpr → Except Reason Uni
   | .loadb a => expression p scope a
   -- The semantics has no value for a nonzero shift of a whole word or more, so the
   -- distance has to be a literal the gate can see.
-  | .shr l r =>
+  | .shr l r | .shl l r =>
     match r with
     | .const n => if n < 64 then expression p scope l else .error .shiftAmount
     | _ => .error .shiftAmount
@@ -218,6 +218,17 @@ theorem expression_lowers {p : Profile} {scope : List String} :
     | none => rw [hLa] at ha; simp at ha
     | some a' => simp [lowerExp, hLa]
   | shr l r ihl ihr =>
+    intro h
+    simp only [expression] at h
+    split at h
+    · split at h
+      · have hl := ihl h
+        cases hLl : lowerExp l with
+        | none => rw [hLl] at hl; simp at hl
+        | some l' => simp [lowerExp, hLl]
+      · simp at h
+    · simp at h
+  | shl l r ihl ihr =>
     intro h
     simp only [expression] at h
     split at h
@@ -519,6 +530,12 @@ exported one refuses every external call. -/
 theorem main_refuses_other_externals :
     rejectedMain (whole [.ffi "write" [.base, .const 0, .base, .const 8], .ret (.const 0)])
       .externalEffect = true := by decide
+
+/-- `<<` is held to the rule of `>>>`: a literal distance below one word. -/
+theorem shift_left_distance :
+    rejectedWith (scalar [.ret (.shl (.var "a") (.const 64))]) .shiftAmount = true ∧
+      rejectedWith (scalar [.ret (.shl (.var "a") (.var "a"))]) .shiftAmount = true ∧
+      (emit (scalar [.ret (.shl (.var "a") (.const 63))])).isOk = true := by decide
 
 theorem injected_name_rejected : identifier "x); return 9; //" = false := by decide
 theorem keyword_rejected : identifier "while" = false := by decide

@@ -60,13 +60,13 @@ class Emitted(unittest.TestCase):
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "reply", "skeleton", "frame-line", "frame-line-4",
-                     "frame-block-64", "frame-block-4", "session"):
+        for name in ("region", "echo", "render", "crc", "sip", "scan", "reply", "skeleton", "frame-line",
+                     "frame-line-4", "frame-block-64", "frame-block-4", "session"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "3ee7436d25b1ffbbc9e441d5978e5e17031f0abf7fda2c5c23739caba2db5f06")
+                         "e4ce212d1d665800f93ed370e410d47b0d90f3817d86aa0472814ec3c3329e7e")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 
@@ -187,7 +187,7 @@ class StateCorpus(unittest.TestCase):
         # unseen for want of a case.
         programs = [line for line in dump.splitlines() if line.startswith("PROG ")]
         for construct in ("(skip)", "(dec ", "(assign ", "(store ", "(storeb ", "(extcall ",
-                          "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ",
+                          "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ", "(shl ", "(xor ", "(or ",
                           "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless "):
             with self.subTest(construct=construct):
                 self.assertTrue(any(construct in p for p in programs), construct)
@@ -297,7 +297,7 @@ class ParserContract(unittest.TestCase):
             ["store", ["Var", "b"], ["Lsr", ["Var", "x"], ["Const", 5]]],
             ["if", ["NotLess", ["Var", "b"], ["Var", "a"]], [], [["return", ["MemLoadByte", ["Var", "a"]]]]],
         ]]]})
-        for unknown in ("(func 1 g () (return (Xor (Var local a) (Const 1))))",
+        for unknown in ("(func 1 g () (return (Asr (Var local a) (Const 1))))",
                         "(func 1 g () (return (Var global a)))",
                         "(func 1 g () (tail_call h ()))",
                         "(func 1 g () (return (Mul (Var local a) (Var local b) (Var local c))))"):
@@ -348,7 +348,11 @@ class Generated(unittest.TestCase):
         self.assertEqual(run([["st", "p", 0x0807060504030201], ["return", ["ld8", ["+", "p", 1]]]]), 2)
         self.assertEqual(run([["return", ["lds", 1, "t"]]]), fuzz_interp.buffer_base(1) + 16)
         self.assertEqual(run([["return", [">>>", "a", 1]]]), 2)
-        for body in ([["return", [">>>", "a", 64]]], [["return", ["lds", 1, ["+", "p", 1]]]],
+        self.assertEqual(run([["return", ["<<", "a", 63]]]), 1 << 63)
+        self.assertEqual(run([["return", ["^", "a", 3]]]), 6)
+        self.assertEqual(run([["return", ["|", "a", 3]]]), 7)
+        for body in ([["return", [">>>", "a", 64]]], [["return", ["<<", "a", 64]]],
+                     [["return", ["lds", 1, ["+", "p", 1]]]],
                      [["return", ["ld8", ["+", "p", 4096]]]], [["return", ["ld8", ["-", "p", 1]]]],
                      [["while", 1, []], ["return", 0]], [["st", "t", 0], ["return", 0]]):
             with self.subTest(body=body), self.assertRaises(fuzz_interp.Fault):
@@ -456,7 +460,7 @@ class Generated(unittest.TestCase):
     def test_fuzz_planted_defects_change_what_they_name(self) -> None:
         source = ("export fun dn_t(1 p, 1 a, 1 dn_result) {\n  if a <= 3 {\n    st8 p, ld8 (p + 1);\n"
                   "    st dn_result, (a) >>> 63;\n    return 0;\n  } else {\n    st dn_result, (a) >>> 5;\n"
-                  "    return 0;\n  }\n}\n")
+                  "    st dn_result, (a ^ 1) << 2;\n    return 0;\n  }\n}\n")
         mutants = native_fuzz.MUTANTS
         self.assertIn("if a < 3 {", mutants["le-as-lt"](source))
         self.assertIn("    st p, ld8", mutants["st8-as-st"](source))
@@ -464,6 +468,8 @@ class Generated(unittest.TestCase):
         self.assertIn("if (a <= 3) == 0 {", mutants["if-negated"](source))
         self.assertIn(">>> 62;", mutants["shift-off-by-one"](source))
         self.assertIn(">>> 6;", mutants["shift-off-by-one"](source))
+        self.assertIn("(a | 1) << 2;", mutants["xor-as-or"](source))
+        self.assertIn("(a ^ 1) >>> 2;", mutants["shl-as-shr"](source))
         for name, mutant in mutants.items():
             with self.subTest(mutant=name):
                 changed = [a != b for a, b in zip(source.splitlines(), mutant(source).splitlines(), strict=True)]

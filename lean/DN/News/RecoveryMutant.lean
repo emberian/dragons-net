@@ -7,7 +7,7 @@ import DN.News.Recovery
 Recovery (`DN.News.Recovery`) with one of its rules changed, for the lane that holds recovery
 against an independent reference to show that it sees each (`scripts/store_check.py`). With no rule
 changed it is recovery (`recoverM_none`); with any, a directory written for it recovers otherwise
-(`mutants_differ`).
+(`mutants_differ`), or for the bound on articles, its commits (`capacity_differs`).
 -/
 
 namespace DN.News.RecoveryMutant
@@ -66,6 +66,8 @@ inductive Mutant
   | keyUnchecked
   /-- the store's key taken from the configuration, not from the journal -/
   | keyFromConfig
+  /-- one article more than `capacity` let through -/
+  | capacityLate
   deriving DecidableEq
 
 def names : List (String × Mutant) :=
@@ -78,7 +80,8 @@ def names : List (String × Mutant) :=
    ("aside-never", .asideNever), ("aside-always", .asideAlways), ("aside-at-tail", .asideAtTail),
    ("temp-kept", .tempKept), ("tidy-unsynced", .tidyUnsynced), ("exhausted-late", .exhaustedLate),
    ("key-unchecked", .keyUnchecked), ("tail-unprefixed", .tailUnprefixed),
-   ("aside-over-quarantine", .asideOverQuarantine), ("key-from-config", .keyFromConfig)]
+   ("aside-over-quarantine", .asideOverQuarantine), ("key-from-config", .keyFromConfig),
+   ("capacity-late", .capacityLate)]
 
 /-! ## Recovery, its rules changed -/
 
@@ -133,12 +136,14 @@ def asideOfM (m : Mutant) (recorded : List Bytes) (names : List Name) (torn : Bo
 def recoverRecordsM (m : Mutant) (cfg : Config) (img : Image) (names : List Name)
     (content key : Bytes) (cs : List Commit) (cut : Option Nat) :
     Except Fault (Store × List Action) :=
+  if (if m = .capacityLate then decide (capacity + 1 < cs.length)
+      else decide (capacity < cs.length)) then .error (.tooMany cs.length) else
   match (if m = .seqUnchecked then none else seqTwice? cs),
-      (if m = .numbersUnchecked then none else notAboveM m [] cs),
-      (if m = .groupsUnchecked then none else unknownGroup? cfg cs), fileFaultM m img cs with
+      (if m = .groupsUnchecked then none else unknownGroup? cfg cs),
+      (if m = .numbersUnchecked then none else notAboveM m [] cs), fileFaultM m img cs with
   | some s, _, _, _ => .error (.seqTwice s)
-  | none, some (g, n), _, _ => .error (.numberNotAbove g n)
-  | none, none, some g, _ => .error (.unknownGroup g)
+  | none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
   | none, none, none, some f => .error f
   | none, none, none, none =>
     let next0 := nextSeqM m cs names
@@ -265,7 +270,8 @@ def journalOf (cs : List Commit) : Bytes := journal sampleKey (cs.map .commit)
 def tornJournal : Bytes := journal sampleKey [] ++ [0]
 
 /-- A configuration and a directory that tell recovery with one rule changed from recovery. None
-makes the kernel compute a tag over more than two small commits. -/
+makes the kernel compute a tag over more than two small commits; the bound's would, so its witness
+is its commits alone (`capacity_differs`). -/
 def witness : Mutant → Config × Image
   | .none => (sampleConfig, [])
   | .seqUnchecked =>
@@ -294,11 +300,19 @@ def witness : Mutant → Config × Image
   | .exhaustedLate => (sampleConfig, [(journalName, journalOf []), (tempName (2 ^ 64 - 1), [])])
   | .keyUnchecked => (⟨[], []⟩, [])
   | .keyFromConfig => (otherConfig, [(journalName, journalOf [])])
+  | .capacityLate => (sampleConfig, [])
 
 /-- **Each rule changed here matters**: with it changed, its witness recovers otherwise. -/
-theorem mutants_differ : ∀ m, m ≠ .none →
+theorem mutants_differ : ∀ m, m ≠ .none → m ≠ .capacityLate →
     recoverM m (witness m).1 (witness m).2 ≠ recover (witness m).1 (witness m).2 := by
-  intro m hm
-  cases m <;> first | exact absurd rfl hm | decide +kernel
+  intro m hm hc
+  cases m <;> first | exact absurd rfl hm | exact absurd rfl hc | decide +kernel
+
+/-- **The bound matters**: one commit past it, recovery with it changed goes on to the rules. -/
+theorem capacity_differs :
+    let cs := List.replicate (capacity + 1) (commitOf 1 1)
+    recoverRecordsM .capacityLate sampleConfig [] [] [] sampleKey cs none ≠
+      recoverRecords sampleConfig [] [] [] sampleKey cs none := by
+  decide +kernel
 
 end DN.News.RecoveryMutant

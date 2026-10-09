@@ -340,7 +340,7 @@ class Server:
 
     def take(self, t: Turn) -> Turn:
         woken = self.last.wake and t.now >= self.last.wake
-        if not t.events and len(self.last.events) < self.batch and not woken:
+        if not t.events and self.trace and len(self.last.events) < self.batch and not woken:
             if not self.idle_allowed:
                 raise LaneError(f"the server took a turn with nothing to do at {t.now}")
             self.idle_allowed -= 1
@@ -1172,7 +1172,7 @@ DEFECTS = [
         "cn->reading = !cn->lost && read && taken == len;", "cn->reading = !cn->lost && read;", 1)],
         "reading waits", "stopped the run: code 4"),
     Defect("listening with the table full", [(
-        "int listening = free_indexes() > 0 && !paused;", "int listening = !paused;", 1)],
+        "int taking = listening && free_indexes() > 0 && !paused;", "int taking = listening && !paused;", 1)],
         "sixty-five clients", "a turn with nothing to do"),
     Defect("no poll timeout on the real clock", [(
         "else left = at - now > INT_MAX ? INT_MAX : (int)(at - now);", "else return timeout;", 1)],

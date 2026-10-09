@@ -3,9 +3,11 @@
 """The host lane: the host's side of the store (native/store.c), run with a stand-in for the
 program (native/host_driver.c) that prints what the host hands it:
 
+- the host listens, and prints its port, only once the program says to, and a word to listen
+  that is neither 0 nor 1, or 0 after 1, ends it with status 1;
 - without a spool there is no store: no identity, no group, no random octets, and no client may
   post;
-- with one, the program gets the wall clock, 24 random octets drawn anew for each run, the path
+- with one, the program gets the wall clock, 40 random octets drawn anew for each run, the path
   identity and the groups; a client may post from loopback by default, and else from the networks
   `--post-from` names, to the bit, over IPv4 and IPv6;
 - a second host on a held spool, and a mark of a failed sync of this boot in the spool or the run
@@ -15,7 +17,7 @@ program (native/host_driver.c) that prints what the host hands it:
   closed; truncated; the directory listed a page at a time; eight jobs at once; each error's class,
   a job stopping at its first failure; each way a job breaks the contract ends the host with
   status 1;
-- each defect planted in store.c and jobs.c is caught.
+- each defect planted in nntp_host.c, store.c and jobs.c is caught.
 """
 from __future__ import annotations
 
@@ -61,10 +63,10 @@ class Builds:
     fiu: Path
 
 
-def build(name: str, store: Path = STORE, jobs: Path = JOBS) -> Builds:
+def build(name: str, host: Path = HOST, store: Path = STORE, jobs: Path = JOBS) -> Builds:
     fiu = lanes.pinned_tool("libfiu")
-    sources = [DRIVER, HOST, store, jobs, *RUNTIME]
-    clean = (store, jobs) == (STORE, JOBS)
+    sources = [DRIVER, host, store, jobs, *RUNTIME]
+    clean = (host, store, jobs) == (HOST, STORE, JOBS)
     return Builds(lanes.link(OUT / name, sources, includes=[OUT], check=clean),
                   lanes.link(OUT / f"{name}-fiu", sources, includes=[OUT, fiu], check=clean,
                              flags=["-DFIU_ENABLE=1", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]))
@@ -82,14 +84,27 @@ def layout() -> dict[str, int]:
     return {name: int(value) for name, value in found}
 
 
-def start(binary: Path, options: list[str], address: str, env: dict[str, str] | None = None,
-          wrap: tuple[str, ...] = (), wait: float = WAIT) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
-    """The host, listening, run under `wrap` with `env`; its standard output, and its port."""
+def launch(binary: Path, options: list[str], address: str, env: dict[str, str] | None = None,
+           wrap: tuple[str, ...] = ()) -> tuple[subprocess.Popen[str], lanes.Lines]:
+    """The host run under `wrap` with `env`, and its standard output."""
     proc = subprocess.Popen([*wrap, str(binary), *NAMED, "--address", address, *options], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-    lines = lanes.Lines(proc.stdout)
+    return proc, lanes.Lines(proc.stdout)
+
+
+def start(binary: Path, options: list[str], address: str) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
+    """The host, listening once the first batch is fetched and handed over; its standard output, and its port."""
+    proc, lines = launch(binary, options, address)
+    if proc.stdin is None:
+        raise LaneError("the host has no input")
     try:
-        first = lines.get(wait)
+        proc.stdin.write("next\nemit\n")
+        proc.stdin.flush()
+    except BrokenPipeError:
+        pass
+    try:
+        while (first := lines.get(WAIT)) and not first.startswith("{"):
+            pass
     except queue.Empty:
         proc.kill()
         raise LaneError(f"the host said nothing in {WAIT} s with {options}") from None
@@ -171,9 +186,52 @@ def boot_id() -> str:
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
+def on_free_port(binary: Path) -> tuple[Jobs, int]:
+    """A host on a port free a moment before, started again if another process took the port in between."""
+    for _ in range(4):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        try:
+            return Jobs(binary, ["--port", str(port)]), port
+        except LaneError as error:
+            if "Address already in use" not in str(error):
+                raise
+    raise LaneError("no free port in four attempts")
+
+
+def listening(binary: Path) -> dict[str, str]:
+    """No client connects before the program says to listen; once it has, the host prints its port and a client
+    connects; a word to listen of 0 after 1, or of 2, ends the host with status 1."""
+    first, port = on_free_port(binary)
+    seen = {}
+    with first as h:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=WAIT).close()
+        except ConnectionRefusedError:
+            seen["before"] = "refused"
+        else:
+            raise LaneError("a client connected before the program said to listen")
+        h.send("listen 1", "emit")
+        said = json.loads(h.line() or "{}")
+        if said.get("port") != port:
+            raise LaneError(f"told to listen, the host printed {said}, not port {port}")
+        with socket.create_connection(("127.0.0.1", port), timeout=WAIT):
+            h.fetch()
+            seen["after"] = "connected"
+            h.send("listen 0", "emit")
+            h.exited("listening 0, having listened 1", 1, "a word to listen of 0 after 1")
+    with Jobs(binary, []) as h:
+        h.send("listen 2", "emit")
+        h.exited("listening 2, having listened 0", 1, "a word to listen of 2")
+    seen["0 after 1"] = seen["2"] = "ended"
+    return seen
+
+
 def no_store(binary: Path) -> dict[str, object]:
     begin, opened = serve(binary, [])
-    if begin[2:] != ["0" * 48, "-"] or opened[3] != "0":
+    random = 2 * layout()["RANDOM_LEN"]
+    if begin[2:] != ["0" * random, "-"] or opened[3] != "0":
         raise LaneError(f"without a spool the program got {begin[2:]}, a client posting {opened[3]}")
     return {"start": begin[2:], "post": opened[3]}
 
@@ -189,7 +247,8 @@ def handed(binary: Path) -> dict[str, object]:
     wanted = [IDENTITY.encode().hex(), *(g.encode().hex() for g in GROUPS)]
     if first[3:] != wanted or second[3:] != wanted:
         raise LaneError(f"the program got {first[3:]}, not the identity and the groups {wanted}")
-    if len(first[2]) != 48 or first[2] == "0" * 48 or first[2] == second[2]:
+    random = 2 * layout()["RANDOM_LEN"]
+    if len(first[2]) != random or first[2] == "0" * random or first[2] == second[2]:
         raise LaneError(f"random octets {first[2]} and then {second[2]}")
     if opened[3] != "1":
         raise LaneError("a client on loopback may not post by default")
@@ -299,17 +358,20 @@ class Op:
 
 
 class Jobs:
-    """A host with a store, handed jobs by the driver; what each completion said, by slot."""
+    """A host handed jobs by the driver, not listening; what each completion said, by slot."""
 
     def __init__(self, binary: Path, options: list[str], points: list[str] | None = None,
                  wrap: tuple[str, ...] = (), wait: float = WAIT) -> None:
         """`points` enables libfiu's points of failure in the test build as it starts, one command each."""
         self.w, self.wait_s = layout(), wait
         env = None if points is None else fiu_environment("\n".join(points))
-        self.proc, self.lines, self.port = start(binary, options, "127.0.0.1", env, wrap, wait)
+        self.proc, self.lines = launch(binary, options, "127.0.0.1", env, wrap)
         self.done: dict[int, list[int]] = {}
         self.ended = False
+        self.send("listen 0")
         self.fetch()
+        if self.ended:
+            raise LaneError(f"the host did not start with {options}: {self.said()}")
 
     def line(self) -> str | None:
         try:
@@ -702,12 +764,12 @@ def in_flight(b: Builds) -> str:
     with tempfile.TemporaryDirectory() as temp, \
             Jobs(b.fiu, Store(temp).options(), [enabled("dn/sync-slow", 2000)]) as h:
         h.hand(0, 1, [Op("sync-dir")], fetch=False)
-        with socket.create_connection(("127.0.0.1", h.port), timeout=WAIT):
-            h.fetch()
-            if 0 in h.done:
-                raise LaneError("a sync slowed down by 2 s completed before a client was taken")
-            h.hand(0, 2, [Op("sync-dir")], fetch=False)
-            h.broken("still in flight")
+        h.send("wake 1")
+        h.fetch()
+        if 0 in h.done:
+            raise LaneError("a sync slowed down by 2 s completed before a batch that did not wait")
+        h.hand(0, 2, [Op("sync-dir")], fetch=False)
+        h.broken("still in flight")
     return "refused"
 
 
@@ -770,14 +832,18 @@ def on_plain(check: Callable[[Path], object]) -> Callable[[Builds], object]:
 
 # The checks, the quick ones first: a planted defect stops at the first that catches it.
 CHECKS: dict[str, Callable[[Builds], object]] = {
-    "no store": on_plain(no_store), "handed": on_plain(handed), "posting": on_plain(posting), "held": on_plain(held),
-    "marks": on_plain(marks_at_start), "options": on_plain(options), "files": on_plain(files),
-    "truncated": on_plain(truncated), "errors": on_plain(errors), "listing": on_plain(listing),
-    "at once": on_plain(at_once), "breaches": on_plain(breaches), "a signal": signalled, "faults": faults,
-    "in flight": in_flight, "races": races}
+    "listening": on_plain(listening), "no store": on_plain(no_store), "handed": on_plain(handed),
+    "posting": on_plain(posting), "held": on_plain(held), "marks": on_plain(marks_at_start),
+    "options": on_plain(options), "files": on_plain(files), "truncated": on_plain(truncated),
+    "errors": on_plain(errors), "listing": on_plain(listing), "at once": on_plain(at_once),
+    "breaches": on_plain(breaches), "a signal": signalled, "faults": faults, "in flight": in_flight, "races": races}
 
 # Defects planted: (the file, the name, the text, what it becomes).
 DEFECTS = [
+    (HOST, "listening from the start",
+     "    listen_port = ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port);\n",
+     "    listen_port = ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port);\n    start_listening();\n"),
+    (HOST, "a word to listen unchecked", "if (listen_word > 1 || (listening && !listen_word))", "if (0)"),
     (STORE, "the lock not taken", "if (flock(spool, LOCK_EX | LOCK_NB)) {", "if (0) {"),
     (STORE, "a mark of this boot let through", "if (!memcmp(seen, id, BOOT_ID))",
      "if (0 && !memcmp(seen, id, BOOT_ID))"),
@@ -830,7 +896,7 @@ def check() -> Report:
         planted = OUT / f"defect-{index}.c"
         planted.write_text(lanes.plant(source.read_text(), text, becomes, 1, f"{source.name}, for a planted defect,",
                                        exact=True))
-        broken = build(f"defect-{index}", **{"store" if source == STORE else "jobs": planted})
+        broken = build(f"defect-{index}", **{{HOST: "host", STORE: "store", JOBS: "jobs"}[source]: planted})
         for check_name, run in CHECKS.items():
             try:
                 run(broken)

@@ -54,7 +54,7 @@ def bdWith (look : String → Bd2) : PExpr → Bd2
     if op == .lt || op == .le || op == .eq then Bd2.all .notBased
     else (bdWith look l).merge (bdWith look r)
   | .loadw _ _ | .loadb _ => Bd2.all .trusted
-  | .shr l r => ((bdWith look r).1, (bdWith look l).2)
+  | .shr l r | .shl l r => ((bdWith look r).1, (bdWith look l).2)
 
 /-! ## The account
 
@@ -75,7 +75,7 @@ def Account.addressable (acc : Account) (a : PExpr) : Bool :=
 /-- Every load in `e` is from an address the checker trusts. -/
 def Account.loads (acc : Account) : PExpr → Bool
   | .loadw _ a | .loadb a => acc.addressable a && acc.loads a
-  | .binop _ l r | .shr l r => acc.loads l && acc.loads r
+  | .binop _ l r | .shr l r | .shl l r => acc.loads l && acc.loads r
   | .const _ | .var _ | .base => true
 
 /-- `branch_loc_inf`: after two paths from `before`, a local they leave in different states is

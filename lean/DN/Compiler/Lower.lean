@@ -37,6 +37,8 @@ def lowerExp : PExpr → Option PancakeExp
       | .eq   => some (.cmp .equal a b)     -- `a == b` parses to `Cmp Equal a b`
       | .le   => some (.cmp .notLess b a)   -- `a <= b` parses to `Cmp NotLess b a` (parser SWAPS operands)
       | .sub  => some (.op .sub a b)        -- `a - b` parses to `Op Sub [a;b]`
+      | .xor  => some (.op .xor a b)        -- `a ^ b` parses to `Op Xor [a;b]`
+      | .or_  => some (.op .or_ a b)        -- `a | b` parses to `Op Or [a;b]`
     | _, _ => none
   | .loadw 1 a   =>
     match lowerExp a with
@@ -50,6 +52,10 @@ def lowerExp : PExpr → Option PancakeExp
   | .shr l r     =>
     match lowerExp l, lowerExp r with
     | some l', some r' => some (.shiftR l' r')
+    | _, _             => none
+  | .shl l r     =>
+    match lowerExp l, lowerExp r with
+    | some l', some r' => some (.shiftL l' r')
     | _, _             => none
 
 mutual

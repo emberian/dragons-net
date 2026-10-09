@@ -53,8 +53,8 @@ Left out of `panLang$prog`: `Call`, `DecCall`, `Primitive`, `Raise`, `Tick`,
 `Annot`, `Break`, `Continue`, `Store32`, `ShMemLoad`, `ShMemStore`. Left out of
 `panLang$exp`: structs (`RStruct`, `RField`, `NStruct`, `NField`), `Load` of a
 shape other than one word, `Load32`, `Panop` other than multiplication, `TopAddr`,
-`BytesInWord`, and `Var Global`. Of `Shift`, only the logical right shift (`Lsr`) is
-modelled; `Lsl`, `Asr` and `Ror` are not. Left out of the state: `globals`,
+`BytesInWord`, and `Var Global`. Of `Shift`, `Lsr` and `Lsl` are modelled; `Asr` and `Ror`
+are not. Left out of the state: `globals`,
 `structs`, `code`, `eshapes`, `sh_memaddrs`, `top_addr`.
 
 Values are words: every value the subset produces has shape `One`, so the shape
@@ -69,11 +69,11 @@ never stores a label.
 | `Const w` | `.const` | same |
 | `Var Local v` | `.var` | same: the lookup, so an undeclared variable has no value |
 | `BaseAddr` | `.base` | same |
-| `Op op es` (arity 2: `Add`, `And`, `Sub`) | `.op` | same on the three operators the subset emits |
+| `Op op es` (arity 2: `Add`, `And`, `Sub`, `Xor`, `Or`) | `.op` | same on the five operators the subset emits |
 | `Panop Mul [a;b]` | `.mul` | same |
 | `Cmp cmp e1 e2` (`Less`, `Equal`, `NotLess`) | `.cmp` | same, including that `Less`/`NotLess` are signed |
 | `LoadByte addr` | `.loadByte` | same: out of domain has no value |
-| `Shift Lsr e1 e2` | `.shiftR` | same at `e8eca63`, including that a nonzero shift of a whole word or more has no value |
+| `Shift Lsr e1 e2`, `Shift Lsl e1 e2` | `.shiftR`, `.shiftL` | same at `e8eca63`, including that a nonzero shift of a whole word or more has no value |
 | `Load One addr` | `.loadWord` | same: out of domain has no value |
 
 ## Programs (`evaluate_def`)

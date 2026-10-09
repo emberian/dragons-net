@@ -193,8 +193,8 @@ trap, see §3.1. -/
 fused-serve stages. `Sub` is the one binop panLang admits ONLY at arity 2
 (`word_op Sub [w1;w2] = SOME (w1 - w2)`, `word_op_def`), so — unlike `Add`/`And`
 — it carries no fold-identity specialisation delta: the model's binary `op .sub`
-is exactly the source. -/
-inductive Binop | add | and_ | sub
+is exactly the source. `Xor`/`Or` fold as `Add` does, with `0w` (`word_op_def`). -/
+inductive Binop | add | and_ | sub | xor | or_
 deriving Repr, DecidableEq
 
 /-- panLang `cmp` subset (`asm$cmp`). `less` is `Cmp Less`, which `word_cmp Less
@@ -223,6 +223,7 @@ inductive PancakeExp
   | loadByte (addr : PancakeExp)              -- `LoadByte addr`
   | loadWord (addr : PancakeExp)              -- `Load One addr`
   | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
+  | shiftL   (l r : PancakeExp)               -- `Shift Lsl l r`
 deriving Repr
 
 /-- The word `k`, as a constant. -/
@@ -245,6 +246,8 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
       | .add  => some (a + b)       -- `word_op Add [a;b] = FOLDR word_add 0w = a+b`
       | .and_ => some (a &&& b)     -- `word_op And [a;b] = FOLDR word_and (¬0w) = a&&&b`
       | .sub  => some (a - b)       -- `word_op Sub [a;b] = SOME (a - b)` (word_op_def, arity-2)
+      | .xor  => some (a ^^^ b)     -- `word_op Xor [a;b] = FOLDR word_xor 0w = a ^^^ b`
+      | .or_  => some (a ||| b)     -- `word_op Or [a;b] = FOLDR word_or 0w = a ||| b`
     | _, _ => none
   | .mul l r =>
     match eval s l, eval s r with
@@ -257,6 +260,12 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
     | some a, some b =>
       let places := b.toNat
       if places ≠ 0 && places ≥ 64 then none else some (a >>> places)
+    | _, _ => none
+  | .shiftL l r =>
+    match eval s l, eval s r with
+    | some a, some b =>
+      let places := b.toNat
+      if places ≠ 0 && places ≥ 64 then none else some (a <<< places)
     | _, _ => none
   | .cmp .less l r =>
     match eval s l, eval s r with
@@ -527,6 +536,19 @@ theorem eval_shiftR_value (ffi : σ) :
 /-- It is the logical shift: the sign bit does not fill in behind it. -/
 theorem eval_shiftR_is_logical (ffi : σ) :
     eval (bareState ffi) (.shiftR (.const 0x8000000000000000) (.const 63)) = some 1 := rfl
+
+/-- The left shift has no value at a whole word either, and drops the bits it pushes out. -/
+theorem eval_shiftL_whole_word_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftL (.const 1) (.const 64)) = none := rfl
+
+theorem eval_shiftL_value (ffi : σ) :
+    eval (bareState ffi) (.shiftL (.const 0x8000000000001234) (.const 4)) = some 0x12340 := rfl
+
+/-- `^` and `|` are bitwise: one keeps the bits set in exactly one operand, the other in either. -/
+theorem eval_xor_or_value (ffi : σ) :
+    eval (bareState ffi) (.op .xor (.const 0b1100) (.const 0b1010)) = some 0b0110 ∧
+      eval (bareState ffi) (.op .or_ (.const 0b1100) (.const 0b1010)) = some 0b1110 :=
+  ⟨rfl, rfl⟩
 
 /-- A distance far beyond the word has no value either. -/
 theorem eval_shiftR_huge_is_none (ffi : σ) :

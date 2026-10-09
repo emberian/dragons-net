@@ -50,6 +50,7 @@ theorem eval_clock (s : PancakeState σ) (k : Nat) :
   | loadByte a ih => simp only [eval, ih]
   | loadWord a ih => simp only [eval, ih]
   | shiftR l r ihl ihr => simp only [eval, ihl, ihr]
+  | shiftL l r ihl ihr => simp only [eval, ihl, ihr]
 
 theorem skip (o : Oracle σ) (P : PancakeState σ → Prop) : Safe o P .skip P := by
   intro s hs

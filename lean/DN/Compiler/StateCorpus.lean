@@ -118,6 +118,8 @@ def ppExp : PancakeExp → String
   | .op .add l r => "(add " ++ ppExp l ++ " " ++ ppExp r ++ ")"
   | .op .and_ l r => "(and " ++ ppExp l ++ " " ++ ppExp r ++ ")"
   | .op .sub l r => "(sub " ++ ppExp l ++ " " ++ ppExp r ++ ")"
+  | .op .xor l r => "(xor " ++ ppExp l ++ " " ++ ppExp r ++ ")"
+  | .op .or_ l r => "(or " ++ ppExp l ++ " " ++ ppExp r ++ ")"
   | .mul l r => "(mul " ++ ppExp l ++ " " ++ ppExp r ++ ")"
   | .cmp .less l r => "(less " ++ ppExp l ++ " " ++ ppExp r ++ ")"
   | .cmp .equal l r => "(equal " ++ ppExp l ++ " " ++ ppExp r ++ ")"
@@ -125,6 +127,7 @@ def ppExp : PancakeExp → String
   | .loadByte a => "(loadb " ++ ppExp a ++ ")"
   | .loadWord a => "(loadw " ++ ppExp a ++ ")"
   | .shiftR l r => "(shr " ++ ppExp l ++ " " ++ ppExp r ++ ")"
+  | .shiftL l r => "(shl " ++ ppExp l ++ " " ++ ppExp r ++ ")"
 
 /-- The program as an S-expression. -/
 def ppProg : PancakeProg → String
@@ -146,7 +149,7 @@ a known set rather than over a function nobody can print. -/
 def expNames : PancakeExp → List String
   | .const _ | .base => []
   | .var name => [name]
-  | .op _ l r | .mul l r | .cmp _ l r | .shiftR l r => expNames l ++ expNames r
+  | .op _ l r | .mul l r | .cmp _ l r | .shiftR l r | .shiftL l r => expNames l ++ expNames r
   | .loadByte a | .loadWord a => expNames a
 
 /-- The names a program binds or reads. -/
@@ -380,9 +383,15 @@ def generated : List Case :=
     , { gen ("gen-storeb-be-" ++ toString a)
           (.seq (.storeByte (.const (word a)) (.const (word 0xcd)))
             (.ret (.loadWord (.const (word 0))))) with be := true } ]
-  let shifts := ([0, 1, 63, 64, 65] : List Nat).map fun k =>
-    gen ("gen-shr-" ++ toString k)
-      (.ret (.shiftR (.const (word 0x8000000000000001)) (.const (word k))))
+  let shifts := ([0, 1, 63, 64, 65] : List Nat).flatMap fun k =>
+    [ gen ("gen-shr-" ++ toString k)
+        (.ret (.shiftR (.const (word 0x8000000000000001)) (.const (word k))))
+    , gen ("gen-shl-" ++ toString k)
+        (.ret (.shiftL (.const (word 0x8000000000000001)) (.const (word k)))) ]
+  let bitwise := ([(0xf0f0, 0xff00), (0, 0xffffffffffffffff), (0x8000000000000001, 1)] :
+      List (Nat × Nat)).flatMap fun (a, b) =>
+    [ gen s!"gen-xor-{a}-{b}" (.ret (.op .xor (.const (word a)) (.const (word b))))
+    , gen s!"gen-or-{a}-{b}" (.ret (.op .or_ (.const (word a)) (.const (word b)))) ]
   let edges : List Nat := [0, 1, 0x7fffffffffffffff, 0x8000000000000000, 0xffffffffffffffff]
   let comparisons := edges.flatMap fun v =>
     [ gen ("gen-less-" ++ toString v) (.ret (.cmp .less (.const (word v)) (.const (word 1))))
@@ -425,7 +434,7 @@ def generated : List Case :=
         (.extCall "read" (.const (word 32)) (.const (word 1)) (.const (word 8)) (.const (word 1)))
     , gen "gen-dec-return-restores"
         (.seq (.dec "n" (.const (word 9)) (.ret (.var "n"))) (.ret (.var "n"))) ]
-  memory ++ shifts ++ comparisons ++ clocks ++ replies ++ arithmetic ++ novalue
+  memory ++ shifts ++ bitwise ++ comparisons ++ clocks ++ replies ++ arithmetic ++ novalue
 
 /-! ## The write-back clause on its own
 

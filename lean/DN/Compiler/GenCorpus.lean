@@ -48,7 +48,13 @@ def mutants : List Case :=
      result := 1, changed := [] },
    { name := "st8-as-st", f := reduced ["p"] [.storeb (v "p") (eAdd (n 1) (n 255)), .ret (n 0)],
      plan := { params := [.pointer "p" 0 0], entries := [] },
-     input := zeroInput, result := 0, changed := [] }]
+     input := zeroInput, result := 0, changed := [] },
+   { name := "xor-as-or", f := reduced [] [.ret (eXor (n 1) (n 1))],
+     plan := noParams, input := zeroInput,
+     result := 0, changed := [] },
+   { name := "shl-as-shr", f := reduced [] [.ret (.shl (n 1) (n 1))],
+     plan := noParams, input := zeroInput,
+     result := 2, changed := [] }]
 
 /-- None yet: no run has found a disagreement to keep. -/
 def found : List Case := []
@@ -67,6 +73,8 @@ def regression_802 : Bool := holds "ld8-as-lds"
 def regression_803 : Bool := holds "le-as-lt"
 def regression_804 : Bool := holds "shift-off-by-one"
 def regression_805 : Bool := holds "st8-as-st"
+def regression_934 : Bool := holds "xor-as-or"
+def regression_935 : Bool := holds "shl-as-shr"
 
 def caseJson (c : Case) : Except String Json := do
   let o ← runModel c.f c.plan c.input
