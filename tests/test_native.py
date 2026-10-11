@@ -55,6 +55,13 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_recovery_passes_the_safety_analysis(self) -> None:
+        """The analysis of decision 0004 on recovery's step in a loop, its area at the heap's start:
+        recovery is to be embedded in the session's program, whose theorem then needs it."""
+        done = subprocess.run([str(DN_COMPILER), "analyze-recover"], text=True, capture_output=True,
+                              check=False, timeout=600)
+        self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,

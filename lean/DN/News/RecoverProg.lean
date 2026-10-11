@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.Recovery
 import DN.News.ScanProg
+import DN.Compiler.Analyzer
 
 /-!
 # DN.News.RecoverProg
@@ -11,13 +12,14 @@ journal for its scanner (`DN.News.ScanProg`), whether an article's final file is
 whether a name set aside is — or has something for it: an action, a number set aside, the store it
 starts with, or why it does not start. Commits go into the index, a slot each. The configuration's
 key is of sixteen octets, so `badKey` is never found. Tested against `dn-compiler recovery-model`,
-not proven.
+not proven. As the scanner does, it checks each word it reads back before it makes an address of
+it, and runs `fail` on one out of range.
 -/
 
 namespace DN.News.RecoverProg
 
 open DN.Compiler DN.Compiler.Syntax
-open DN.News.ScanProg (lit bytesAre leS inc ne or2)
+open DN.News.ScanProg (lit bytesAre leS inc ne or2 kept)
 open DN.News.Journal (keyLength firstFrame commitType journalName)
 
 /-! ## The area -/
@@ -214,26 +216,33 @@ def journalGiven : List PStmt :=
   [sset ScanProg.sSize (rw rJournalSize), sset ScanProg.sBase (n 0), sset ScanProg.sLen (n 0),
    sset ScanProg.sPos (n 0), sset ScanProg.sKeyed (n 0), sset ScanProg.sCount (n 0), next 3]
 
+section
+variable (fail : List PStmt)
+
 /-- A commit read: into its slot while there is one, its groups by their index in the
 configuration, and the first group the configuration lacks noted. -/
 def commitRead : List PStmt :=
   [.assign "rcm" (eAdd (rw rCommits) (n 1)), rset rCommits (v "rcm"),
-   .ite (eLe (v "rcm") (n Recovery.capacity))
+   .ite (eAnd (eLt (n 0) (v "rcm")) (eLe (v "rcm") (n Recovery.capacity)))
      ([slotOf (eSub (v "rcm") (n 1)), .store (v "rsl") (sw ScanProg.sSeq),
        .store (atOff (v "rsl") slotSizes)
          (eOr (.shl (sw ScanProg.sHeader) (n 32)) (sw ScanProg.sFileSize)),
-       .assign "rgc" (sw ScanProg.sGroupCount),
+       .assign "rgc" (sw ScanProg.sGroupCount), kept fail "rgc" ScanProg.groupsMax,
+       .assign "ril" (sw ScanProg.sIdLen), kept fail "ril" 250,
+       .assign "rio" (sw ScanProg.sIdAt), kept fail "rio" ScanProg.windowRoom,
+       .assign "rwp" (atOff (v "jsc") ScanProg.sWindow),
        .store (atOff (v "rsl") slotMisc) (eOr (eOr (.shl (sw ScanProg.sCrc) (n 16))
-         (.shl (sw ScanProg.sIdLen) (n 8))) (v "rgc")),
+         (.shl (v "ril") (n 8))) (v "rgc")),
        .assign "rj" (lit 0),
-       .while (eLt (v "rj") (sw ScanProg.sIdLen))
+       .while (eLt (v "rj") (v "ril"))
          [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
-            (.loadb (eAdd (sw ScanProg.sIdAt) (v "rj"))), inc "rj"],
+            (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
        .assign "rg" (lit 0),
        .while (eLt (v "rg") (v "rgc"))
          [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
             (eMul (v "rg") (n ScanProg.groupSlot))),
-          .assign "rga" (.loadw 1 (v "rgs")), .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)),
+          .assign "rga" (.loadw 1 (v "rgs")), kept fail "rga" ScanProg.windowRoom,
+          .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)), kept fail "rgl" groupNameMax,
           .assign "rx" (lit groupsMax), .assign "rc" (lit 0), .assign "rgn" (rw rGroupCount),
           .ite (eLt (n groupsMax) (v "rgn")) [.assign "rgn" (lit groupsMax)] [],
           .while (eLt (v "rc") (v "rgn"))
@@ -242,7 +251,8 @@ def commitRead : List PStmt :=
                [.assign "rok" (lit 1), .assign "rj" (lit 0),
                 .while (eLt (v "rj") (v "rgl"))
                   [.ite (ne (.loadb (eAdd (atOff (v "rcp") 8) (v "rj")))
-                      (.loadb (eAdd (v "rga") (v "rj")))) [.assign "rok" (lit 0)] [],
+                      (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))))
+                    [.assign "rok" (lit 0)] [],
                    inc "rj"],
                 .ite (v "rok") [.assign "rx" (v "rc")] []] [],
              inc "rc"],
@@ -251,19 +261,19 @@ def commitRead : List PStmt :=
               [rset rUnknown (n 1), rset rUnknownLen (v "rgl"), .assign "rj" (lit 0),
                .while (eLt (v "rj") (v "rgl"))
                  [.storeb (eAdd (atOff rp rUnknownName) (v "rj"))
-                    (.loadb (eAdd (v "rga") (v "rj"))), inc "rj"]]] [],
+                    (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))), inc "rj"]]] [],
           .store (eAdd (atOff (v "rsl") slotGroups) (eMul (v "rg") (n 8)))
             (eOr (.shl (v "rx") (n 32)) (.loadw 1 (atOff (v "rgs") 16))),
           inc "rg"]]) []]
 
 /-- Phase 3: the scanner run until it wants octets or the journal ends. -/
 def scanning : List PStmt :=
-  ScanProg.stepSrc ++
+  ScanProg.stepWith fail ++
   [.assign "rst" (sw ScanProg.sStatus),
    .ite (eEq (v "rst") (n ScanProg.wanted)) (stop asksOctets)
      [.ite (eEq (v "rst") (n ScanProg.record))
        [rset rRecords (eAdd (rw rRecords) (n 1)),
-        .ite (eEq (sw ScanProg.sType) (n commitType)) commitRead []]
+        .ite (eEq (sw ScanProg.sType) (n commitType)) (commitRead fail) []]
        [.ite (eEq (v "rst") (n ScanProg.corrupt))
          (refuse (.journal 0 .short) [rset rFaultA (sw ScanProg.sPos),
            rset rFaultB (sw ScanProg.sWhy)])
@@ -297,10 +307,12 @@ def rules : List PStmt :=
            .assign "rbad" (lit 0), .assign "ri" (lit 0),
            .while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "ri") (v "rcm")))
              [slotOf (v "ri"), .assign "rgc" (eAnd (slotW slotMisc) (n 255)),
+              kept fail "rgc" ScanProg.groupsMax,
               .assign "rg" (lit 0),
               .while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "rg") (v "rgc")))
                 [.assign "rx" (groupW "rg"),
                  .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
+                 kept fail "rc" (groupsMax - 1),
                  .assign "rv" (eAnd (v "rx") (n (2 ^ 32 - 1))),
                  .ite (eLe (v "rv") (.loadw 1 (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8)))))
                    [.assign "rbad" (lit 1)] [inc "rg"]],
@@ -308,7 +320,9 @@ def rules : List PStmt :=
                 [.assign "rg" (lit 0),
                  .while (eLt (v "rg") (v "rgc"))
                    [.assign "rx" (groupW "rg"),
-                    .store (eAdd (atOff rp rHigh) (eMul (.shr (v "rx") (n 32)) (n 8)))
+                    .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
+                 kept fail "rc" (groupsMax - 1),
+                    .store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8)))
                       (eAnd (v "rx") (n (2 ^ 32 - 1))), inc "rg"],
                  inc "ri"]],
            .ite (v "rbad")
@@ -319,15 +333,16 @@ def rules : List PStmt :=
 
 /-- Phase 5: each commit's final file, there and of its size, in the journal's order. -/
 def files : List PStmt :=
-  [.assign "ri" (rw rI), slotOf (v "ri")] ++ held "rcm" ++
+  [.assign "ri" (rw rI), kept fail "ri" Recovery.capacity] ++ held "rcm" ++
   [.ite (rw rWait)
-     [rset rWait (n 0),
+     [kept fail "ri" (Recovery.capacity - 1), slotOf (v "ri"), rset rWait (n 0),
       .ite (eEq (rw rFound) (n 0)) (refuse (.missingFile 0) [rset rFaultA (slotW slotSeq)])
         [.ite (ne (rw rFileSize) (eAnd (slotW slotSizes) (n (2 ^ 32 - 1))))
           (refuse (.wrongSize 0) [rset rFaultA (slotW slotSeq)])
           [rset rI (eAdd (v "ri") (n 1))]]]
      [.ite (eLt (v "ri") (v "rcm"))
-       ([rset rSeq (slotW slotSeq), rset rWait (n 1)] ++ stop asksFile) [next 6]]]
+       ([slotOf (v "ri"), rset rSeq (slotW slotSeq), rset rWait (n 1)] ++ stop asksFile)
+       [next 6]]]
 
 /-- Phase 6: the next sequence number, while numbers last. -/
 def numbered : List PStmt :=
@@ -406,16 +421,16 @@ def created : List PStmt :=
 
 /-- **One step**: the phases until one asks or gives. A name asked for arrives in phase 1 or 8,
 the step that asked having left the phase there. -/
-def stepSrc : List PStmt :=
+def stepWith : List PStmt :=
   [.assign "jsc" (atOff rp rScan), .assign "rgo" (lit 1),
    .while (v "rgo")
      [.assign "rph" (rw rPhase),
       .ite (eEq (v "rph") (n 0)) begin
        [.ite (eEq (v "rph") (n 1)) firstPass
         [.ite (eEq (v "rph") (n 2)) journalGiven
-         [.ite (eEq (v "rph") (n 3)) scanning
-          [.ite (eEq (v "rph") (n 4)) rules
-           [.ite (eEq (v "rph") (n 5)) files
+         [.ite (eEq (v "rph") (n 3)) (scanning fail)
+          [.ite (eEq (v "rph") (n 4)) (rules fail)
+           [.ite (eEq (v "rph") (n 5)) (files fail)
             [.ite (eEq (v "rph") (n 6)) numbered
              [.ite (eEq (v "rph") (n 7)) tail
               [.ite (eEq (v "rph") (n 8)) secondPass
@@ -424,10 +439,16 @@ def stepSrc : List PStmt :=
                  [.ite (eEq (v "rph") (n 11)) finish
                   [.ite (eEq (v "rph") (n 12)) renamed askNext]]]]]]]]]]]]]]
 
+end
+
+/-- One step, ending with `ScanProg.broken` on a word out of range. -/
+def stepSrc : List PStmt := stepWith [.ret (n ScanProg.broken)]
+
 /-- The step's locals, its own and the scanner's. -/
 def locals : List String :=
   ["rgo", "rph", "rk", "rl", "rq", "rc", "rlet", "rv", "rok", "rj", "rm", "rcm", "rsl", "rgc",
-   "rgn", "rg", "rgs", "rga", "rgl", "rx", "rcp", "rst", "rdup", "ri", "rbad", "jsc"] ++
+   "rgn", "rg", "rgs", "rga", "rgl", "rx", "rcp", "rst", "rdup", "ri", "rbad", "ril", "rio", "rwp",
+   "jsc"] ++
   ScanProg.locals
 
 /-- One step on the area at `rsc`, its status returned. -/
@@ -435,6 +456,28 @@ def recoverKernel : PFun :=
   { name := "dn_recover_step", exported := true, params := [(1, "rsc")],
     body := .dec "jz" (eSub rp rp) :: locals.map (.dec · (v "jz")) ++ stepSrc ++
       [.ret (rw rStatus)] }
+
+/-- Where the analysis takes the area to lie: above the heap's header. -/
+def analysisAt : Nat := 64
+
+/-- The step run in a whole program's loop, its area at `@base + analysisAt` and its caller an
+external call that may write all of it, `fail` run on a word out of range: what the analysis of
+decision 0004 is run on. -/
+def analysisWith (fail : List PStmt) : PFun :=
+  { name := "main", body :=
+    [.dec "jz" (n 0), .dec "rsc" (atOff .base analysisAt)] ++ locals.map (.dec · (n 0)) ++
+    [.while (n 1) (stepWith fail ++ [.ffi "dn_next" [rp, n 8, rp, n size]]), .ret (n 0)] }
+
+def analysisMain : PFun := analysisWith [.ret (n 1)]
+
+/-- Whether the analysis accepts the program, its heap reaching to the area's end. -/
+def accepted (f : PFun) : Bool :=
+  match Lower.lower f with
+  | some p => (Analyzer.check (analysisAt + size) p).toBool
+  | none => false
+
+/-- The analysis accepts the step, and refuses it when a word out of range goes on as one in it. -/
+def regression_945 (_ : Unit) : Bool := accepted analysisMain && !accepted (analysisWith [])
 
 /-- The area as a C header for the test's host. -/
 def header : String :=

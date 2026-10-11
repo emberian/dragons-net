@@ -177,7 +177,9 @@ static void recover(const unsigned char *key, const char *groups) {
     for (uint64_t steps = 0;; ++steps) {
         if (steps > bound) dn_violation("recovery took %" PRIu64 " steps", steps);
         uint32_t status = dn_recover_step((uintptr_t)a);
-        if (status != dn_word(a + DN_RECOVER_STATUS)) dn_violation("recovery returned another status");
+        if (status != dn_word(a + DN_RECOVER_STATUS))
+            dn_violation("recovery returned %" PRIu32 ", its area says %" PRIu64, status,
+                         dn_word(a + DN_RECOVER_STATUS));
         uint64_t seq = dn_word(a + DN_RECOVER_SEQ);
         if (status == DN_RECOVER_ASKS_NAME) {
             if (dn_word(a + DN_RECOVER_FIRST)) next_name = 0;

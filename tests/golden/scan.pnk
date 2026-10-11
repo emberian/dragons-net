@@ -9,13 +9,16 @@ export fun dn_scan_step(1 jsc) {
   var jrem = jz;
   var jneed = jz;
   var jx = jz;
+  var jcnt = jz;
   var ji = jz;
   var jq = jz;
+  var jo = jz;
   var jf = jz;
   var jr = jz;
   var jwhy = jz;
   var jpl = jz;
   var jt = jz;
+  var jhk = jz;
   var jtag = jz;
   var jmw = jz;
   var jtorn = jz;
@@ -36,6 +39,9 @@ export fun dn_scan_step(1 jsc) {
   var jbb = jz;
   var jga = jz;
   var jgb = jz;
+  var jla = jz;
+  var jna = jz;
+  var jnb = jz;
   var jeq = jz;
   var k = jz;
   var p = jz;
@@ -51,6 +57,10 @@ export fun dn_scan_step(1 jsc) {
   jsz = lds 1 jsc;
   jb = lds 1 (jsc + 8);
   jwl = lds 1 (jsc + 16);
+  if 0 < ((jwl < 0) + (17776 < jwl)) {
+    return 99;
+  } else {
+  }
   jp = lds 1 (jsc + 24);
   jky = lds 1 (jsc + 32);
   jw = jsc + 1928;
@@ -65,15 +75,20 @@ export fun dn_scan_step(1 jsc) {
     }
     if (jb + jwl) < (jp + jneed) {
       jx = jp - jb;
+      if 0 < ((jx < 0) + (17776 < jx)) {
+        return 99;
+      } else {
+      }
+      jcnt = jwl - jx;
       ji = jz + 0;
       if jx {
-        while (ji + jx) < jwl {
+        while ji < jcnt {
           st8 jw + ji, ld8 (jw + jx + ji);
           ji = ji + 1;
         }
       } else {
       }
-      jwl = jwl - jx;
+      jwl = jcnt;
       st jsc + 8, jp;
       st jsc + 16, jwl;
       jx = jsz - (jp + jwl);
@@ -85,7 +100,13 @@ export fun dn_scan_step(1 jsc) {
       st jsc + 48, 1;
     } else {
       jq = jp;
-      jf = jw + (jp - jb);
+      jo = jq - jb;
+      if 0 < ((jo < 0) + (17776 < jo)) {
+        return 99;
+      } else {
+      }
+      jf = jw + jo;
+      jpp = jf + 13;
       jr = jrem;
       jwhy = jz + 0;
       if jr < 13 {
@@ -96,7 +117,7 @@ export fun dn_scan_step(1 jsc) {
         jpl = ((jpl) << 8) | (ld8 (jf + 2));
         jpl = ((jpl) << 8) | (ld8 (jf + 1));
         jpl = ((jpl) << 8) | (ld8 jf);
-        if 1376 < jpl {
+        if 0 < ((1376 < jpl) + (jpl < 0)) {
           jwhy = jz + 2;
         } else {
           if jr < (jpl + 14) {
@@ -106,19 +127,20 @@ export fun dn_scan_step(1 jsc) {
               jwhy = jz + 3;
             } else {
               jt = ld8 (jf + 12);
+              k = jsc + 520;
+              jhk = jky;
               if jky {
-                k = jsc + 520;
               } else {
-                k = jz + 0;
                 if (jt == 1) & (jpl == 36) {
                   if ((((((((((((((((((1 & ((ld8 (jf + 13)) == 100)) & ((ld8 (jf + 13 + 1)) == 114)) & ((ld8 (jf + 13 + 2)) == 97)) & ((ld8 (jf + 13 + 3)) == 103)) & ((ld8 (jf + 13 + 4)) == 111)) & ((ld8 (jf + 13 + 5)) == 110)) & ((ld8 (jf + 13 + 6)) == 115)) & ((ld8 (jf + 13 + 7)) == 45)) & ((ld8 (jf + 13 + 8)) == 110)) & ((ld8 (jf + 13 + 9)) == 101)) & ((ld8 (jf + 13 + 10)) == 116)) & ((ld8 (jf + 13 + 11)) == 32)) & ((ld8 (jf + 13 + 12)) == 106)) & ((ld8 (jf + 13 + 13)) == 111)) & ((ld8 (jf + 13 + 14)) == 117)) & ((ld8 (jf + 13 + 15)) == 114)) & ((ld8 (jf + 13 + 16)) == 110)) & ((ld8 (jf + 13 + 17)) == 97)) & ((ld8 (jf + 13 + 18)) == 108) {
                     k = jf + 33;
+                    jhk = jz + 1;
                   } else {
                   }
                 } else {
                 }
               }
-              if k == 0 {
+              if jhk == 0 {
                 jwhy = jz + 4;
               } else {
                 p = jsc + 536;
@@ -317,7 +339,7 @@ export fun dn_scan_step(1 jsc) {
                 if jpl < (ji + jml) {
                   jok = jz + 0;
                 } else {
-                  st jsc + 88, jpp + ji;
+                  st jsc + 88, jo + 13 + ji;
                   st jsc + 96, jml;
                   ji = ji + jml;
                 }
@@ -339,6 +361,10 @@ export fun dn_scan_step(1 jsc) {
             }
             jgi = jz + 0;
             while jok & (jgi < jgc) {
+              if 0 < ((ji < 0) + (1376 < ji)) {
+                return 99;
+              } else {
+              }
               if jpl < (ji + 1) {
                 jok = jz + 0;
               } else {
@@ -348,7 +374,7 @@ export fun dn_scan_step(1 jsc) {
                   jok = jz + 0;
                 } else {
                   jgp = jsc + 136 + (jgi * 24);
-                  st jgp, jpp + ji;
+                  st jgp, jo + 13 + ji;
                   st jgp + 8, jnl;
                   ji = ji + jnl;
                   if jpl < (ji + 4) {
@@ -369,6 +395,10 @@ export fun dn_scan_step(1 jsc) {
                 }
               }
               jgi = jgi + 1;
+            }
+            if 0 < ((ji < 0) + (1376 < ji)) {
+              return 99;
+            } else {
             }
             if jok {
               if jpl < (ji + 12) {
@@ -407,20 +437,36 @@ export fun dn_scan_step(1 jsc) {
               while jbb < jgc {
                 jga = jsc + 136 + (ja * 24);
                 jgb = jsc + 136 + (jbb * 24);
-                if (lds 1 (jga + 8)) == (lds 1 (jgb + 8)) {
+                jeq = jz + 0;
+                jla = lds 1 (jga + 8);
+                if 0 < ((jla < 0) + (64 < jla)) {
+                  return 99;
+                } else {
+                }
+                if jla == (lds 1 (jgb + 8)) {
+                  jna = lds 1 jga;
+                  if 0 < ((jna < 0) + (19168 < jna)) {
+                    return 99;
+                  } else {
+                  }
+                  jnb = lds 1 jgb;
+                  if 0 < ((jnb < 0) + (19168 < jnb)) {
+                    return 99;
+                  } else {
+                  }
                   jeq = jz + 1;
                   jx = jz + 0;
-                  while jx < (lds 1 (jga + 8)) {
-                    if ((ld8 ((lds 1 jga) + jx)) == (ld8 ((lds 1 jgb) + jx))) == 0 {
+                  while jx < jla {
+                    if ((ld8 (jw + jna + jx)) == (ld8 (jw + jnb + jx))) == 0 {
                       jeq = jz + 0;
                     } else {
                     }
                     jx = jx + 1;
                   }
-                  if jeq {
-                    jok = jz + 0;
-                  } else {
-                  }
+                } else {
+                }
+                if jeq {
+                  jok = jz + 0;
                 } else {
                 }
                 jbb = jbb + 1;
@@ -463,7 +509,13 @@ export fun dn_scan_step(1 jsc) {
             if jky {
               jq = jp + 1;
               while jtorn & (jq < jsz) {
-                jf = jw + (jq - jb);
+                jo = jq - jb;
+                if 0 < ((jo < 0) + (17776 < jo)) {
+                  return 99;
+                } else {
+                }
+                jf = jw + jo;
+                jpp = jf + 13;
                 jr = jsz - jq;
                 jwhy = jz + 0;
                 if jr < 13 {
@@ -474,7 +526,7 @@ export fun dn_scan_step(1 jsc) {
                   jpl = ((jpl) << 8) | (ld8 (jf + 2));
                   jpl = ((jpl) << 8) | (ld8 (jf + 1));
                   jpl = ((jpl) << 8) | (ld8 jf);
-                  if 1376 < jpl {
+                  if 0 < ((1376 < jpl) + (jpl < 0)) {
                     jwhy = jz + 2;
                   } else {
                     if jr < (jpl + 14) {
@@ -485,7 +537,8 @@ export fun dn_scan_step(1 jsc) {
                       } else {
                         jt = ld8 (jf + 12);
                         k = jsc + 520;
-                        if k == 0 {
+                        jhk = jz + 1;
+                        if jhk == 0 {
                           jwhy = jz + 4;
                         } else {
                           p = jsc + 536;

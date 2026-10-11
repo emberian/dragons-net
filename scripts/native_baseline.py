@@ -443,7 +443,7 @@ def scan(cake: str) -> dict[str, Any]:
         # the end mark never checked
         "scan-end": ("== 165) == 0 {", "== 166) == 0 {", 2),
         # a payload one octet longer let through
-        "scan-length": ("if 1376 < jpl {", "if 1377 < jpl {", 2),
+        "scan-length": ("(1376 < jpl)", "(1377 < jpl)", 2),
         # a torn tail one octet longer than the largest frame
         "scan-torn-longer": ("jx = jz + 1390;", "jx = jz + 1391;", 1),
         # a torn tail before the format one octet shorter than its frame
@@ -534,7 +534,10 @@ def recover(cake: str) -> dict[str, Any]:
     unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
     if unfound:
         raise LaneError(f"the recovery mutations {unfound} no longer find the text they change")
-    refused_all(cake, host, [(name, text.replace(old, new), 1, "recovery found")
+    # Each finds otherwise than the model, but a group the configuration lacks, let be, which takes
+    # the index of no group to the table of highest numbers, where the check of its range stops it.
+    refused_all(cake, host, [(name, text.replace(old, new), 1,
+                              "recovery returned 99" if name == "recover-groups" else "recovery found")
                              for name, (old, new, _) in mutants.items()], stdin=stdin)
     measured["recover_mutants_rejected"] = len(mutants)
     measured["recover_other_keys"] = sum(ln.startswith("recover ") for ln in lines) - len(first)

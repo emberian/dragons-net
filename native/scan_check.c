@@ -3,7 +3,7 @@
  * journal in hexadecimal, `-` for none, the most octets one read adds to the window, and what the
  * model reads in it. Stepped as a caller does, a frame a step, the scanner has to read the same; its
  * area ends at a page without access, and it may ask only for octets the journal has, that fit the
- * window, and point only into the window. */
+ * window, and give only offsets into it. */
 #define _GNU_SOURCE
 #include "cake_runtime.h"
 #include "dn_scan_layout.h"
@@ -40,11 +40,11 @@ static void say_hex(const unsigned char *p, uint64_t n) {
     for (uint64_t i = 0; i < n; ++i) say((char[]){digits[p[i] >> 4], digits[p[i] & 15]}, 2);
 }
 
-/* Where an octet the scanner points to lies: in the window's octets, `n` of them. */
+/* The `n` octets at offset `at` of the window, which have to lie in its octets. */
 static const unsigned char *in_window(const unsigned char *a, uint64_t at, uint64_t n) {
-    uint64_t from = (uintptr_t)(a + DN_SCAN_WINDOW), len = dn_word(a + DN_SCAN_LEN);
-    if (at < from || n > len || at - from > len - n) dn_violation("a record points outside the window");
-    return (const unsigned char *)(uintptr_t)at;
+    uint64_t len = dn_word(a + DN_SCAN_LEN);
+    if (n > len || at > len - n) dn_violation("a record points outside the window");
+    return a + DN_SCAN_WINDOW + at;
 }
 
 static void record(const unsigned char *a) {
@@ -92,7 +92,9 @@ static uint64_t scan(const unsigned char *j, size_t n, uint64_t chunk) {
     for (uint64_t steps = 0;; ++steps) {
         if (steps > 2 * n + 16) dn_violation("the scanner took %" PRIu64 " steps over %zu octets", steps, n);
         uint32_t status = dn_scan_step((uintptr_t)a);
-        if (status != dn_word(a + DN_SCAN_STATUS)) dn_violation("the scanner returned another status");
+        if (status != dn_word(a + DN_SCAN_STATUS))
+            dn_violation("the scanner returned %" PRIu32 ", its area says %" PRIu64, status,
+                         dn_word(a + DN_SCAN_STATUS));
         uint64_t base = dn_word(a + DN_SCAN_BASE), len = dn_word(a + DN_SCAN_LEN), pos = dn_word(a + DN_SCAN_POS);
         if (status == DN_SCAN_WANTED) {
             uint64_t want = dn_word(a + DN_SCAN_WANT), take = want < chunk ? want : chunk;

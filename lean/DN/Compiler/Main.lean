@@ -34,7 +34,7 @@ private def commands : List String :=
    "store-model",
    "emit-layout", "emit-session", "emit-session-layout", "emit-scan-layout",
    "emit-recover-layout",
-   "analyze-session",
+   "analyze-session", "analyze-recover",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -92,6 +92,9 @@ def main (args : List String) : IO UInt32 := do
   | ["emit-session-layout"] => output (.ok DN.Server.SessionLayout.header)
   | ["emit-scan-layout"] => output (.ok DN.News.ScanProg.header)
   | ["emit-recover-layout"] => output (.ok DN.News.RecoverProg.header)
+  | ["analyze-recover"] =>
+    output (analyzed (DN.News.RecoverProg.analysisAt + DN.News.RecoverProg.size)
+      (Lower.lower DN.News.RecoverProg.analysisMain))
   | ["analyze-session"] =>
     output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
   | ["frame-model"] =>
