@@ -19,8 +19,10 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
 - A word is an interval of its signed value, or, for an address, of its offset from `@base`, with
   the remainder by eight when it is known. A load gives any value, except a word whose range a
   condition has just checked, which keeps it until the next store, call, or change of the local it
-  is addressed by. Accesses must lie in a heap of the layout's size, words on word boundaries,
-  and above its first 64 bytes, which hold the header CakeML's theorem fixes.
+  is addressed by. A condition cuts the range of a local or such a word it compares, or of `x` in
+  `x + k` for a constant `k` when adding it cannot leave the words. Accesses must lie in a heap of
+  the layout's size, words on word boundaries, and above its first 64 bytes, which hold the header
+  CakeML's theorem fixes.
 - A loop's invariant is searched for — joins, widening up to the guard, then widening — and then
   checked to hold on entry and to be kept by the body. Only the check is proven; the search can be
   changed freely.

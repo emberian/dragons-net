@@ -13,7 +13,9 @@ accepts never errs, so a program is shown safe by running the analysis.
 A word is abstracted by an interval of its signed value, or, for an address, of its offset from
 `@base`, with the offset's remainder by eight when it is known. A load from memory gives any value,
 except a word whose range a condition has just checked (a cell), which keeps that range until the
-next store, external call, or change of the local it is addressed by. A loop's invariant is found
+next store, external call, or change of the local it is addressed by. A condition cuts the range of
+a local or a cell it compares, or of `x` in `x + k` for a constant `k` when adding it cannot leave
+the words. A loop's invariant is found
 by running its body until the state stops growing, widening a bound that keeps moving; whatever the
 search finds is checked, and only the check is relied on.
 -/
@@ -222,7 +224,8 @@ def meet (v : AVal) (lo hi : Int) : Option AVal :=
   if l ≤ h then some { v with lo := l, hi := h } else none
 
 /-- The state with the range of the local or cell `e` names cut to `[lo, hi]`, when `e` names one
-and holds a number; nothing when the ranges do not meet. -/
+and holds a number — or of the local `x` cut to `[lo - k, hi - k]` when `e` is `x + k` and adding
+`k` to it cannot leave the words; nothing when the ranges do not meet. -/
 def refine (size : Nat) (A : AState) (e : PancakeExp) (lo hi : Int) : Option AState :=
   match e with
   | .var x =>
@@ -239,6 +242,15 @@ def refine (size : Nat) (A : AState) (e : PancakeExp) (lo hi : Int) : Option ASt
       else (meet v lo hi).map fun v' =>
         { A with cells := (x, k, v') :: A.cells.filter fun c => !(c.1 = x && c.2.1 = k) }
     | _, _ => some A
+  | .op .add (.var x) (.const k) =>
+    match lookup x A.locals with
+    | some v =>
+      if v.ptr then some A
+      else if wordMin ≤ v.lo + k.toInt ∧ v.hi + k.toInt ≤ wordMax then
+        (meet v (lo - k.toInt) (hi - k.toInt)).bind fun v' =>
+          (setVar x v' A.locals).map fun ls => { A with locals := ls }
+      else some A
+    | none => some A
   | _ => some A
 
 def isFlag (v : AVal) : Bool := !v.ptr && 0 ≤ v.lo && v.hi ≤ 1
@@ -370,15 +382,19 @@ def valOf (size : Nat) (A : AState) (e : PancakeExp) (what : String) : Except Al
   | some v => .ok v
   | none => .error s!"{what}: an expression that may have no value: {repr e}"
 
-/-- The bound the guard `e` puts on the local `x` of `X` when `x` may be as large as any word, plus
-one: where a counter stepped by one past the guard stops. -/
+/-- How large a local is taken to be while a guard's bound on it is sought: below the end of the
+words by `2 ^ 32`, so that `x + k < y` bounds it too for a constant `k` below that. -/
+def guardCap : Int := wordMax - 2 ^ 32
+
+/-- The bound the guard `e` puts on the local `x` of `X` when `x` may be as large as `guardCap`,
+plus one: where a counter stepped by one past the guard stops. -/
 def guardHi (size : Nat) (e : PancakeExp) (X : AState) (x : String) (v : AVal) : Option Int :=
-  match setVar x { v with hi := wordMax } X.locals with
+  match setVar x { v with hi := max v.lo guardCap } X.locals with
   | some ls =>
     match assume size { X with locals := ls } e true with
     | some G =>
       match lookup x G.locals with
-      | some g => if g.hi < wordMax then some (g.hi + 1) else none
+      | some g => if g.hi < guardCap then some (g.hi + 1) else none
       | none => none
     | none => none
   | none => none
@@ -597,6 +613,26 @@ def regression_929 : Bool := (check heap (bitwiseAt .or_ 15 16 32)).toBool
 def regression_930 : Bool := !(check heap (bitwiseAt .or_ 15 16 33)).toBool
 def regression_931 : Bool := (check heap (shiftedLeft 63)).toBool
 def regression_932 : Bool := !(check heap (shiftedLeft 64)).toBool
+/-- Eight bytes at a time while `off + 8 <= n`, or `off + 8 < n` when `strict`, a byte stored at
+each `off`: the guard bounds `off` by `n - 8`, or `n - 9`. -/
+private def blocks (n : Nat) (strict : Bool := false) : PancakeProg :=
+  .dec "off" (c 0) (.seq (.while_ (if strict then .cmp .less (.op .add (.var "off") (c 8)) (c n)
+        else .cmp .notLess (c n) (.op .add (.var "off") (c 8)))
+      (.seq (.storeByte (.op .add (at' 0) (.var "off")) (c 0))
+        (.assign "off" (.op .add (.var "off") (c 8)))))
+    (.ret (c 0)))
+
+-- The last block's byte, 56, lies in the heap, and with one more block, 64, it does not; a word
+-- loaded from memory is not bounded by `x + 8 < 40`, since adding 8 to it may leave the words.
+def regression_940 : Bool := (check heap (blocks 64)).toBool
+def regression_941 : Bool := !(check heap (blocks 72)).toBool
+def regression_943 : Bool := (check heap (blocks 65 true)).toBool
+def regression_944 : Bool := !(check heap (blocks 73 true)).toBool
+def regression_942 : Bool :=
+  !(check heap (.dec "x" (.loadWord (at' 0))
+    (.seq (.cond (.cmp .less (.op .add (.var "x") (c 8)) (c 40))
+        (.storeByte (.op .add (at' 0) (.var "x")) (c 0)) .skip) (.ret (c 0))))).toBool
+
 /-- An address cut by `&` to a number up to 15 is that number, no longer an address. -/
 def regression_933 : Bool :=
   (check heap (.dec "x" (.op .and_ .base (c 15))

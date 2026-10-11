@@ -780,6 +780,16 @@ theorem lookupCell_filter {x y : String} {k j : Int} (hne : ¬ (y = x ∧ j = k)
       · rfl
       · exact lookupCell_filter hne rest
 
+theorem eval_add_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
+    (h : eval s (.op .add l r) = some w) :
+    ∃ a b, eval s l = some a ∧ eval s r = some b ∧ w = a + b := by
+  simp only [eval] at h
+  split at h
+  · rename_i a b ha hb
+    cases h
+    exact ⟨a, b, ha, hb, rfl⟩
+  · cases h
+
 theorem refine_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds size A s)
     {e : PancakeExp} {w : Word} (he : eval s e = some w) {lo hi : Int}
     (h1 : lo ≤ w.toInt) (h2 : w.toInt ≤ hi) :
@@ -839,6 +849,40 @@ theorem refine_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds 
           simp only [lookupCell, hq, Bool.false_eq_true, if_false] at hu
           rw [lookupCell_filter hk] at hu
           exact h.2.2 y j u hu p hp'
+    · exact ⟨A, rfl, h⟩
+  · rename_i x k
+    split
+    · rename_i v hv
+      split
+      · exact ⟨A, rfl, h⟩
+      · rename_i hp
+        split
+        · rename_i hk
+          obtain ⟨a, kw, ha, hkw, hw⟩ := eval_add_inv he
+          simp only [eval] at ha hkw
+          cases hkw
+          obtain ⟨w', e', hw'⟩ := h.2.1 x v hv
+          rw [ha] at e'
+          cases e'
+          have hnp : v.ptr = false := by simpa using hp
+          have hvh := hw'
+          simp only [AVal.holds, hnp, Bool.false_eq_true, if_false] at hvh
+          obtain ⟨l, u, _⟩ := hvh
+          have hsum : w.toInt = a.toInt + k.toInt := by
+            rw [hw, BitVec.toInt_add, bmod_small (by omega) (by omega)]
+          obtain ⟨v', hm, hv'⟩ := meet_sound hw' hnp (lo := lo - k.toInt) (hi := hi - k.toInt)
+            (by omega) (by omega)
+          obtain ⟨ls, hs⟩ := setVar_of_found (v := v') hv
+          refine ⟨{ A with locals := ls }, by simp [hm, hs], h.1, ?_, h.2.2⟩
+          intro y u' hu
+          by_cases hy : y = x
+          · subst hy
+            rw [lookup_setVar_same hs] at hu
+            cases hu
+            exact ⟨a, ha, hv'⟩
+          · rw [lookup_setVar_other hy hs] at hu
+            exact h.2.1 y u' hu
+        · exact ⟨A, rfl, h⟩
     · exact ⟨A, rfl, h⟩
   · exact ⟨A, rfl, h⟩
 
@@ -928,15 +972,6 @@ theorem assumeEq_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Hold
       obtain ⟨A2, e2, h2⟩ := refine_sound h1 hb (lo := va.lo) (hi := va.hi) (by omega) (by omega)
       exact ⟨A2, by simp [e1, e2], h2⟩
   · exact ⟨A, rfl, h⟩
-theorem eval_add_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
-    (h : eval s (.op .add l r) = some w) :
-    ∃ a b, eval s l = some a ∧ eval s r = some b ∧ w = a + b := by
-  simp only [eval] at h
-  split at h
-  · rename_i a b ha hb
-    cases h
-    exact ⟨a, b, ha, hb, rfl⟩
-  · cases h
 
 theorem eval_and_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
     (h : eval s (.op .and_ l r) = some w) :
