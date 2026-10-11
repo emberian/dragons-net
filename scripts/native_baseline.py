@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -172,15 +173,19 @@ def documented(measured: dict[str, Any]) -> None:
 
 
 def build(cake: str, name: str, host: Path, binary: str | None = None) -> Path:
-    """Compile `name`.pnk and link it with `host`."""
-    assembly = lanes.assemble(cake, OUT / f"{name}.pnk", timeout=180)
+    """Compile `name`.pnk and link it with `host`. The recovery takes CakeML about a minute and a half
+    alone, more beside other builds: the limits are guards against a hang."""
+    assembly = lanes.assemble(cake, OUT / f"{name}.pnk", timeout=600)
     return lanes.link(OUT / (binary or f"{name}-check"), [host, NATIVE / "cake_runtime.c", assembly],
-                      includes=[OUT], timeout=60)
+                      includes=[OUT], timeout=300)
 
 
 def run(binary: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(binary), *args], input=stdin, text=True, capture_output=True, timeout=120,
-                          check=False)
+    try:
+        return subprocess.run([str(binary), *args], input=stdin, text=True, capture_output=True, timeout=600,
+                              check=False)
+    except subprocess.TimeoutExpired:
+        raise LaneError(f"{binary.name} ran for more than 600 s") from None
 
 
 def measured_by(binary: Path, *args: str, stdin: str | None = None) -> dict[str, Any]:
@@ -198,6 +203,16 @@ def refuses(cake: str, name: str, source: str, host: Path, status: int, message:
     done = run(build(cake, name, host), *args, stdin=stdin)
     if done.returncode != status or (message is not None and message not in done.stderr):
         raise LaneError(f"{host.name} did not refuse {name} (status {done.returncode}):\n{done.stderr}")
+
+
+def refused_all(cake: str, host: Path, planted: list[tuple[str, str, int, str | None]], *args: str,
+                stdin: str | None = None) -> None:
+    """Each kernel of `planted` (its name, its source, and the status and message it has to be
+    refused with) built and run on its own, several at once."""
+    with ThreadPoolExecutor(max_workers=abnf_check.WORKERS) as pool:
+        for done in [pool.submit(refuses, cake, name, source, host, status, message, *args, stdin=stdin)
+                     for name, source, status, message in planted]:
+            done.result()
 
 
 def differential(cake: str) -> dict[str, Any]:
@@ -315,9 +330,8 @@ def replies(cake: str) -> dict[str, Any]:
         # a keyword compared without the length guard reads past the input
         "reply-unguarded": (text.replace(guard, "if 0 <= inlen {", 1), -signal.SIGSEGV),
     }
-    for name, (source, status) in mutants.items():
-        refuses(cake, name, source, host, status, "reply mismatch" if status == 1 else None, str(max_len),
-                stdin=stdin)
+    refused_all(cake, host, [(name, source, status, "reply mismatch" if status == 1 else None)
+                             for name, (source, status) in mutants.items()], str(max_len), stdin=stdin)
     measured["reply_mutants_rejected"] = len(mutants)
     return measured
 
@@ -346,8 +360,7 @@ def echo(cake: str) -> dict[str, Any]:
         # the whole capacity copied, the length returned
         "echo-capacity": (text.replace(loop, "while i < cap {"), "copy/frame mismatch"),
     }
-    for name, (source, message) in mutants.items():
-        refuses(cake, name, source, host, 1, message)
+    refused_all(cake, host, [(name, source, 1, message) for name, (source, message) in mutants.items()])
     measured["missing_store_mutant_rejected"] = True
     measured["capacity_mutants_rejected"] = len(mutants) - 1
     return measured
@@ -371,10 +384,11 @@ def crc(cake: str) -> dict[str, Any]:
         # the table's words a half word apart
         "crc-stride": ("(i * 8)", "(i * 4)", 1),
     }
-    for name, (old, new, times) in mutants.items():
-        if text.count(old) != times:
-            raise LaneError(f"the CRC mutation {name} no longer finds the text it changes")
-        refuses(cake, name, text.replace(old, new), host, 1, "CRC-32C of", stdin=examples)
+    unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
+    if unfound:
+        raise LaneError(f"the CRC mutations {unfound} no longer find the text they change")
+    refused_all(cake, host, [(name, text.replace(old, new), 1, "CRC-32C of")
+                             for name, (old, new, _) in mutants.items()], stdin=examples)
     measured["crc_mutants_rejected"] = len(mutants)
     return measured
 
@@ -398,10 +412,11 @@ def sip(cake: str) -> dict[str, Any]:
         # another finalization constant
         "sip-final": ("^ 255", "^ 254", 1),
     }
-    for name, (old, new, times) in mutants.items():
-        if text.count(old) != times:
-            raise LaneError(f"the SipHash mutation {name} no longer finds the text it changes")
-        refuses(cake, name, text.replace(old, new), host, 1, "SipHash of", stdin=vectors)
+    unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
+    if unfound:
+        raise LaneError(f"the SipHash mutations {unfound} no longer find the text they change")
+    refused_all(cake, host, [(name, text.replace(old, new), 1, "SipHash of")
+                             for name, (old, new, _) in mutants.items()], stdin=vectors)
     measured["sip_mutants_rejected"] = len(mutants)
     return measured
 
@@ -454,11 +469,11 @@ def scan(cake: str) -> dict[str, Any]:
         # a frame read with its last octet not in the window
         "scan-need": ("jneed = jz + 1390;", "jneed = jz + 1389;", 1),
     }
-    for name, (old, new, times) in mutants.items():
-        if text.count(old) != times:
-            raise LaneError(f"the scanner mutation {name} no longer finds the text it changes")
-        said = "of 17 groups" if name == "scan-groups" else "scan of"
-        refuses(cake, name, text.replace(old, new), host, 1, said, stdin=lines)
+    unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
+    if unfound:
+        raise LaneError(f"the scanner mutations {unfound} no longer find the text they change")
+    refused_all(cake, host, [(name, text.replace(old, new), 1, "of 17 groups" if name == "scan-groups" else "scan of")
+                             for name, (old, new, _) in mutants.items()], stdin=lines)
     measured["scan_mutants_rejected"] = len(mutants)
     return measured
 
@@ -516,10 +531,11 @@ def recover(cake: str) -> dict[str, Any]:
         # the directory not synced after names are tidied
         "recover-tidy-unsynced": ("if (ri == 0) & (0 < (lds 1 (rsc + 528))) {", "if 0 {", 1),
     }
-    for name, (old, new, times) in mutants.items():
-        if text.count(old) != times:
-            raise LaneError(f"the recovery mutation {name} no longer finds the text it changes")
-        refuses(cake, name, text.replace(old, new), host, 1, "recovery found", stdin=stdin)
+    unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
+    if unfound:
+        raise LaneError(f"the recovery mutations {unfound} no longer find the text they change")
+    refused_all(cake, host, [(name, text.replace(old, new), 1, "recovery found")
+                             for name, (old, new, _) in mutants.items()], stdin=stdin)
     measured["recover_mutants_rejected"] = len(mutants)
     measured["recover_other_keys"] = sum(ln.startswith("recover ") for ln in lines) - len(first)
     return measured
