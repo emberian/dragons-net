@@ -143,7 +143,7 @@ def lexer_keywords(cake: str, out: Path, table: list[dict[str, Any]]) -> int:
     for word, is_keyword in [(w, True) for w in here] + [(w, False) for w in elsewhere]:
         source.write_text(f"export fun dn_word(1 a) {{ var {word} = a; return {word}; }}\n")
         with source.open("rb") as inp:
-            probe = subprocess.run([cake, "--pancake", "--main_return=true"], stdin=inp,
+            probe = subprocess.run([cake, "--pancake", "--reg_alg=0", "--main_return=true"], stdin=inp,
                                    capture_output=True, timeout=60, check=False)
         if is_keyword and probe.returncode == 0:
             raise LaneError(f"the compiler accepts {word} as a name; the table calls it a keyword")

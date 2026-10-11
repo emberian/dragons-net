@@ -82,10 +82,12 @@ def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = 
             main_return: bool = True, timeout: int = 300) -> bytes:
     """What the Pancake compiler prints for `source`. A warning (a redeclared variable, say) leaves
     the exit status at zero, so any diagnostic fails; with `warnings` off, for a source whose
-    warnings are beside what is asked of it, only the status does, and nothing is silenced."""
+    warnings are beside what is asked of it, only the status does, and nothing is silenced. The
+    simple register allocator: the compiler's theorem holds for every allocator, and its default,
+    IRC, takes minutes on a function the size of the session's `main` with recovery embedded."""
     options = ["--explore"] if explore else []
     with source.open("rb") as inp:
-        done = subprocess.run([cake, "--pancake", *options, f"--main_return={str(main_return).lower()}"],
+        done = subprocess.run([cake, "--pancake", "--reg_alg=0", *options, f"--main_return={str(main_return).lower()}"],
                               stdin=inp, capture_output=True, timeout=timeout, check=False)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
