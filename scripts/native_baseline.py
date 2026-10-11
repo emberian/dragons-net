@@ -20,15 +20,17 @@ import abnf_check
 import journal_check
 import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
+import store_check
 from words import MASK, signed, word_op
 
 OUT = ROOT / "build/baseline"
 FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
             ("crc.pnk", "emit-crc"), ("sip.pnk", "emit-sip"), ("scan.pnk", "emit-scan"),
-            ("dn_scan_layout.h", "emit-scan-layout"),
+            ("dn_scan_layout.h", "emit-scan-layout"), ("recover.pnk", "emit-recover"),
+            ("dn_recover_layout.h", "emit-recover-layout"),
             ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
 HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
-         NATIVE / "sip_check.c", NATIVE / "scan_check.c",
+         NATIVE / "sip_check.c", NATIVE / "scan_check.c", NATIVE / "recover_check.c",
          NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
 
@@ -157,6 +159,7 @@ def documented(measured: dict[str, Any]) -> None:
               "crc_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "sip_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "scan_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
+              "recover_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "reply_cases": ("README.md", "docs/assurance.md", "docs/baseline.md",
                               "docs/decisions/0001-embedding.md"),
               "reply_inputs": ("docs/baseline.md",)}
@@ -460,6 +463,68 @@ def scan(cake: str) -> dict[str, Any]:
     return measured
 
 
+def recover(cake: str) -> dict[str, Any]:
+    """Recovery against the model on the store lane's directories — the table and those drawn, each
+    with a key of sixteen octets, as the host gives — and on what the actions of those that recover
+    leave."""
+    host = NATIVE / "recover_check.c"
+    model = [str(lanes.DN_COMPILER), "recovery-model"]
+    # the store lane's fixed seed, so that both recover the same directories
+    rng = random.Random(store_check.SEED)  # noqa: S311
+    lines = [c.line for c in (*store_check.table(), *store_check.drawn(rng))]
+    first = [ln for ln in lines if ln.startswith("recover ") and len(ln.split(" ")[1]) == 32]
+    found = abnf_check.answer_lines(model, first, abnf_check.WORKERS)
+    done = [(ln.split(" "), said.split(" ")) for ln, said in zip(first, found, strict=True) if said.startswith("ok ")]
+    left = abnf_check.answer_lines(model, [f"apply {ln[3]} {said[6]}" for ln, said in done], abnf_check.WORKERS)
+    again = [f"recover {ln[1]} {ln[2]} {image}" for (ln, _), image in zip(done, left, strict=True)]
+    asked = first + again
+    answers = found + abnf_check.answer_lines(model, again, abnf_check.WORKERS)
+    stdin = "".join(f"{ln.split(' ', 1)[1]} {said}\n" for ln, said in zip(asked, answers, strict=True))
+    measured = measured_by(build(cake, "recover", host), stdin=stdin)
+    text = (OUT / "recover.pnk").read_text()
+    # Each with the text it changes and how many times that text occurs: twice for the torn tail's
+    # number, kept under it and set aside.
+    mutants = {
+        # one article more than the store holds
+        "recover-capacity": ("if 4097 <= rcm {", "if 4098 <= rcm {", 1),
+        # a sequence number in two commits let be
+        "recover-seq": ("while (rdup == 0) & (ri < rcm) {", "while 0 {", 1),
+        # an article number equal to the group's last let be
+        "recover-numbers": ("if rv <= (lds 1 (rsc + 5248 + (rc * 8))) {",
+                            "if rv < (lds 1 (rsc + 5248 + (rc * 8))) {", 1),
+        # a group the configuration lacks let be
+        "recover-groups": ("if (lds 1 (rsc + 400)) == 1 {", "if 0 {", 1),
+        # a missing file taken for one of no octets
+        "recover-missing": ("if (lds 1 (rsc + 320)) == 0 {", "if 0 {", 1),
+        # a file of another size let be
+        "recover-size": ("if ((lds 1 (rsc + 328)) == ((lds 1 (rsl + 8)) & 4294967295)) == 0 {", "if 0 {", 1),
+        # numbers taken to run out one later
+        "recover-exhausted": ("(rm == 18446744073709551615) +", "0 +", 1),
+        # a final file set aside also when a tail has its number
+        "recover-aside-at-tail": ("(rv ^ 9223372036854775808) < ((lds 1 (rsc + 376)) ^ 9223372036854775808)",
+                                  "(rv ^ 9223372036854775808) <= ((lds 1 (rsc + 376)) ^ 9223372036854775808)", 1),
+        # a final file renamed over one set aside before
+        "recover-over-quarantine": ("if lds 1 (rsc + 320) {", "if 0 {", 1),
+        # a format cut short made again among other files
+        "recover-remade-among-files": ("if (lds 1 (rsc + 344)) == 1 {", "if 0 < (lds 1 (rsc + 344)) {", 1),
+        # a temporary file kept
+        "recover-temp-kept": ("if rk == 3 {", "if 0 {", 1),
+        # a torn tail kept, and set aside, under the number after it
+        "recover-tail-number": ("st rsc + 544, lds 1 (rsc + 504);", "st rsc + 544, lds 1 (rsc + 512);", 2),
+        # the directory not synced after a new journal among no files
+        "recover-create-unsynced": ("if (ri == 1) & (lds 1 (rsc + 24)) {", "if 0 {", 1),
+        # the directory not synced after names are tidied
+        "recover-tidy-unsynced": ("if (ri == 0) & (0 < (lds 1 (rsc + 528))) {", "if 0 {", 1),
+    }
+    for name, (old, new, times) in mutants.items():
+        if text.count(old) != times:
+            raise LaneError(f"the recovery mutation {name} no longer finds the text it changes")
+        refuses(cake, name, text.replace(old, new), host, 1, "recovery found", stdin=stdin)
+    measured["recover_mutants_rejected"] = len(mutants)
+    measured["recover_other_keys"] = sum(ln.startswith("recover ") for ln in lines) - len(first)
+    return measured
+
+
 def gates(cake: str) -> int:
     """The two gates every lane compiles through, seen refusing: a warning fails the build, and an
     export outside the project namespace is refused."""
@@ -498,6 +563,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     measured.update(crc(cake))
     measured.update(sip(cake))
     measured.update(scan(cake))
+    measured.update(recover(cake))
     measured.update(replies(cake))
     measured.update(echo(cake))
     measured["gate_sensitivity_cases"] = gates(cake)
@@ -515,6 +581,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
         "crc_source_sha256": lanes.digest(OUT / "crc.pnk"),
         "sip_source_sha256": lanes.digest(OUT / "sip.pnk"),
         "scan_source_sha256": lanes.digest(OUT / "scan.pnk"),
+        "recover_source_sha256": lanes.digest(OUT / "recover.pnk"),
         "reply_source_sha256": lanes.digest(OUT / "reply.pnk"),
         "reply_cases_sha256": lanes.digest(OUT / "reply-cases.json"),
         "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),

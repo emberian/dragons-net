@@ -9,6 +9,7 @@ import DN.News.FramerProg
 import DN.News.CrcProg
 import DN.News.SipProg
 import DN.News.ScanProg
+import DN.News.RecoverProg
 
 /-!
 # DN.Printed
@@ -73,7 +74,8 @@ def named : List (String × Except String Program) :=
   [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
    ("reply", reply), ("skeleton", skeleton), ("session", session),
    ("crc", checked News.CrcProg.crcKernel), ("sip", checked News.SipProg.sipKernel),
-   ("scan", checked News.ScanProg.scanKernel)] ++ framers
+   ("scan", checked News.ScanProg.scanKernel),
+   ("recover", checked News.RecoverProg.recoverKernel)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/

@@ -26,13 +26,14 @@ open DN.Compiler
 
 private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-crc",
-   "emit-sip", "emit-scan", "emit-frame-line", "emit-frame-line-4", "emit-frame-block-64",
-   "emit-frame-block-4",
+   "emit-sip", "emit-scan", "emit-recover", "emit-frame-line", "emit-frame-line-4",
+   "emit-frame-block-64", "emit-frame-block-4",
    "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
    "journal-model [--mutant NAME]", "recovery-model [--mutant NAME]", "fs-model [--mutant NAME]",
    "store-model",
    "emit-layout", "emit-session", "emit-session-layout", "emit-scan-layout",
+   "emit-recover-layout",
    "analyze-session",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
@@ -90,6 +91,7 @@ def main (args : List String) : IO UInt32 := do
   | ["emit-layout"] => output (.ok DN.Server.Layout.header)
   | ["emit-session-layout"] => output (.ok DN.Server.SessionLayout.header)
   | ["emit-scan-layout"] => output (.ok DN.News.ScanProg.header)
+  | ["emit-recover-layout"] => output (.ok DN.News.RecoverProg.header)
   | ["analyze-session"] =>
     output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
   | ["frame-model"] =>
