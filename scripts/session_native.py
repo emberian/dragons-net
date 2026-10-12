@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import random
@@ -29,7 +30,8 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lanes  # the path above is what makes these importable
+import abnf_check  # the path above is what makes these importable
+import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
 import session_check as sessions
 from session_check import GREETING, IDENTITY, LONGEST, SHORTEST, SOURCE, Identity, Speaker
@@ -384,7 +386,6 @@ def check(cake: str) -> Report:
     scenarios_hold(binary, scenarios, expected)
     scripts_hold(binary, answers)
     random_hosts = wander(binary, RUNS)
-    caught = {}
     words = layout()
     places = {"{past}": str(words["SIZE"]), "{stop}": str(words["OWN_OFF"] + words["OWN_STOP"]),
               "{listen}": str(words["EMIT_OFF"] + words["EMIT_LISTEN"])}
@@ -394,7 +395,8 @@ def check(cake: str) -> Report:
             text = text.replace(place, offset)
         return text
 
-    for index, (name, pattern, becomes, times, sign) in enumerate(DEFECTS):
+    def judged(index: int, name: str, pattern: str, becomes: str, times: int, sign: str) -> tuple[str, str]:
+        """The program with the defect built and run as the program is; how it was caught."""
         planted = lanes.whole_program(cake, f"defect-{index}", plant(source, placed(pattern), placed(becomes), times),
                                       OUT, HOST)
         try:
@@ -404,9 +406,12 @@ def check(cake: str) -> Report:
         except LaneError as error:
             if sign not in str(error):
                 raise LaneError(f"the program with {name} was caught, but not as {sign!r}: {error}") from None
-            caught[name] = str(error)[:400]
-            continue
+            return name, str(error)[:400]
         raise LaneError(f"the program with {name} answered every host as the model")
+
+    # Several at once: each is built and run apart from the others, judged by no clock.
+    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+        caught = dict(pool.map(lambda d: judged(d[0], *d[1]), enumerate(DEFECTS)))
     lanes.require_quoted({"docs/baseline.md": [f"on the model's {len(scenarios)} scenarios and {turns:,} turns",
                                                f"{RUNS} hosts drawn at random"]})
     return Report("checked", cake, HOSTS, {
