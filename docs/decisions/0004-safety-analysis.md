@@ -37,16 +37,24 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
 
 ## Consequences
 
-- `DN.Server.SessionSafe` and `DN.Server.SkeletonSafe` each prove by one run of the analysis that
-  no run of their program fails (`never_fails`, `printed_never_fails`). The premise, `Covers`, asks
+- `DN.Server.SkeletonSafe` proves by one run of the analysis that no run of its program fails
+  (`never_fails`, `printed_never_fails`); `DN.Server.SessionSafe` and `DN.News.RecoverSafe` prove it
+  by the claims of a certificate (below). The premise, `Covers`, asks
   for the heap's words from byte 64 up to the layout's size. It holds of the memory
   CakeML's theorem gives a program (`addresses base (heap_len - globals_size)`) when `@base` is on
   a word boundary and the heap has at least the layout's words: `covers_heap` proves it of such a
   set of words, and `covers_mono` of any memory that holds them.
-- The kernel's run of the analysis on the session's program takes about 40 s and 7.4 GB in the
-  build; `leanchecker` re-checks the whole library in about 45 s with 8.7 GB, nanoda in about a
-  minute with 4.9 GB. The build and `leanchecker` print their time and largest process on every
-  run (`scripts/measured.py`), so that the cost shows as the program grows.
+- Within one declaration the kernel keeps every step of its reduction, so its memory grows with
+  the locals in scope times the statements analyzed: one run on recovery's step took 18 GB, above
+  the CI runner's 16. `DN.Compiler.AnalyzerCert` cuts the analysis into pieces along the program's
+  structure, a certificate giving the state each piece ends in and the invariant of each loop it
+  cuts through; `analyzeC` checks the cuts as `analyze` checks its own, and each piece's claim is
+  a declaration of its own (`dn-compiler analysis-cert` prints the module, a test keeps it current;
+  the result-checking of Besson, Jensen and Pichardie, ref. 3). `DN.Compiler.AnalyzerCertSound`
+  proves once that the claims holding make the program as safe as `analyze_safe` does. The session
+  is checked in 8 claims (about 35 s and 2.8 GB), recovery's step in 15 (about 60 s and 4.3 GB).
+  The build and `leanchecker` print their time and largest process on every run
+  (`scripts/measured.py`), so that the cost shows as the program grows.
 - What is not proven stays as 0003 lists it: the transcription of the semantics, the parser, the
   stack bound, and anything about the program's behaviour beyond not failing.
 
@@ -55,3 +63,5 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
 1. Jourdan, Laporte, Blazy, Leroy, Pichardie. A Formally-Verified C Static Analyzer. POPL 2015.
 2. CakeML `ed31510`, `pancake/proofs/pan_to_targetProofScript.sml`: the memory the compiler's
    theorem gives a program.
+3. Besson, Jensen, Pichardie. Proof-carrying code from certified abstract interpretation and
+   fixpoint compression. Theoretical Computer Science 364(3), 2006.

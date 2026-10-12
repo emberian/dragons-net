@@ -109,7 +109,8 @@ def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool 
 /-- The modules `dn-compiler` is built from. Pinned so that the executable compiler cannot
 start depending on another module without that being reviewed. -/
 def compilerModules : Array Name :=
-  #[`DN.Compiler.Abi, `DN.Compiler.Analyzer, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy,
+  #[`DN.Compiler.Abi, `DN.Compiler.Analyzer, `DN.Compiler.AnalyzerCert,
+    `DN.Compiler.AnalyzerCertGen, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy,
     `DN.Compiler.Bytes, `DN.Compiler.Canon, `DN.Compiler.Checked, `DN.Compiler.Clock,
     `DN.Compiler.Decimal, `DN.Compiler.Div10, `DN.Compiler.Gen, `DN.Compiler.GenCorpus,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,

@@ -15,6 +15,7 @@ import DN.News.RecoveryModel
 import DN.News.FsCases
 import DN.News.StoreCases
 import DN.Compiler.Analyzer
+import DN.Compiler.AnalyzerCertGen
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
 with its host, runs the framing, grammar, article, journal, recovery, file system, store and session
@@ -34,7 +35,7 @@ private def commands : List String :=
    "store-model",
    "emit-layout", "emit-session", "emit-session-layout", "emit-scan-layout",
    "emit-recover-layout",
-   "analyze-session", "analyze-recover",
+   "analyze-session", "analyze-recover", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -78,6 +79,24 @@ private def analyzed (size : Nat) : Option PancakeProg → Except String String
   | none => .error "the program does not lower"
   | some p => (Analyzer.check size p).map fun _ => "safe\n"
 
+/-- How much of the analysis one declaration of a certificate's claims may cost
+(`Analyzer.Gen.cost`). -/
+private def certBudget : Nat := 60000
+
+private def sessionCert : Analyzer.Gen.Target :=
+  { module := "DN.Server.SessionCert", imports := ["DN.Server.Session"],
+    program := "DN.Server.Session.main", size := "DN.Server.SessionLayout.size",
+    doc := "The safety analysis of the session's `main` (decision 0004) in pieces: the claims " ++
+      "of a\n" ++
+      "certificate of `DN.Compiler.AnalyzerCert`, one declaration each." }
+
+private def recoverCert : Analyzer.Gen.Target :=
+  { module := "DN.News.RecoverCert", imports := ["DN.News.RecoverProg"],
+    program := "DN.News.RecoverProg.analysisMain",
+    size := "DN.News.RecoverProg.analysisAt + DN.News.RecoverProg.size",
+    doc := "The safety analysis of recovery's step in a loop (`RecoverProg.analysisMain`) in\n" ++
+      "pieces: the claims of a certificate of `DN.Compiler.AnalyzerCert`, one declaration each." }
+
 private def output (result : Except String String) : IO UInt32 :=
   match result with
   | .ok text => IO.print text *> pure 0
@@ -95,6 +114,20 @@ def main (args : List String) : IO UInt32 := do
   | ["analyze-recover"] =>
     output (analyzed (DN.News.RecoverProg.analysisAt + DN.News.RecoverProg.size)
       (Lower.lower DN.News.RecoverProg.analysisMain))
+  | "analysis-cert" :: what :: rest =>
+    let budget := (rest.head?.bind String.toNat?).getD certBudget
+    let target : Option (Analyzer.Gen.Target × Nat × Option PancakeProg) := match what with
+      | "session" => some (sessionCert, DN.Server.SessionLayout.size,
+          Lower.lower DN.Server.Session.main)
+      | "recover" => some (recoverCert, DN.News.RecoverProg.analysisAt + DN.News.RecoverProg.size,
+          Lower.lower DN.News.RecoverProg.analysisMain)
+      | _ => none
+    match target with
+    | some (t, size, some p) =>
+      output ((Analyzer.Gen.certifyMain size budget p).map fun (k, n) =>
+        Analyzer.Gen.render t k n)
+    | some (_, _, none) => output (.error "the program does not lower")
+    | none => output (.error s!"no certificate for {what}")
   | ["analyze-session"] =>
     output (analyzed DN.Server.SessionLayout.size (Lower.lower DN.Server.Session.main))
   | ["frame-model"] =>

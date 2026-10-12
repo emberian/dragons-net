@@ -62,6 +62,16 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_certificates_of_the_analysis_are_current(self) -> None:
+        """The modules whose claims the kernel checks a declaration each are what the generator
+        prints for the programs as they are."""
+        for what, module in (("session", "lean/DN/Server/SessionCert.lean"),
+                             ("recover", "lean/DN/News/RecoverCert.lean")):
+            done = subprocess.run([str(DN_COMPILER), "analysis-cert", what], text=True, capture_output=True,
+                                  check=False, timeout=600)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout, (ROOT / module).read_text(), f"{module} is stale: regenerate it")
+
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,

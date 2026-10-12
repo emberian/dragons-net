@@ -78,15 +78,18 @@ def isKind (k : News.FrameSpec.Kind) : PExpr := eEq (v "kind") (n (News.FramerPr
 
 /-! ## The texts of the replies -/
 
-/-- The word of the texts that starts at byte `8 * w` of them, its first byte lowest, as the
-machines the host runs on lay out a word; past the last text, zeros. -/
-def textWord (w : Nat) : Nat :=
-  (List.range 8).foldr (fun j acc => acc * 256 + (texts.flatten.getD (8 * w + j) 0).toNat) 0
+/-- Bytes as words, eight a word, its first byte lowest, as the machines the host runs on lay out
+a word; the last word filled with zeros. `j` bytes of the word `acc` are taken. -/
+def textWords : List (BitVec 8) → Nat → Nat → List Nat
+  | [], 0, _ => []
+  | [], _, acc => [acc]
+  | b :: rest, j, acc =>
+    if j = 7 then (acc + b.toNat * 256 ^ 7) :: textWords rest 0 0
+    else textWords rest (j + 1) (acc + b.toNat * 256 ^ j)
 
 /-- The texts, a word at a time, into the program's own area. -/
 def textsInit : List PStmt :=
-  (List.range ((texts.flatten.length + 7) / 8)).map fun w =>
-    .store (at_ (ownOff + ownTexts + 8 * w)) (n (textWord w))
+  (textWords texts.flatten 0 0).mapIdx fun w x => .store (at_ (ownOff + ownTexts + 8 * w)) (n x)
 
 def textAddr (k : Nat) : PExpr := at_ (ownOff + ownTexts + textAt k)
 def textLen (k : Nat) : Nat := (texts.getD k []).length
