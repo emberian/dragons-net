@@ -79,9 +79,11 @@ knows nothing of articles.
   after those it depends on completed.
 - The operations: create a file under a new name, failing if it exists; open a file; write bytes at
   an offset, all of them; read at an offset; report a size; `fdatasync`, `fsync`; rename; remove;
-  truncate; sync the directory; open the directory and list its names a page at a time; close. A
-  name is a kind and a number, made by the host into the name `DN.News.Journal` gives, relative to
-  the directory opened at start (`openat`, `renameat`, `unlinkat`).
+  truncate; sync the directory; open the directory, its names read then, and list them a page at a
+  time from any of them — recovery's actions leave its second pass over the same names, where a
+  reading of the directory leaves a name added or removed meanwhile unspecified (POSIX `readdir`);
+  close. A name is a kind and a number, made by the host into the name `DN.News.Journal` gives,
+  relative to the directory opened at start (`openat`, `renameat`, `unlinkat`).
 - A created or opened file stays open across jobs, in the host's table of sixteen places (four
   POSTs, the journal, eight reads, spare), named by place and generation; the program closes it, the
   host only what is left at the end. A file is synced through the descriptor it was written through:

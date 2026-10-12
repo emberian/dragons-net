@@ -14,9 +14,10 @@ program (native/host_driver.c) that prints what the host hands it:
   directory, refuse the start with status 4; a mark of another boot is removed;
 - options that cannot be refuse the start with status 2;
 - file jobs (native/jobs.c): a file created, written, sized, synced, renamed, read past its end and
-  closed; truncated; the directory listed a page at a time; eight jobs at once; each error's class,
-  a job stopping at its first failure; each way a job breaks the contract ends the host with
-  status 1;
+  closed; truncated; the directory's names listed, as it was opened, a page at a time from any of
+  them; eight jobs at once; each error's class at each point of failure, a failed opening giving its
+  place back, a job stopping at its first failure; each way a job breaks the contract ends the host
+  with status 1;
 - each defect planted in nntp_host.c, store.c and jobs.c is caught.
 """
 from __future__ import annotations
@@ -534,26 +535,40 @@ def errors(binary: Path) -> dict[str, list[int]]:
 
 
 def listing(binary: Path) -> dict[str, int]:
-    """The directory listed a page at a time, each name once, none longer than a page refused as another
-    error."""
+    """The directory's names as it was opened, though a name is added, one removed and one renamed after,
+    listed a page at a time, each once, and from the twentieth again in the same order; none longer than a
+    page refused as another error."""
     w = layout()
+
+    def page_at(h: Jobs, gen: int, p: int, g: int, start: int) -> list[str]:
+        h.hand(0, gen, [Op("list", p, g, offset=start, length=60)])
+        count, used = ok(h.wait(0), 1, "a page")[:2]
+        page, found = h.peek(0, 0, used), list[str]()
+        while page:
+            found.append(page[1:1 + page[0]].decode())
+            page = page[1 + page[0]:]
+        if len(found) != count:
+            raise LaneError(f"a page of {count} names holds {len(found)}")
+        return found
+
     with tempfile.TemporaryDirectory() as temp:
         store = Store(temp)
-        made = {file_name("temp", k) for k in range(40)}
+        made = sorted(file_name("temp", k) for k in range(40))
         for name in made:
             (store.spool / name).write_bytes(b"")
         with Jobs(binary, store.options()) as h:
             p, g = opened(h, 0, 1, "journal", 0, "open-dir")
-            names, pages = [], 0
+            (store.spool / file_name("temp", 99)).write_bytes(b"")
+            (store.spool / made[0]).unlink()
+            (store.spool / made[1]).rename(store.spool / file_name("quarantine", 1))
+            names: list[str] = []
+            pages = 0
             for gen in range(2, 100):
-                h.hand(0, gen, [Op("list", p, g, length=60)])
-                count, used = ok(h.wait(0), 1, "a page")[:2]
-                if not count:
+                found = page_at(h, gen, p, g, len(names))
+                if not found:
                     break
-                page, pages = h.peek(0, 0, used), pages + 1
-                while page:
-                    names.append(page[1:1 + page[0]].decode())
-                    page = page[1 + page[0]:]
+                names, pages = names + found, pages + 1
+            again = page_at(h, 100, p, g, 20)
             h.hand(1, 1, [Op("open-dir")])
             q, r = ok(h.wait(1), 1, "a second listing")[:2]
             h.hand(1, 2, [Op("list", q, r, length=5)])
@@ -561,9 +576,10 @@ def listing(binary: Path) -> dict[str, int]:
             h.hand(0, 200, [Op("close", p, g)])
             ok(h.wait(0), 1, "closing a listing")
             h.stop()
-    if sorted(names) != sorted(made) or pages < 14 or small[1:3] != [0, w["CLASS_OTHER"]]:
-        raise LaneError(f"listed {len(names)} names of {len(made)} in {pages} pages; a page too small for a name: "
-                        f"{small[1:3]}")
+    if sorted(names) != made or pages < 14 or not again or again != names[20:20 + len(again)] or \
+            small[1:3] != [0, w["CLASS_OTHER"]]:
+        raise LaneError(f"listed {len(names)} names of {len(made)} in {pages} pages, from the twentieth {again}; a "
+                        f"page too small for a name: {small[1:3]}")
     return {"names": len(names), "pages": pages}
 
 
@@ -625,6 +641,11 @@ def two_dir_syncs(h: Jobs) -> None:
     h.hands([(0, 1, [Op("sync-dir")], {}), (1, 1, [Op("sync-dir")], {})])
 
 
+def past_names(h: Jobs) -> None:
+    p, g = opened(h, 0, 1, "journal", 0, "open-dir")
+    h.hand(0, 2, [Op("list", p, g, offset=1, length=60)])
+
+
 def seventeen(h: Jobs) -> None:
     for slot in range(2):
         h.hand(slot, 1, [Op("create", name="temp", number=8 * slot + k) for k in range(8)])
@@ -649,6 +670,7 @@ BREACHES: dict[str, tuple[Callable[[Jobs], None], str]] = {
     "a file another job names": (named_twice, "which a job in flight names"),
     "two syncs of the directory": (two_dir_syncs, "while another does"),
     "a list of a file": (lambda h: h.hand(0, 1, [Op("list", *fresh(h), length=60)]), "of the other kind"),
+    "a listing from past its names": (past_names, "lists from name 1 of 0"),
     "a removal of the journal": (lambda h: h.hand(0, 1, [Op("remove", name="journal")]), "the journal"),
     "a rename onto the journal": (lambda h: h.hand(0, 1, [Op("rename", name="temp", number=1, to="journal")]),
                                   "the journal"),
@@ -689,14 +711,17 @@ def marks(store: Store) -> list[str]:
             and (getattr(store, w) / MARK).read_text().strip() == boot_id()]
 
 
-def failing(b: Builds, points: list[str], ops: Callable[[tuple[int, int]], list[Op]]) -> dict[str, object]:
-    """A file created, then a job of `ops` on it with `points` enabled from the start: its completion, what the
-    file holds, the marks left, and whether the host then refuses to start."""
+def failing(b: Builds, points: list[str], ops: Callable[[tuple[int, int]], list[Op]],
+            make: str = "create") -> dict[str, object]:
+    """A file created, or opened when `make` says so, then a job of `ops` on it with `points` enabled from the
+    start: its completion, what the file holds, the marks left, and whether the host then refuses to start."""
     data = b"hello world"
     with tempfile.TemporaryDirectory() as temp:
         store = Store(temp)
+        if make == "open":
+            (store.spool / file_name("temp", 1)).write_bytes(b"")
         with Jobs(b.fiu, store.options(), points) as h:
-            pg = opened(h, 0, 1, "temp", 1)
+            pg = opened(h, 0, 1, "temp", 1, make)
             h.hand(0, 2, ops(pg), {0: data})
             done = h.wait(0)
             h.stop()
@@ -706,6 +731,23 @@ def failing(b: Builds, points: list[str], ops: Callable[[tuple[int, int]], list[
         if left:
             refused(b.plain, store.options(), 4, "a sync failed since the machine started")
     return {"done": done[1:3], "holds": holds, "marks": left, "refused after": bool(left)}
+
+
+def listing_failing(b: Builds, point: str) -> dict[str, object]:
+    """The directory opened and listed with `point` enabled: the completion of the job that fails, the marks
+    left, and the place a file opened next takes, which a failed opening gives back."""
+    with tempfile.TemporaryDirectory() as temp:
+        store = Store(temp)
+        (store.spool / file_name("temp", 1)).write_bytes(b"")
+        with Jobs(b.fiu, store.options(), [enabled(point, errno.EIO)]) as h:
+            h.hand(0, 1, [Op("open-dir")])
+            done = h.wait(0)
+            if done[1:3] == [1, 0]:
+                h.hand(0, 2, [Op("list", done[3], done[4], length=60)])
+                done = h.wait(0)
+            place = opened(h, 1, 1, "temp", 1, "open")[0]
+            h.stop()
+        return {"done": done[1:3], "marks": marks(store), "next place": place}
 
 
 def enabled(name: str, error: int, once: bool = False) -> str:
@@ -722,6 +764,9 @@ def faults(b: Builds) -> dict[str, object]:
         return Op("write", *pg, length=11)
 
     cases: dict[str, tuple[list[str], Callable[[tuple[int, int]], list[Op]], dict[str, object]]] = {
+        # the file the job runs on opened, not created
+        "a creation failing": ([enabled("dn/create", errno.EIO)], lambda _pg: [Op("create", name="temp", number=2)],
+                               {"done": [0, io], "marks": []}),
         "a data sync failing": ([enabled("dn/data-sync", errno.EIO)], lambda pg: [write(pg), Op("data-sync", *pg)],
                                 {"done": [1, io], "marks": ["spool", "run"]}),
         "a sync failing": ([enabled("dn/sync", errno.EIO)], lambda pg: [write(pg), Op("sync", *pg)],
@@ -743,13 +788,30 @@ def faults(b: Builds) -> dict[str, object]:
                           {"done": [0, other], "marks": []}),
         "one mark left": ([enabled("dn/mark-spool", errno.EIO), enabled("dn/data-sync", errno.EIO)],
                           lambda pg: [write(pg), Op("data-sync", *pg)], {"done": [1, io], "marks": ["run"]}),
+        "an opening failing": ([enabled("dn/open", errno.EIO)], lambda _pg: [Op("open", name="temp", number=1)],
+                               {"done": [0, io], "marks": []}),
+        "a read failing": ([enabled("dn/read", errno.EIO)], lambda pg: [Op("read", *pg, length=11)],
+                           {"done": [0, io], "marks": []}),
+        "a size failing": ([enabled("dn/size", errno.EIO)], lambda pg: [Op("size", *pg)],
+                           {"done": [0, io], "marks": []}),
+        "a truncation failing": ([enabled("dn/truncate", errno.EIO)], lambda pg: [write(pg), Op("truncate", *pg)],
+                                 {"done": [1, io], "holds": b"hello world", "marks": []}),
+        "a removal failing": ([enabled("dn/remove", errno.EIO)], lambda _pg: [Op("remove", name="temp", number=1)],
+                              {"done": [0, io], "holds": b"", "marks": []}),
     }
     seen: dict[str, object] = {}
     for what, (points, ops, wanted) in cases.items():
-        got = failing(b, points, ops)
+        got = failing(b, points, ops, "open" if what == "a creation failing" else "create")
         if any(got[k] != v for k, v in wanted.items()):
             raise LaneError(f"{what}: {got}, not {wanted}")
         seen[what] = {k: v.hex() if isinstance(v, bytes) else v for k, v in got.items() if k in wanted}
+    for what, point, place in (("the directory's opening failing", "dn/open-dir", 0),
+                               ("the directory's reading failing", "dn/read-dir", 0),
+                               ("a listing failing", "dn/list", 1)):
+        got = listing_failing(b, point)
+        if got != {"done": [0, io], "marks": [], "next place": place}:
+            raise LaneError(f"{what}: {got}, not done [0, {io}], no mark, next place {place}")
+        seen[what] = got
     with tempfile.TemporaryDirectory() as temp, \
             Jobs(b.fiu, Store(temp).options(), [enabled("dn/mark-spool", errno.EIO), enabled("dn/mark-run", errno.EIO),
                                                 enabled("dn/sync-dir", errno.EIO)]) as h:
@@ -862,7 +924,19 @@ DEFECTS = [
      "if (!f->open || closed[op->place])"),
     (JOBS, "a file in flight named again", "if (f->busy && f->busy != k + 1)", "if (0 && f->busy != k + 1)"),
     (JOBS, "two syncs of the directory let through", "if (j->dir_sync && dir_syncs)", "if (0 && dir_syncs)"),
-    (JOBS, "a name lost between pages", "            seekdir(dir, at);\n", "            (void)at;\n"),
+    (JOBS, "a listing from its first name whatever the index", "for (uint64_t k = 0; k < from; ++k)",
+     "for (uint64_t k = 0; k < 0 * from; ++k)"),
+    (JOBS, "a failed reading of the directory taken as done", "    int error = errno;\n    closedir(dir);",
+     "    int error = 0;\n    closedir(dir);"),
+    (JOBS, "a failed opening's place kept", "            if (j->place[i] >= 0) files[j->place[i]].reserved = 0;",
+     "            if (0 && j->place[i] >= 0) files[j->place[i]].reserved = 0;"),
+    (JOBS, "a listing past its names let through", "op->code == DN_SESSION_OP_LIST && op->offset > f->count",
+     "op->code == DN_SESSION_OP_LIST && 0 * op->offset > f->count"),
+    (JOBS, "names read at each page", "    for (uint64_t k = 0; k < from; ++k)",
+     ("    if (!from) {\n        free(f->names);\n        ((struct file *)f)->names = NULL;\n"
+      "        ((struct file *)f)->size = 0;\n        ((struct file *)f)->count = 0;\n"
+      "        read_names(openat(spool, \".\", O_RDONLY | O_DIRECTORY), (struct file *)f);\n    }\n"
+      "    for (uint64_t k = 0; k < from; ++k)")),
     (JOBS, "a job going on after a failure",
      "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n                break;\n",
      "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n"),

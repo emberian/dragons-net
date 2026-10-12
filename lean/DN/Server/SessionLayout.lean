@@ -133,7 +133,8 @@ def jobGen : Nat := 8
 def jobCount : Nat := 16
 def jobOpsAt : Nat := 24
 /-- An operation: its code, a file's place and generation, a name's kind and number, a second
-name's, an offset, a length, and where its bytes lie in the job's data. -/
+name's, an offset (for a listing, the index of its first name), a length, and where its bytes lie
+in the job's data. -/
 def opCode : Nat := 0
 def opHandle : Nat := 8
 def opHandleGen : Nat := 16
