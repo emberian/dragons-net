@@ -27,6 +27,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 from typing import IO, NamedTuple
@@ -38,6 +39,7 @@ from lanes import NATIVE, ROOT, LaneError, Report
 import session_check as sessions
 import session_native
 import session_ref as ref
+import store_ref
 
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
@@ -1090,6 +1092,41 @@ def crowd(b: Build) -> str:
     return f"{ref.CONNS} served {server.batch} a batch, the next once one closed"
 
 
+def store_start(b: Build) -> str:
+    """Recovery at start on a spool: an empty one gets a journal of its format and a start record, a
+    start after it appends another, the server listening and greeting each time; and a spool holding
+    a name no store gives ends the start with status 4, the reason named."""
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        for _ in range(2):
+            with serving(b, False, *options, traced=False) as server:
+                read_expected(server.client(), GREETING, "the greeting after recovery")
+        data = (spool / "journal").read_bytes()
+        at = store_ref.HEADER + len(store_ref.MAGIC)
+        key = data[at:at + store_ref.KEY]
+        first = store_ref.FIRST_FRAME
+        start = store_ref.HEADER + 1
+        want = (store_ref.frame(key, 0, store_ref.FORMAT, store_ref.MAGIC + key)
+                + store_ref.frame(key, first, store_ref.START, b"")
+                + store_ref.frame(key, first + start, store_ref.START, b""))
+        left = sorted(f.name for f in spool.iterdir())
+        if data != want or left != ["journal"]:
+            raise LaneError(f"two starts on an empty spool left {left}, a journal of "
+                            f"{data.hex()}, not {want.hex()}")
+        (spool / "junk").write_bytes(b"")
+        done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
+                               SOURCE.decode(), *options], capture_output=True, text=True,
+                              timeout=b.timeout, check=False)
+    said = "the store is refused: corrupt bad-name 6a756e6b"
+    if done.returncode != 4 or said not in done.stderr:
+        raise LaneError(f"a spool with a name no store gives: status {done.returncode}, {done.stderr[-300:]!r}")
+    return f"a journal of {len(want)} octets; refused: {said}"
+
+
 CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
@@ -1110,6 +1147,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "actions for another generation": stale_generation,
     "over IPv6": over_ipv6,
     "sixty-five clients": crowd,
+    "a store recovered at start": store_start,
 }
 
 
@@ -1233,6 +1271,11 @@ DEFECTS = [
         ("                accept_ready = 0;\n                accept_paused_until = now + ACCEPT_PAUSE_MS;\n"
          "                return;"), "                (void)now;\n                return;", 1)],
         "out of descriptors", "a turn with nothing to do"),
+    Defect("a store refused at start taken for a broken contract",
+           [("    if (stop == DN_SESSION_STORE_REFUSED || stop == DN_SESSION_RECOVERY_FAILED)\n", "    if (0)\n", 1)],
+           "a store recovered at start", "status 3"),
+    Defect("the start record written as a commit", [(r"(st8 @base \+ \d+ \+ 12), 3;", r"\1, 2;", 1)],
+           "a store recovered at start", "a journal of", program=True),
     Defect("the first command's deadline a millisecond early", [(r"now \+ 10000;", "now + 9999;", 1)],
            "first command", "asked to be woken at 10000", program=True),
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],

@@ -84,12 +84,10 @@ static const struct entry *named(char letter, uint64_t seq) {
     return lookup(name, 17);
 }
 
-/* What the area points to, `n` octets from `at`, has to lie in it. */
+/* The `n` octets at offset `at` of the area, which have to lie in it. */
 static const unsigned char *in_area(const unsigned char *a, uint64_t at, uint64_t n) {
-    uint64_t from = (uintptr_t)a;
-    if (at < from || n > DN_RECOVER_AREA || at - from > DN_RECOVER_AREA - n)
-        dn_violation("recovery points outside its area");
-    return (const unsigned char *)(uintptr_t)at;
+    if (n > DN_RECOVER_AREA || at > DN_RECOVER_AREA - n) dn_violation("recovery points outside its area");
+    return a + at;
 }
 
 static const char *const why[] = {"", "short", "too-long", "unterminated", "tag", "not-a-record", "format-again"};

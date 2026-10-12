@@ -65,13 +65,14 @@ def rNext0 : Nat := rFresh + 8
 def rNext : Nat := rNext0 + 8
 def rJournalEnd : Nat := rNext + 8
 def rTidied : Nat := rJournalEnd + 8
-/-- An action: its kind, a number, a second, and octets. -/
+/-- An action: its kind, a number, a second, and octets, where they lie in the area and how many. -/
 def rAct : Nat := rTidied + 8
 def rActA : Nat := rAct + 8
 def rActB : Nat := rActA + 8
 def rActAt : Nat := rActB + 8
 def rActLen : Nat := rActAt + 8
-/-- Why the store does not start: the fault, a number, a second, and octets. -/
+/-- Why the store does not start: the fault, a number, a second, and octets, where they lie in the
+area and how many. -/
 def rFault : Nat := rActLen + 8
 def rFaultA : Nat := rFault + 8
 def rFaultB : Nat := rFaultA + 8
@@ -299,7 +300,7 @@ def rules : List PStmt :=
          .ite (v "rdup") [] [inc "ri"]],
       .ite (v "rdup") (refuse (.seqTwice 0) [rset rFaultA (v "rv")])
         [.ite (eEq (rw rUnknown) (n 1))
-          (refuse (.unknownGroup []) [rset rFaultAt (atOff rp rUnknownName),
+          (refuse (.unknownGroup []) [rset rFaultAt (n rUnknownName),
             rset rFaultLen (rw rUnknownLen)])
           [.assign "rc" (lit 0),
            .while (eLt (v "rc") (n groupsMax))
@@ -327,7 +328,7 @@ def rules : List PStmt :=
                  inc "ri"]],
            .ite (v "rbad")
              (refuse (.numberNotAbove [] 0) [rset rFaultA (v "rv"),
-               rset rFaultAt (eAdd (atOff rp (rGroups + 8)) (eMul (v "rc") (n rGroupSlot))),
+               rset rFaultAt (eAdd (n (rGroups + 8)) (eMul (v "rc") (n rGroupSlot))),
                rset rFaultLen (.loadw 1 (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))))])
              [rset rI (n 0), rset rWait (n 0), next 5]]]])]
 
@@ -363,8 +364,7 @@ def tail : List PStmt :=
      [rset rI (eAdd (v "ri") (n 1)),
       .ite (eEq (v "ri") (n 0))
         (act actKeep [rset rActA (rw rNext0), rset rActB (rw rCut),
-          rset rActAt (eAdd (atOff (v "jsc") ScanProg.sWindow)
-            (eSub (rw rCut) (sw ScanProg.sBase))),
+          rset rActAt (eAdd (n (rScan + ScanProg.sWindow)) (eSub (rw rCut) (sw ScanProg.sBase))),
           rset rActLen (eSub (sw ScanProg.sSize) (rw rCut))])
         [.ite (eEq (v "ri") (n 1)) (act actSyncDir []) (act actCut [rset rActA (rw rCut)])]]]
 

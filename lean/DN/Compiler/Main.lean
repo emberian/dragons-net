@@ -81,7 +81,7 @@ private def analyzed (size : Nat) : Option PancakeProg → Except String String
 
 /-- How much of the analysis one declaration of a certificate's claims may cost
 (`Analyzer.Gen.cost`). -/
-private def certBudget : Nat := 60000
+private def certBudget : Nat := 150000
 
 private def sessionCert : Analyzer.Gen.Target :=
   { module := "DN.Server.SessionCert", imports := ["DN.Server.Session"],

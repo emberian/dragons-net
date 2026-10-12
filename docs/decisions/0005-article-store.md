@@ -237,7 +237,9 @@ knows nothing of articles.
   its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
   sending, it closes the connection without the final dot.
 - Recovery runs before the first connection: the first batch comes at once, and the host listens
-  only from the `dn_emit` whose word says the store is ready.
+  only from the `dn_emit` whose word says the store is ready. The program drives it in `main` by
+  file jobs, one in flight; refused, or a job failed, it stops the run, and the host ends with
+  status 4 and the reason recovery left in its area.
 
 ### How an article's bytes flow
 

@@ -51,8 +51,9 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
   cuts through; `analyzeC` checks the cuts as `analyze` checks its own, and each piece's claim is
   a declaration of its own (`dn-compiler analysis-cert` prints the module, a test keeps it current;
   the result-checking of Besson, Jensen and Pichardie, ref. 3). `DN.Compiler.AnalyzerCertSound`
-  proves once that the claims holding make the program as safe as `analyze_safe` does. The session
-  is checked in 8 claims (about 35 s and 2.8 GB), recovery's step in 15 (about 60 s and 4.3 GB).
+  proves once that the claims holding make the program as safe as `analyze_safe` does. The session,
+  recovery at start in it, is checked in 17 claims (about 205 s and 6.1 GB), recovery's step alone
+  in 9 (about 50 s and 4.2 GB).
   The build and `leanchecker` print their time and largest process on every run
   (`scripts/measured.py`), so that the cost shows as the program grows.
 - What is not proven stays as 0003 lists it: the transcription of the semantics, the parser, the

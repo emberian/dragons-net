@@ -17,7 +17,8 @@
  *            host listens from the first emit that says to, and keeps listening.
  *
  * Every action is checked against the layout; one that breaks it ends the process with status 1.
- * A run the program stops because the host broke the contract ends it with status 3. SIGTERM or
+ * A run the program stops because the host broke the contract ends it with status 3; one it stops
+ * because recovery refused the store, or a file job of recovery failed, with status 4. SIGTERM or
  * SIGINT closes every socket and ends the run inside a call, with status 0. `--spool` and the other
  * options of store.c give the store; a store refused at start ends the host with status 4.
  *
@@ -492,6 +493,9 @@ __attribute__((noreturn)) static void on_exit_run(int code) {
     if (code != 0) dn_violation("the run ended for want of stack or heap (code %d)", code);
     uint64_t stop = dn_word(dn_heap_at(DN_SESSION_OWN_OFF + DN_SESSION_OWN_STOP));
     if (stop == 0) dn_violation("the program ended its run without a cause");
+    if (stop == DN_SESSION_STORE_REFUSED || stop == DN_SESSION_RECOVERY_FAILED)
+        dn_store_recovery_stopped(stop, dn_heap_at(DN_SESSION_REC_OFF),
+                                  dn_word(dn_heap_at(DN_SESSION_DRV_OFF + DN_SESSION_D_CLASS)));
     fprintf(stderr, "the program stopped the run: code %" PRIu64 "\n", stop);
     if (report_fd >= 0 && started) {
         traced(" | stopped %" PRIu64 "\n", stop);

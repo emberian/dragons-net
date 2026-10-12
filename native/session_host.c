@@ -100,6 +100,7 @@ static void batch(unsigned char *a) {
     char *word = strtok(text, " "), *now = strtok(NULL, " ");
     if (!word || strcmp(word, "turn") || !now || strtok(NULL, " ")) dn_harness("bad input: not a turn");
     dn_put_word(a + DN_SESSION_NEXT_CLOCK, number(now));
+    dn_put_word(a + DN_SESSION_NEXT_STORE, 0);
     dn_put_word(a + DN_SESSION_NEXT_REV_LEN, revision_len);
     memcpy(a + DN_SESSION_NEXT_REV, revision, smaller(revision_len, sizeof revision));
     dn_put_word(a + DN_SESSION_NEXT_SRC_LEN, source_len);

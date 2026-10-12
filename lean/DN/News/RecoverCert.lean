@@ -210,20 +210,9 @@ def cert : Cert :=
   (.cond
   (.leaf (some { locals := [], cells := none }))
   (.cond
-  (.chain 8 (some { locals :=
+  (.leaf (some { locals :=
       [("jw", AVal.mk true 7752 7752 (some 0)),
-       ("jwl", AVal.mk false 0 17776 none)], cells := none })
-  (.seq
-  (.cond
-  (.leaf (some { locals := [], cells := none }))
-  (.chain 2 (some { locals := [], cells := none })
-  (.cond
-  (.leaf (some { locals := [("jwl", AVal.mk false (-17776) 17776 none)], cells := none }))
-  (.chain 9 (some { locals :=
-      [("jpp", AVal.mk true 7765 25541 none),
-       ("jf", AVal.mk true 7752 25528 none)], cells := none })
-  (.leaf (some { locals := [], cells := none }))))))
-  (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none }))))
+       ("rgo", AVal.mk false 0 1 none)], cells := none }))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none }))))))))
   (.leaf (some { locals := [], cells := none })))))
   (.leaf none)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
@@ -231,7 +220,7 @@ def cert : Cert :=
 /-- The certificate fits the program. -/
 theorem accepted : (checkC size mainP cert).toBool = true := by decide +kernel
 
-theorem count : (claims size mainP cert).length = 15 := by decide +kernel
+theorem count : (claims size mainP cert).length = 9 := by decide +kernel
 
 theorem claim_0 : ((claims size mainP cert).getD 0 default).ok size = true := by
   decide +kernel
@@ -260,24 +249,6 @@ theorem claim_7 : ((claims size mainP cert).getD 7 default).ok size = true := by
 theorem claim_8 : ((claims size mainP cert).getD 8 default).ok size = true := by
   decide +kernel
 
-theorem claim_9 : ((claims size mainP cert).getD 9 default).ok size = true := by
-  decide +kernel
-
-theorem claim_10 : ((claims size mainP cert).getD 10 default).ok size = true := by
-  decide +kernel
-
-theorem claim_11 : ((claims size mainP cert).getD 11 default).ok size = true := by
-  decide +kernel
-
-theorem claim_12 : ((claims size mainP cert).getD 12 default).ok size = true := by
-  decide +kernel
-
-theorem claim_13 : ((claims size mainP cert).getD 13 default).ok size = true := by
-  decide +kernel
-
-theorem claim_14 : ((claims size mainP cert).getD 14 default).ok size = true := by
-  decide +kernel
-
 /-- Every claim holds. -/
 theorem claims_ok : ∀ i, i < (claims size mainP cert).length →
     ((claims size mainP cert).getD i default).ok size = true := by
@@ -293,12 +264,6 @@ theorem claims_ok : ∀ i, i < (claims size mainP cert).length →
   | 6, _ => exact claim_6
   | 7, _ => exact claim_7
   | 8, _ => exact claim_8
-  | 9, _ => exact claim_9
-  | 10, _ => exact claim_10
-  | 11, _ => exact claim_11
-  | 12, _ => exact claim_12
-  | 13, _ => exact claim_13
-  | 14, _ => exact claim_14
-  | _ + 15, h => exact absurd h (by omega)
+  | _ + 9, h => exact absurd h (by omega)
 
 end DN.News.RecoverCert

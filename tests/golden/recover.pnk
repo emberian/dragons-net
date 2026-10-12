@@ -1086,7 +1086,7 @@ export fun dn_recover_step(1 rsc) {
                   rgo = jz + 0;
                 } else {
                   if (lds 1 (rsc + 400)) == 1 {
-                    st rsc + 600, rsc + 416;
+                    st rsc + 600, 416;
                     st rsc + 608, lds 1 (rsc + 408);
                     st rsc + 576, 6;
                     st rsc, 9;
@@ -1139,7 +1139,7 @@ export fun dn_recover_step(1 rsc) {
                     }
                     if rbad {
                       st rsc + 584, rv;
-                      st rsc + 600, rsc + 648 + (rc * 72);
+                      st rsc + 600, 648 + (rc * 72);
                       st rsc + 608, lds 1 (rsc + 640 + (rc * 72));
                       st rsc + 576, 5;
                       st rsc, 9;
@@ -1238,7 +1238,7 @@ export fun dn_recover_step(1 rsc) {
                         st rsc + 536, 1;
                         st rsc + 544, lds 1 (rsc + 504);
                         st rsc + 552, lds 1 (rsc + 488);
-                        st rsc + 560, jsc + 1928 + ((lds 1 (rsc + 488)) - (lds 1 (jsc + 8)));
+                        st rsc + 560, 7688 + ((lds 1 (rsc + 488)) - (lds 1 (jsc + 8)));
                         st rsc + 568, (lds 1 jsc) - (lds 1 (rsc + 488));
                         st rsc, 6;
                         rgo = jz + 0;

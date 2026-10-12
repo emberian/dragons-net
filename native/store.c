@@ -13,6 +13,7 @@
 #include "host.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <sys/file.h>
@@ -138,6 +139,7 @@ void dn_store_start(void) {
 void dn_store_fill(unsigned char *next) {
     struct timespec t;
     if (clock_gettime(CLOCK_REALTIME, &t)) dn_harness("clock_gettime: %s", strerror(errno));
+    dn_put_word(next + DN_SESSION_NEXT_STORE, spool >= 0);
     dn_put_word(next + DN_SESSION_NEXT_WALL, (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000);
     memcpy(next + DN_SESSION_NEXT_RANDOM, random_octets, sizeof random_octets);
     size_t n = identity ? strlen(identity) : 0;
@@ -153,6 +155,52 @@ void dn_store_fill(unsigned char *next) {
 }
 
 int dn_store_spool(void) { return spool; }
+
+/* Octets of recovery's area, in hexadecimal; they have to lie in it. */
+static void print_hex(const unsigned char *rec, uint64_t at, uint64_t n) {
+    if (n > DN_SESSION_REC_AREA || at > DN_SESSION_REC_AREA - n)
+        dn_violation("recovery names octets outside its area");
+    for (uint64_t i = 0; i < n; ++i) fprintf(stderr, "%02x", rec[at + i]);
+}
+
+static const char *const corrupt_why[] = {"short", "too-long", "unterminated", "tag", "not-a-record", "format-again"};
+
+void dn_store_recovery_stopped(uint64_t stop, const unsigned char *rec, uint64_t job_class) {
+    if (stop == DN_SESSION_RECOVERY_FAILED)
+        refuse("recovery failed: a file job failed, class %" PRIu64, job_class);
+    uint64_t x = dn_word(rec + DN_SESSION_REC_FAULT_A), y = dn_word(rec + DN_SESSION_REC_FAULT_B);
+    uint64_t at = dn_word(rec + DN_SESSION_REC_FAULT_AT), len = dn_word(rec + DN_SESSION_REC_FAULT_LEN);
+    fprintf(stderr, "the store is refused: corrupt ");
+    switch (dn_word(rec + DN_SESSION_REC_FAULT)) {
+    case 1:
+        fprintf(stderr, "bad-name ");
+        print_hex(rec, DN_SESSION_REC_NAME, dn_word(rec + DN_SESSION_REC_NAME_LEN));
+        break;
+    case 2: fprintf(stderr, "no-journal"); break;
+    case 3:
+        if (y - 1 >= sizeof corrupt_why / sizeof *corrupt_why)
+            dn_violation("a journal corrupt for reason %" PRIu64, y);
+        fprintf(stderr, "journal %" PRIu64 " %s", x, corrupt_why[y - 1]);
+        break;
+    case 4: fprintf(stderr, "seq-twice %" PRIu64, x); break;
+    case 5:
+        fprintf(stderr, "number-not-above ");
+        print_hex(rec, at, len);
+        fprintf(stderr, " %" PRIu64, x);
+        break;
+    case 6:
+        fprintf(stderr, "unknown-group ");
+        print_hex(rec, at, len);
+        break;
+    case 7: fprintf(stderr, "missing-file %" PRIu64, x); break;
+    case 8: fprintf(stderr, "wrong-size %" PRIu64, x); break;
+    case 9: fprintf(stderr, "exhausted"); break;
+    case 11: fprintf(stderr, "too-many %" PRIu64, x); break;
+    default: dn_violation("recovery refused the store for reason %" PRIu64, dn_word(rec + DN_SESSION_REC_FAULT));
+    }
+    fprintf(stderr, "\n");
+    exit(4);
+}
 
 /* The mark in `dir`, unless the test build fails it at `point`; whether it was left. */
 static int leave_mark(int dir, const char *point) {

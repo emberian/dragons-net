@@ -2,6 +2,7 @@
 import DN.News.ArticleSpec
 import DN.News.Journal
 import DN.News.SessionSpec
+import DN.News.RecoverProg
 
 /-!
 # DN.Server.SessionLayout
@@ -18,12 +19,13 @@ The offset of every word is a multiple of eight, so a word lies on a word bounda
 - The configuration of both calls: the version word.
 - The array `dn_next` fills: first the time the program asks to be woken at (it writes that word
   before the call; zero for none), then the number of events, the host's clock in milliseconds,
-  the revision and the address of the source the replies name (a length, then the bytes), the wall
-  clock (milliseconds since 1970, UTC), the run's random octets, the path identity and the groups
-  (a count, then each a length and the name); the events, each a kind, an index, a generation, a
-  length, whether the connection may post, and the bytes; then the number of completions and a
-  slot per file job, kind zero if none: a kind, the job's generation, the operations that
-  succeeded, the error's class, two result words per operation, and the bytes read.
+  the revision and the address of the source the replies name (a length, then the bytes), whether
+  there is a store, the wall clock (milliseconds since 1970, UTC), the run's random octets, the path
+  identity and the groups (a count, then each a length and the name); the events, each a kind, an
+  index, a generation, a length, whether the connection may post, and the bytes; then the number
+  of completions and a slot per file job, kind zero if none: a kind, the job's generation, the
+  operations that succeeded, the error's class, two result words per operation, and the bytes
+  read.
 - The array `dn_emit` hands over: the number of actions, whether the host is to listen (zero until
   the program has recovered its store, then one), then a slot for each connection, which holds its
   action if it has one and kind zero if not: a kind, an index, a generation, a length, whether to
@@ -32,14 +34,17 @@ The offset of every word is a multiple of eight, so a word lies on a word bounda
   the number of operations, the operations, and the data.
 - The program's own area: the host's clock at the last batch, whether the identity was taken in,
   the code the program stopped with, its copy of the identity, the fixed texts of the replies, and
-  the table of connections.
+  the table of connections; then the area of recovery at start (`DN.News.RecoverProg`) and of the
+  file jobs that drive it: the places of the directory's listing and of the journal, how far the
+  listing is read, the generation of the last job, the class of the error a failed job stopped
+  with, and a page of the listing.
 -/
 
 namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 5
+def version : Nat := 6
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -73,7 +78,8 @@ def randomLen : Nat := runValueLen + News.Journal.keyLength + indexKeyLen
 def identityMax : Nat := 200
 def groupMax : Nat := 64
 def groupsMax : Nat := 64
-def nextWall : Nat := nextSrc + srcMax
+def nextStore : Nat := nextSrc + srcMax
+def nextWall : Nat := nextStore + 8
 def nextRandom : Nat := nextWall + 8
 def nextIdentityLen : Nat := nextRandom + randomLen
 def nextIdentity : Nat := nextIdentityLen + 8
@@ -203,8 +209,25 @@ def cHeld : Nat := cFramer + framerHead + News.SessionSpec.lineLimit
 def cOut : Nat := cHeld + data
 def connSlot : Nat := cOut + data
 
+/-- Recovery's area, then the words of the jobs that drive it. -/
+def recOff : Nat := tableOff + conns * connSlot
+def drvOff : Nat := recOff + News.RecoverProg.size
+def dDir : Nat := 0
+def dDirGen : Nat := 8
+def dDirOpen : Nat := 16
+def dJnl : Nat := 24
+def dJnlGen : Nat := 32
+def dJnlOpen : Nat := 40
+def dIndex : Nat := 48
+def dPageLen : Nat := 56
+def dPagePos : Nat := 64
+def dGen : Nat := 72
+def dClass : Nat := 80
+/-- A page of the listing, with a name's room past it. -/
+def dPage : Nat := 88
+
 /-- The bytes of heap the program needs from `@base`. -/
-def size : Nat := tableOff + conns * connSlot
+def size : Nat := drvOff + dPage + jobData + 256
 
 /-- Event kinds. -/
 def opened : Nat := 1
@@ -254,12 +277,15 @@ def nameQuarantine : Nat := 4
 def nameTail : Nat := 5
 
 /-- The codes of a stop that the host is to blame for: those of `DN.News.SessionSpec.Breach`, then
-an event of no kind the layout has, an identity that does not fit the replies, and a word of the
-program's own area out of the range the program keeps it in, which a host that writes only into
-the arrays of its calls is not seen to cause. -/
+an event of no kind the layout has, an identity or groups that do not fit the replies or the
+store, and a word of the program's own area out of the range the program keeps it in, which a host
+that writes only into the arrays of its calls is not seen to cause. -/
 def unknownEvent : Nat := 8
 def badIdentity : Nat := 9
 def brokenState : Nat := 10
+/-- The codes of a stop at start: recovery refuses the store, or a file job it drove failed. -/
+def storeRefused : Nat := 11
+def recoveryFailed : Nat := 12
 
 def nextName : String := "dn_next"
 def emitName : String := "dn_emit"
@@ -288,6 +314,13 @@ def header : String :=
      ("CLOSE_GRACEFULLY", closeGracefully), ("CLOSE_NOW", closeNow),
      ("OVER_TAKEN", News.SessionSpec.Breach.overTaken.code), ("UNKNOWN_EVENT", unknownEvent),
      ("BAD_IDENTITY", badIdentity), ("BROKEN_STATE", brokenState),
+     ("STORE_REFUSED", storeRefused), ("RECOVERY_FAILED", recoveryFailed),
+     ("NEXT_STORE", nextStore),
+     ("REC_OFF", recOff), ("REC_FAULT", News.RecoverProg.rFault),
+     ("REC_FAULT_A", News.RecoverProg.rFaultA), ("REC_FAULT_B", News.RecoverProg.rFaultB),
+     ("REC_FAULT_AT", News.RecoverProg.rFaultAt), ("REC_FAULT_LEN", News.RecoverProg.rFaultLen),
+     ("REC_NAME", News.RecoverProg.rName), ("REC_NAME_LEN", News.RecoverProg.rNameLen),
+     ("REC_AREA", News.RecoverProg.size), ("DRV_OFF", drvOff), ("D_CLASS", dClass),
      ("HEAP_BYTES", heapBytes), ("RUN_VALUE_LEN", runValueLen), ("RANDOM_LEN", randomLen),
      ("IDENTITY_MAX", identityMax), ("GROUP_MAX", groupMax), ("GROUPS_MAX", groupsMax),
      ("NEXT_WALL", nextWall), ("NEXT_RANDOM", nextRandom), ("NEXT_IDENTITY_LEN", nextIdentityLen),
@@ -328,7 +361,8 @@ theorem offsets_aligned :
       ownSrcLen % 8 = 0 ∧ ownTexts % 8 = 0 ∧ tableOff % 8 = 0 ∧ connSlot % 8 = 0 ∧
       cFramer % 8 = 0 ∧ nextWall % 8 = 0 ∧ nextIdentityLen % 8 = 0 ∧ nextGroupCount % 8 = 0 ∧
       groupSlot % 8 = 0 ∧ nextDoneCount % 8 = 0 ∧ doneHead % 8 = 0 ∧ doneSlot % 8 = 0 ∧
-      emitJobs % 8 = 0 ∧ opSlot % 8 = 0 ∧ jobHead % 8 = 0 ∧ jobSlot % 8 = 0 := by
+      emitJobs % 8 = 0 ∧ opSlot % 8 = 0 ∧ jobHead % 8 = 0 ∧ jobSlot % 8 = 0 ∧ nextStore % 8 = 0 ∧
+      recOff % 8 = 0 ∧ drvOff % 8 = 0 := by
   decide +kernel
 
 /-- The layout, with the header before it, fits the heap the host provisions. -/

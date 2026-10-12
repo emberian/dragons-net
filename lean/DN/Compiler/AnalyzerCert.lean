@@ -26,10 +26,18 @@ structure Delta where
   locals : List (String × AVal) := []
   cells : Option (List (String × Int × AVal)) := none
 
+/-- The locals `ls` with the ranges `ds` gives, named in the order they are in scope: one pass,
+since the kernel pays for each step; nothing if `ds` names a local not in scope, or out of order. -/
+def mergeLocals : List (String × AVal) → List (String × AVal) → Option (List (String × AVal))
+  | ls, [] => some ls
+  | [], _ :: _ => none
+  | (x, a) :: ls, (y, b) :: ds =>
+    if x = y then ((x, b) :: ·) <$> mergeLocals ls ds
+    else ((x, a) :: ·) <$> mergeLocals ls ((y, b) :: ds)
+
 /-- `A` changed by `d`, or nothing if `d` names a local not in scope. -/
 def Delta.apply (A : AState) (d : Delta) : Option AState :=
-  (d.locals.foldlM (fun ls (x, v) => setVar x v ls) A.locals).map fun ls =>
-    ⟨ls, d.cells.getD A.cells⟩
+  (mergeLocals A.locals d.locals).map fun ls => ⟨ls, d.cells.getD A.cells⟩
 
 /-- The analysis of the first `n` statements of a chain `seq c1 (seq c2 …)`. -/
 def prefixOut (size : Nat) : Nat → AState → PancakeProg → Except Alarm (Option AState)
