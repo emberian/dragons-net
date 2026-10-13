@@ -228,13 +228,43 @@ def pinned_python(requirements: Path) -> Path:
     return venv / "bin/python"
 
 
+def unheld(requirement: dict[str, Any]) -> list[str]:
+    """What the documents do not say of a run's requirement: phrases each file has to carry
+    (`quoted`), and numbers sections have to state as measured (`stated`, as `misstated` reads)."""
+    wrong = []
+    for name, phrases in requirement.get("quoted", {}).items():
+        text = (ROOT / name).read_text()
+        wrong += [f"{name} does not say {phrase!r}" for phrase in phrases if phrase not in text]
+    for name, sections, measured in requirement.get("stated", []):
+        text = (ROOT / name).read_text()
+        stated = "".join(section(text, start, end) for start, end in sections)
+        wrong += [f"{name} states otherwise than measured: {w}" for w in misstated(stated, measured)]
+    return wrong
+
+
+def require(requirement: dict[str, Any]) -> None:
+    """Hold the documents to what this run measured. When `DN_DOCUMENTED` names a file, the
+    requirement is added to it instead, for `scripts/check_documents.py` to hold them to after the
+    run: then a change to the documents alone runs no lane again (`scripts/once.py`)."""
+    later = os.environ.get("DN_DOCUMENTED")
+    if later:
+        with Path(later).open("a", encoding="utf-8") as f:
+            f.write(json.dumps(requirement) + "\n")
+        return
+    wrong = unheld(requirement)
+    if wrong:
+        raise LaneError("; ".join(wrong))
+
+
 def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
     """The documents quote what this run measured: each file has to carry each phrase."""
-    for name, phrases in quotes.items():
-        text = (ROOT / name).read_text()
-        for phrase in phrases:
-            if phrase not in text:
-                raise LaneError(f"{name} does not say {phrase!r}")
+    require({"quoted": {name: list(phrases) for name, phrases in quotes.items()}})
+
+
+def require_stated(stated: list[tuple[str, list[tuple[str, str]], dict[str, str]]]) -> None:
+    """Each document's sections, from each start to the first end after it, state each measured
+    number as measured."""
+    require({"stated": [[name, [list(s) for s in sections], measured] for name, sections, measured in stated]})
 
 
 def differing(asked: list[str], model: list[str], reference: list[str]) -> str | None:

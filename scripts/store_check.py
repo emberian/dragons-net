@@ -536,14 +536,10 @@ def check() -> Report:
                 "directories of the table": f"{len(families['table']):,}",
                 "directories drawn": f"{len(families['drawn']) // 2:,}",
                 "lists of actions": f"{len(families['actions']):,}", "that recover": f"{len(recovered):,}"}
-    baseline = (lanes.ROOT / "docs/baseline.md").read_text()
-    assurance = (lanes.ROOT / "docs/assurance.md").read_text()
-    stated = lanes.section(baseline, "\n| Store |", "\n|") + lanes.section(baseline, "\n### Store\n", "\n### ")
-    wrong = lanes.misstated(stated, measured)
-    wrong += lanes.misstated(lanes.section(assurance, "\n| Recovery (`DN.News.Recovery`", "\n|"),
-                             {k: measured[k] for k in ("cases", "versions of recovery", "that recover")})
-    if wrong:
-        raise LaneError(f"the documents state otherwise than measured: {wrong}")
+    lanes.require_stated([
+        ("docs/baseline.md", [("\n| Store |", "\n|"), ("\n### Store\n", "\n### ")], measured),
+        ("docs/assurance.md", [("\n| Recovery (`DN.News.Recovery`", "\n|")],
+         {k: measured[k] for k in ("cases", "versions of recovery", "that recover")})])
     seen = [field(a, 1) for a in answers if a.startswith("corrupt ")]
     return Report("checked", None, [REFERENCE, REQUIREMENTS], {
         "cases": len(cases), "by_family": {k: len(v) for k, v in families.items()},

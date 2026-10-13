@@ -86,6 +86,9 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # This job's inputs decide whether it runs, so its checks are not traced.
+    env:
+      DN_ONCE: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,6 +176,9 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # This job's inputs decide whether it runs, so its checks are not traced.
+    env:
+      DN_ONCE: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -280,11 +286,26 @@ jobs:
       - name: Unpack the build
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/build_archive.py unpack build/lean-build.tar
-      - name: Valgrind, for the host lane's check of races
+      - name: Valgrind, for the host lane's check of races, and strace, which records what a check reads
         if: steps.passed.outputs.run-id == ''
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends valgrind
+          sudo apt-get install --yes --no-install-recommends valgrind strace
+      # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
+      # the last run of this repository's branches to record them are taken up.
+      - name: The checks' last passes
+        id: stamps
+        if: steps.passed.outputs.run-id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prior_pass.py checks-test >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
+        with:
+          name: checks-test
+          path: build/stamps
+          run-id: ${{ steps.stamps.outputs.run-id }}
+          github-token: ${{ github.token }}
       - name: Gate tests, Rust crates and models
         if: steps.passed.outputs.run-id == ''
         run: |
@@ -295,7 +316,20 @@ jobs:
         run: bash scripts/native_lanes.sh
       - name: Bounded interleaving exploration
         if: steps.passed.outputs.run-id == ''
-        run: python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
+        run: python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
+      - name: The documents held to what the checks measured
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/check_documents.py
+      # Kept even when a check failed: a stamp records only a check that passed.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.passed.outputs.run-id == ''
+        with:
+          name: checks-test
+          path: |
+            build/stamps/*.json
+            !build/stamps/hashes.json
+          if-no-files-found: ignore
+          retention-days: 30
       # Recorded only once every step above has passed; artifacts are seen across branches, so the
       # run on main after a merge finds it too (scripts/prior_pass.py).
       - name: Record the pass

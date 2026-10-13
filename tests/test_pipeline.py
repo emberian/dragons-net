@@ -32,15 +32,15 @@ class CheckScript(unittest.TestCase):
 
     def test_check_script_runs_every_gate_in_order(self) -> None:
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
-                 "once gate", "lake build --wfail DN dn-compiler",
+                 "once check-gate", "lake build --wfail DN dn-compiler",
                  '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
                  '"$leanchecker" DN', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("all) build; once proofs; once tests ;;", CHECK)
-        self.assertIn("gate() { python3 scripts/check_structure.py; }", CHECK)
+        self.assertIn("all) build; once check-proofs bash scripts/check.sh proofs-now; tests ;;", CHECK)
+        self.assertIn("once check-gate python3 scripts/check_structure.py", CHECK)
         self.assertNotIn("lake env", CHECK)
 
     def test_build_archive_accepts_only_the_build_directory(self) -> None:
@@ -136,7 +136,11 @@ class CheckScript(unittest.TestCase):
             tree, stubs, toolchain = (Path(temp) / name for name in ("repo", "bin", "toolchain"))
             (tree / "scripts").mkdir(parents=True)
             shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            (tree / "tests").mkdir()
+            for module in ("test_a.py", "test_once.py"):
+                (tree / "tests" / module).write_text("")
             subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            subprocess.run(["git", "add", "tests"], cwd=tree, check=True)
             log = Path(temp) / "log"
 
             def stub(directory: Path, name: str, body: str) -> None:
@@ -160,6 +164,7 @@ class CheckScript(unittest.TestCase):
             stub(stubs, "elan", f"echo {toolchain}/$2")
             env = {key: value for key, value in os.environ.items() if key not in ("LEAN_PATH", "LEAN_ABORT_ON_PANIC")}
             env["PATH"] = f"{stubs}:{os.environ['PATH']}"
+            env["DN_ONCE"] = "none"
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py",
@@ -173,7 +178,9 @@ class CheckScript(unittest.TestCase):
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
-                "tests": ["python3 -m unittest", "cargo clippy", "cargo clippy", "cargo clippy",
+                "tests": ["python3 -m unittest discover -s tests -p test_a.py",
+                          "python3 -m unittest discover -s tests -p test_once.py",
+                          "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
                           "python3 scripts/state_check.py", "python3 scripts/session_check.py",
                           "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
@@ -241,7 +248,7 @@ class CheckScript(unittest.TestCase):
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
-                                           "DN_ONCE": "off"},
+                                           "DN_ONCE": "none"},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -260,47 +267,6 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
-
-    def test_a_check_runs_once_per_tree(self) -> None:
-        """A check that passed is not run again on a tree whose every file is as it was, and is on
-        one with a file changed, added, or of another content under the same name, or with another
-        command or compiler."""
-        with tempfile.TemporaryDirectory() as temp:
-            tree = Path(temp)
-            (tree / "scripts").mkdir()
-            shutil.copy(ROOT / "scripts/once.py", tree / "scripts")
-            (tree / ".gitignore").write_text("build/\n")
-            (tree / "a.txt").write_text("one\n")
-            subprocess.run(["git", "init", "-q", str(tree)], check=True)
-
-            def run(*args: str, cake: str = "") -> subprocess.CompletedProcess[str]:
-                return subprocess.run([sys.executable, str(tree / "scripts/once.py"), *args], cwd=tree, text=True,
-                                      env={**os.environ, "CAKE": cake}, capture_output=True, check=False,
-                                      timeout=60)
-
-            def once(action: str, *command: str, cake: str = "") -> int:
-                return run(action, "lane", "--", *(command or ("run",)), cake=cake).returncode
-
-            missed = run("check", "lane", "--", "run")
-            self.assertEqual(missed.returncode, 1)
-            # The key is taken before the check runs: a file changed meanwhile leaves the tree unstamped.
-            (tree / "a.txt").write_text("changed while it ran\n")
-            self.assertEqual(run("stamp", "lane", missed.stdout.strip()).returncode, 0)
-            self.assertEqual(once("check"), 1)
-            (tree / "a.txt").write_text("one\n")
-            self.assertEqual(once("check"), 0)
-            self.assertEqual(run("stamp", "lane", "").returncode, 1)
-            self.assertEqual(run("stamp", "../lane", missed.stdout.strip()).returncode, 1)
-            self.assertEqual(once("check", "other"), 1)
-            self.assertEqual(once("check", cake="/other/cake"), 1)
-            (tree / "build/ignored").write_text("left by a run\n")
-            self.assertEqual(once("check"), 0)
-            (tree / "a.txt").write_text("two\n")
-            self.assertEqual(once("check"), 1)
-            (tree / "a.txt").write_text("one\n")
-            self.assertEqual(once("check"), 0)
-            (tree / "b.txt").write_text("")
-            self.assertEqual(once("check"), 1)
 
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
         """CI skips a job whose pass an earlier run recorded: the newest such run of this repository's
@@ -326,7 +292,7 @@ class CheckScript(unittest.TestCase):
         for name, job in jobs.items():
             with self.subTest(job=name):
                 steps = re.split(r"(?m)^      - ", job)[1:]
-                found = [i for i, s in enumerate(steps) if "run: python3 scripts/prior_pass.py" in s]
+                found = [i for i, s in enumerate(steps) if 'run: python3 scripts/prior_pass.py "passed-' in s]
                 recorded = [i for i, s in enumerate(steps) if "name: passed-${{" in s]
                 self.assertEqual(len(found), 1)
                 self.assertEqual(len(recorded), 1)

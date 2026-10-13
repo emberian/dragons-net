@@ -3,7 +3,7 @@
 # The native lanes, in order, each with its log in build/evidence/. check_all.sh and CI both run
 # all of them from this one list. Named lanes run alone; the nightly run uses this to start each
 # on a fresh machine. The compiler is the one CAKE names, or else the pinned release. A lane that
-# passed on this very tree is not run again (scripts/once.py).
+# passed on the inputs it read is not run again (scripts/once.py); DN_ONCE=none runs it untraced.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
@@ -34,7 +34,9 @@ mkdir -p build/evidence
 for name in "${chosen[@]}"; do
   script_of "$name"
   run=(python3 "${script[@]}" --cake "$cake")
-  if key=$(python3 scripts/once.py check "lane-$name" -- "${run[@]}"); then continue; fi
-  "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
-  if [[ -n $key ]]; then python3 scripts/once.py stamp "lane-$name" "$key"; fi
+  if [[ ${DN_ONCE:-} == none ]]; then
+    "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
+  else
+    python3 scripts/once.py run "lane-$name" --log "build/evidence/$name.log" -- "${run[@]}"
+  fi
 done

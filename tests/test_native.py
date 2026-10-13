@@ -9,6 +9,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -682,6 +683,18 @@ class Lanes(unittest.TestCase):
             self.assertIn("platform", report)
 
     def test_documents_have_to_say_what_the_run_measured(self) -> None:
-        lanes.require_quoted({"README.md": ("dn-compiler",)})
-        with self.assertRaisesRegex(lanes.LaneError, "README.md does not say 'no such phrase'"):
-            lanes.require_quoted({"README.md": ("no such phrase",)})
+        """Run alone, a lane holds the documents to what it measured; under `scripts/once.py` it
+        leaves the requirement for `scripts/check_documents.py`, which holds them to it."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("DN_DOCUMENTED", None)
+            lanes.require_quoted({"README.md": ("dn-compiler",)})
+            with self.assertRaisesRegex(lanes.LaneError, "README.md does not say 'no such phrase'"):
+                lanes.require_quoted({"README.md": ("no such phrase",)})
+            with self.assertRaisesRegex(lanes.LaneError, "states otherwise than measured: 'cases': none, not 3"):
+                lanes.require_stated([("README.md", [("# dn", "## ")], {"cases": "3"})])
+        with tempfile.TemporaryDirectory() as temp:
+            later = Path(temp) / "documented"
+            with mock.patch.dict(os.environ, {"DN_DOCUMENTED": str(later)}):
+                lanes.require_quoted({"README.md": ("no such phrase",)})
+            [requirement] = [json.loads(line) for line in later.read_text().splitlines()]
+            self.assertEqual(lanes.unheld(requirement), ["README.md does not say 'no such phrase'"])

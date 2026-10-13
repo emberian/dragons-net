@@ -303,15 +303,10 @@ def check() -> Report:
                 "table cases": f"{len(written):,}", "runs drawn": f"{len(runs):,}",
                 "lives of one file": f"{len(lives):,}",
                 "images listed": f"{len(must):,}", "images changed": f"{len(families['changed']):,}"}
-    baseline = (lanes.ROOT / "docs/baseline.md").read_text()
-    assurance = (lanes.ROOT / "docs/assurance.md").read_text()
-    stated = lanes.section(baseline, "\n| File system |", "\n|") + lanes.section(baseline, "\n### File system\n",
-                                                                                "\n### ")
-    wrong = lanes.misstated(stated, measured)
-    wrong += lanes.misstated(lanes.section(assurance, "\n| File system and crashes", "\n|"),
-                             {k: measured[k] for k in ("cases", "versions of the model")})
-    if wrong:
-        raise LaneError(f"the documents state otherwise than measured: {wrong}")
+    lanes.require_stated([
+        ("docs/baseline.md", [("\n| File system |", "\n|"), ("\n### File system\n", "\n### ")], measured),
+        ("docs/assurance.md", [("\n| File system and crashes", "\n|")],
+         {k: measured[k] for k in ("cases", "versions of the model")})])
     return Report("checked", None, [REFERENCE], {
         "cases": len(cases), "by_family": {k: len(v) for k, v in families.items()},
         "crash_verdicts": {v: verdicts.count(v) for v in ("yes", "no")}, "refused_lines": len(REFUSED),

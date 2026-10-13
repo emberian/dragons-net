@@ -767,12 +767,8 @@ def check() -> Report:
                 "directories a crash may leave": f"{total.images:,}", "ways": f"{len(caught):,}",
                 "events it may not make": f"{sum(probed.values()):,}", "restarts": f"{restarts:,}",
                 "starts failing": f"{failed_starts:,}", "kinds of event": f"{len(PROBES):,}"}
-    baseline = (lanes.ROOT / "docs/baseline.md").read_text()
-    stated = lanes.section(baseline, "\n| Store runs |", "\n|") + lanes.section(baseline, "\n### Store runs\n",
-                                                                                "\n### ")
-    wrong = lanes.misstated(stated, measured)
-    if wrong:
-        raise LaneError(f"the documents state otherwise than measured: {wrong}")
+    lanes.require_stated([
+        ("docs/baseline.md", [("\n| Store runs |", "\n|"), ("\n### Store runs\n", "\n### ")], measured)])
     return Report("checked", None, [lanes.ROOT / f"scripts/{name}" for name in ("fs_ref.py", "recovery_ref.py",
                                                                                  "store_ref.py")], {
         "chains": chains, "runs": segments_run, "points": total.points, "images": total.images,
