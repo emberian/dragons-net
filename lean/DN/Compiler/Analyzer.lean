@@ -513,6 +513,7 @@ def analyze (size : Nat) (A : AState) : PancakeProg → Out
   | .ret e => do
     let _ ← valOf size A e "return"
     .ok none
+  | .decCall _ f _ _ => .error s!"var = {f}(…): a call, which the analysis does not take yet"
 
 /-- The analysis of a whole `main`: no alarm, and no run finishes without a result. -/
 def check (size : Nat) (p : PancakeProg) : Except Alarm Unit := do

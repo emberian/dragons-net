@@ -83,7 +83,7 @@ class Emitted(unittest.TestCase):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "e4ce212d1d665800f93ed370e410d47b0d90f3817d86aa0472814ec3c3329e7e")
+                         "bbedd21e816d4d0241062103dd9ba705604636dc61eea2aca341f49c24a9eaab")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 

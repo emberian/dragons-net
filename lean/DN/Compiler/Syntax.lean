@@ -149,10 +149,10 @@ def ppFun (f : PFun) : String :=
   let header := kw ++ f.name ++ "(" ++ ps ++ ") {"
   String.intercalate "\n" (header :: (ppStmts "  " f.body ++ ["}"])) ++ "\n"
 
-/-- Is this statement a declaration? A declaration scopes the statements after it, so it
-lowers unlike the others. -/
+/-- Is this statement a declaration — `var`, or a call, which declares what it returns? A
+declaration scopes the statements after it, so it lowers unlike the others. -/
 def PStmt.isDec : PStmt → Bool
-  | .dec _ _ => true
+  | .dec _ _ | .call _ _ _ => true
   | _        => false
 
 /-- Is this statement a function call? (used by the footprint check). -/

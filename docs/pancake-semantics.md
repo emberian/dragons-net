@@ -31,8 +31,9 @@ runs on a schedule.
 
 `e8eca63` is the source revision of the release compiler the native lane runs;
 `ed31510` is the revision the curated backend patch applies to. The two differ
-in function calls (return shapes in `code` and `lookup_code`), in an exception
-declaration, in the type of `code` — none of which this subset models — and in
+in function calls — `e8eca63` keeps a function's return shape in `code` and
+checks what a call returns against it, vacuous here, where every value is one
+word —, in an exception declaration, which this subset does not model, and in
 `Shift`, which it does; every other clause below is the same text on both.
 
 At `e8eca63`, `Shift` is `Shift sh e1 e2`, whose distance is an expression read
@@ -49,13 +50,13 @@ emitter's own gate, `Checked.emit`, refuses a program that uses anything outside
 this subset, so the emitted path stays inside it; the model itself simply has no
 constructor for the rest.
 
-Left out of `panLang$prog`: `Call`, `DecCall`, `Primitive`, `Raise`, `Tick`,
+Left out of `panLang$prog`: `Call`, `Primitive`, `Raise`, `Tick`,
 `Annot`, `Break`, `Continue`, `Store32`, `ShMemLoad`, `ShMemStore`. Left out of
 `panLang$exp`: structs (`RStruct`, `RField`, `NStruct`, `NField`), `Load` of a
 shape other than one word, `Load32`, `Panop` other than multiplication, `TopAddr`,
 `BytesInWord`, and `Var Global`. Of `Shift`, `Lsr` and `Lsl` are modelled; `Asr` and `Ror`
 are not. Left out of the state: `globals`,
-`structs`, `code`, `eshapes`, `sh_memaddrs`, `top_addr`.
+`structs`, `eshapes`, `sh_memaddrs`, `top_addr`; `code` holds each function's parameters and body.
 
 Values are words: every value the subset produces has shape `One`, so the shape
 checks of `Dec`, `Assign` and `Return` are vacuous and the model does not carry
@@ -90,6 +91,7 @@ never stores a label.
 | `While e c` | `.while_` | same: the clock is spent per iteration, `Break` leaves, `Continue` and normal completion loop, no clock is a timeout that empties the locals |
 | `Return e` | `.ret` | same, less the vacuous size check |
 | `ExtCall name ptr1 len1 ptr2 len2` | `.extCall` | same, through `callFFI` |
+| `DecCall rt One f args prog1` | `.decCall` | same, less the vacuous shape check: the arguments through `OPT_MMAP` (`evalArgs`), the body through `lookup_code` (`lookupCode`), no clock a timeout, the body on its own locals with one tick less; a `Return` binds `rt` for `prog1`, restored after; ending without a result, `Break` or `Continue` is an `Error` in the body's state, anything else ends with the locals emptied (`callEnded`) |
 
 ## Helpers
 
@@ -102,6 +104,7 @@ never stores a label.
 | `write_bytearray` | `writeByteArray` | same, including that a store out of range keeps the memory the call was given and so drops the writes of the tail |
 | `set_var`, `res_var`, `empty_locals`, `dec_clock` | `setLocal`, `resVar`, `emptyLocals`, `decClock` | same |
 | `fix_clock` | `clampClock`, inlined at the recursive boundaries | same clamp |
+| `lookup_code`, `OPT_MMAP (eval s)` | `lookupCode`, `evalArgs` | same: distinct parameters, as many as the arguments, every value one word |
 | `call_FFI` | `callFFI` | same: the empty name does not reach the oracle, and a reply whose length differs from the array ends the run |
 
 ## What the model does not carry
@@ -126,6 +129,8 @@ permissive fails the build:
   variable or without a value; a store, byte store, condition, loop guard or
   return without a value; a store or byte store outside the memory domain;
 - a loop that runs out of clock;
+- a call with an argument too many, of a function the code lacks, or of a body that ends
+  without returning; a call that returns binds what it returns (`call_returns`, `call_errors`);
 - an external call whose pointers or lengths have no value, whose configuration
   bytes cannot be read, or whose array cannot be read;
 - at the external call itself: a reply that is too long ends the run, a reply of

@@ -52,7 +52,7 @@ TURNED = (("lds/left: lds 1 ld8 x", "and it does"), ("sub/right: a - x - y", MIS
 # Every form the gate lets through, each of which some printed program has to use. `@base` and
 # external calls pass only in a whole program; the gate refuses calls, so those are covered by the
 # table's cells only.
-STATEMENTS = {"dec", "assign", "store", "storebyte", "if", "while", "return", "extcall"}
+STATEMENTS = {"dec", "assign", "store", "storebyte", "if", "while", "return", "extcall", "deccall"}
 EXPRESSIONS = {"Const", "Var", "Add", "And", "Xor", "Or", "Sub", "Mul", "Less", "NotLess", "Equal", "MemLoad",
                "MemLoadByte", "Lsr", "Lsl", "BaseAddr"}
 # The function the compiler adds to a program that has no `main` of its own.
@@ -150,6 +150,10 @@ def block(form: Any) -> list[Any]:
     if head == "dec" and len(args) == 2 and len(args[0]) == 5 and args[0][:2] == ["local", "1"] \
             and args[0][3] == ":=":
         return [["dec", args[0][2], expression(args[0][4]), block(args[1])]]
+    if head == "dec" and len(args) == 2 and len(args[0]) == 4 and args[0][0] == "1" and args[0][2] == ":=" \
+            and isinstance(args[0][3], list) and len(args[0][3]) == 3 and args[0][3][0] == "call":
+        _, fname, exps = args[0][3]
+        return [["deccall", args[0][1], fname, [expression(e) for e in exps], block(args[1])]]
     if head == "local" and len(args) == 3 and args[1] == ":=":
         return [["assign", args[0], expression(args[2])]]
     if head == "mem" and len(args) == 4 and args[1:3] == [":=", "byte"]:
@@ -214,6 +218,11 @@ def forms_used(programs: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
     def stmts(body: list[Any]) -> None:
         for s in body:
             statements.add(s[0])
+            if s[0] == "deccall":
+                for e in s[3]:
+                    exp(e)
+                stmts(s[4])
+                continue
             for arg in s[1:]:
                 if isinstance(arg, list) and arg and isinstance(arg[0], str):
                     exp(arg)
@@ -221,8 +230,14 @@ def forms_used(programs: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
                     stmts(arg)
 
     for program in programs:
-        stmts(program["body"])
+        for f in (program, *program.get("functions", [])):
+            stmts(f["body"])
     return statements, expressions
+
+
+def names_of(programs: list[dict[str, Any]]) -> set[str]:
+    """The functions the programs define, their own and those they call."""
+    return {f["name"] for p in programs for f in (p, *p.get("functions", []))}
 
 
 def batches(programs: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -230,7 +245,7 @@ def batches(programs: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     groups: list[list[dict[str, Any]]] = []
     for program in programs:
         for group in groups:
-            if all(other["name"] != program["name"] for other in group):
+            if not names_of([program]) & names_of(group):
                 group.append(program)
                 break
         else:
@@ -247,14 +262,14 @@ def compare(cake: str, programs: list[dict[str, Any]], tag: str, *, out: Path, w
                        warnings=warnings)
         if all(p["name"] != "main" for p in group) and trees.pop("main", None) != ADDED_MAIN:
             raise ContractError(f"{tag}-{index}: the parser's program lacks the `main` the compiler adds")
-        extra = set(trees) - {p["name"] for p in group}
+        extra = set(trees) - names_of(group)
         if extra:
             raise ContractError(f"{tag}-{index}: the parser's program has functions nobody printed: "
                                 f"{sorted(extra)}")
-        for program in group:
-            name = program["name"]
+        for f in (f for p in group for f in (p, *p.get("functions", []))):
+            name = f["name"]
             got = trees.get(name)
-            want = {"params": program["params"], "body": program["body"]}
+            want = {"params": f["params"], "body": f["body"]}
             if got != want:
                 raise ContractError(f"{name}: the parser's tree is not the lowered one\n"
                                     f"parser:  {json.dumps(got)}\nlowered: {json.dumps(want)}")

@@ -460,6 +460,7 @@ theorem run_cons (o : Oracle σ) {x : Syntax.PStmt} {cx : PancakeProg}
     refine ⟨.seq cx crest, ?_, seq_step o hrun hclk⟩
     cases x with
     | dec nm e => simp [Syntax.PStmt.isDec] at hnd
+    | call r f as => simp [Syntax.PStmt.isDec] at hnd
     | _ => simp [lowerStmtsFold, hx, hrest]
 
 /-- `run_cons` against a lowering already in hand. -/

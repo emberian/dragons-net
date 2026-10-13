@@ -154,12 +154,19 @@ def blockJson : PancakeProg → List Json
   | .extCall n a b c d =>
     [Json.arr #["extcall", toJson n, expJson (canon a), expJson (canon b), expJson (canon c),
       expJson (canon d)]]
+  | .decCall r f as c =>
+    [Json.arr #["deccall", toJson r, toJson f, Json.arr (as.map (expJson ∘ canon)).toArray,
+      Json.arr (blockJson c).toArray]]
 
 /-- A function as the contract script compares it: its source, as the gate prints it, and the
 canonical tree of its lowering. -/
-def program (f : PFun) (source : String) : Except String Json := do
-  let some body := Lower.lower f | throw s!"{f.name} does not lower"
-  return Json.mkObj [("name", toJson f.name), ("source", toJson source),
-    ("params", toJson (f.params.map (·.2))), ("body", Json.arr (blockJson body).toArray)]
+def program (f : PFun) (source : String) (helpers : List PFun := []) : Except String Json := do
+  let tree (g : PFun) : Except String (List (String × Json)) := do
+    let some body := Lower.lower g | throw s!"{g.name} does not lower"
+    return [("name", toJson g.name), ("params", toJson (g.params.map (·.2))),
+      ("body", Json.arr (blockJson body).toArray)]
+  let helperTrees ← helpers.mapM fun g => return Json.mkObj (← tree g)
+  return Json.mkObj ((← tree f) ++ [("source", toJson source),
+    ("functions", Json.arr helperTrees.toArray)])
 
 end DN.Compiler.Canon

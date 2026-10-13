@@ -26,7 +26,9 @@ inductive Reason
   | declarationName     -- a declared name that is not an identifier
   | redeclaration       -- a name declared while already in scope
   | unboundAssignment   -- an assignment to a name that is not in scope
-  | callEffect          -- a call to another function
+  | callEffect          -- a call of a function the program does not have
+  | callArity           -- a call with other than the function's number of arguments
+  | functionName        -- a function of a program not named as an identifier, or `main`, or twice
   | externalEffect      -- an external call to a name the profile does not allow
   | externalArity       -- an external call with other than four arguments
   | notExported         -- the function is not marked for export
@@ -50,7 +52,9 @@ def Reason.message : Reason → String
   | .declarationName => "invalid declared name"
   | .redeclaration => "name already in scope"
   | .unboundAssignment => "assignment to a variable not in scope"
-  | .callEffect => "calls are outside the exported profile"
+  | .callEffect => "call of a function the program does not have"
+  | .callArity => "call with other than the function's number of arguments"
+  | .functionName => "a function's name is not an identifier, is main, or is given twice"
   | .externalEffect => "external call to a name the profile does not allow"
   | .externalArity => "an external call takes exactly four arguments"
   | .notExported => "function is not exported"
@@ -75,17 +79,21 @@ def exportPrefix : String := "dn_"
 
 def inNamespace (s : String) : Bool := s.toList.take exportPrefix.length == exportPrefix.toList
 
-/-- What a function may use besides its parameters and locals: `@base`, and external calls to
-the named functions. An exported function may use neither. -/
+/-- What a function may use besides its parameters and locals: `@base`, external calls to the
+named functions, and calls of the program's functions, each with its number of parameters. An
+exported function may use none. -/
 structure Profile where
   base : Bool
   externals : List String
+  functions : List (String × Nat) := []
 
 /-- The profile of exported functions. -/
-def exportedProfile : Profile := ⟨false, []⟩
+def exportedProfile : Profile := ⟨false, [], []⟩
 
-/-- The profile of a whole program that reaches its host through `externals`. -/
-def mainProfile (externals : List String) : Profile := ⟨true, externals⟩
+/-- The profile of a whole program that reaches its host through `externals`, and has
+`functions` besides its `main`. -/
+def mainProfile (externals : List String) (functions : List (String × Nat) := []) : Profile :=
+  ⟨true, externals, functions⟩
 
 def expression (p : Profile) (scope : List String) : PExpr → Except Reason Unit
   | .const n => if n < 2^64 then .ok () else .error .literalWidth
@@ -100,6 +108,23 @@ def expression (p : Profile) (scope : List String) : PExpr → Except Reason Uni
     match r with
     | .const n => if n < 64 then expression p scope l else .error .shiftAmount
     | _ => .error .shiftAmount
+
+/-- The arguments of a call, each in scope. -/
+def expressions (p : Profile) (scope : List String) : List PExpr → Except Reason Unit
+  | [] => .ok ()
+  | e :: es => do expression p scope e; expressions p scope es
+
+/-- A call of `f`, declaring `r` for what it returns: a function of the program, as many
+arguments as it has parameters, each in scope, and `r` a new name. -/
+def callCheck (p : Profile) (scope : List String) (r f : String) (args : List PExpr) :
+    Except Reason Unit :=
+  match p.functions.lookup f with
+  | none => .error .callEffect
+  | some k =>
+    if args.length != k then .error .callArity
+    else if !identifier r then .error .declarationName
+    else if scope.contains r then .error .redeclaration
+    else expressions p scope args
 
 mutual
 /-- Statements after which control never reaches the next one. The compiler requires a body
@@ -132,13 +157,13 @@ def statement (p : Profile) (scope : List String) : PStmt → Except Reason Unit
     else .error .externalEffect
   | .ffi name _ =>
     if p.externals.contains name then .error .externalArity else .error .externalEffect
-  | .call _ _ _ => .error .callEffect
+  | .call r f args => callCheck p scope r f args
 def statements (p : Profile) (scope : List String) : List PStmt → Except Reason Unit
   | [] => .ok ()
   | s :: rest => do
     statement p scope s
     if exits s && !rest.isEmpty then .error .unreachable
-    else statements p (match s with | .dec x _ => x :: scope | _ => scope) rest
+    else statements p (match s with | .dec x _ | .call x _ _ => x :: scope | _ => scope) rest
 end
 
 /-- The scope a parameter list opens, in the order the parameters are bound. -/
@@ -169,6 +194,24 @@ def emitMain (externals : List String) (f : PFun) : Except Reason String := do
   statements (mainProfile externals) [] f.body
   unless exitsL f.body do throw .missingReturn
   return ppFun f
+
+/-- A whole program with functions: `main` as `emitMain` takes it, and the functions it calls,
+each named as an identifier, not `main`, once, and not exported, its parameters words, its body in
+the program's profile with an explicit final return; printed in turn, `main` last. -/
+def emitProgram (externals : List String) (funs : List PFun) (main : PFun) :
+    Except Reason String := do
+  unless !main.exported && main.name == "main" && main.params.isEmpty do throw .entryShape
+  let names := funs.map (·.name)
+  unless funs.all (fun f => identifier f.name && f.name != "main" && !f.exported) &&
+      names.eraseDups.length == names.length do throw .functionName
+  let p := mainProfile externals (funs.map fun f => (f.name, f.params.length))
+  for f in funs do
+    let scope ← paramScope f.params []
+    statements p scope f.body
+    unless exitsL f.body do throw .missingReturn
+  statements p [] main.body
+  unless exitsL main.body do throw .missingReturn
+  return String.intercalate "\n" ((funs ++ [main]).map ppFun)
 
 /-! ## The accepted subset lowers
 
@@ -267,6 +310,29 @@ private theorem ffi_other_rejected {p : Profile} {scope : List String} {name : S
   | [], _ | [_], _ | [_, _], _ | [_, _, _], _ | _ :: _ :: _ :: _ :: _ :: _, _ =>
     simp only [statement]; split <;> simp
 
+theorem expressions_lowers {p : Profile} {scope : List String} :
+    ∀ es : List PExpr, expressions p scope es = .ok () → (lowerArgs es).isSome = true
+  | [], _ => rfl
+  | e :: es, h => by
+    simp only [expressions] at h
+    obtain ⟨he, hes⟩ := seq_ok h
+    obtain ⟨v, hv⟩ := exp_some he
+    have := expressions_lowers es hes
+    cases hl : lowerArgs es with
+    | none => rw [hl] at this; simp at this
+    | some vs => simp [lowerArgs, hv, hl]
+
+theorem callCheck_lowers {p : Profile} {scope : List String} {r f : String} {args : List PExpr}
+    (h : callCheck p scope r f args = .ok ()) : ∃ vs, lowerArgs args = some vs := by
+  unfold callCheck at h
+  repeat' split at h
+  all_goals first
+    | exact absurd h (by simp)
+    | (have := expressions_lowers args h
+       cases hl : lowerArgs args with
+       | none => rw [hl] at this; simp at this
+       | some vs => exact ⟨vs, rfl⟩)
+
 theorem checked_lowers (p : Profile) :
     (∀ (scope : List String) (s : PStmt),
         statement p scope s = .ok () → (lowerStmt1 s).isSome = true) ∧
@@ -342,7 +408,9 @@ theorem checked_lowers (p : Profile) :
     exact absurd h (ffi_other_rejected hshape)
   · intro scope name args hshape _ h
     exact absurd h (ffi_other_rejected hshape)
-  · intro scope r fn args h; simp [statement] at h
+  · intro scope r fn args h
+    obtain ⟨vs, hvs⟩ := callCheck_lowers h
+    simp [lowerStmt1, hvs]
   · intro scope _; rfl
   · intro scope s rest ihs ihrest h
     simp only [statements] at h
@@ -369,7 +437,10 @@ theorem checked_lowers (p : Profile) :
           | store a b => simp [lowerStmtsFold, hl, hf]
           | storeb a b => simp [lowerStmtsFold, hl, hf]
           | ffi a b => simp [lowerStmtsFold, hl, hf]
-          | call a b c => simp [lowerStmtsFold, hl, hf]
+          | call r f as =>
+            cases hw : lowerArgs as with
+            | none => simp [lowerStmt1, hw] at h1
+            | some w => simp [lowerStmtsFold, hw, hf]
           | ret a => simp [lowerStmtsFold, hl, hf]
           | ite a b c => simp [lowerStmtsFold, hl, hf]
           | «while» a b => simp [lowerStmtsFold, hl, hf]
@@ -427,21 +498,24 @@ structure RuleCase where
   reason : Reason
   rejected : PFun
   accepted : PFun
-  /-- Judged as a whole program rather than as an exported function. -/
+  /-- Judged as a whole program rather than as an exported function, with these functions. -/
   whole : Bool := false
+  functions : List PFun := []
+  /-- The twin's functions, when they differ. -/
+  twinFunctions : Option (List PFun) := none
 
 /-- The one external call the whole-program cases may make. -/
 def probeExternals : List String := ["dn_probe_io"]
 
-/-- The gate a case is judged by. -/
-def RuleCase.gate (c : RuleCase) (f : PFun) : Except Reason String :=
-  if c.whole then emitMain probeExternals f else emit f
+/-- The gate a case is judged by, with these functions for a whole program. -/
+def RuleCase.gate (c : RuleCase) (fs : List PFun) (f : PFun) : Except Reason String :=
+  if c.whole then emitProgram probeExternals fs f else emit f
 
 /-- The case's function refused for its rule, and its twin accepted. -/
 def RuleCase.honest (c : RuleCase) : Bool :=
-  (match c.gate c.rejected with
+  (match c.gate c.functions c.rejected with
    | .error r => r == c.reason
-   | .ok _ => false) && (c.gate c.accepted).isOk
+   | .ok _ => false) && (c.gate (c.twinFunctions.getD c.functions) c.accepted).isOk
 
 private def body1 : List PStmt := [.ret (.var "a")]
 private def fn (name : String) (params : List (Nat × String)) (body : List PStmt) : PFun :=
@@ -451,6 +525,9 @@ private def probe (params : List (Nat × String)) (body : List PStmt) : PFun :=
 private def scalar (body : List PStmt) : PFun := probe [(1, "a")] body
 private def whole (body : List PStmt) : PFun := { name := "main", body := body }
 private def io (args : List PExpr) : PStmt := .ffi "dn_probe_io" args
+/-- A function of a whole program that returns its parameter plus one. -/
+private def inc (name : String) : PFun :=
+  { name := name, params := [(1, "x")], body := [.ret (.binop .add (.var "x") (.const 1))] }
 
 /-- One case per rule. `catalog_covers_every_reason` makes a new rule without a case
 fail to compile, and `catalog_is_honest` keeps each case on the rule it names. -/
@@ -504,7 +581,22 @@ def catalog : List RuleCase :=
      accepted := whole [.ret (.const 0)] },
    { reason := .entryShape, whole := true,
      rejected := { name := "dn_probe", body := [.ret (.const 0)] },
-     accepted := whole [.ret (.const 0)] }]
+     accepted := whole [.ret (.const 0)] },
+   { reason := .callEffect, whole := true, functions := [inc "inc"],
+     rejected := whole [.call "x" "dec" [.const 1], .ret (.var "x")],
+     accepted := whole [.call "x" "inc" [.const 1], .ret (.var "x")] },
+   { reason := .callArity, whole := true, functions := [inc "inc"],
+     rejected := whole [.call "x" "inc" [.const 1, .const 2], .ret (.var "x")],
+     accepted := whole [.call "x" "inc" [.const 1], .ret (.var "x")] },
+   { reason := .functionName, whole := true, functions := [inc "inc", inc "inc"],
+     twinFunctions := some [inc "inc", inc "inc2"],
+     rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] },
+   { reason := .functionName, whole := true, functions := [inc "main"],
+     twinFunctions := some [inc "inc"],
+     rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] },
+   { reason := .functionName, whole := true, functions := [{ inc "inc" with exported := true }],
+     twinFunctions := some [inc "inc"],
+     rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] }]
 
 def rejectedMain (f : PFun) (r : Reason) : Bool :=
   match emitMain probeExternals f with

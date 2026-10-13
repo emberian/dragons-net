@@ -4,8 +4,13 @@ import DN.Compiler.Lower
 namespace DN.Compiler.LowerTests
 open DN.Compiler.Syntax DN.Compiler.Lower
 
-theorem call_is_rejected :
-    lowerStmt1 (.call "r" "unknown" []) = none := rfl
+/-- A call lowers to `DecCall`, scoping what follows; one whose argument does not lower does not. -/
+theorem call_lowers :
+    lowerStmtsFold [.call "r" "f" [.var "a"], .ret (.var "r")] =
+      some (.decCall "r" "f" [.var "a"] (.ret (.var "r"))) := rfl
+
+theorem call_of_unlowerable_argument_is_rejected :
+    lowerStmt1 (.call "r" "f" [.loadw 2 (.var "p")]) = none := rfl
 
 theorem scalar_load_is_supported :
     lowerExp (.loadw 1 (.var "p")) = some (.loadWord (.var "p")) := rfl

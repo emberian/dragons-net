@@ -1766,6 +1766,9 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
       intro s hs
       obtain ⟨w, ew, _⟩ := eval_of hs hv
       exact ⟨w, ew⟩
+  | decCall r f as c ih =>
+    intro A out h
+    simp [analyze] at h
 
 /-- The analysis of a whole `main`, accepted: from every state whose heap covers the bytes from
 `floor` to `size` after `@base`, the run never finishes normally and never errs. -/

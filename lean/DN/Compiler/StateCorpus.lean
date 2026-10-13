@@ -143,6 +143,9 @@ def ppProg : PancakeProg → String
   | .cond e a b => "(if " ++ ppExp e ++ " " ++ ppProg a ++ " " ++ ppProg b ++ ")"
   | .while_ e c => "(while " ++ ppExp e ++ " " ++ ppProg c ++ ")"
   | .ret e => "(ret " ++ ppExp e ++ ")"
+  | .decCall r f as c =>
+    "(deccall " ++ r ++ " " ++ f ++ " (" ++ " ".intercalate (as.map ppExp) ++ ") " ++ ppProg c ++
+      ")"
 
 /-- Every variable name the program mentions, so the locals can be compared over
 a known set rather than over a function nobody can print. -/
@@ -163,6 +166,7 @@ def progNames : PancakeProg → List String
   | .cond e a b => expNames e ++ progNames a ++ progNames b
   | .while_ e c => expNames e ++ progNames c
   | .ret e => expNames e
+  | .decCall r _ as c => r :: (as.flatMap expNames ++ progNames c)
 
 /-- The names to compare for a case: the ones it binds and the ones its program
 mentions, without repetitions. -/

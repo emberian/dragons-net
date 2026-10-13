@@ -31,9 +31,11 @@ structure Program where
   tree : Lean.Json
 
 /-- A function as the given gate prints it. -/
-def checkedBy (gate : PFun → Except Checked.Reason String) (f : PFun) : Except String Program := do
+def checkedBy (gate : PFun → Except Checked.Reason String) (f : PFun)
+    (helpers : List PFun := []) :
+    Except String Program := do
   let source ← (gate f).mapError Checked.Reason.message
-  return ⟨source, ← Canon.program f source⟩
+  return ⟨source, ← Canon.program f source helpers⟩
 
 /-- An exported function as the gate prints it. -/
 def checked (f : PFun) : Except String Program := checkedBy Checked.emit f
@@ -83,7 +85,9 @@ def all : Except String (List Program) := do
   let fixtures := Baseline.functions ++ [Baseline.control, Baseline.control2] ++
     Baseline.nestedFunctions
   return (← named.mapM (·.2)) ++
-    (← Checked.catalog.mapM fun (c : Checked.RuleCase) => checkedBy c.gate c.accepted) ++
+    (← Checked.catalog.mapM fun (c : Checked.RuleCase) =>
+      let fs := c.twinFunctions.getD c.functions
+      checkedBy (c.gate fs) c.accepted (if c.whole then fs else [])) ++
     (← fixtures.mapM word)
 
 end DN.Printed
