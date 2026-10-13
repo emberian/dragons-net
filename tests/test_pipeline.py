@@ -30,14 +30,15 @@ class CheckScript(unittest.TestCase):
 
     def test_check_script_runs_every_gate_in_order(self) -> None:
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
-                 "python3 scripts/check_structure.py", "lake build --wfail DN dn-compiler",
+                 "once gate", "lake build --wfail DN dn-compiler",
                  '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
                  '"$leanchecker" DN', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("all) build; proofs; tests ;;", CHECK)
+        self.assertIn("all) build; once proofs; once tests ;;", CHECK)
+        self.assertIn("gate() { python3 scripts/check_structure.py; }", CHECK)
         self.assertNotIn("lake env", CHECK)
 
     def test_build_archive_accepts_only_the_build_directory(self) -> None:
@@ -143,7 +144,8 @@ class CheckScript(unittest.TestCase):
 
             for name in ("lake", "cargo", "leanchecker", "lean"):
                 stub(stubs, name, f'echo "{name} $*" >> {log}')
-            stub(stubs, "python3", f'echo "python3 $*" >> {log}\n'
+            stub(stubs, "python3", 'case "$1" in scripts/once.py) exit 1 ;; esac\n'
+                 f'echo "python3 $*" >> {log}\n'
                  'case "$1" in scripts/measured.py) shift; exec "$@" ;; esac\n'
                  f'case "$2" in lean4export | nanoda) echo "{stubs}/$2" ;; esac')
             checker_env = "[$LEAN_PATH $LEAN_ABORT_ON_PANIC]"
@@ -225,6 +227,9 @@ class CheckScript(unittest.TestCase):
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
             shutil.copy(ROOT / "scripts/native_lanes.sh", tree / "scripts")
+            shutil.copy(ROOT / "scripts/once.py", tree / "scripts")
+            subprocess.run(["git", "init", "-q", str(tree)], check=True)
+            (tree / ".gitignore").write_text("build/\nran\n")
             for name, lane in scripts.items():
                 (tree / "scripts" / name).write_text(
                     f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
@@ -233,7 +238,8 @@ class CheckScript(unittest.TestCase):
             def lanes(*names: str, failing: str = "") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
-                                      env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing},
+                                      env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
+                                           "DN_ONCE": "off"},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -252,6 +258,47 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
+
+    def test_a_check_runs_once_per_tree(self) -> None:
+        """A check that passed is not run again on a tree whose every file is as it was, and is on
+        one with a file changed, added, or of another content under the same name, or with another
+        command or compiler."""
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            (tree / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/once.py", tree / "scripts")
+            (tree / ".gitignore").write_text("build/\n")
+            (tree / "a.txt").write_text("one\n")
+            subprocess.run(["git", "init", "-q", str(tree)], check=True)
+
+            def run(*args: str, cake: str = "") -> subprocess.CompletedProcess[str]:
+                return subprocess.run([sys.executable, str(tree / "scripts/once.py"), *args], cwd=tree, text=True,
+                                      env={**os.environ, "CAKE": cake}, capture_output=True, check=False,
+                                      timeout=60)
+
+            def once(action: str, *command: str, cake: str = "") -> int:
+                return run(action, "lane", "--", *(command or ("run",)), cake=cake).returncode
+
+            missed = run("check", "lane", "--", "run")
+            self.assertEqual(missed.returncode, 1)
+            # The key is taken before the check runs: a file changed meanwhile leaves the tree unstamped.
+            (tree / "a.txt").write_text("changed while it ran\n")
+            self.assertEqual(run("stamp", "lane", missed.stdout.strip()).returncode, 0)
+            self.assertEqual(once("check"), 1)
+            (tree / "a.txt").write_text("one\n")
+            self.assertEqual(once("check"), 0)
+            self.assertEqual(run("stamp", "lane", "").returncode, 1)
+            self.assertEqual(run("stamp", "../lane", missed.stdout.strip()).returncode, 1)
+            self.assertEqual(once("check", "other"), 1)
+            self.assertEqual(once("check", cake="/other/cake"), 1)
+            (tree / "build/ignored").write_text("left by a run\n")
+            self.assertEqual(once("check"), 0)
+            (tree / "a.txt").write_text("two\n")
+            self.assertEqual(once("check"), 1)
+            (tree / "a.txt").write_text("one\n")
+            self.assertEqual(once("check"), 0)
+            (tree / "b.txt").write_text("")
+            self.assertEqual(once("check"), 1)
 
     def test_every_native_lane_also_runs_alone(self) -> None:
         """CI runs the native lanes one after another in one checkout, where a lane can lean on what

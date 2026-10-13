@@ -49,8 +49,9 @@ main() {
   fi
   case "${1:-all}" in
     guard) ;;
-    build | proofs | tests) "$1" ;;
-    all) build; proofs; tests ;;
+    build) build ;;
+    proofs | tests) once "$1" ;;
+    all) build; once proofs; once tests ;;
     *)
       echo 'usage: check.sh [guard | build | proofs | tests]' >&2
       exit 2
@@ -63,11 +64,22 @@ main() {
   fi
 }
 
+# A check that passed on the same inputs is not run again (scripts/once.py).
+# The build always runs: Lake rebuilds only what changed, and the outputs must match the sources.
+once() {
+  local key
+  if key=$(python3 scripts/once.py check "check-$1" -- "$1"); then return; fi
+  "$1"
+  if [[ -n $key ]]; then python3 scripts/once.py stamp "check-$1" "$key"; fi
+}
+
+gate() { python3 scripts/check_structure.py; }
+
 # Source gate and build.
 build() {
   local before
   before=$(snapshot)
-  python3 scripts/check_structure.py
+  once gate
   # --wfail: a warning fails the build. Lake replays a module's stored log, so
   # this holds on a warm cache as well as on a fresh checkout. The kernel's runs of the
   # safety analyses make most of its cost, which the log shows as it grows.
