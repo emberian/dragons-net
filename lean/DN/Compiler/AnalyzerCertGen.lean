@@ -71,7 +71,7 @@ def analyzeW (size : Nat) (A : AState) : PancakeProg → W (Option AState)
     return assume size I e false
   | p => do
     count A
-    lift (analyze size A p)
+    lift (analyze size [] A p)
 
 def cost (size : Nat) (A : AState) (p : PancakeProg) : Nat :=
   match (analyzeW size A p).run 0 with
@@ -87,7 +87,7 @@ def deltaOf (A B : AState) : Delta :=
     cells := if decide (A.cells = B.cells) then none else some B.cells }
 
 def leafOf (size : Nat) (A : AState) (p : PancakeProg) : Except Alarm Cert := do
-  match ← analyze size A p with
+  match ← analyze size [] A p with
   | none => .ok (.leaf none)
   | some B =>
     let d := deltaOf A B
@@ -103,7 +103,7 @@ def chainFits (size budget : Nat) (A : AState) (spent : Nat) : PancakeProg → N
   | .seq c1 c2 =>
     let c := cost size A c1
     if budget < spent + c then 0 else
-    match analyze size A c1 with
+    match analyze size [] A c1 with
     | .ok (some B) => 1 + chainFits size budget B (spent + c) c2
     | _ => 1
   | _ => 0
@@ -142,7 +142,7 @@ def certify (size budget : Nat) : Nat → AState → PancakeProg → Except Alar
         | some G => certify size budget fuel G c2
       .ok (.cond k1 k2)
     | .while_ e c => do
-      let (I, _) ← search size e (branch size e true (fun X => analyze size X c)) searchFuel A
+      let (I, _) ← search size e (branch size e true (fun X => analyze size [] X c)) searchFuel A
       let d := deltaOf A I
       if !decide (d.apply A = some I) then .error "while: the invariant is not its entry changed"
       else

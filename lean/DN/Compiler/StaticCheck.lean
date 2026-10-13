@@ -6,11 +6,11 @@ import DN.Compiler.Syntax
 
 CakeML's static checker (`pancake/panStaticScript.sml`) tracks, for every local, whether it is
 derived from the base address, and warns about a load or store whose address may not be. A
-parameter and a loaded word are `Trusted`, a literal or a comparison `NotBased`, an operation
-the strongest of its operands, and a local that the branches of an `if`, or a loop and the code
-before it, leave in different states `NotTrusted`. An address holding a `NotTrusted` part draws
-the warning. The generated-programs lane fails on every warning, so the generator keeps this
-account and builds addresses only from parts that are not `NotTrusted`.
+parameter, a loaded word and what a call returns are `Trusted`, a literal or a comparison
+`NotBased`, an operation the strongest of its operands, and a local that the branches of an `if`,
+or a loop and the code before it, leave in different states `NotTrusted`. An address holding a
+`NotTrusted` part draws the warning. The generated-programs lane fails on every warning, so the
+generator keeps this account and builds addresses only from parts that are not `NotTrusted`.
 
 The two pinned revisions differ in one rule: a shift takes the state of the shifted expression
 at `ed31510` and that of the distance at `e8eca63`, where a literal distance makes it
@@ -109,7 +109,8 @@ def stmtAccount (acc : Account) : PStmt → Option Account
     match blockAccount acc b with
     | some ab => some (Account.join acc ab acc)
     | none => none
-  | .ffi _ args | .call _ _ args => if args.all acc.loads then some acc else none
+  | .ffi _ args => if args.all acc.loads then some acc else none
+  | .call x _ args => if args.all acc.loads then some (acc ++ [(x, Bd2.all .trusted)]) else none
 def blockAccount (acc : Account) : List PStmt → Option Account
   | [] => some acc
   | s :: rest => match stmtAccount acc s with
@@ -139,5 +140,8 @@ def regression_814 : Bool :=
   bdWith (fun _ => Bd2.all .trusted) (.shr (v "p") (n 3)) == (.notBased, .trusted) &&
     !trustedAddresses
       { name := "f", params := [(1, "p")], body := [.ret (.loadb (.shr (v "p") (n 0)))] }
+-- What a call returns is trusted as an address, as a parameter is.
+def regression_954 : Bool :=
+  trustedAddresses { name := "f", params := [], body := [.call "x" "g" [], .ret (.loadb (v "x"))] }
 
 end DN.Compiler.StaticCheck

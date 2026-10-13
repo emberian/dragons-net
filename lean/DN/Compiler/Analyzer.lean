@@ -18,6 +18,10 @@ a local or a cell it compares, or of `x` in `x + k` for a constant `k` when addi
 the words. A loop's invariant is found
 by running its body until the state stops growing, widening a bound that keeps moving; whatever the
 search finds is checked, and only the check is relied on.
+
+A function is analysed once, from any arguments, and only the functions defined before it may be
+called: a call's value is any word, and the memory may change. A function's arguments are numbers
+to it, so the addresses it uses come from `@base`.
 -/
 
 namespace DN.Compiler.Analyzer
@@ -372,6 +376,17 @@ def arrayOk (size : Nat) (p len : AVal) : Bool :=
 /-- Why a program was not shown safe. -/
 abbrev Alarm := String
 
+/-- The functions a statement may call, each with its parameters, the last defined first. -/
+abbrev Env := List (String × List String)
+
+/-- The parameters of `f` and the functions defined before it. -/
+def findFn (f : String) : Env → Option (List String × Env)
+  | [] => none
+  | (g, ps) :: rest => if f = g then some (ps, rest) else findFn f rest
+
+/-- A function's state on entry: its parameters, each any word. -/
+def entryState (ps : List String) : AState := ⟨ps.map fun p => (p, AVal.top), []⟩
+
 /-- The outcome of a statement: an alarm, or the state it ends normally in, if it can. -/
 abbrev Out := Except Alarm (Option AState)
 
@@ -381,6 +396,13 @@ def valOf (size : Nat) (A : AState) (e : PancakeExp) (what : String) : Except Al
   match evalA size A e with
   | some v => .ok v
   | none => .error s!"{what}: an expression that may have no value: {repr e}"
+
+/-- Every argument has a value. -/
+def argsOk (size : Nat) (A : AState) (what : String) : List PancakeExp → Except Alarm Unit
+  | [] => .ok ()
+  | e :: es => do
+    let _ ← valOf size A e what
+    argsOk size A what es
 
 /-- How large a local is taken to be while a guard's bound on it is sought: below the end of the
 words by `2 ^ 32`, so that `x + k < y` bounds it too for a constant `k` below that. -/
@@ -466,12 +488,12 @@ def loop (size : Nat) (e : PancakeExp) (body : AState → Out) (A : AState) : Ou
   need (leOpt post I) "while: no invariant found"
   .ok (assume size I e false)
 
-def analyze (size : Nat) (A : AState) : PancakeProg → Out
+def analyze (size : Nat) (env : Env) (A : AState) : PancakeProg → Out
   | .skip => .ok (some A)
   | .dec x e c => do
     let v ← valOf size A e s!"var {x}"
     let inner := { locals := (x, v) :: A.locals, cells := killCells x A.cells }
-    match ← analyze size inner c with
+    match ← analyze size env inner c with
     | none => .ok none
     | some B =>
       let ls := dropVar x B.locals
@@ -501,23 +523,55 @@ def analyze (size : Nat) (A : AState) : PancakeProg → Out
     need (arrayOk size cp clv && arrayOk size ap alv) s!"@{name}: an array that may be off the heap"
     .ok (some { A with cells := [] })
   | .seq c1 c2 => do
-    match ← analyze size A c1 with
+    match ← analyze size env A c1 with
     | none => .ok none
-    | some B => analyze size B c2
+    | some B => analyze size env B c2
   | .cond e c1 c2 => do
     let _ ← valOf size A e "if"
-    let o1 ← branch size e true (fun X => analyze size X c1) A
-    let o2 ← branch size e false (fun X => analyze size X c2) A
+    let o1 ← branch size e true (fun X => analyze size env X c1) A
+    let o2 ← branch size e false (fun X => analyze size env X c2) A
     joinOuts o1 o2
-  | .while_ e c => loop size e (fun X => analyze size X c) A
+  | .while_ e c => loop size e (fun X => analyze size env X c) A
   | .ret e => do
     let _ ← valOf size A e "return"
     .ok none
-  | .decCall _ f _ _ => .error s!"var = {f}(…): a call, which the analysis does not take yet"
+  | .decCall rt f args c => do
+    let what := s!"var {rt} = {f}(…)"
+    argsOk size A what args
+    match findFn f env with
+    | none => .error s!"{what}: a function not defined before this one"
+    | some (ps, _) =>
+      need (ps.length == args.length) s!"{what}: another number of arguments"
+      match ← analyze size env { locals := (rt, AVal.top) :: A.locals, cells := [] } c with
+      | none => .ok none
+      | some B =>
+        let ls := dropVar rt B.locals
+        need (lookup rt ls).isNone s!"{what}: a local declared again inside its own scope"
+        .ok (some { locals := ls, cells := killCells rt B.cells })
 
 /-- The analysis of a whole `main`: no alarm, and no run finishes without a result. -/
 def check (size : Nat) (p : PancakeProg) : Except Alarm Unit := do
-  match ← analyze size ⟨[], []⟩ p with
+  match ← analyze size [] ⟨[], []⟩ p with
+  | none => .ok ()
+  | some _ => .error "main: a run may finish without a result"
+
+/-- The functions of a program, in the order defined, each analysed from any arguments with those
+before it to call, and none finishing without a result: the functions `main` may call. -/
+def checkFns (size : Nat) : Env → List (String × List String × PancakeProg) → Except Alarm Env
+  | env, [] => .ok env
+  | env, (f, ps, body) :: fns => do
+    need (findFn f env).isNone s!"{f}: a function defined twice"
+    need (f != "main") s!"{f}: a function named as the program's entry"
+    need (decide ps.Nodup) s!"{f}: a parameter named twice"
+    match ← analyze size env (entryState ps) body with
+    | none => checkFns size ((f, ps) :: env) fns
+    | some _ => .error s!"{f}: a run may finish without a result"
+
+/-- The analysis of a program: its functions, then its `main`. -/
+def checkProgram (size : Nat) (fns : List (String × List String × PancakeProg)) (p : PancakeProg) :
+    Except Alarm Unit := do
+  let env ← checkFns size [] fns
+  match ← analyze size env ⟨[], []⟩ p with
   | none => .ok ()
   | some _ => .error "main: a run may finish without a result"
 
@@ -638,5 +692,51 @@ def regression_942 : Bool :=
 def regression_933 : Bool :=
   (check heap (.dec "x" (.op .and_ .base (c 15))
     (.seq (.storeByte (.op .add (at' 48) (.var "x")) (c 0)) (.ret (c 0))))).toBool
+
+/-- A byte stored at `k` of the heap above its header, `k` checked to lie in it first (or not): to
+a function, its argument may be any word. -/
+private def put (checked : Bool) : PancakeProg :=
+  .seq (if checked then
+      .cond (.cmp .less (c 0)
+          (.op .add (.cmp .less (.var "k") (c 0)) (.cmp .less (c 63) (.var "k"))))
+        (.ret (c 1)) .skip
+    else .skip)
+    (.seq (.storeByte (.op .add (at' 0) (.var "k")) (c 0)) (.ret (c 0)))
+
+/-- `main` calling `f` with `args`, then returning what it gave. -/
+private def calls (f : String) (args : List PancakeExp) : PancakeProg :=
+  .decCall "r" f args (.ret (.var "r"))
+
+def regression_949 : Bool :=
+  (checkProgram heap [("put", ["k"], put true)] (calls "put" [c 5])).toBool
+def regression_950 : Bool :=
+  !(checkProgram heap [("put", ["k"], put false)] (calls "put" [c 5])).toBool
+/-- Another number of arguments, a function not defined, one calling itself, one that may finish
+without a result, and one defined twice are refused. -/
+def regression_951 : Bool :=
+  !(checkProgram heap [("put", ["k"], put true)] (calls "put" [c 5, c 6])).toBool &&
+    !(checkProgram heap [] (calls "put" [c 5])).toBool &&
+    !(checkProgram heap [("f", [], calls "f" [])] (calls "f" [])).toBool &&
+    !(checkProgram heap [("f", [], .skip)] (calls "f" [])).toBool &&
+    !(checkProgram heap [("f", [], .ret (c 0)), ("f", [], .ret (c 0))] (calls "f" [])).toBool
+/-- A function may call one defined before it. -/
+def regression_952 : Bool :=
+  (checkProgram heap [("put", ["k"], put true), ("twice", ["k"], .decCall "a" "put" [.var "k"]
+      (.decCall "b" "put" [.op .add (.var "k") (c 1)] (.ret (.var "b"))))]
+    (calls "twice" [c 7])).toBool
+/-- What a call returns may be any word: storing at it is refused. -/
+def regression_953 : Bool :=
+  !(checkProgram heap [("put", ["k"], put true)] (.decCall "r" "put" [c 5]
+    (.seq (.storeByte (.op .add (at' 0) (.var "r")) (c 0)) (.ret (c 0))))).toBool
+/-- Calls in a branch and in a loop are taken; a call whose result is named as a local in scope, and
+after which the run may go on, is refused, as such a declaration is. -/
+def regression_955 : Bool :=
+  let fns := [("put", ["k"], put true)]
+  (checkProgram heap fns (.cond (.loadWord (at' 0)) (calls "put" [c 1]) (.ret (c 0)))).toBool &&
+    (checkProgram heap fns (.dec "i" (c 0) (.seq (.while_ (.cmp .less (.var "i") (c 3))
+        (.decCall "r" "put" [.var "i"] (.assign "i" (.op .add (.var "i") (c 1)))))
+      (.ret (c 0))))).toBool &&
+    !(checkProgram heap fns
+      (.dec "r" (c 0) (.seq (.decCall "r" "put" [c 5] .skip) (.ret (c 0))))).toBool
 
 end DN.Compiler.Analyzer

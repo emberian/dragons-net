@@ -20,6 +20,8 @@ from gatekit import CHECK, ROOT, regressions, run, script, sha256, source_tree
 
 bootstrap_tool = script("bootstrap_tool")
 build_archive = script("build_archive")
+prior_pass = script("prior_pass")
+check_prose = script("check_prose")
 structure = script("check_structure")
 upstream_sources = script("check_upstream_sources")
 verify_run = script("verify_run")
@@ -299,6 +301,63 @@ class CheckScript(unittest.TestCase):
             self.assertEqual(once("check"), 0)
             (tree / "b.txt").write_text("")
             self.assertEqual(once("check"), 1)
+
+    def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
+        """CI skips a job whose pass an earlier run recorded: the newest such run of this repository's
+        own branches, never one of a fork, whose workflow is its own, nor an expired record."""
+        def artifact(run: int, repository: int = 7, head: int = 7, expired: bool = False) -> dict[str, Any]:
+            return {"expired": expired, "workflow_run": {"id": run, "repository_id": repository,
+                                                         "head_repository_id": head}}
+
+        self.assertIsNone(prior_pass.choose({"artifacts": []}, 7))
+        self.assertEqual(prior_pass.choose({"artifacts": [artifact(3), artifact(5), artifact(4)]}, 7), 5)
+        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, head=9)]}, 7))
+        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, repository=9, head=9)]}, 7))
+        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, expired=True)]}, 7))
+        self.assertEqual(prior_pass.choose({"artifacts": [artifact(5, head=9), artifact(2)]}, 7), 2)
+        self.assertIsNone(prior_pass.choose({"artifacts": [{"expired": False}]}, 7))
+
+    def test_ci_records_a_pass_only_after_its_steps(self) -> None:
+        """Every job looks for a recorded pass first, and records its own last, so a job that
+        failed half way records none."""
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text().split("\njobs:\n", 1)[1]
+        jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=\n\n  [#a-z]|\Z)", workflow, re.MULTILINE | re.DOTALL))
+        self.assertEqual(set(jobs), set(verify_run.REQUIRED_JOBS))
+        for name, job in jobs.items():
+            with self.subTest(job=name):
+                steps = re.split(r"(?m)^      - ", job)[1:]
+                found = [i for i, s in enumerate(steps) if "run: python3 scripts/prior_pass.py" in s]
+                recorded = [i for i, s in enumerate(steps) if "name: passed-${{" in s]
+                self.assertEqual(len(found), 1)
+                self.assertEqual(len(recorded), 1)
+                # Only the build's archive goes up either way: a later job of the run needs it.
+                self.assertTrue(all("if:" in s or "name: lean-build" in s for s in steps[found[0] + 1:recorded[0] + 1]))
+                self.assertTrue(all("upload-artifact" in s or "lean-build" in s
+                                    for s in steps[recorded[0] + 1:]))
+
+    def test_prose_is_held_to_its_limits(self) -> None:
+        """A paragraph, a list item, a sentence and a table cell each over its limit are refused, each at
+        its line; a code span counts as one word, code blocks and headings not at all, and short text
+        passes."""
+        def text(n: int) -> str:
+            return " ".join(["Word"] + ["word"] * (n - 1))
+
+        self.assertEqual(check_prose.problems(f"# {text(99)}\n\n{text(40)}.\n\n| {text(40)} | b |\n| --- | - |\n"), [])
+        self.assertEqual(check_prose.problems(f"```\n{text(99)}\n```\n`{text(99)}` {text(44)}.\n"), [])
+        long = check_prose.problems(f"{text(30)}. {text(31)}.\n\n- {text(40)}.\n- {text(46)}.\n\n| {text(41)} |\n"
+                                    f"\n`a` `b` {text(44)}.\n")
+        self.assertEqual([p.split(":")[0] for p in long], ["line 1", "line 4", "line 6", "line 8"])
+        self.assertIn("a paragraph of 61 words", long[0])
+        self.assertIn("a sentence of 46 words", long[1])
+        self.assertIn("a cell of 41 words", long[2])
+        self.assertIn("a sentence of 46 words", long[3])
+        # A sentence ends where a capital, a digit or code follows its full stop, not elsewhere.
+        self.assertEqual(check_prose.sentences("One. Two e.g. three. 4 x. `y` z."), ["One.", "Two e.g. three.", "4 x.",
+                                                                              "`y` z."])
+        # Lint holds every Markdown file to them but the records and the files listed as not yet brought.
+        lint = (ROOT / "scripts/lint.sh").read_text()
+        self.assertIn("| xargs -0 python3 -P scripts/check_prose.py", lint)
+        self.assertIn("git ls-files -z '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/'", lint)
 
     def test_every_native_lane_also_runs_alone(self) -> None:
         """CI runs the native lanes one after another in one checkout, where a lane can lean on what

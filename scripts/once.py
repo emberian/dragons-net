@@ -8,8 +8,8 @@ file git tracks or would track, by content, so nothing a check can read is left 
 checks `INPUTS` names, the files under its paths; the compiler `CAKE` names counts too. The stamps
 lie in `build/stamps`, or where `DN_STAMPS` says; `DN_ONCE=off` runs everything again and stamps it.
 
-`once.py key NAME` prints the key of NAME's inputs alone, for CI, whose jobs keep what they passed
-on in its cache under that key."""
+`once.py key NAME` prints the key of NAME's inputs alone, for CI, whose jobs record what they
+passed on as an artifact named by that key (`scripts/prior_pass.py`)."""
 from __future__ import annotations
 
 import hashlib

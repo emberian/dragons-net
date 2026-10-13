@@ -26,6 +26,9 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
 - A loop's invariant is searched for — joins, widening up to the guard, then widening — and then
   checked to hold on entry and to be kept by the body. Only the check is proven; the search can be
   changed freely.
+- Functions are analysed in the order defined, each from any arguments, and may call only those
+  before it: a call gives any word and forgets the cells. `checkProgram` takes a program so, and
+  `program_never_fails` proves it from code holding its functions; certificates take no calls yet.
 - The analysis is written in structural recursion over `Nat` and `Int`, so the kernel reduces it.
   `dn-compiler analyze-session` runs the same analysis compiled and names the first alarm, which
   the kernel does not.

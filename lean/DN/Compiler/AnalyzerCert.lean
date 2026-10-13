@@ -12,8 +12,8 @@ gives as changes to the one it starts in; a loop the certificate cuts through ta
 it gives, checked as `analyze` checks the one it finds. `analyzeC` runs a certificate without
 analyzing its pieces and lists what it claims of each; `DN.Compiler.AnalyzerCertSound` proves that
 when each claim holds — `analyze` gives it, each in a declaration of its own — the program is as
-safe as `analyze_safe` makes it. A certificate is found as `analyze` finds invariants
-(`dn-compiler analysis-cert`); only the checks are relied on.
+safe as `analyze_safe` makes it, with no functions to call. A certificate is found as `analyze`
+finds invariants (`dn-compiler analysis-cert`); only the checks are relied on.
 -/
 
 namespace DN.Compiler.Analyzer
@@ -43,7 +43,7 @@ def Delta.apply (A : AState) (d : Delta) : Option AState :=
 def prefixOut (size : Nat) : Nat → AState → PancakeProg → Except Alarm (Option AState)
   | 0, A, _ => .ok (some A)
   | n + 1, A, .seq c1 c2 => do
-    match ← analyze size A c1 with
+    match ← analyze size [] A c1 with
     | none => .ok none
     | some B => prefixOut size n B c2
   | _ + 1, _, _ => .error "a chain shorter than the certificate's"
@@ -77,7 +77,7 @@ instance : Inhabited Ob := ⟨⟨⟨[], []⟩, .skip, 0, none⟩⟩
 
 /-- The analysis a claim is about. -/
 def Ob.run (size : Nat) (ob : Ob) : Except Alarm (Option AState) :=
-  if ob.n = 0 then analyze size ob.A ob.p else prefixOut size ob.n ob.A ob.p
+  if ob.n = 0 then analyze size [] ob.A ob.p else prefixOut size ob.n ob.A ob.p
 
 /-- The claims hold. -/
 def ObsOk (size : Nat) (obs : List Ob) : Prop := ∀ ob ∈ obs, ob.run size = .ok ob.out

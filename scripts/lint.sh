@@ -59,6 +59,12 @@ main() {
   "$gitleaks" git --no-banner --redact --log-level warn .
   git ls-files -z '*.md' "${sources[@]}" | xargs -0 "$typos"
   git ls-files -z "${sources[@]}" | xargs -0 "$editorconfig"
+  # Prose stays short. Decisions and reviews are records, kept as written; the files after them have
+  # not been brought to the limits yet, and leave this list once they are.
+  git ls-files -z '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/' ':!:AGENTS.md' \
+    ':!:CONTRIBUTING.md' ':!:SECURITY.md' ':!:backend/README.md' ':!:docs/architecture.md' ':!:docs/echo.md' \
+    ':!:docs/handoff.md' ':!:docs/nntp.md' ':!:docs/pancake-semantics.md' ':!:docs/porting-risks.md' \
+    ':!:docs/project.md' ':!:models/README.md' | xargs -0 python3 -P scripts/check_prose.py
   cargo fmt --all -- --check
   cargo fmt --manifest-path models/Cargo.toml --all -- --check
   "$deny" --locked check

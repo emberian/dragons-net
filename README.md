@@ -4,89 +4,52 @@
 
 **A compiler and dataplane foundation for Dragon’s News: an ambitious little NNTP server, and eventually a component of the dregg dragon’s egg operating system.**
 
-The aim is a small, understandable news server with an exceptionally good dataplane: bounded storage, explicit ownership, efficient native code, and correctness arguments that reach as far toward the running program as we can make them. NNTP brings asynchronous conversation and federation; durable article storage and offline exchange will be first-class design concerns.
+The path is **Lean specifications and proofs → Pancake → CakeML → native code**, with a narrow host for sockets, buffers and durable storage, built on the inherited `orb-compiler`, `orb`, `drorb` and datacake work.
 
-The proposed path is **Lean specifications and proofs → Pancake → CakeML → native code**, with a narrow host interface for sockets, buffers, and durable storage. We inherit substantial compiler and reactor work from `orb-compiler`, `orb`, `drorb`, and the datacake experiments. This repository gives that work a focused home and fresh history. The adjacent `fn` experiment is separate.
+**Today: compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server answering RFC 3977's mandatory commands on loopback, recovering its store at start; not yet a usable news server or an end-to-end verified executable.**
 
-**Today this is working compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server that answers the mandatory commands of RFC 3977 on loopback without a store. It is not yet a usable news server or an end-to-end verified executable.**
-
-The [inherited-code review](docs/reviews/README.md) records confirmed defects, fixes, and the ownership/proof work required before porting the old reactors.
-
-Start with [the compiler baseline](docs/baseline.md): what is exercised, the two native boundary bugs it exposed, and what remains to establish.
+Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](docs/assurance.md); the [inherited-code review](docs/reviews/README.md) records the defects found in what was inherited.
 
 ## What’s here
 
 | Area | Current state |
 | --- | --- |
-| [Compiler](lean/DN/Compiler) | The emitted subset and its proofs, under `DN.Compiler`: syntax, lowering, the checked emitter and ABI, model execution, the safety analysis, a proven weakest precondition for showing what a program computes, byte operations, decimal rendering, certificates and regression examples. The inherited HTTP workloads were removed; the extraction manifest records where they came from. |
-| [Source language](lean/DN/Dsl) | A small language of replies embedded deeply in Lean, compiled into the emitted subset, with one proof that, in the model of Pancake's semantics, the lowered code of every program the emitter accepts does what the program means; the printed source, CakeML and the host are tested, not proven ([why deep](docs/decisions/0001-embedding.md)). Keyword branches and byte literals so far; not yet an NNTP command parser. |
-| [Server loop](lean/DN/Server) | The server's `main`, a loop that reaches its host through two external calls on arrays in its own heap, with the layout it shares with the host printed as a C header. In the model of Pancake's semantics its runs never fail, for any host and any clock, given a heap that covers the layout, by the same safety analysis as the session's; the compiled loop runs against a scripted host, and hostile batches end it. The skeleton echoes payloads; the NNTP session's program (`DN.Server.Session`) is built the same way ([details](docs/baseline.md#session-program)). |
-| [Dataplane models](lean/DN/Dataplane) | Ring ownership, conservation and at-most-once recycling; slabs and generation counters, with stale keys rejected for the rest of the trace; completion handling; wakeups, including the drain order that loses messages; deadlines whose tombstones are swept back under twice the live set and whose firing is a step of the same model; flow control and draining. The discipline the two generation-tagged stores share — an incarnation that ended never resolves again — is stated and proven once, and each store is an instance of it. Candidate specifications: no refinement theorem connects them to a running host. |
-| [Host primitives](crates/dn-runtime) | A small Rust library with a generational slab, connection permits, and a partial-write cursor. Tested; correspondence to the Lean models remains work. |
-| [Concurrency exploration](models) | Eight Rust models (three of them sharing the buffer-lease type) and 30 Loom tests, three of which drive the shipped admission gate, including counterexamples for deliberately broken algorithms and a recorded set of defects the tests must catch. |
-| [Native execution](docs/baseline.md) | 35,520 differential arithmetic/control cases, 300 generated programs, 99,240 digest comparisons, 26,039 copy-kernel checks, 311 CRC-32C buffers, 370 SipHash-2-4 messages, 28,704 journal readings, 2,066 recovered directories and 5,790 reply-table calls through the actual compiler. |
-| [TCP echo](docs/echo.md) | A bounded `poll` host calling the generated byte-copy kernel; real socket tests cover concurrency, partial output, disconnects, and admission limits. |
-| [Backend work](backend/README.md) | Pinned CakeML/HOL source and a curated datacake optimization patch. Source retrieval, the prover build, the proof rebuild and the compiler bootstrap from that source are scripted and have been run here. |
-| [Migration sources](migration/dataplane/README.md) | The original native host, FFI, and performance tooling preserved for extraction, byte for byte, and checked against the manifest. These are reference sources, outside the active build; [the porting risks](docs/porting-risks.md) say which of their lifetime and ownership decisions cannot be carried over. |
-| [News](lean/DN/News) | How input is cut into command lines and multi-line blocks: a specification over the whole stream (`FrameSpec`), framers proven to give it however the input is cut into chunks (`Framer`), and the functions the compiler prints from them proven to make exactly the framers' steps (`FramerCode`), held against an independent reference on the compiled code ([details](docs/baseline.md#framers)); the session runs the line framer's statements inside its `main`, where they are tested, not proven. Which reply each command line gets (`CommandSpec`) and the session as a function of what the host reports (`SessionSpec`) are run as a model that a simulated host drives and an independent reference judges ([details](docs/baseline.md#session-model)). The session's program (`DN.Server.Session`) is compiled, held against that model turn by turn, and proven in the model never to fail by a safety analysis proven sound once ([details](docs/baseline.md#session-program)); a host serves it over sockets on loopback ([details](docs/baseline.md#nntp-server)). The article store is specified and proven in the model — which articles are accepted, its journal, the file system and its crashes, recovery, and that a crash at any point of its runs keeps every article answered 240 under stated assumptions ([decision 0005](docs/decisions/0005-article-store.md), [details](docs/assurance.md)); its host is built, and its program's CRC-32C and SipHash-2-4 are proven to compute the specification's (`CrcCode`, `SipHashCode`) and its journal scanner and recovery tested against it (`ScanProg`, `RecoverProg`); the rest of the program, peering and a human UI remain to be built. |
+| [Compiler](lean/DN/Compiler) | The emitted Pancake subset and its proofs: syntax, lowering, the checked emitter, model execution, the safety analysis and a proven weakest precondition. |
+| [Source language](lean/DN/Dsl) | A deeply embedded language of replies, proven in the model to compile to code that does what each program means ([why deep](docs/decisions/0001-embedding.md)). |
+| [Server loop](lean/DN/Server) | The server's `main` and the session's program, reaching the host through external calls, proven in the model never to fail for any host and clock from a heap covering their layout ([details](docs/baseline.md#session-program)). |
+| [Dataplane models](lean/DN/Dataplane) | Rings, slabs, completions, wakeups, deadlines and flow control, proven of the models; no refinement to a running host. |
+| [Host primitives](crates/dn-runtime) | A tested Rust slab, connection permits and a partial-write cursor. |
+| [Concurrency exploration](models) | Eight Rust models and 30 Loom tests, with recorded defects the tests must catch. |
+| [Native execution](docs/baseline.md) | 35,520 differential cases, 300 generated programs, 26,039 copy-kernel checks, 311 CRC-32C buffers, 370 SipHash-2-4 messages, 28,704 journal readings, 2,066 recovered directories and 5,790 reply-table calls through the real compiler. |
+| [TCP echo](docs/echo.md) | A bounded `poll` host calling the generated copy kernel. |
+| [Backend work](backend/README.md) | Pinned CakeML/HOL source, a curated datacake patch, the proof rebuild and the compiler bootstrap, scripted. |
+| [Migration sources](migration/dataplane/README.md) | The original native host, preserved byte for byte as reference ([porting risks](docs/porting-risks.md)). |
+| [News](lean/DN/News) | Framers ([details](docs/baseline.md#framers)), the session's specification ([details](docs/baseline.md#session-model)) and program, the NNTP server ([details](docs/baseline.md#nntp-server)), and the article store specified and proven in the model ([decision 0005](docs/decisions/0005-article-store.md)), its CRC-32C and SipHash-2-4 proven, its scanner and recovery tested and recovery run at start. |
 
-The proof audit (`scripts/Audit.lean`) imports every module under `lean/DN` and rejects any declaration there that is an axiom, `unsafe`, `partial`, `extern`, `export`, `implemented_by`, an initializer or a `csimp` theorem, or that depends on an axiom other than `propext`, `Classical.choice` and `Quot.sound`; the only exception is the `_unsafe_rec` helper Lean generates to compile a recursive definition of the same module. The audit also runs every `regression_*` example, a `Bool` or, so that importing its module costs nothing, a `Unit → Bool`. `leanchecker` re-checks the same modules in the kernel, and nanoda, a Lean kernel written independently, checks them again with everything they use and admits only those three axioms. Before the build, a source gate rejects the commands through which library code could act on the system, such as `#eval`, custom elaborators and `unsafe` code. The gate is a tripwire, not a sandbox: building Lean code runs code, so check untrusted changes in an isolated environment without secrets. These checks concern the soundness of the recorded proofs, not the strength or completeness of the specifications. See [assurance boundaries](docs/assurance.md) and [the transcription of Pancake's semantics](docs/pancake-semantics.md), which also says how the states a run stops in are held against an independent implementation.
+`scripts/Audit.lean`, `leanchecker` and nanoda re-check every declaration of `lean/DN` against the allowed axioms after a source gate; this is about the proofs' soundness, not the specifications' strength ([assurance](docs/assurance.md), [Pancake semantics](docs/pancake-semantics.md)). The gate is a tripwire, not a sandbox: check untrusted changes in isolation, without secrets.
 
 ## Build and check
 
-Install Git, Python 3.12, [elan](https://github.com/leanprover/elan), and [rustup](https://rustup.rs/). A native C toolchain is needed to build the Lean executable. The repository pins Lean and Rust in their toolchain files; the first build downloads them. The checks run on Linux x86-64 and download or build their pinned tools on first use; elsewhere, `bash scripts/check.sh build` runs the source gate and the build. No sibling checkout or Mathlib is needed.
+Install Git, Python 3.12, [elan](https://github.com/leanprover/elan), [rustup](https://rustup.rs/) and a C toolchain; the checks run on Linux x86-64 and fetch their pinned tools on first use (elsewhere, `bash scripts/check.sh build`).
 
 ```sh
 git clone https://github.com/emberian/dragons-net.git dn
 cd dn
 bash scripts/lint.sh
 bash scripts/check.sh
+bash scripts/check_all.sh
 ```
 
-`lint.sh` checks workflows, shell and Python scripts, Rust formatting, dependencies, secrets and documentation spelling with digest-pinned tools (Linux x86-64; the first run downloads them). `check.sh` runs the Lean source gate, builds the Lean library and `dn-compiler`, re-checks them with `leanchecker` and nanoda (the first run builds nanoda and `lean4export` from pinned sources, which needs Rust), runs the proof audit and its executable examples, runs gate tests, Clippy, the host and ordinary concurrency tests, and the checks that hold a model against an independent reference: the states a run stops in (`scripts/state_check.py`), the session (`scripts/session_check.py`), the grammar of header fields (`scripts/abnf_check.py`, whose ABNF library is pinned in `scripts/requirements-tests.txt`), which articles a POST accepts (`scripts/article_check.py`), the store's journal and file names (`scripts/journal_check.py`, whose third CRC-32C, google-crc32c, is pinned there too), the file system and what a crash may leave of it (`scripts/fs_check.py`), how the store recovers (`scripts/store_check.py`), and the store's program held at every point of its runs to a sample of what a crash may leave (`scripts/runs_check.py`). Its stages `build`, `proofs` and `tests` can also run separately. Do not run overlapping Lake builds in the same checkout.
+`lint.sh` runs the static checks, `check.sh` the source gate, build, proofs, audit and the model checks (stages `build`, `proofs`, `tests`), and `check_all.sh` adds the native lanes of `scripts/native_lanes.sh` ([baseline](docs/baseline.md#reproduce-the-baseline)); a check that passed on the same inputs is not run again.
 
-Emit a supported native example (`emit-region`, `emit-echo`, `emit-render`, `emit-crc`, `emit-sip`, `emit-scan`, `emit-recover`, `emit-reply`), the differential fixtures (`emit-baseline`, `emit-reply-cases`), the printed programs and precedence cells the parser contract compares (`emit-trees`, `emit-cells`), or generated programs (`emit-fuzz SEED COUNT VECTORS`; `run-fuzz` checks and runs programs given as data, `emit-corpus` prints the recorded cases):
+`dn-compiler` prints the native examples, fixtures and programs the lanes compile, for instance `.lake/build/bin/dn-compiler emit-region > build/region.pnk`.
 
-```sh
-mkdir -p build
-.lake/build/bin/dn-compiler emit-region > build/region.pnk
-```
-
-Run bounded concurrency exploration:
-
-```sh
-python3 scripts/check_models.py --loom
-```
-
-On **Linux x86-64**, with Python 3.12 (the NNTP lane uses the standard library's `nntplib`, removed in Python 3.13), `curl`, `make`, and a C compiler, compile and execute the generated kernel using the digest-pinned CakeML release:
-
-```sh
-cake=$(python3 scripts/bootstrap_tool.py cake)
-python3 scripts/native_check.py --cake "$cake"
-python3 scripts/native_baseline.py --cake "$cake"
-build/baseline/dn-echo --port 8119
-```
-
-Each lane writes a report under `build/` (`native`, `baseline`, `entry`, `server`, `framing`, `session-model`, `session`, `nntp`, `parser`, `fuzz`, `abnf` for the grammar, `article` for article acceptance, `journal`, `fs`, `store` and `runs` for the store, `fiu` and `lazyfs` for the tools the crash tests rest on, and `host` for the host's side of the store), with artifact digests and measurements; see [echo usage](docs/echo.md). `bash scripts/check_all.sh` runs the complete Linux baseline in one command, native lanes included (the LazyFS lane, which mounts FUSE, runs apart); they are listed once, in `scripts/native_lanes.sh`, which runs all of them or only those it is given by name ([baseline](docs/baseline.md#reproduce-the-baseline)). The region benchmark measures a digest kernel and `scripts/entry_bench.py measure` a reply table over loopback; neither is **NNTP throughput**. This release compiler is distinct from the patched source in `backend/lock.json`.
-
-Four workflows run the checks:
-
-- [CI](.github/workflows/ci.yml) runs these lanes as one chain of jobs — lint; the source gate and build without network; the kernel re-checks and proof audit on a fresh machine; then the tests, native and Loom lanes — with the LazyFS lane beside it once the lint has passed, and uploads their evidence. Every push to `main` is checked and never cancelled; only a superseded pull-request run is. For a pull request GitHub runs that workflow, and the scripts it starts, from the pull request's own merge commit, so a green run says that those checks passed rather than that the project's checks passed.
-- [`verify`](.github/workflows/verify.yml) runs from the default branch, where a pull request cannot edit it, and publishes a check run saying whether every required job of the finished run succeeded and whether the files that decide what the checks do are the default branch's; it reports a change that edits its own checks instead of rejecting it ([assurance](docs/assurance.md)), and reports nothing until it is itself on the default branch. The checks do not gate merges by themselves: that needs the `lint`, `build`, `proofs`, `test` and `verify` checks to be required on the branch, which only the repository owner can configure.
-- [The backend workflow](.github/workflows/backend.yml) rebuilds the patched Pancake proof: the whole chain up to the compiler theorem weekly and on request, and the narrow target the patch touches when the lane itself changes. It asks the prover what compiler built it, and reads the rebuilt theorem's tag rather than trusting what the build printed. [Backend proof instructions](backend/README.md) give the measured times and what a run showed.
-- [The nightly workflow](.github/workflows/scheduled.yml) runs what is too slow for every change or needs the network: dependency advisories, the recorded concurrency defects, Miri, CodeQL on the host C, longer property runs, the upstream sources the semantics was taken from, each native lane alone on a fresh machine, and generated programs from a new seed, which a run by hand can repeat with the seed, count and inputs its summary gives; like every scheduled workflow, it runs from the default branch.
+[CI](.github/workflows/ci.yml) runs lint, a build without network, the proofs on a fresh machine and the tests and native lanes; [`verify`](.github/workflows/verify.yml) reports from the default branch whether a run's checks are the project's; [backend](.github/workflows/backend.yml) rebuilds the patched proof; [nightly](.github/workflows/scheduled.yml) runs the slow and networked checks.
 
 ## Pick up the work
 
-The [live project roadmap](https://github.com/emberian/dragons-net/issues/28)
-organizes the work into four milestones with acceptance criteria and dependencies.
-See the [backlog guide](docs/project.md) for starting points and
-[CONTRIBUTING](CONTRIBUTING.md) for the development workflow.
-
-Start with the [baseline and review findings](docs/baseline.md), then the [contributor handoff](docs/handoff.md), then [architecture](docs/architecture.md) and [assurance](docs/assurance.md). The [NNTP plan](docs/nntp.md) identifies the RFC scope and the first useful vertical slice. Design decisions are recorded in [docs/decisions](docs/decisions/): the source language ([0001](docs/decisions/0001-embedding.md)), the entry and memory of the generated program ([0002](docs/decisions/0002-entry-and-memory.md)), the first NNTP slice ([0003](docs/decisions/0003-nntp-slice.md)), the safety analysis of the session's program ([0004](docs/decisions/0004-safety-analysis.md)) and the article store ([0005](docs/decisions/0005-article-store.md)).
-
-The echo service supplies a reference workload for the next milestone: an optimized reactor driving a bounded, persistent NNTP session, which runs as a loop in the program's `main`: receive bytes, frame commands, produce responses, survive partial writes and disconnects, and retain accepted articles across restart. Compiler improvements should be exercised by that real workload. Native ownership checks, parser refinement, crash recovery, and backpressure belong in the acceptance criteria from the start.
+The [roadmap](https://github.com/emberian/dragons-net/issues/28), the [backlog guide](docs/project.md), [CONTRIBUTING](CONTRIBUTING.md), the [handoff](docs/handoff.md), [architecture](docs/architecture.md), the [NNTP plan](docs/nntp.md) and the [decisions](docs/decisions/) say where to start.
 
 ## Provenance and license
 
-Project code is AGPL-3.0-or-later; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The CakeML patch retains its upstream BSD license, and RFC texts retain their own notices. [The extraction manifest](docs/provenance.json) records source revisions, paths, hashes, and transformations, and the scheduled lane refetches every publicly recorded file and compares it with the hash beside it. Original projects were copied, not moved or modified.
+Project code is AGPL-3.0-or-later ([LICENSE](LICENSE), [NOTICE](NOTICE)); the CakeML patch keeps its BSD license and RFC texts their notices, and [the extraction manifest](docs/provenance.json) records every inherited file's source and hash.

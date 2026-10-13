@@ -57,11 +57,11 @@ theorem prefix_safe (o : Oracle σ) {size : Nat} {Q : PancakeState σ → Prop} 
         | none =>
           simp only at h
           cases h
-          exact Safe.seq (analyze_safe o size c1 A none hr) (post_none o c2 size _)
+          exact Safe.seq (analyze_safe0 o size c1 A none hr) (post_none o c2 size _)
             (post_clockFree size none)
         | some B =>
           simp only at h
-          apply Safe.seq (analyze_safe o size c1 A (some B) hr) _ (post_clockFree size (some B))
+          apply Safe.seq (analyze_safe0 o size c1 A (some B) hr) _ (post_clockFree size (some B))
           intro s ⟨B', hB', hsB⟩
           cases hB'
           exact ih B c2 q out h hq hrest s hsB
@@ -104,12 +104,12 @@ theorem analyzeC_safe (o : Oracle σ) (size : Nat) :
     | none =>
       simp only [analyzeC] at h
       cases h
-      exact analyze_safe o size p A none (hobs _ (List.mem_singleton_self _))
+      exact analyze_safe0 o size p A none (hobs _ (List.mem_singleton_self _))
     | some d =>
       simp only [analyzeC] at h
       split at h
       · cases h
-        exact analyze_safe o size p A _ (hobs _ (List.mem_singleton_self _))
+        exact analyze_safe0 o size p A _ (hobs _ (List.mem_singleton_self _))
       · cases h
   | chain n d k ih =>
     intro p A out obs h hobs
