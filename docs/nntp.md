@@ -10,7 +10,7 @@ The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). 
 
 | Capability | Commands | Intended stage |
 | --- | --- | --- |
-| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | First slice: answered, without a store; the store is #17 |
+| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | First slice: answered; the store is recovered at start, not yet read (#17) |
 | READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Reader completeness |
 | LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Reader completeness |
 | POST | POST | Durable posting |
