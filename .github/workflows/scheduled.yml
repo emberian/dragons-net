@@ -102,7 +102,7 @@ jobs:
   # to the security results, and the per-commit chain runs code from the change.
   codeql-c:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       actions: read
       contents: read
@@ -111,21 +111,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The host includes layouts dn-compiler prints. It is built and prints them before the tracer
+      # starts: the C Lean compiles to is not what is read here.
+      - name: Install the pinned Lean manager
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        run: python3 scripts/bootstrap_tool.py lean
+      - name: Source gate and build
+        run: bash scripts/check.sh build
+      - name: Print the layouts
+        run: python3 scripts/compile_sources.py --print-to "${RUNNER_TEMP}/layouts"
       - uses: github/codeql-action/init@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
         with:
           languages: c-cpp
           build-mode: manual
       # Compiling alone is enough for the database: linking needs the generated assembly, and
-      # what is read here is the host's own source.
-      # The same flags the native lane compiles with, minus the link-only ones: a database built
-      # from different flags describes a program nobody runs.
+      # what is read here is the host's own source. The flags are the native lane's, less those of
+      # linking: a database built from different flags describes a program nobody runs. check.sh
+      # compiles the same way on every commit.
       - name: Compile the host
-        run: |
-          for source in native/*.c; do
-            cc -O2 -Wall -Wextra -Werror -fPIE -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
-              -fstack-clash-protection -fcf-protection=full -Wformat=2 -I native \
-              -c "$source" -o "${RUNNER_TEMP}/$(basename "$source").o"
-          done
+        run: python3 scripts/compile_sources.py --layouts "${RUNNER_TEMP}/layouts"
       - uses: github/codeql-action/analyze@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
 
   # The per-commit lane runs each property over proptest's default number of cases, which is

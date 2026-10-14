@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The fiu lane: the points of failure the host's test build is to carry (decision 0005), held to
-what its tests will take of libfiu, on a program with one point (native/fault_probe.c):
+what its tests will take of libfiu, on a program with one point, written as the host writes them
+(native/fault_probe.c, through native/faults.h):
 
 - built with FIU_ENABLE and libfiu, the program does not fail at a point no one enabled;
 - a point enabled as the program starts, through `FIU_ENABLE` and libfiu's preload, fails with the
   information it was given: once when it was enabled once, every time otherwise;
 - a point enabled and then disabled while the program runs, through the named pipes of libfiu's
   remote control, fails from then on and stops;
-- built without FIU_ENABLE, the same program never fails at the point, whatever is enabled, needs
-  no libfiu and carries no symbol of it.
+- built without FIU_ENABLE, the same program never fails at the point, whatever is enabled, builds
+  without libfiu's headers, needs no libfiu and carries no symbol of it.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from lanes import LaneError, Report
 
 OUT = lanes.ROOT / "build/fiu"
 PROBE = lanes.NATIVE / "fault_probe.c"
+FAULTS = lanes.NATIVE / "faults.h"
 POINT = "dn/probe"
 # How long the lane waits for the probe or libfiu's remote control at any one step.
 WAIT = 10
@@ -75,8 +77,8 @@ class Probe:
 
 def build(fiu: Path, binary: Path, *, enabled: bool) -> Path:
     """The probe with the hardening flags, with its point of failure or without it."""
-    with_fiu = ["-DFIU_ENABLE=1", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"] if enabled else []
-    lanes.loud([lanes.cc(), *lanes.HARDENING, f"-I{fiu}", str(PROBE), "-o", str(binary), *with_fiu],
+    with_fiu = ["-DFIU_ENABLE=1", f"-I{fiu}", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"] if enabled else []
+    lanes.loud([lanes.cc(), *lanes.HARDENING, str(PROBE), "-o", str(binary), *with_fiu],
                timeout=120, what=f"building {binary.name}")
     lanes.hardened(binary)
     return binary
@@ -177,7 +179,7 @@ def check() -> Report:
     plain = lanes.loud(["readelf", "-d", "--dyn-syms", str(without)], timeout=60, what="reading the probe")
     if "libfiu" in plain or "fiu_" in plain:
         raise LaneError("the probe built without FIU_ENABLE still refers to libfiu")
-    return Report("checked", None, [PROBE], {"point": POINT, "answers": seen}, printed_by_dn_compiler=False)
+    return Report("checked", None, [PROBE, FAULTS], {"point": POINT, "answers": seen}, printed_by_dn_compiler=False)
 
 
 def main() -> None:
