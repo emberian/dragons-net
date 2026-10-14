@@ -87,7 +87,7 @@ def all : Except String (List Program) := do
   return (← named.mapM (·.2)) ++
     (← Checked.catalog.mapM fun (c : Checked.RuleCase) =>
       let fs := c.twinFunctions.getD c.functions
-      checkedBy (c.gate fs) c.accepted (if c.whole then fs else [])) ++
+      checkedBy (c.gate fs) c.accepted fs) ++
     (← fixtures.mapM word)
 
 end DN.Printed

@@ -1,4 +1,5 @@
 {
+ "functions": [],
  "input": {
   "data": {},
   "fill": [
@@ -23,6 +24,7 @@
   "seed": 2
  },
  "original": {
+  "functions": [],
   "input": {
    "data": {},
    "fill": [
@@ -32,6 +34,7 @@
   },
   "plan": {
    "entries": [],
+   "functions": [],
    "params": [
     {
      "buffer": 1,
@@ -86,6 +89,7 @@
  },
  "plan": {
   "entries": [],
+  "functions": [],
   "params": []
  },
  "printed": "export fun dn_min(1 dn_result) {\n  st dn_result, 1 | 1;\n  return 0;\n}\n",

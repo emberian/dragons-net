@@ -187,6 +187,32 @@ def emit (f : PFun) : Except Reason String := do
   unless exitsL f.body do throw .missingReturn
   return ppFun f
 
+/-- The functions of a program besides its entry `entry`: each named as an identifier, not `main`,
+which CakeML takes for the entry, once and not as `entry`, and not exported, its parameters words,
+its body in the profile `p` with an explicit final return. They may call one another in any order,
+as CakeML allows. -/
+def checkFunctions (p : Profile) (entry : String) (funs : List PFun) : Except Reason Unit := do
+  let names := funs.map (·.name) ++ [entry]
+  unless funs.all (fun g => identifier g.name && g.name != "main" && !g.exported) &&
+      names.eraseDups.length == names.length do throw .functionName
+  for g in funs do
+    let scope ← paramScope g.params []
+    statements p scope g.body
+    unless exitsL g.body do throw .missingReturn
+
+/-- An exported function as `emit` takes it, with the functions it calls as `checkFunctions` takes
+them; printed in turn, the exported function last. -/
+def emitWith (funs : List PFun) (f : PFun) : Except Reason String := do
+  unless f.exported do throw .notExported
+  unless identifier f.name do throw .exportedName
+  unless inNamespace f.name do throw .foreignNamespace
+  unless f.params.length ≤ 4 do throw .parameterCount
+  let p : Profile := ⟨false, [], funs.map fun g => (g.name, g.params.length)⟩
+  checkFunctions p f.name funs
+  statements p (← paramScope f.params []) f.body
+  unless exitsL f.body do throw .missingReturn
+  return String.intercalate "\n" ((funs ++ [f]).map ppFun)
+
 /-- A whole program: a `main` without parameters that is not exported, reaching its host through
 the external calls `externals` names, with an explicit final return. -/
 def emitMain (externals : List String) (f : PFun) : Except Reason String := do
@@ -195,20 +221,13 @@ def emitMain (externals : List String) (f : PFun) : Except Reason String := do
   unless exitsL f.body do throw .missingReturn
   return ppFun f
 
-/-- A whole program with functions: `main` as `emitMain` takes it, and the functions it calls,
-each named as an identifier, not `main`, once, and not exported, its parameters words, its body in
-the program's profile with an explicit final return; printed in turn, `main` last. -/
+/-- A whole program with functions: `main` as `emitMain` takes it, and the functions it calls as
+`checkFunctions` takes them in the program's profile; printed in turn, `main` last. -/
 def emitProgram (externals : List String) (funs : List PFun) (main : PFun) :
     Except Reason String := do
   unless !main.exported && main.name == "main" && main.params.isEmpty do throw .entryShape
-  let names := funs.map (·.name)
-  unless funs.all (fun f => identifier f.name && f.name != "main" && !f.exported) &&
-      names.eraseDups.length == names.length do throw .functionName
   let p := mainProfile externals (funs.map fun f => (f.name, f.params.length))
-  for f in funs do
-    let scope ← paramScope f.params []
-    statements p scope f.body
-    unless exitsL f.body do throw .missingReturn
+  checkFunctions p main.name funs
   statements p [] main.body
   unless exitsL main.body do throw .missingReturn
   return String.intercalate "\n" ((funs ++ [main]).map ppFun)
@@ -498,8 +517,9 @@ structure RuleCase where
   reason : Reason
   rejected : PFun
   accepted : PFun
-  /-- Judged as a whole program rather than as an exported function, with these functions. -/
+  /-- Judged as a whole program rather than as an exported function. -/
   whole : Bool := false
+  /-- The functions the case's function may call. -/
   functions : List PFun := []
   /-- The twin's functions, when they differ. -/
   twinFunctions : Option (List PFun) := none
@@ -507,9 +527,9 @@ structure RuleCase where
 /-- The one external call the whole-program cases may make. -/
 def probeExternals : List String := ["dn_probe_io"]
 
-/-- The gate a case is judged by, with these functions for a whole program. -/
+/-- The gate a case is judged by, with these functions. -/
 def RuleCase.gate (c : RuleCase) (fs : List PFun) (f : PFun) : Except Reason String :=
-  if c.whole then emitProgram probeExternals fs f else emit f
+  if c.whole then emitProgram probeExternals fs f else if fs.isEmpty then emit f else emitWith fs f
 
 /-- The case's function refused for its rule, and its twin accepted. -/
 def RuleCase.honest (c : RuleCase) : Bool :=
@@ -525,7 +545,7 @@ private def probe (params : List (Nat × String)) (body : List PStmt) : PFun :=
 private def scalar (body : List PStmt) : PFun := probe [(1, "a")] body
 private def whole (body : List PStmt) : PFun := { name := "main", body := body }
 private def io (args : List PExpr) : PStmt := .ffi "dn_probe_io" args
-/-- A function of a whole program that returns its parameter plus one. -/
+/-- A function a case calls, which returns its parameter plus one. -/
 private def inc (name : String) : PFun :=
   { name := name, params := [(1, "x")], body := [.ret (.binop .add (.var "x") (.const 1))] }
 
@@ -596,7 +616,24 @@ def catalog : List RuleCase :=
      rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] },
    { reason := .functionName, whole := true, functions := [{ inc "inc" with exported := true }],
      twinFunctions := some [inc "inc"],
-     rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] }]
+     rejected := whole [.ret (.const 0)], accepted := whole [.ret (.const 0)] },
+   -- An exported function with the functions it calls.
+   { reason := .callEffect, functions := [inc "inc"],
+     rejected := scalar [.call "x" "dec" [.var "a"], .ret (.var "x")],
+     accepted := scalar [.call "x" "inc" [.var "a"], .ret (.var "x")] },
+   { reason := .callArity, functions := [inc "inc"],
+     rejected := scalar [.call "x" "inc" [.var "a", .var "a"], .ret (.var "x")],
+     accepted := scalar [.call "x" "inc" [.var "a"], .ret (.var "x")] },
+   { reason := .functionName, functions := [inc "inc", inc "inc"],
+     twinFunctions := some [inc "inc", inc "inc2"], rejected := scalar body1, accepted := scalar body1 },
+   { reason := .functionName, functions := [inc "main"], twinFunctions := some [inc "inc"],
+     rejected := scalar body1, accepted := scalar body1 },
+   { reason := .functionName, functions := [inc "dn_probe"], twinFunctions := some [inc "inc"],
+     rejected := scalar body1, accepted := scalar body1 },
+   { reason := .functionName, functions := [{ inc "inc" with exported := true }],
+     twinFunctions := some [inc "inc"], rejected := scalar body1, accepted := scalar body1 },
+   { reason := .missingReturn, functions := [{ inc "inc" with body := [.dec "y" (.var "x")] }],
+     twinFunctions := some [inc "inc"], rejected := scalar body1, accepted := scalar body1 }]
 
 def rejectedMain (f : PFun) (r : Reason) : Bool :=
   match emitMain probeExternals f with

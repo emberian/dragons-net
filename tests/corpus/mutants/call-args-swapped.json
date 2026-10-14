@@ -1,0 +1,294 @@
+{
+ "functions": [
+  {
+   "body": [
+    [
+     "st8",
+     "p",
+     "a"
+    ],
+    [
+     "return",
+     0
+    ]
+   ],
+   "name": "h0",
+   "params": [
+    "p",
+    "a",
+    "b"
+   ]
+  }
+ ],
+ "input": {
+  "data": {},
+  "fill": [
+   0,
+   0
+  ]
+ },
+ "kind": "native",
+ "model": {
+  "changed": [],
+  "result": 0
+ },
+ "name": "call-args-swapped",
+ "native": {
+  "changed": [
+   [
+    0,
+    4088,
+    1
+   ]
+  ],
+  "result": 0,
+  "status": 0
+ },
+ "origin": {
+  "input": 1,
+  "program": "dn_fuzz_47",
+  "seed": 2
+ },
+ "original": {
+  "functions": [
+   {
+    "body": [
+     [
+      "var",
+      "x1",
+      [
+       "|",
+       1,
+       4095
+      ]
+     ],
+     [
+      "var",
+      "x5",
+      [
+       "<",
+       "a",
+       "x1"
+      ]
+     ],
+     [
+      "var",
+      "x2",
+      [
+       "|",
+       "b",
+       "b"
+      ]
+     ],
+     [
+      "st8",
+      "p",
+      [
+       "<",
+       "a",
+       "x1"
+      ]
+     ],
+     [
+      "set",
+      "x5",
+      "x5"
+     ],
+     [
+      "set",
+      "x2",
+      [
+       "|",
+       "x1",
+       "x5"
+      ]
+     ],
+     [
+      "return",
+      [
+       "|",
+       "x1",
+       "x5"
+      ]
+     ]
+    ],
+    "name": "h0",
+    "params": [
+     "p",
+     "a",
+     "b"
+    ]
+   }
+  ],
+  "input": {
+   "data": {
+    "a": 31
+   },
+   "fill": [
+    17215842908797539742,
+    18446744073709551615
+   ]
+  },
+  "plan": {
+   "entries": [],
+   "functions": [
+    {
+     "name": "h0",
+     "params": [
+      {
+       "buffer": 0,
+       "kind": "pointer",
+       "name": "p",
+       "offset": 4088
+      },
+      {
+       "kind": "data",
+       "name": "a"
+      },
+      {
+       "kind": "data",
+       "name": "b"
+      }
+     ]
+    }
+   ],
+   "params": [
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "p",
+     "offset": 4088
+    },
+    {
+     "buffer": 0,
+     "kind": "pointer",
+     "name": "q",
+     "offset": 0
+    },
+    {
+     "kind": "data",
+     "name": "a"
+    }
+   ]
+  },
+  "program": {
+   "body": [
+    [
+     "set",
+     "a",
+     "a"
+    ],
+    [
+     "var",
+     "x1",
+     [
+      "|",
+      13753306040967658551,
+      "a"
+     ]
+    ],
+    [
+     "call",
+     "x5",
+     "h0",
+     [
+      "p",
+      "a",
+      2147483647
+     ]
+    ],
+    [
+     "st8",
+     [
+      "+",
+      "p",
+      [
+       "&",
+       "x1",
+       7
+      ]
+     ],
+     [
+      "|",
+      "a",
+      "x5"
+     ]
+    ],
+    [
+     "return",
+     [
+      "|",
+      "x5",
+      4095
+     ]
+    ]
+   ],
+   "name": "dn_fuzz_47",
+   "params": [
+    "p",
+    "q",
+    "a"
+   ]
+  }
+ },
+ "plan": {
+  "entries": [],
+  "functions": [
+   {
+    "name": "h0",
+    "params": [
+     {
+      "buffer": 0,
+      "kind": "pointer",
+      "name": "p",
+      "offset": 4088
+     },
+     {
+      "kind": "data",
+      "name": "a"
+     },
+     {
+      "kind": "data",
+      "name": "b"
+     }
+    ]
+   }
+  ],
+  "params": [
+   {
+    "buffer": 0,
+    "kind": "pointer",
+    "name": "p",
+    "offset": 4088
+   }
+  ]
+ },
+ "printed": "fun dn_min_h0(1 p, 1 a, 1 b) {\n  st8 p, a;\n  return 0;\n}\n\nexport fun dn_min(1 p, 1 dn_result) {\n  var x5 = dn_min_h0(p, 1, 0);\n  st dn_result, 0;\n  return 0;\n}\n",
+ "program": {
+  "body": [
+   [
+    "call",
+    "x5",
+    "h0",
+    [
+     "p",
+     0,
+     1
+    ]
+   ],
+   [
+    "return",
+    0
+   ]
+  ],
+  "name": "dn_min",
+  "params": [
+   "p"
+  ]
+ },
+ "reduction": {
+  "asked": 959,
+  "taken": 23
+ },
+ "source": "fun dn_min_h0(1 p, 1 a, 1 b) {\n  st8 p, a;\n  return 0;\n}\n\nexport fun dn_min(1 p, 1 dn_result) {\n  var x5 = dn_min_h0(p, 0, 1);\n  st dn_result, 0;\n  return 0;\n}\n"
+}

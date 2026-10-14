@@ -11,7 +11,7 @@ import DN.Compiler.SyntaxJson
 
 Bounded random programs of the subset the gate accepts, for the generated differential lane
 (`scripts/native_fuzz.py`). Each program goes through the real gate and printer
-(`Abi.emitWord`), and the model runs its lowering; the expected values come from the model,
+(`Abi.emitWordWith`), and the model runs its lowering; the expected values come from the model,
 never from the generator, and the lane holds them against an independent interpreter of the
 source and against the compiled code.
 
@@ -27,6 +27,12 @@ nothing beyond.
 
 Which constructs a program may use is drawn per program (swarm testing): a mix that leaves
 most of them out reaches combinations a fixed mix rarely does.
+
+A program may call two functions of its own, each of data parameters and maybe the pointer `p`,
+which every call passes on; the second may call the first. Every block is built within what it
+may spend of the model's clock, a loop's iterations and a call's own spending included, so no run
+of a program the generator builds runs out of it; the record says how much a run may spend, which
+the lane counts again from the program.
 -/
 
 namespace DN.Compiler.Gen
@@ -76,6 +82,8 @@ structure Plan where
   params : List Param
   /-- Word `k` of the page of pointers points `offset` bytes into buffer `buffer`. -/
   entries : List (Nat × Nat)
+  /-- The parameters of each function the program calls. -/
+  functions : List (String × List Param) := []
 
 /-! ## What a program may use -/
 
@@ -96,6 +104,8 @@ structure Config where
   computed : Bool
   pointerLocals : Bool
   earlyReturn : Bool
+  /-- Functions of the program's own, called. -/
+  calls : Bool
   /-- Expression depth. -/
   depth : Nat
   /-- Statements a block may have. -/
@@ -111,8 +121,8 @@ def genConfig : G Config := do
   return { ops := if ops.isEmpty then [.add] else ops, shift := ← flag, loadWord := ← flag,
            loadByte := ← flag, storeWord := ← flag, storeByte := ← flag, branches := ← flag,
            loops := ← flag, table := ← flag, alias := ← flag, computed := ← flag,
-           pointerLocals := ← flag, earlyReturn := ← flag, depth := 1 + (← below 4),
-           statements := 1 + (← below 6), nesting := 1 + (← below 3) }
+           pointerLocals := ← flag, earlyReturn := ← flag, calls := ← flag,
+           depth := 1 + (← below 4), statements := 1 + (← below 6), nesting := 1 + (← below 3) }
 
 /-- An aligned offset into a buffer, favouring its first and last words. -/
 def genOffset : G Nat := do
@@ -154,6 +164,7 @@ inductive Ty
   | data (mutable : Bool)
   | ptr (buffer lo hi : Nat)
   | table
+  deriving BEq
 
 abbrev Env := List (String × Ty)
 
@@ -272,33 +283,48 @@ def genPointerLocal (c : Config) (plan : Plan) (env : Env) (offset : G PExpr) :
   let o := 8 * (← below (steps + 1))
   return some (if o == 0 then p else eAdd p (.const o), .ptr b (lo + o) (hi + o))
 
-/-- A block of statements over the locals `env`, in the states `acc` records, and whether it
-always leaves the function. `iterations` is how many times the block may run in all, which
-bounds the loops inside it. -/
-def genBlock (c : Config) (plan : Plan) :
-    Nat → Nat → Bool → Env → Account → G (List PStmt × Bool)
-  | 0, _, _, _, _ => return ([], false)
-  | fuel + 1, iterations, top, env0, acc0 => do
+/-- A function a program calls: its parameters, as the plan has them, and the most of the clock
+one call of it spends. -/
+structure Callee where
+  name : String
+  params : List Param
+  cost : Nat
+
+/-- A block of statements over the locals `env`, in the states `acc` records, whether it always
+leaves the function, and the most of the clock a run of it spends, which is at most `room`: a loop
+iteration spends one, a call one and what the function's body spends. `iterations` is how many
+times the block may run in all, which bounds how deep loops nest inside it. -/
+def genBlock (c : Config) (plan : Plan) (callees : List Callee) :
+    Nat → Nat → Nat → Bool → Env → Account → G (List PStmt × Bool × Nat)
+  | 0, _, _, _, _, _ => return ([], false, 0)
+  | fuel + 1, iterations, room, top, env0, acc0 => do
     let count := 1 + (← below c.statements)
     let mut env := env0
     let mut acc := acc0
     let mut out : List PStmt := []
     let mut exits := false
+    let mut spent := 0
     for _ in [0:count] do
       if exits then break
+      let left := room - spent
       -- Offsets and pointer locals only from parts the checker trusts.
       let safe := settled env acc
       let data := genData c plan c.depth env safe
       let offset := genData c plan (c.depth - 1) safe safe
       let mutable := env.filterMap fun (x, t) => match t with | .data true => some x | _ => none
+      -- A function whose pointer is the one in scope here, with room for its call.
+      let callable := callees.filter fun g => g.cost + 1 ≤ left && g.params.all fun
+        | .pointer x b o => env.lookup x == some (.ptr b o o)
+        | _ => true
       let mut kinds : List Nat := [0, 0]
       if !mutable.isEmpty then kinds := kinds ++ [1]
       if c.storeWord then kinds := kinds ++ [2]
       if c.storeByte then kinds := kinds ++ [3]
       if c.branches && fuel > 0 then kinds := kinds ++ [4]
-      if c.loops && fuel > 0 && iterations * 8 ≤ 64 then kinds := kinds ++ [5]
+      if c.loops && fuel > 0 && iterations * 8 ≤ 64 && 8 ≤ left then kinds := kinds ++ [5]
       if c.pointerLocals then kinds := kinds ++ [6]
       if c.earlyReturn && !top then kinds := kinds ++ [7]
+      if c.calls && !callable.isEmpty then kinds := kinds ++ [8, 8]
       let mut made : List PStmt := []
       match ← pick kinds with
       | 1 => made := [.assign (← pick mutable) (← data)]
@@ -310,20 +336,22 @@ def genBlock (c : Config) (plan : Plan) :
           made := [.storeb a (← data)]
       | 4 =>
         let cond ← data
-        let (t, et) ← genBlock c plan fuel iterations false env acc
-        let (e, ee) ← genBlock c plan fuel iterations false env acc
+        let (t, et, ct) ← genBlock c plan callees fuel iterations left false env acc
+        let (e, ee, ce) ← genBlock c plan callees fuel iterations left false env acc
         made := [.ite cond t e]
         exits := et && ee
+        spent := spent + max ct ce
       | 5 =>
         if let some i ← fresh env counterPool then
-          let bound ← if ← chance 1 2 then pure (.const (← below 9))
-            else pure (eAnd (← genData c plan (c.depth - 1) env safe) (.const 7))
+          let (bound, most) ← if ← chance 1 2 then (fun k => (PExpr.const k, k)) <$> below 9
+            else pure (eAnd (← genData c plan (c.depth - 1) env safe) (.const 7), 7)
           let inner := env ++ [(i, .data false)]
-          let (body, bodyExits) ←
-            genBlock c plan fuel (iterations * 8) false inner (acc ++ [(i, Bd2.all .notBased)])
+          let (body, bodyExits, cost) ← genBlock c plan callees fuel (iterations * 8)
+            (left / max most 1 - 1) false inner (acc ++ [(i, Bd2.all .notBased)])
           let step := if bodyExits then [] else [.assign i (eAdd (.var i) (.const 1))]
           made := [.dec i (.const 0), .while (eLt (.var i) bound) (body ++ step)]
           env := inner
+          spent := spent + most * (cost + 1)
       | 6 =>
         if let some r ← fresh env pointerPool then
           if let some (e, t) ← genPointerLocal c plan env offset then
@@ -332,6 +360,15 @@ def genBlock (c : Config) (plan : Plan) :
       | 7 =>
         made := [.ret (← data)]
         exits := true
+      | 8 =>
+        if let some r ← fresh env dataPool then
+          let g ← pickOr ⟨"", [], 0⟩ callable
+          let args ← g.params.mapM fun
+            | .pointer x _ _ => pure (.var x)
+            | _ => data
+          made := [.call r g.name args]
+          env := env ++ [(r, .data true)]
+          spent := spent + g.cost + 1
       | _ =>
         if let some x ← fresh env dataPool then
           made := [.dec x (← data)]
@@ -343,18 +380,53 @@ def genBlock (c : Config) (plan : Plan) :
     if top && !exits then
       out := out ++ [.ret (← genData c plan c.depth env (settled env acc))]
       exits := true
-    return (out, exits)
+    return (out, exits, spent)
 
-def paramEnv (plan : Plan) : Env :=
-  plan.params.map fun
+def paramEnv (params : List Param) : Env :=
+  params.map fun
     | .data x => (x, .data true)
     | .pointer x b o => (x, .ptr b o o)
     | .table x => (x, .table)
 
-def genFun (name : String) (c : Config) (plan : Plan) : G PFun := do
-  let (body, _) ← genBlock c plan (c.nesting + 1) 1 true (paramEnv plan)
-    (plan.params.map fun p => (p.name, Bd2.all .trusted))
-  return { name, exported := true, params := plan.params.map fun p => (1, p.name), body }
+def trustedParams (params : List Param) : Account := params.map fun p => (p.name, Bd2.all .trusted)
+
+/-- The model's clock: low enough that a program the reducer turned into a long loop is refused
+quickly, since each store the model makes lengthens every later load. A run of a generated
+program spends at most all of it, one call of a function at most `callBudget`, and of a function
+before another at most half what that one may. -/
+def modelClock : Nat := 10000
+def callBudget : Nat := 600
+
+/-- The exported function, and the most of the clock a run of it spends. -/
+def genFun (name : String) (c : Config) (plan : Plan) (callees : List Callee) : G (PFun × Nat) := do
+  let (body, _, cost) ← genBlock c plan callees (c.nesting + 1) 1 modelClock true
+    (paramEnv plan.params) (trustedParams plan.params)
+  return ({ name, exported := true, params := plan.params.map fun p => (1, p.name), body }, cost)
+
+/-- Function `k` of a program: up to three parameters, data and, when the plan has a pointer `p`,
+maybe that pointer first; it calls only `callees`, the functions before it. -/
+def genCallee (c : Config) (plan : Plan) (callees : List Callee) (k room : Nat) :
+    G (PFun × Callee) := do
+  let pointer := plan.params.filter fun | .pointer "p" _ _ => true | _ => false
+  let first ← if !pointer.isEmpty && (← chance 1 2) then pure pointer else pure []
+  let count ← below (4 - first.length)
+  let params := first ++ (["a", "b", "c"].take count).map Param.data
+  let (body, _, cost) ← genBlock c plan callees (c.nesting + 1) 1 room true (paramEnv params)
+    (trustedParams params)
+  let name := s!"h{k}"
+  return ({ name, params := params.map fun p => (1, p.name), body }, { name, params, cost })
+
+/-- Two functions when the program calls any, the second of which may call the first, with room
+for a call of it. -/
+def genCallees (c : Config) (plan : Plan) : G (List PFun × List Callee) := do
+  let count := if c.calls then 2 else 0
+  let mut funs := []
+  let mut callees := []
+  for k in [0:count] do
+    let (f, g) ← genCallee c plan callees k (callBudget / 2 ^ (count - 1 - k))
+    funs := funs ++ [f]
+    callees := callees ++ [g]
+  return (funs, callees)
 
 /-! ## Inputs and what the model makes of them -/
 
@@ -400,19 +472,19 @@ def modelDomain (a : Word) : Bool :=
   x % 8 == 0 &&
     ((bufferOf x).isSome || (x ≥ tableBase && x < tableBase + pageBytes) || x == slotAddress)
 
-/-- The model's clock: well above the 2,352 loop iterations a generated program can take, and low
-enough that a program the reducer turned into a long loop is refused quickly, since each store the
-model makes lengthens every later load. -/
-def modelClock : Nat := 10000
+/-- The code of the functions `funs`, as the model looks a call up. -/
+def codeOf (funs : List PFun) (g : String) : Option (List String × PancakeProg) := do
+  let h ← funs.find? (·.name == g)
+  return (h.params.map (·.2), ← lower h)
 
-def modelState (plan : Plan) (vec : Vector) : PancakeState Unit :=
+def modelState (plan : Plan) (vec : Vector) (funs : List PFun) : PancakeState Unit :=
   let value : Param → Option Word
     | .data x => (vec.data.lookup x).map (BitVec.ofNat 64)
     | .pointer _ b o => some (BitVec.ofNat 64 (bufferBase b + o))
     | .table _ => some (BitVec.ofNat 64 tableBase)
   { locals := fun x => (plan.params.find? (·.name == x)).bind value,
     memory := modelMemory plan vec, memaddrs := modelDomain, be := false, clock := modelClock,
-    ffi := (), baseAddr := 0 }
+    ffi := (), baseAddr := 0, code := codeOf funs }
 
 /-- What the model makes of one call: the word the function returns and every word of the
 buffers it changed, as buffer, byte offset and new value. -/
@@ -420,10 +492,12 @@ structure Outcome where
   result : Nat
   changed : List (Nat × Nat × Nat)
 
-def runModel (f : PFun) (plan : Plan) (vec : Vector) : Except String Outcome := do
+/-- What the model makes of a call of `f`, with the functions `funs` it calls. -/
+def runModel (f : PFun) (funs : List PFun) (plan : Plan) (vec : Vector) : Except String Outcome := do
   let some wrapped := lower (Abi.wordResult f) | throw "the program does not lower"
   let some original := lower f | throw "the program does not lower"
-  let s := modelState plan vec
+  unless funs.all (lower · |>.isSome) do throw "a function of the program does not lower"
+  let s := modelState plan vec funs
   let (r, final) := PancakeSem .failing wrapped
     { s with locals := setLocal s.locals "dn_result" (BitVec.ofNat 64 slotAddress) }
   unless r == some (.return_ 0) do throw s!"the model does not return through the slot: {repr r}"
@@ -448,9 +522,13 @@ def paramJson : Param → Json
       ("offset", toJson o)]
   | .table x => Json.mkObj [("name", toJson x), ("kind", "table")]
 
+def paramsJson (params : List Param) : Json := Json.arr (params.map paramJson).toArray
+
 def planJson (plan : Plan) : Json :=
-  Json.mkObj [("params", Json.arr (plan.params.map paramJson).toArray),
-    ("entries", toJson (plan.entries.map fun (b, o) => [b, o]))]
+  Json.mkObj [("params", paramsJson plan.params),
+    ("entries", toJson (plan.entries.map fun (b, o) => [b, o])),
+    ("functions", Json.arr (plan.functions.map fun (g, ps) =>
+      Json.mkObj [("name", toJson g), ("params", paramsJson ps)]).toArray)]
 
 def paramOfJson (j : Json) : Except String Param := do
   let name ← j.getObjValAs? String "name"
@@ -461,12 +539,22 @@ def paramOfJson (j : Json) : Except String Param := do
   | "table" => return .table name
   | k => throw s!"unknown parameter kind {k}"
 
+def paramsOfJson (j : Json) : Except String (List Param) := do
+  (← (← j.getObjVal? "params").getArr?).toList.mapM paramOfJson
+
+/-- Absent lists, as a test or an older case gives them, are empty. -/
+def listOr (j : Json) (key : String) : Except String (List Json) :=
+  match j.getObjVal? key with
+  | .ok v => return (← v.getArr?).toList
+  | .error _ => return []
+
 def planOfJson (j : Json) : Except String Plan := do
-  let params ← (← (← j.getObjVal? "params").getArr?).toList.mapM paramOfJson
   let entries ← (← j.getObjValAs? (List (List Nat)) "entries").mapM fun
     | [b, o] => pure (b, o)
     | _ => throw "an entry is a buffer and an offset"
-  return { params, entries }
+  let functions ← (← listOr j "functions").mapM fun g => do
+    return (← g.getObjValAs? String "name", ← paramsOfJson g)
+  return { params := ← paramsOfJson j, entries, functions }
 
 def vectorJson (v : Vector) : Json :=
   Json.mkObj [("data", Json.mkObj (v.data.map fun (x, k) => (x, toJson k))),
@@ -490,35 +578,65 @@ def configJson (c : Config) : Json :=
     ("branches", toJson c.branches), ("loops", toJson c.loops), ("table", toJson c.table),
     ("alias", toJson c.alias), ("computed", toJson c.computed),
     ("pointer_locals", toJson c.pointerLocals), ("early_return", toJson c.earlyReturn),
-    ("depth", toJson c.depth), ("statements", toJson c.statements), ("nesting", toJson c.nesting)]
+    ("calls", toJson c.calls), ("depth", toJson c.depth), ("statements", toJson c.statements),
+    ("nesting", toJson c.nesting)]
 
 /-! ## Records -/
 
-/-- A program with its inputs, checked by the gate, printed, lowered and run in the model. -/
-def record (f : PFun) (plan : Plan) (vectors : List Vector) (extra : List (String × Json)) :
-    Except String Json := do
-  let source ← (Abi.emitWord f).mapError Checked.Reason.message
-  unless trustedAddresses (Abi.wordResult f) do
+mutual
+/-- The statement with each function it calls renamed by `r`. -/
+def renamedStmt (r : String → String) : PStmt → PStmt
+  | .call x g args => .call x (r g) args
+  | .ite e t f => .ite e (renamedStmts r t) (renamedStmts r f)
+  | .while e b => .while e (renamedStmts r b)
+  | .dec x e => .dec x e
+  | .assign x e => .assign x e
+  | .store a e => .store a e
+  | .storeb a e => .storeb a e
+  | .ffi g args => .ffi g args
+  | .ret e => .ret e
+def renamedStmts (r : String → String) : List PStmt → List PStmt
+  | [] => []
+  | s :: rest => renamedStmt r s :: renamedStmts r rest
+end
+
+/-- The program as it is printed: each of its functions named after `f`, so that the functions of
+programs compiled together are distinct. -/
+def qualified (f : PFun) (funs : List PFun) : PFun × List PFun :=
+  let r g := if funs.any (·.name == g) then s!"{f.name}_{g}" else g
+  ({ f with body := renamedStmts r f.body },
+   funs.map fun g => { g with name := r g.name, body := renamedStmts r g.body })
+
+/-- A program with the functions it calls and its inputs, checked by the gate, printed, lowered
+and run in the model. -/
+def record (f : PFun) (funs : List PFun) (plan : Plan) (vectors : List Vector)
+    (extra : List (String × Json)) : Except String Json := do
+  let (f', funs') := qualified f funs
+  let source ← (Abi.emitWordWith funs' f').mapError Checked.Reason.message
+  unless (Abi.wordResult f' :: funs').all trustedAddresses do
     throw "an address CakeML's static checker does not trust, which it would warn about"
-  let tree ← Canon.program (Abi.wordResult f) source
+  let tree ← Canon.program (Abi.wordResult f') source funs'
   let runs ← vectors.mapM fun vec => do
-    return (vectorJson vec).mergeObj (Json.mkObj (outcomeJson (← runModel f plan vec)))
+    return (vectorJson vec).mergeObj (Json.mkObj (outcomeJson (← runModel f' funs' plan vec)))
   return Json.mkObj (extra ++ [("name", toJson f.name), ("plan", planJson plan),
-    ("program", funJson f), ("source", toJson source), ("tree", tree),
-    ("vectors", Json.arr runs.toArray)])
+    ("program", funJson f), ("functions", Json.arr (funs.map funJson).toArray),
+    ("source", toJson source), ("tree", tree), ("vectors", Json.arr runs.toArray)])
 
 /-- Program `index` of the run started from `seed`: drawn from its own seed, so it can be made
 again without the programs before it. -/
 def generated (seed : UInt64) (index vectors : Nat) : Except String Json :=
-  let draw : G (Config × Plan × PFun × List Vector) := do
+  let draw : G (Config × Plan × PFun × List PFun × Json × List Vector) := do
     let c ← genConfig
     let plan ← genPlan c
-    let f ← genFun s!"dn_fuzz_{index}" c plan
+    let (funs, callees) ← genCallees c plan
+    let (f, cost) ← genFun s!"dn_fuzz_{index}" c plan callees
     let vs ← (List.range vectors).mapM fun _ => genVector plan
-    return (c, plan, f, vs)
-  let ((c, plan, f, vs), _) := draw.run (splitmix seed index, 0)
-  (record f plan vs [("index", toJson index), ("config", configJson c)]).mapError
-    fun e => s!"program {index} of seed {seed}: {e}\n{ppFun f}"
+    let cost := Json.mkObj [("program", toJson cost), ("functions", toJson (callees.map (·.cost)))]
+    return (c, { plan with functions := callees.map fun g => (g.name, g.params) }, f, funs, cost, vs)
+  let ((c, plan, f, funs, cost, vs), _) := draw.run (splitmix seed index, 0)
+  (record f funs plan vs [("index", toJson index), ("config", configJson c), ("cost", cost)]).mapError
+    fun e =>
+    s!"program {index} of seed {seed}: {e}\n{String.intercalate "\n" ((funs ++ [f]).map ppFun)}"
 
 /-- Programs `0` to `count - 1` of the run started from `seed`. -/
 def batch (seed : UInt64) (count vectors : Nat) : Except String Json := do
@@ -532,9 +650,11 @@ def replay (input : Json) : Except String Json := do
   let out ← cases.mapM fun j => do
     let answer : Except String Json := do
       let f ← funOfJson (← j.getObjVal? "program")
+      let funs ← (← listOr j "functions").mapM fun g => do
+        return { ← funOfJson g with exported := false }
       let plan ← planOfJson (← j.getObjVal? "plan")
       let vectors ← (← (← j.getObjVal? "vectors").getArr?).toList.mapM vectorOfJson
-      record f plan vectors []
+      record f funs plan vectors []
     match answer with
     | .ok r => pure r
     | .error e => pure (Json.mkObj [("error", toJson e)])

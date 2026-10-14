@@ -21,6 +21,8 @@ open Lean DN.Compiler.Syntax DN.Compiler.Gen DN.Compiler.SyntaxJson
 structure Case where
   name : String
   f : PFun
+  /-- The functions `f` calls. -/
+  functions : List PFun := []
   plan : Plan
   input : Vector
   result : Nat
@@ -54,7 +56,13 @@ def mutants : List Case :=
      result := 0, changed := [] },
    { name := "shl-as-shr", f := reduced [] [.ret (.shl (n 1) (n 1))],
      plan := noParams, input := zeroInput,
-     result := 2, changed := [] }]
+     result := 2, changed := [] },
+   { name := "call-args-swapped", f := reduced ["p"] [.call "x5" "h0" [v "p", n 0, n 1], .ret (n 0)],
+     functions := [{ name := "h0", params := [(1, "p"), (1, "a"), (1, "b")],
+                     body := [.storeb (v "p") (v "a"), .ret (n 0)] }],
+     plan := { params := [.pointer "p" 0 4088], entries := [],
+               functions := [("h0", [.pointer "p" 0 4088, .data "a", .data "b"])] },
+     input := zeroInput, result := 0, changed := [] }]
 
 /-- None yet: no run has found a disagreement to keep. -/
 def found : List Case := []
@@ -63,7 +71,7 @@ def found : List Case := []
 def holds (name : String) : Bool :=
   match (mutants ++ found).find? (·.name == name) with
   | some c =>
-    match runModel c.f c.plan c.input with
+    match runModel c.f c.functions c.plan c.input with
     | .ok o => o.result == c.result && o.changed == c.changed
     | .error _ => false
   | none => false
@@ -75,11 +83,13 @@ def regression_804 : Bool := holds "shift-off-by-one"
 def regression_805 : Bool := holds "st8-as-st"
 def regression_934 : Bool := holds "xor-as-or"
 def regression_935 : Bool := holds "shl-as-shr"
+def regression_956 : Bool := holds "call-args-swapped"
 
 def caseJson (c : Case) : Except String Json := do
-  let o ← runModel c.f c.plan c.input
+  let o ← runModel c.f c.functions c.plan c.input
   return Json.mkObj [("name", toJson c.name), ("plan", planJson c.plan), ("program", funJson c.f),
-    ("input", vectorJson c.input), ("model", Json.mkObj (outcomeJson o))]
+    ("functions", Json.arr (c.functions.map funJson).toArray), ("input", vectorJson c.input),
+    ("model", Json.mkObj (outcomeJson o))]
 
 /-- The cases, as the lane compares them with the recorded files. -/
 def json : Except String Json := do

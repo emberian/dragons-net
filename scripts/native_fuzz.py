@@ -3,9 +3,9 @@
 """Generated programs, held three ways: the Lean model, an independent interpreter, and the code
 CakeML compiles from the printed source.
 
-`dn-compiler emit-fuzz SEED COUNT VECTORS` draws bounded programs of the subset the gate accepts
-(`DN.Compiler.Gen`), prints each through the gate, runs its lowering in the model on each input,
-and gives the canonical tree for the parser contract. This script
+`dn-compiler emit-fuzz SEED COUNT VECTORS` draws bounded programs of the subset the gate accepts,
+some with functions they call (`DN.Compiler.Gen`), prints each through the gate, runs its lowering
+in the model on each input, and gives the canonical tree for the parser contract. This script
 
 - runs every program on every input in `fuzz_interp`, which reads the source rather than the
   lowering, and requires the value and every changed word to be the model's;
@@ -66,12 +66,25 @@ REACHED = ("load word", "load byte", "store word", "store byte", "word in word a
            "pointer from the table", "pointer local", "computed address",
            "one byte through two pointers, stored to", "branch taken", "branch not taken",
            "loop iteration", "declaration in an inner block", "return in a loop", "return in a branch",
+           "call", "call in a loop", "call from a called function", "pointer passed to a function",
            *(f"{edge} {size} of buffer {b}" for edge in ("first", "last") for size in ("byte", "word")
              for b in range(interp.BUFFERS)),
            *(f"operator {op}" for op in ("+", "-", "*", "&", "^", "|", "<", "<=", "==", ">>>", "<<")))
 # What some program has to use, as the type check counts it.
 USED = ("a name declared again in a sibling block", *(f"{n} parameters" for n in range(4)))
 Transform = Callable[[str], str] | None
+
+
+def call_args_swapped(source: str) -> str:
+    """The first two data arguments of each call swapped: the pointer `p` a call passes on keeps its
+    place, so that the defect, like the programs, never makes an address a value."""
+    def swapped(m: re.Match[str]) -> str:
+        args = m.group(2).split(", ")
+        data = [k for k, a in enumerate(args) if a != "p"]
+        if len(data) >= 2:
+            args[data[0]], args[data[1]] = args[data[1]], args[data[0]]
+        return f"{m.group(1)}({', '.join(args)});"
+    return re.sub(r"(?m)^(\s*var \w+ = \w+)\((.*)\);$", swapped, source)
 
 
 def shift_plus_one(source: str) -> str:
@@ -97,6 +110,8 @@ MUTANTS: dict[str, Callable[[str], str]] = {
     "xor-as-or": lambda s: s.replace(" ^ ", " | "),
     # a left shift printed as a right one
     "shl-as-shr": lambda s: s.replace(") << ", ") >>> "),
+    # the first two data arguments of a call printed swapped
+    "call-args-swapped": call_args_swapped,
 }
 # The host's own checks: a call that never returns, one that reads the page after its buffer, and
 # one that writes beside the result slot, each with what the host has to report.
@@ -116,7 +131,8 @@ def dn(args: list[str], stdin: str | None = None, timeout: int = 600) -> Any:
 
 def replay(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Programs given as data, checked, printed and run by the model."""
-    inputs = [{"program": c["program"], "plan": c["plan"], "vectors": c["vectors"]} for c in cases]
+    inputs = [{"program": c["program"], "functions": c.get("functions", []), "plan": c["plan"], "vectors": c["vectors"]}
+              for c in cases]
     records: list[dict[str, Any]] = dn(["run-fuzz"], json.dumps(inputs))
     return records
 
@@ -125,7 +141,7 @@ def disagreement(record: dict[str, Any], reached: Counter[str] | None = None) ->
     """The first input on which the interpreter does not give the model's answer, and how."""
     for index, vector in enumerate(record["vectors"]):
         try:
-            result, changed, got = interp.run(record["program"], record["plan"], vector)
+            result, changed, got = interp.run(record["program"], record["plan"], vector, record["functions"])
         except interp.Fault as fault:
             return index, f"the interpreter stops ({fault}), the model returns {vector['result']}"
         if (result, changed) != (vector["result"], vector["changed"]):
@@ -242,12 +258,13 @@ def agrees(outcome: Any, vector: dict[str, Any]) -> bool:
 
 def case_of(record: dict[str, Any], vector_index: int) -> reducer.Case:
     vector = record["vectors"][vector_index]
-    return {"program": record["program"], "plan": record["plan"],
+    return {"program": record["program"], "functions": record["functions"], "plan": record["plan"],
             "vector": {"data": vector["data"], "fill": vector["fill"]}}
 
 
 def renamed(case: reducer.Case, name: str) -> dict[str, Any]:
-    return {"program": {**case["program"], "name": name}, "plan": case["plan"], "vectors": [case["vector"]]}
+    return {"program": {**case["program"], "name": name}, "functions": case.get("functions", []), "plan": case["plan"],
+            "vectors": [case["vector"]]}
 
 
 def valid(cases: list[reducer.Case]) -> list[tuple[int, dict[str, Any]]]:
@@ -310,13 +327,16 @@ def fixture(kind: str, name: str, case: reducer.Case, original: reducer.Case, or
             stats: dict[str, int], native: Native | None = None, transform: Transform = None,
             cake: str | None = None) -> dict[str, Any]:
     """A reduced case as it is recorded: the program, its input, what the model says, and what the
-    side that disagrees says; with the case it was reduced from."""
+    side that disagrees says; with the case it was reduced from, and where that was drawn when it
+    was recorded, which a generator changed since may draw no more."""
     [record] = replay([renamed(case, "dn_min")])
     vector = record["vectors"][0]
     out: dict[str, Any] = {
         "name": name, "kind": kind, "origin": origin, "reduction": stats,
-        "original": {"program": original["program"], "plan": original["plan"], "input": original["vector"]},
-        "plan": record["plan"], "program": record["program"], "source": record["source"],
+        "original": {"program": original["program"], "functions": original.get("functions", []),
+                     "plan": original["plan"], "input": original["vector"]},
+        "plan": record["plan"], "program": record["program"], "functions": record["functions"],
+        "source": record["source"],
         "input": {"data": vector["data"], "fill": vector["fill"]},
         "model": {"result": vector["result"], "changed": vector["changed"]}}
     if kind == "native" and native is not None:
@@ -398,7 +418,8 @@ def check_mutant(native: Native, records: list[dict[str, Any]], name: str, seed:
         original, origin = case_of(records[i], j), {"seed": seed, "program": records[i]["name"], "input": j}
     else:
         start = recorded["original"]
-        original = {"program": start["program"], "plan": start["plan"], "vector": start["input"]}
+        original = {"program": start["program"], "functions": start.get("functions", []), "plan": start["plan"],
+                    "vector": start["input"]}
         origin = recorded["origin"]
         if not fails([original])[0]:
             raise LaneError(f"the case {path.name} was reduced from no longer shows {name}")
@@ -414,7 +435,7 @@ def check_mutant(native: Native, records: list[dict[str, Any]], name: str, seed:
             (OUT / "minimized").mkdir(parents=True, exist_ok=True)
             (OUT / "minimized" / f"{name}.json").write_text(dumped(result))
             raise LaneError(f"reducing again gives another case than {path.relative_to(ROOT)}; the new one is in "
-                            f"build/fuzz/minimized/{name}.json (--write-corpus records it)")
+                            f"build/fuzz/minimized/{name}.json (--write-corpus {name} records it)")
     return {"programs_changed": changed, "calls_caught": caught, "reduced_nodes": reducer.size(case)[0],
             "asked": stats["asked"], "taken": stats["taken"], "seconds": round(time.monotonic() - started, 1)}
 
@@ -431,14 +452,15 @@ def check_corpus(native: Native) -> dict[str, int]:
             raise LaneError(f"{directory.relative_to(ROOT)} holds {sorted(files)}, "
                             f"DN.Compiler.GenCorpus {sorted(lean)}")
         for name, recorded in files.items():
-            for field in ("plan", "program", "input", "model"):
-                if recorded[field] != lean[name][field]:
+            for field in ("plan", "program", "functions", "input", "model"):
+                if recorded.get(field) != lean[name][field]:
                     raise LaneError(f"{directory.relative_to(ROOT)}/{name}.json: its {field} is not the one "
                                     f"DN.Compiler.GenCorpus holds")
     if sorted(c["name"] for c in held["mutants"]) != sorted(MUTANTS):
         raise LaneError(f"the planted cases are {sorted(c['name'] for c in held['mutants'])}, "
                         f"the planted defects {sorted(MUTANTS)}")
-    found = [{"program": c["program"], "plan": c["plan"], "vectors": [c["input"]]} for c in held["found"]]
+    found = [{"program": c["program"], "functions": c["functions"], "plan": c["plan"], "vectors": [c["input"]]}
+             for c in held["found"]]
     if found:
         records = replay(found)
         for record, case in zip(records, held["found"], strict=True):
@@ -473,7 +495,7 @@ def parsed_as_lowered(cake: str, records: list[dict[str, Any]], origin: dict[str
     return matched
 
 
-def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, write: bool) -> Report:
+def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, write: set[str]) -> Report:
     shutil.rmtree(OUT / "minimized", ignore_errors=True)
     records = dn(["emit-fuzz", str(seed), str(count), str(vectors)], timeout=600 + count * vectors // 50)
     (OUT / "programs.json").write_text(json.dumps(records))
@@ -482,9 +504,17 @@ def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, wr
     used: Counter[str] = Counter()
     for record in records:
         try:
-            used.update(interp.check_types(record["program"], record["plan"]))
+            used.update(interp.check_types(record["program"], record["plan"], record["functions"]))
         except interp.TypeViolation as violation:
             raise LaneError(f"{record['name']} lets a pointer into a value: {violation}") from violation
+        try:
+            bound = interp.worst_case(record["program"], record["functions"])
+        except interp.Fault as fault:
+            raise LaneError(f"{record['name']}: {fault}") from fault
+        if bound != record["cost"] or bound["program"] > interp.CLOCK or \
+                any(c > interp.CALL_BUDGET for c in bound["functions"]):
+            raise LaneError(f"{record['name']} can spend {bound} of the clock, the generator counts {record['cost']}, "
+                            f"and the budgets are {interp.CLOCK} and {interp.CALL_BUDGET}")
         found = disagreement(record, reached)
         if found is not None:
             j, how = found
@@ -507,7 +537,7 @@ def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, wr
     corpus = {"mutants": 0, "found": 0}
     calls = sum(len(r["vectors"]) for r in records)
     if standard:
-        mutants = {name: check_mutant(native, records, name, seed, write) for name in MUTANTS}
+        mutants = {name: check_mutant(native, records, name, seed, name in write) for name in MUTANTS}
         corpus = check_corpus(native)
         lanes.require_quoted({"docs/baseline.md": (f"{len(records)} generated programs", f"{calls:,} calls"),
                               "docs/assurance.md": (f"{len(records)} generated programs",),
@@ -518,7 +548,7 @@ def generated(cake: str, seed: int, count: int, vectors: int, standard: bool, wr
         "mutants": mutants, "corpus": corpus})
 
 
-def main() -> None:
+def arguments() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cake", default=os.environ.get("CAKE", ""))
     parser.add_argument("--bootstrapped", action="store_true",
@@ -526,16 +556,27 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--count", type=int, default=COUNT)
     parser.add_argument("--vectors", type=int, default=VECTORS)
-    parser.add_argument("--write-corpus", action="store_true",
-                        help="record the planted cases in tests/corpus/mutants instead of comparing")
+    parser.add_argument("--write-corpus", nargs="*", choices=sorted(MUTANTS), metavar="DEFECT",
+                        help="record the cases of the planted defects named, or of all, in tests/corpus/mutants "
+                             "instead of comparing")
+    return parser
+
+
+def to_write(given: list[str] | None) -> set[str]:
+    """The planted cases `--write-corpus` records: none without it, all when it names none."""
+    return set() if given is None else set(given or MUTANTS)
+
+
+def main() -> None:
+    parser = arguments()
     args = parser.parse_args()
     lanes.require_platform(parser)
     cake = None if args.bootstrapped else lanes.given_cake(parser, args.cake)
     standard = (args.seed, args.count, args.vectors) == (SEED, COUNT, VECTORS)
-    if args.write_corpus and not standard:
+    if args.write_corpus is not None and not standard:
         parser.error("the corpus is recorded from the standard run only")
     lanes.lane_main("GENERATED PROGRAMS", OUT, lambda: generated(
-        cake or lanes.bootstrapped(), args.seed, args.count, args.vectors, standard, args.write_corpus))
+        cake or lanes.bootstrapped(), args.seed, args.count, args.vectors, standard, to_write(args.write_corpus)))
 
 
 if __name__ == "__main__":

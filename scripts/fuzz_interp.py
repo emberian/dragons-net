@@ -7,6 +7,9 @@ no code with the Lean model, which runs the lowered program, and computes `<=` a
 operator from what the source means rather than from what the lowering turns it into, so a
 defect in either shows as a disagreement.
 
+A call runs the function's body on its own locals, its arguments bound to its parameters, and
+spends one step of the clock, as a loop iteration does.
+
 `check_types` holds a program to the discipline the generator keeps: a pointer is only ever
 used as an address, so the model's addresses and the host's never meet in a value.
 """
@@ -26,8 +29,10 @@ BUFFERS = 3
 WORDS = PAGE // 8
 TABLE_BASE = 0x400000
 GOLDEN = 0x9E3779B97F4A7C15
-# A bound on loop iterations, the model's clock (`DN.Compiler.Gen.modelClock`).
+# A bound on loop iterations and calls, the model's clock (`DN.Compiler.Gen.modelClock`), and on
+# those of one call of a function (`DN.Compiler.Gen.callBudget`).
 CLOCK = 10000
+CALL_BUDGET = 600
 
 
 def buffer_base(b: int) -> int:
@@ -63,8 +68,11 @@ class Return(Exception):
 class Machine:
     """One call of a program: its memory, filled as the host fills it, and what it reached."""
 
-    def __init__(self, plan: dict[str, Any], vector: dict[str, Any]) -> None:
+    def __init__(self, plan: dict[str, Any], vector: dict[str, Any], functions: list[dict[str, Any]]) -> None:
         seed, mask = vector["fill"]
+        self.functions = {f["name"]: f for f in functions}
+        # How many calls the running statement is inside.
+        self.calls = 0
         self.regions: dict[int, bytearray] = {}
         for b in range(BUFFERS):
             words = (fill_word(seed, mask, b, i).to_bytes(8, "little") for i in range(WORDS))
@@ -215,6 +223,8 @@ class Machine:
                 self.clock -= 1
                 self.reached["loop iteration"] += 1
                 self.block(s[2], env, "while")
+        elif head == "call":
+            self.call(s[1], s[2], s[3], env)
         elif head == "return":
             value = self.value(s[1], env)
             if "while" in self.blocks:
@@ -224,6 +234,39 @@ class Machine:
             raise Return(value)
         else:
             raise Fault(f"a statement this interpreter does not run: {head}")
+
+    def call(self, name: str, function_name: str, args: list[Any], env: list[dict[str, int]]) -> None:
+        values = [self.value(a, env) for a in args]
+        function = self.functions.get(function_name)
+        if function is None or len(function["params"]) != len(values) or len(set(function["params"])) != len(values):
+            raise Fault(f"a call of {function_name} the program does not define so")
+        if self.clock == 0:
+            raise Fault("the clock ran out")
+        self.clock -= 1
+        self.reached["call"] += 1
+        if "while" in self.blocks:
+            self.reached["call in a loop"] += 1
+        if self.calls:
+            self.reached["call from a called function"] += 1
+        roots = {p: root for p, a in zip(function["params"], args, strict=True) if (root := self.root(a)) is not None}
+        if roots:
+            self.reached["pointer passed to a function"] += 1
+        outer = (self.blocks, self.roots)
+        self.blocks, self.roots = [], roots
+        self.calls += 1
+        try:
+            self.block(function["body"], [dict(zip(function["params"], values, strict=True))], "function")
+        except Return as done:
+            value = done.value
+        else:
+            raise Fault(f"{function_name} ran to its end without returning")
+        finally:
+            self.blocks, self.roots = outer
+            self.calls -= 1
+        env[-1][name] = value
+        self.roots.pop(name, None)
+        if len(self.blocks) > 1:
+            self.reached["declaration in an inner block"] += 1
 
     def aliased(self) -> bool:
         """Whether some byte was reached through two pointers, and stored to."""
@@ -240,10 +283,20 @@ class Machine:
         return out
 
 
-def run(program: dict[str, Any], plan: dict[str, Any],
-        vector: dict[str, Any]) -> tuple[int, list[list[int]], Counter[str]]:
-    """The value `program` returns on `vector`, the words it changes, and what it reached."""
-    machine = Machine(plan, vector)
+def same_functions(plan: dict[str, Any], functions: list[dict[str, Any]]) -> None:
+    """Raise unless the plan and the functions name the same functions with the same parameters."""
+    named = [(f["name"], [p["name"] for p in f["params"]]) for f in plan.get("functions", [])]
+    if named != [(f["name"], f["params"]) for f in functions]:
+        raise Fault("the plan and the program name different functions")
+
+
+def run(program: dict[str, Any], plan: dict[str, Any], vector: dict[str, Any],
+        functions: list[dict[str, Any]] | None = None) -> tuple[int, list[list[int]], Counter[str]]:
+    """The value `program` returns on `vector`, calling `functions`, the words it changes, and what
+    it reached."""
+    functions = functions or []
+    same_functions(plan, functions)
+    machine = Machine(plan, vector, functions)
     scope: dict[str, int] = {}
     for param in plan["params"]:
         if param["kind"] == "data":
@@ -265,6 +318,33 @@ def run(program: dict[str, Any], plan: dict[str, Any],
             machine.reached["one byte through two pointers, stored to"] += 1
         return done.value, machine.changed(), machine.reached
     raise Fault("the program ran to its end without returning")
+
+
+def worst_case(program: dict[str, Any], functions: list[dict[str, Any]]) -> dict[str, Any]:
+    """The most of the clock a run of the program and a call of each function can spend, from the
+    loops as the generator builds them: a counter from 0 below a literal or a value masked with 7."""
+    def block(statements: list[Any], costs: dict[str, int]) -> int:
+        spent = 0
+        for s in statements:
+            if s[0] == "if":
+                spent += max(block(s[2], costs), block(s[3], costs))
+            elif s[0] == "while":
+                bound = s[1][2] if s[1][0] == "<" else None
+                if isinstance(bound, int) and not isinstance(bound, bool):
+                    most = bound
+                elif isinstance(bound, list) and bound[0] == "&" and bound[2] == 7:
+                    most = 7
+                else:
+                    raise Fault(f"a loop the generator does not build: {s[1]}")
+                spent += most * (block(s[2], costs) + 1)
+            elif s[0] == "call":
+                spent += costs[s[2]] + 1
+        return spent
+
+    costs: dict[str, int] = {}
+    for f in functions:
+        costs[f["name"]] = block(f["body"], costs)
+    return {"program": block(program["body"], costs), "functions": [costs[f["name"]] for f in functions]}
 
 
 class TypeViolation(Exception):
@@ -297,10 +377,18 @@ def expression_type(e: Any, types: dict[str, str]) -> str:
     return "data"
 
 
-def check_types(program: dict[str, Any], plan: dict[str, Any]) -> Counter[str]:
-    """Raise if a pointer can leak into a value; otherwise count the forms the program uses."""
+def check_types(program: dict[str, Any], plan: dict[str, Any],
+                functions: list[dict[str, Any]] | None = None) -> Counter[str]:
+    """Raise if a pointer can leak into a value, in the program or a function it calls; otherwise
+    count the forms the program uses."""
     kinds = {"data": "data", "pointer": "pointer", "table": "table"}
     types = {p["name"]: kinds[p["kind"]] for p in plan["params"]}
+    functions = functions or []
+    try:
+        same_functions(plan, functions)
+    except Fault as fault:
+        raise TypeViolation(str(fault)) from None
+    callees = {f["name"]: [kinds[p["kind"]] for p in f["params"]] for f in plan.get("functions", [])}
     used: Counter[str] = Counter()
 
     def address(e: Any, scope: dict[str, str]) -> None:
@@ -320,10 +408,18 @@ def check_types(program: dict[str, Any], plan: dict[str, Any]) -> Counter[str]:
         declared: set[str] = set()
         for s in statements:
             head = s[0]
-            for part in s[1:]:
+            for part in s[3] if head == "call" else s[1:]:
                 if isinstance(part, list) and part and not isinstance(part[0], list):
                     walk_expression(part, scope)
-            if head == "var":
+            if head == "call":
+                wanted = callees.get(s[2])
+                if wanted is None or [expression_type(a, scope) for a in s[3]] != wanted:
+                    raise TypeViolation(f"a call of {s[2]} with arguments of other kinds than its parameters")
+                if s[1] in siblings:
+                    used["a name declared again in a sibling block"] += 1
+                scope[s[1]] = "data"
+                declared.add(s[1])
+            elif head == "var":
                 t = expression_type(s[2], scope)
                 if t == "table":
                     raise TypeViolation("a local holding the page of pointers")
@@ -351,5 +447,7 @@ def check_types(program: dict[str, Any], plan: dict[str, Any]) -> Counter[str]:
         return declared
 
     block(program["body"], types, set())
+    for f, plan_f in zip(functions, plan.get("functions", []), strict=True):
+        block(f["body"], {p["name"]: kinds[p["kind"]] for p in plan_f["params"]}, set())
     used[f"{len(plan['params'])} parameters"] += 1
     return used
