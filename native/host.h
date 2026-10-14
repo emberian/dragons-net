@@ -91,6 +91,24 @@ static inline unsigned char *dn_inaccessible(void) {
     return page;
 }
 
+/* `n` bytes that end where a page without access begins, in a mapping of `size` bytes. */
+struct dn_span {
+    unsigned char *map, *data;
+    size_t size;
+};
+
+static inline struct dn_span dn_before_guard(size_t n) {
+    size_t page = dn_page_size(), pages = (n + page - 1) / page + 1;
+    unsigned char *map = mmap(NULL, pages * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (map == MAP_FAILED) dn_harness("mmap: %s", strerror(errno));
+    dn_protect(map + (pages - 1) * page, PROT_NONE);
+    return (struct dn_span){map, map + (pages - 1) * page - n, pages * page};
+}
+
+static inline void dn_unmap(struct dn_span g) {
+    if (munmap(g.map, g.size)) dn_harness("munmap: %s", strerror(errno));
+}
+
 /* A decimal number from 0 to `max`, or the host ends. */
 static inline uint64_t dn_parse_u64(const char *text, uint64_t max) {
     char *end;

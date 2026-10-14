@@ -22,9 +22,10 @@ without corruption, with every answered article and only commits a run appended 
 did not refuse, each with its octets (`running_crash`); a restart before a sync of the journal or
 the directory failed, while numbers last, starts as `start_safe` says (`running_restart`).
 
-Assumed, each shown needed by an example but acceptance after a failed sync: a commit only once its
-file is placed, one at a time, with its own number, the file's size, a record the journal can hold
-and article numbers allocated in groups the store carries (`Allocated`); 240 only after the
+Assumed, each shown needed by an example but acceptance after a failed sync and room for one more
+article (recovery refuses more than `capacity`): a commit only once its file is placed, one at a
+time, with its own number, the file's size, a record the journal can hold, room for it among the
+commits and article numbers allocated in groups the store carries (`Allocated`); 240 only after the
 journal's sync; no article accepted after a failed sync or write of the journal. The file's CRC-32C
 is assumed: reads check it, recovery does not.
 -/
@@ -108,10 +109,13 @@ def viewOf (p : Prog) (h : Hist) : View :=
 def commitFrame (k : Bytes) (rs : List Record) (c : Commit) : Bytes :=
   (Record.commit c).encode k (journal k rs).length
 
-/-- What the program checks of a commit's groups before it appends the record: each one the store
-carries, and the article number it allocates there above the last the records gave the group. -/
+/-- What the program checks before it appends a commit: room for one more article among the commits
+(the program counts the files set aside too, which the proofs do not need), and of each group, that
+the store carries it and that the article number it allocates there is above the last the records
+gave the group. -/
 def Allocated (cfg : Config) (rs : List Record) (c : Commit) : Prop :=
-  ∀ g ∈ c.groups, g.name ∈ cfg.groups ∧ highIn (commitsOf rs) g.name < g.number
+  (commitsOf rs).length < capacity ∧
+    ∀ g ∈ c.groups, g.name ∈ cfg.groups ∧ highIn (commitsOf rs) g.name < g.number
 
 /-- **A step of the store**: one operation of the file system, done or failed, or none, and what the
 program and the run make of it. A step is one operation taking effect; the program learns how a
@@ -1123,10 +1127,10 @@ theorem rules_snoc (cfg : Config) (rs : List Record) (c : Commit) (h : Rules cfg
   have hcs : commitsOf (rs ++ [.commit c]) = commitsOf rs ++ [c] := by simp [commitsOf]
   rw [hcs]
   refine ⟨seqTwice_snoc c _ h.1 hseq, notAbove_snoc c [] _ h.2.1 ?_,
-    unknownGroup_snoc cfg _ c h.2.2 fun g hg => (ha g hg).1⟩
+    unknownGroup_snoc cfg _ c h.2.2.1 fun g hg => (ha.2 g hg).1, by simp; have := ha.1; omega⟩
   rw [List.find?_eq_none]
   intro g hg hle
-  have := (ha g hg).2
+  have := (ha.2 g hg).2
   simp only [List.nil_append, decide_eq_true_eq] at hle
   omega
 
@@ -1489,6 +1493,7 @@ theorem running_placed_witness : ∃ s p h x i, Running sampleConfig s p h ∧ p
 
 /-- The premise `Allocated` can hold: of article 2 after the examples' records. -/
 theorem allocated_witness : Allocated sampleConfig wRecords (articleOf 2) := by
+  refine ⟨by decide, ?_⟩
   intro g hg
   simp only [articleOf, List.mem_singleton] at hg
   subst hg
@@ -1691,6 +1696,7 @@ def Cmd.allowed (cfg : Config) (x : St) : Cmd → Bool
   | .commit q c => match x.prog.posts q with
     | some ⟨o, _, .placed _⟩ => x.prog.committing.isNone && x.prog.accepting && c.seq == q &&
         c.fileSize == o.length && (crc32c o).toNat == c.fileCrc && (Record.commit c).ok &&
+        decide ((commitsOf x.prog.records).length < capacity) &&
         c.groups.all fun g => cfg.groups.contains g.name &&
           decide (highIn (commitsOf x.prog.records) g.name < g.number)
     | _ => false
@@ -1723,8 +1729,8 @@ theorem allowed_sound (cfg : Config) (x : St) (c : Cmd) (h : c.allowed cfg x = t
         | exact ⟨_, rfl, rfl⟩
         | exact ⟨_, _, rfl, rfl⟩
         | exact ⟨_, _, rfl, rfl, h⟩
-        | obtain ⟨⟨⟨⟨⟨⟨hc, ha⟩, hs⟩, hz⟩, hcrc⟩, hok⟩, hg⟩ := h
-          exact ⟨_, _, rfl, rfl, hc, ha, hs, hz, hcrc, hok, hg⟩
+        | obtain ⟨⟨⟨⟨⟨⟨⟨hc, ha⟩, hs⟩, hz⟩, hcrc⟩, hok⟩, hcap⟩, hg⟩ := h
+          exact ⟨_, _, rfl, rfl, hc, ha, hs, hz, hcrc, hok, hcap, hg⟩
 
 /-- Whether each command of a run is allowed where it is run. -/
 def allowedRun (cfg : Config) : St → List Cmd → Bool
@@ -2024,5 +2030,14 @@ def regression_923 (_ : Unit) : Bool :=
     !(runOn (goOn ((written2 ++ ([.place 1, .place 2] : List Cmd)).foldl St.after startSt) c1)
       [.commit 2 (commitFor 2 2 bodyB), .publish]).all (recoversAll sampleConfig) &&
     allowedRun sampleConfig startSt fine && (runOn startSt fine).all (recoversAll sampleConfig)
+
+/-- **Room for the article**: a store holding `capacity` articles takes no commit, and one holding
+one fewer does. -/
+def regression_924 (_ : Unit) : Bool :=
+  let x := (written2 ++ [Cmd.place 1]).foldl St.after startSt
+  let holding (k : Nat) : St :=
+    ⟨x.fs, { x.prog with records := List.replicate k (.commit (commitFor 9 0 body)) }, x.hist⟩
+  let c := Cmd.commit 1 (commitFor 1 1 body)
+  c.allowed sampleConfig (holding (capacity - 1)) && !c.allowed sampleConfig (holding capacity)
 
 end DN.News.StoreOps

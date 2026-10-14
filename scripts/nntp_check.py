@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Buffer, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
@@ -20,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import random
 import resource
 import selectors
 import signal
@@ -27,17 +29,21 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 from typing import IO, NamedTuple
 import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lanes  # the path above is what makes these importable
+import abnf_check  # the path above is what makes these importable
+import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
 import session_check as sessions
 import session_native
 import session_ref as ref
+import store_check
+import store_ref
 
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
@@ -340,7 +346,7 @@ class Server:
 
     def take(self, t: Turn) -> Turn:
         woken = self.last.wake and t.now >= self.last.wake
-        if not t.events and len(self.last.events) < self.batch and not woken:
+        if not t.events and self.trace and len(self.last.events) < self.batch and not woken:
             if not self.idle_allowed:
                 raise LaneError(f"the server took a turn with nothing to do at {t.now}")
             self.idle_allowed -= 1
@@ -1090,6 +1096,147 @@ def crowd(b: Build) -> str:
     return f"{ref.CONNS} served {server.batch} a batch, the next once one closed"
 
 
+def store_start(b: Build) -> str:
+    """Recovery at start on a spool: an empty one gets a journal of its format and a start record, a
+    start after it appends another, the server listening and greeting each time; and a spool holding
+    a name no store gives ends the start with status 4, the reason named."""
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        for _ in range(2):
+            with serving(b, False, *options, traced=False) as server:
+                read_expected(server.client(), GREETING, "the greeting after recovery")
+        data = (spool / "journal").read_bytes()
+        at = store_ref.HEADER + len(store_ref.MAGIC)
+        key = data[at:at + store_ref.KEY]
+        first = store_ref.FIRST_FRAME
+        start = store_ref.HEADER + 1
+        want = (store_ref.frame(key, 0, store_ref.FORMAT, store_ref.MAGIC + key)
+                + store_ref.frame(key, first, store_ref.START, b"")
+                + store_ref.frame(key, first + start, store_ref.START, b""))
+        left = sorted(f.name for f in spool.iterdir())
+        if data != want or left != ["journal"]:
+            raise LaneError(f"two starts on an empty spool left {left}, a journal of "
+                            f"{data.hex()}, not {want.hex()}")
+        (spool / "junk").write_bytes(b"")
+        done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
+                               SOURCE.decode(), *options], capture_output=True, text=True,
+                              timeout=b.timeout, check=False)
+    said = "the store is refused: corrupt bad-name 6a756e6b"
+    if done.returncode != 4 or said not in done.stderr:
+        raise LaneError(f"a spool with a name no store gives: status {done.returncode}, {done.stderr[-300:]!r}")
+    return f"a journal of {len(want)} octets; refused: {said}"
+
+
+def files_of(image: str) -> list[tuple[bytes, bytes]]:
+    """The files an image of the store lane names, in order."""
+    if image == "-":
+        return []
+    return [(bytes.fromhex(n.replace("-", "")), bytes.fromhex(d.replace("-", "")))
+            for n, d in (f.split("=") for f in image.split(";"))]
+
+
+def image_of(spool: Path) -> tuple[str, dict[bytes, bytes]]:
+    """A spool as the store lane writes an image, in the order the directory lists its names, and its
+    files."""
+    names = [os.fsencode(f.name) for f in spool.iterdir()]
+    files = {n: (spool / os.fsdecode(n)).read_bytes() for n in names}
+    return store_check.image([(n, files[n]) for n in names]), files
+
+
+def started(b: Build, spool: Path, run: Path, groups: list[bytes]) -> tuple[int | None, str]:
+    """The server started on `spool`: None once it listens, then stopped by SIGTERM; else the status it
+    ended with. What it wrote to stderr."""
+    command = [str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source", SOURCE.decode(),
+               "--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+               *(a for g in groups for a in ("--group", g.decode()))]
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
+        out = Server.pipe(proc.stdout)
+        with selectors.DefaultSelector() as ready:
+            ready.register(out.fileno(), selectors.EVENT_READ)
+            if not ready.select(b.timeout):
+                proc.kill()
+                proc.communicate()
+                raise LaneError(f"the server on {spool} neither listened nor ended in {b.timeout} s")
+        listened = bool(out.readline())
+        if listened:
+            proc.send_signal(signal.SIGTERM)
+        try:
+            _, err = proc.communicate(timeout=b.timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            raise LaneError(f"the server on {spool} did not end in {b.timeout} s") from None
+        if listened and (proc.returncode != 0 or "stopped: a signal" not in err):
+            raise LaneError(f"on SIGTERM the server on {spool} ended with status {proc.returncode}: {err[-300:]!r}")
+        return (None if listened else proc.returncode), err
+
+
+def store_directories(b: Build) -> str:
+    """The store lane's directories, each written to a spool and the server started on it twice: where
+    `dn-compiler recovery-model` recovers the directory, the server listens, and leaves the files the
+    model's actions leave, a start record appended to the journal, then one more; where it refuses, the
+    start ends with status 4 and the model's reason."""
+    model = [str(lanes.DN_COMPILER), "recovery-model"]
+    rng = random.Random(store_check.SEED)  # noqa: S311 -- the store lane's own draw
+    cases = []
+    for case in (*store_check.table(), *store_check.drawn(rng)):
+        _, key_hex, groups_hex, listed = case.line.split(" ")
+        files = files_of(listed)
+        if len(key_hex) == 32 and all(n and b"/" not in n and 0 not in n and n not in (b".", b"..") for n, _ in files):
+            groups = [bytes.fromhex(g) for g in groups_hex.split(",")] if groups_hex != "-" else []
+            cases.append((bytes.fromhex(key_hex), groups, files))
+    def one(k: int, key: bytes, groups: list[bytes], files: list[tuple[bytes, bytes]]) -> bool:
+        """Whether the model recovers the directory, the server having done as it does."""
+        with tempfile.TemporaryDirectory() as temp:
+            spool, run = Path(temp, f"spool-{k}"), Path(temp, f"run-{k}")
+            spool.mkdir()
+            run.mkdir()
+            for name, data in files:
+                (spool / os.fsdecode(name)).write_bytes(data)
+            image, _ = image_of(spool)
+            line = f"recover {key.hex()} {','.join(g.hex() for g in groups) or '-'} {image}"
+            said = abnf_check.answer_lines(model, [line])[0]
+            status, err = started(b, spool, run, groups)
+            if said.startswith("corrupt "):
+                if status != 4 or f"the store is refused: {said}\n" not in err:
+                    raise LaneError(f"{line[:200]}: the model answers {said[:200]}, the server status {status}: "
+                                    f"{err[-300:]!r}")
+                return False
+            if status is not None:
+                raise LaneError(f"{line[:200]}: the model recovers it, the server ended with status {status}: "
+                                f"{err[-300:]!r}")
+            _, nxt, end, _, _, actions = said.split(" ")[1:]
+            _, after = image_of(spool)
+            journal = after.get(b"journal", b"")
+            at = store_ref.HEADER + len(store_ref.MAGIC)
+            jkey = journal[at:at + store_ref.KEY]
+            actions = ";".join(f"create:{jkey.hex()}" if a.startswith("create:") else a for a in actions.split(";"))
+            applied = abnf_check.answer_lines(model, [f"apply {line.split(' ')[3]} {actions}"])[0]
+            want = dict(files_of(applied))
+            want[b"journal"] = want.get(b"journal", b"") + store_ref.frame(jkey, int(end), store_ref.START, b"")
+            if after != want:
+                held = store_check.image(sorted(after.items()))
+                raise LaneError(f"{line[:200]}: after a start the spool holds {held[:300]}, "
+                                f"not {store_check.image(sorted(want.items()))[:300]} (next {nxt})")
+            status, err = started(b, spool, run, groups)
+            _, again = image_of(spool)
+            want[b"journal"] += store_ref.frame(jkey, len(want[b"journal"]), store_ref.START, b"")
+            if status is not None or again != want:
+                raise LaneError(f"{line[:200]}: a second start: status {status}, the spool "
+                                f"{store_check.image(sorted(again.items()))[:300]}: {err[-300:]!r}")
+            return True
+
+    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+        results = list(pool.map(lambda kc: one(kc[0], *kc[1]), enumerate(cases)))
+    recovered = sum(results)
+    refused = len(results) - recovered
+    return f"{recovered} spools recovered and started again, {refused} refused as the model refuses them"
+
+
 CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
@@ -1110,6 +1257,8 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "actions for another generation": stale_generation,
     "over IPv6": over_ipv6,
     "sixty-five clients": crowd,
+    "a store recovered at start": store_start,
+    "the store lane's directories": store_directories,
 }
 
 
@@ -1172,7 +1321,7 @@ DEFECTS = [
         "cn->reading = !cn->lost && read && taken == len;", "cn->reading = !cn->lost && read;", 1)],
         "reading waits", "stopped the run: code 4"),
     Defect("listening with the table full", [(
-        "int listening = free_indexes() > 0 && !paused;", "int listening = !paused;", 1)],
+        "int taking = listening && free_indexes() > 0 && !paused;", "int taking = listening && !paused;", 1)],
         "sixty-five clients", "a turn with nothing to do"),
     Defect("no poll timeout on the real clock", [(
         "else left = at - now > INT_MAX ? INT_MAX : (int)(at - now);", "else return timeout;", 1)],
@@ -1233,6 +1382,15 @@ DEFECTS = [
         ("                accept_ready = 0;\n                accept_paused_until = now + ACCEPT_PAUSE_MS;\n"
          "                return;"), "                (void)now;\n                return;", 1)],
         "out of descriptors", "a turn with nothing to do"),
+    Defect("a store refused at start taken for a broken contract",
+           [("    if (stop == DN_SESSION_STORE_REFUSED || stop == DN_SESSION_RECOVERY_FAILED)\n", "    if (0)\n", 1)],
+           "a store recovered at start", "status 3"),
+    Defect("the start record written as a commit", [(r"(st8 @base \+ \d+ \+ 12), 3;", r"\1, 2;", 1)],
+           "a store recovered at start", "a journal of", program=True),
+    Defect("a final file set aside removed instead", [(r"st @base \+ 182384, 8;", "st @base + 182384, 9;", 1)],
+           "the store lane's directories", "after a start the spool holds", program=True),
+    Defect("the second pass not begun at the first name", [(r"if lds 1 \(rsc \+ 32\) \{", "if 0 {", 1)],
+           "the store lane's directories", "the spool holds", program=True),
     Defect("the first command's deadline a millisecond early", [(r"now \+ 10000;", "now + 9999;", 1)],
            "first command", "asked to be woken at 10000", program=True),
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],

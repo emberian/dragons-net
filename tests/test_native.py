@@ -9,6 +9,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -55,18 +56,35 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_recovery_passes_the_safety_analysis(self) -> None:
+        """The analysis of decision 0004 on recovery's step in a loop, its area at the heap's start:
+        recovery is to be embedded in the session's program, whose theorem then needs it."""
+        done = subprocess.run([str(DN_COMPILER), "analyze-recover"], text=True, capture_output=True,
+                              check=False, timeout=600)
+        self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
+    def test_certificates_of_the_analysis_are_current(self) -> None:
+        """The modules whose claims the kernel checks a declaration each are what the generator
+        prints for the programs as they are."""
+        for what, module in (("session", "lean/DN/Server/SessionCert.lean"),
+                             ("recover", "lean/DN/News/RecoverCert.lean")):
+            done = subprocess.run([str(DN_COMPILER), "analysis-cert", what], text=True, capture_output=True,
+                                  check=False, timeout=600)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout, (ROOT / module).read_text(), f"{module} is stale: regenerate it")
+
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "reply", "skeleton", "frame-line", "frame-line-4",
-                     "frame-block-64", "frame-block-4", "session"):
+        for name in ("region", "echo", "render", "crc", "sip", "scan", "recover", "reply", "skeleton",
+                     "frame-line", "frame-line-4", "frame-block-64", "frame-block-4", "session"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
         # The differential fixture is 200 KB of cases; its digest catches a change just as well.
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "3ee7436d25b1ffbbc9e441d5978e5e17031f0abf7fda2c5c23739caba2db5f06")
+                         "b9a5c824739f6d6fe047d99b6a7a7b150b4c71897d30054a7f3aa5abbcbe51e6")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 
@@ -187,7 +205,7 @@ class StateCorpus(unittest.TestCase):
         # unseen for want of a case.
         programs = [line for line in dump.splitlines() if line.startswith("PROG ")]
         for construct in ("(skip)", "(dec ", "(assign ", "(store ", "(storeb ", "(extcall ",
-                          "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ",
+                          "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ", "(shl ", "(xor ", "(or ",
                           "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless "):
             with self.subTest(construct=construct):
                 self.assertTrue(any(construct in p for p in programs), construct)
@@ -297,7 +315,7 @@ class ParserContract(unittest.TestCase):
             ["store", ["Var", "b"], ["Lsr", ["Var", "x"], ["Const", 5]]],
             ["if", ["NotLess", ["Var", "b"], ["Var", "a"]], [], [["return", ["MemLoadByte", ["Var", "a"]]]]],
         ]]]})
-        for unknown in ("(func 1 g () (return (Xor (Var local a) (Const 1))))",
+        for unknown in ("(func 1 g () (return (Asr (Var local a) (Const 1))))",
                         "(func 1 g () (return (Var global a)))",
                         "(func 1 g () (tail_call h ()))",
                         "(func 1 g () (return (Mul (Var local a) (Var local b) (Var local c))))"):
@@ -333,9 +351,9 @@ class Generated(unittest.TestCase):
     def test_fuzz_interpreter_reads_the_source(self) -> None:
         """Signed comparisons, `<=` itself rather than a rewriting of it, little-endian bytes, and
         a fault wherever the semantics has no value."""
-        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
-                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}],
-                "entries": [[1, 16]]}
+        plan: dict[str, Any] = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}],
+                                "entries": [[1, 16]]}
 
         def run(body: list[Any], a: int = 5) -> int:
             program = {"name": "dn_t", "params": ["p", "t", "a"], "body": body}
@@ -348,16 +366,73 @@ class Generated(unittest.TestCase):
         self.assertEqual(run([["st", "p", 0x0807060504030201], ["return", ["ld8", ["+", "p", 1]]]]), 2)
         self.assertEqual(run([["return", ["lds", 1, "t"]]]), fuzz_interp.buffer_base(1) + 16)
         self.assertEqual(run([["return", [">>>", "a", 1]]]), 2)
-        for body in ([["return", [">>>", "a", 64]]], [["return", ["lds", 1, ["+", "p", 1]]]],
+        self.assertEqual(run([["return", ["<<", "a", 63]]]), 1 << 63)
+        self.assertEqual(run([["return", ["^", "a", 3]]]), 6)
+        self.assertEqual(run([["return", ["|", "a", 3]]]), 7)
+        # A call binds its arguments to the function's parameters and runs it on locals of its own.
+        functions = [{"name": "h0", "params": ["p", "a"], "body": [["st8", "p", "a"], ["return", ["+", "a", 1]]]}]
+        called = {**plan, "functions": [{"name": "h0", "params": [plan["params"][0], {"name": "a", "kind": "data"}]}]}
+        result, changed, reached = fuzz_interp.run(
+            {"name": "dn_t", "params": ["p", "t", "a"],
+             "body": [["var", "x0", 7], ["call", "x1", "h0", ["p", "x0"]], ["return", ["+", "x1", "a"]]]},
+            called, {"data": {"a": 5}, "fill": [0, 0]}, functions)
+        self.assertEqual((result, changed), (13, [[0, 0, 7]]))
+        self.assertEqual((reached["call"], reached["pointer passed to a function"]), (1, 1))
+        # Its locals are its own: what it declares leaves the caller's alone, and it sees none of them.
+        own = [{"name": "h0", "params": ["p", "a"], "body": [["var", "x0", 9], ["set", "a", 2], ["return", "x0"]]}]
+        result, _, _ = fuzz_interp.run(
+            {"name": "dn_t", "params": ["p", "t", "a"],
+             "body": [["var", "x0", 1], ["call", "x1", "h0", ["p", "x0"]], ["return", ["+", ["+", "x0", "x1"], "a"]]]},
+            called, {"data": {"a": 5}, "fill": [0, 0]}, own)
+        self.assertEqual(result, 1 + 9 + 5)
+        twice = {**called, "functions": [{"name": "h0", "params": [{"name": "a", "kind": "data"}] * 2}]}
+        wrong: list[tuple[list[Any], dict[str, Any], list[Any]]] = [
+            ([["call", "x", "h1", ["p", 1]], ["return", 0]], called, functions),
+            ([["call", "x", "h0", ["p"]], ["return", 0]], called, functions),
+            ([["call", "x", "h0", ["p", 1]], ["return", 0]], called, [{**functions[0], "body": [["st8", "p", "a"]]}]),
+            ([["var", "x0", 1], ["call", "x", "h0", ["p", 1]], ["return", 0]], called,
+             [{**functions[0], "body": [["return", "x0"]]}]),
+            ([["call", "x", "h0", [1, 2]], ["return", 0]], twice, [{"name": "h0", "params": ["a", "a"],
+                                                                   "body": [["return", "a"]]}]),
+            ([["return", 0]], called, [{**functions[0], "name": "h1"}]),
+        ]
+        for body, given_plan, given in wrong:
+            with self.subTest(body=body), self.assertRaises(fuzz_interp.Fault):
+                fuzz_interp.run({"name": "dn_t", "params": ["p", "t", "a"], "body": body}, given_plan,
+                                {"data": {"a": 5}, "fill": [0, 0]}, given)
+        for body in ([["return", [">>>", "a", 64]]], [["return", ["<<", "a", 64]]],
+                     [["return", ["lds", 1, ["+", "p", 1]]]],
                      [["return", ["ld8", ["+", "p", 4096]]]], [["return", ["ld8", ["-", "p", 1]]]],
                      [["while", 1, []], ["return", 0]], [["st", "t", 0], ["return", 0]]):
             with self.subTest(body=body), self.assertRaises(fuzz_interp.Fault):
                 run(body)
 
+    def test_fuzz_a_call_spends_the_clock_in_the_model_and_the_interpreter(self) -> None:
+        """A loop iteration and a call each spend one step of the clock: 5,000 iterations, each with
+        a call, spend all of it, one more runs out of it."""
+        plan = {"params": [], "entries": [], "functions": [{"name": "h0", "params": []}]}
+        functions = [{"name": "h0", "params": [], "body": [["return", 0]]}]
+
+        def program(n: int) -> dict[str, Any]:
+            return {"name": "dn_t", "params": [], "body": [
+                ["var", "i", 0], ["while", ["<", "i", n], [["call", "x", "h0", []], ["set", "i", ["+", "i", 1]]]],
+                ["return", "i"]]}
+
+        cases = [{"program": program(n), "functions": functions, "plan": plan,
+                  "vectors": [{"data": {}, "fill": [0, 0]}]} for n in (5000, 5001)]
+        answers = json.loads(subprocess.run([str(DN_COMPILER), "run-fuzz"], input=json.dumps(cases), check=True,
+                                            text=True, capture_output=True).stdout)
+        self.assertEqual(answers[0]["vectors"][0]["result"], 5000)
+        self.assertIn("does not return", answers[1]["error"])
+        self.assertEqual(fuzz_interp.run(program(5000), plan, {"data": {}, "fill": [0, 0]}, functions)[0], 5000)
+        with self.assertRaisesRegex(fuzz_interp.Fault, "clock"):
+            fuzz_interp.run(program(5001), plan, {"data": {}, "fill": [0, 0]}, functions)
+
     def test_fuzz_types_refuse_pointer_leaks(self) -> None:
         """A pointer used as a value would make the model's addresses and the host's meet."""
-        plan = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
-                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}], "entries": [[1, 0]]}
+        plan: dict[str, Any] = {"params": [{"name": "p", "kind": "pointer", "buffer": 0, "offset": 0},
+                                           {"name": "t", "kind": "table"}, {"name": "a", "kind": "data"}],
+                                "entries": [[1, 0]]}
 
         def check(body: list[Any]) -> Any:
             return fuzz_interp.check_types({"name": "dn_t", "params": ["p", "t", "a"], "body": body}, plan)
@@ -389,6 +464,36 @@ class Generated(unittest.TestCase):
         for leak in leaks:
             with self.subTest(body=leak), self.assertRaises(fuzz_interp.TypeViolation):
                 check(leak)
+        # A call passes a pointer only where the function takes one, and the function is checked too.
+        called = {**plan, "functions": [{"name": "h0", "params": [plan["params"][0], {"name": "a", "kind": "data"}]}]}
+
+        def check_call(args: list[Any], body: list[Any]) -> Any:
+            return fuzz_interp.check_types(
+                {"name": "dn_t", "params": ["p", "t", "a"], "body": [["call", "x", "h0", args], ["return", "x"]]},
+                called, [{"name": "h0", "params": ["p", "a"], "body": body}])
+
+        check_call(["p", "a"], [["st8", "p", "a"], ["return", "a"]])
+        refused: list[tuple[list[Any], list[Any]]] = [
+            (["a", "a"], [["return", "a"]]), (["p", "p"], [["return", "a"]]), (["p", "a"], [["return", "p"]]),
+            (["p"], [["return", "a"]])]
+        for args, body in refused:
+            with self.subTest(args=args, body=body), self.assertRaises(fuzz_interp.TypeViolation):
+                check_call(args, body)
+        with self.assertRaisesRegex(fuzz_interp.TypeViolation, "different functions"):
+            fuzz_interp.check_types({"name": "dn_t", "params": ["p", "t", "a"], "body": [["return", 0]]}, called, [])
+
+    def test_fuzz_the_clock_a_program_may_spend_is_counted_from_its_loops_and_calls(self) -> None:
+        """A loop spends its most iterations, each one step and its body's; a call one step and what
+        the function spends; a branch the more of its two blocks."""
+        functions = [{"name": "h0", "params": [], "body": [
+            ["var", "i0", 0], ["while", ["<", "i0", 3], [["set", "i0", ["+", "i0", 1]]]], ["return", 0]]}]
+        program = {"name": "dn_t", "params": ["a"], "body": [
+            ["var", "i0", 0],
+            ["while", ["<", "i0", ["&", "a", 7]], [["call", "x", "h0", []], ["set", "i0", ["+", "i0", 1]]]],
+            ["if", "a", [["call", "y", "h0", []]], []], ["return", 0]]}
+        self.assertEqual(fuzz_interp.worst_case(program, functions), {"program": 7 * (4 + 1) + 4, "functions": [3]})
+        with self.assertRaisesRegex(fuzz_interp.Fault, "does not build"):
+            fuzz_interp.worst_case({**program, "body": [["while", "a", []], ["return", 0]]}, [])
 
     def test_fuzz_replay_refuses_addresses_the_checker_distrusts(self) -> None:
         """A candidate the reducer makes can leave a local in different states on the two sides of a
@@ -435,18 +540,53 @@ class Generated(unittest.TestCase):
         self.assertEqual(first["vector"], {"data": {}, "fill": [0, 0]})
         self.assertTrue(all(fuzz_reduce.well_typed(c) for c in asked))
 
+    def test_fuzz_reducer_drops_and_shrinks_what_a_program_calls(self) -> None:
+        """A function nothing calls goes, a parameter its body does not use goes with the argument of
+        every call, and a call is replaced by a literal or one of its arguments."""
+        plan = {"params": [{"name": "a", "kind": "data"}], "entries": [],
+                "functions": [{"name": "h0", "params": [{"name": "a", "kind": "data"}, {"name": "b", "kind": "data"}]},
+                              {"name": "h1", "params": []}]}
+        case = {"program": {"name": "dn_t", "params": ["a"],
+                            "body": [["call", "x", "h0", ["a", 5]], ["return", ["<=", "x", 3]]]},
+                "functions": [{"name": "h0", "params": ["a", "b"], "body": [["return", ["-", "a", 1]]]},
+                              {"name": "h1", "params": [], "body": [["return", 0]]}],
+                "plan": plan, "vector": {"data": {"a": 2}, "fill": [0, 0]}}
+
+        def fails(cases: list[Any]) -> list[bool]:
+            # The failure lies in the function: it has to be called and subtract from its parameter.
+            return [any(s[0] == "call" for s in c["program"]["body"]) and '["-", "a",' in json.dumps(c["functions"])
+                    for c in cases]
+
+        small, _ = fuzz_reduce.reduce(case, fails)
+        self.assertEqual(small["functions"], [{"name": "h0", "params": ["a"], "body": [["return", ["-", "a", 0]]]}])
+        self.assertEqual([p["name"] for p in small["plan"]["functions"][0]["params"]], ["a"])
+        self.assertEqual(small["program"]["body"][0], ["call", "x", "h0", [0]])
+        self.assertEqual(small["program"]["params"], [])
+        self.assertTrue(fuzz_reduce.well_typed(small))
+        gone, _ = fuzz_reduce.reduce(case, lambda cases: ["<=" in json.dumps(c["program"]) for c in cases])
+        self.assertEqual((gone["functions"], gone["plan"]["functions"]), ([], []))
+        self.assertEqual(gone["program"]["body"], [["return", ["<=", 0, 0]]])
+
     def test_fuzz_programs_read_back_as_they_were_emitted(self) -> None:
         """A program the reducer hands back as data is checked, printed and run exactly as the
         generator's own: the reading of the data is the inverse of its writing."""
         emitted = json.loads(subprocess.run([str(DN_COMPILER), "emit-fuzz", "7", "25", "2"], check=True, text=True,
                                             capture_output=True).stdout)
-        given = [{"program": r["program"], "plan": r["plan"],
+        self.assertTrue(any(r["functions"] for r in emitted))
+        for r in emitted:
+            # What the generator counts of the clock is what the program can spend, and no program it
+            # draws without calls has a function or a call.
+            self.assertEqual(fuzz_interp.worst_case(r["program"], r["functions"]), r["cost"])
+            if not r["config"]["calls"]:
+                self.assertEqual(r["functions"], [])
+                self.assertNotIn('"call"', json.dumps(r["program"]))
+        given = [{"program": r["program"], "functions": r["functions"], "plan": r["plan"],
                   "vectors": [{"data": v["data"], "fill": v["fill"]} for v in r["vectors"]]} for r in emitted]
         back = json.loads(subprocess.run([str(DN_COMPILER), "run-fuzz"], input=json.dumps(given), check=True, text=True,
                                          capture_output=True).stdout)
         for before, after in zip(emitted, back, strict=True):
             with self.subTest(program=before["name"]):
-                for key in ("name", "plan", "program", "source", "tree", "vectors"):
+                for key in ("name", "plan", "program", "functions", "source", "tree", "vectors"):
                     self.assertEqual(before[key], after[key])
         refused = json.loads(subprocess.run([str(DN_COMPILER), "run-fuzz"], input=json.dumps(
             [{**given[0], "program": {**given[0]["program"], "body": [["return", "nowhere"]]}}]),
@@ -456,7 +596,7 @@ class Generated(unittest.TestCase):
     def test_fuzz_planted_defects_change_what_they_name(self) -> None:
         source = ("export fun dn_t(1 p, 1 a, 1 dn_result) {\n  if a <= 3 {\n    st8 p, ld8 (p + 1);\n"
                   "    st dn_result, (a) >>> 63;\n    return 0;\n  } else {\n    st dn_result, (a) >>> 5;\n"
-                  "    return 0;\n  }\n}\n")
+                  "    st dn_result, (a ^ 1) << 2;\n    return 0;\n  }\n}\n")
         mutants = native_fuzz.MUTANTS
         self.assertIn("if a < 3 {", mutants["le-as-lt"](source))
         self.assertIn("    st p, ld8", mutants["st8-as-st"](source))
@@ -464,10 +604,27 @@ class Generated(unittest.TestCase):
         self.assertIn("if (a <= 3) == 0 {", mutants["if-negated"](source))
         self.assertIn(">>> 62;", mutants["shift-off-by-one"](source))
         self.assertIn(">>> 6;", mutants["shift-off-by-one"](source))
+        self.assertIn("(a | 1) << 2;", mutants["xor-as-or"](source))
+        self.assertIn("(a ^ 1) >>> 2;", mutants["shl-as-shr"](source))
+        called = "fun dn_t_h0(1 p, 1 a, 1 b) {\n  return a;\n}\n\n" + source.replace(
+            "  if a <= 3 {\n", "  var x0 = dn_t_h0(p, a, 3);\n  var x1 = dn_t_h1(p, a);\n  if a <= 3 {\n")
+        swapped = mutants["call-args-swapped"](called + "  var x2 = dn_t_h2();\n")
+        self.assertIn("var x0 = dn_t_h0(p, 3, a);", swapped)
+        self.assertIn("var x1 = dn_t_h1(p, a);", swapped)
+        self.assertIn("var x2 = dn_t_h2();", swapped)
+        source = called
         for name, mutant in mutants.items():
             with self.subTest(mutant=name):
                 changed = [a != b for a, b in zip(source.splitlines(), mutant(source).splitlines(), strict=True)]
                 self.assertTrue(any(changed))
+
+    def test_fuzz_the_corpus_is_recorded_for_the_defects_named(self) -> None:
+        parsed = [native_fuzz.arguments().parse_args(given).write_corpus
+                  for given in ([], ["--write-corpus"], ["--write-corpus", "le-as-lt", "call-args-swapped"])]
+        self.assertEqual([native_fuzz.to_write(p) for p in parsed],
+                         [set(), set(native_fuzz.MUTANTS), {"le-as-lt", "call-args-swapped"}])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            native_fuzz.arguments().parse_args(["--write-corpus", "no-such-defect"])
 
 
 class StandIn:
@@ -494,7 +651,7 @@ class StandIn:
 
 def record(name: str, result: int, program: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"name": name, "source": f"export fun {name}() {{}}\n", "tree": {"name": name},
-            "program": program or {"name": name, "params": [], "body": [["return", result]]},
+            "program": program or {"name": name, "params": [], "body": [["return", result]]}, "functions": [],
             "plan": {"params": [], "entries": []},
             "vectors": [{"data": {}, "fill": [0, 0], "result": result, "changed": []}]}
 
@@ -514,7 +671,7 @@ class GeneratedOnStandIns(unittest.TestCase):
 
     def test_a_found_case_that_disagrees_again_is_refused(self) -> None:
         kept = record("dn_min", 7)
-        case = {"name": "kept", "program": kept["program"], "plan": kept["plan"],
+        case = {"name": "kept", "program": kept["program"], "functions": [], "plan": kept["plan"],
                 "input": {"data": {}, "fill": [0, 0]}, "model": {"result": 7, "changed": []}}
         with tempfile.TemporaryDirectory() as temp:
             mutants, found = Path(temp) / "mutants", Path(temp) / "found"
@@ -603,7 +760,8 @@ class GeneratedOnStandIns(unittest.TestCase):
         def replay(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
             # The stand-in parser below reads only dn_0, so these renamed programs disagree with it.
             return [{"name": c["program"]["name"], "source": tree["source"],
-                     "tree": {**tree, "name": c["program"]["name"]}, "program": c["program"], "plan": c["plan"],
+                     "tree": {**tree, "name": c["program"]["name"]}, "program": c["program"], "functions": [],
+                     "plan": c["plan"],
                      "vectors": [{**c["vectors"][0], "result": 1, "changed": []}]} for c in cases]
 
         with tempfile.TemporaryDirectory() as temp:
@@ -659,6 +817,18 @@ class Lanes(unittest.TestCase):
             self.assertIn("platform", report)
 
     def test_documents_have_to_say_what_the_run_measured(self) -> None:
-        lanes.require_quoted({"README.md": ("dn-compiler",)})
-        with self.assertRaisesRegex(lanes.LaneError, "README.md does not say 'no such phrase'"):
-            lanes.require_quoted({"README.md": ("no such phrase",)})
+        """Run alone, a lane holds the documents to what it measured; under `scripts/once.py` it
+        leaves the requirement for `scripts/check_documents.py`, which holds them to it."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("DN_DOCUMENTED", None)
+            lanes.require_quoted({"README.md": ("dn-compiler",)})
+            with self.assertRaisesRegex(lanes.LaneError, "README.md does not say 'no such phrase'"):
+                lanes.require_quoted({"README.md": ("no such phrase",)})
+            with self.assertRaisesRegex(lanes.LaneError, "states otherwise than measured: 'cases': none, not 3"):
+                lanes.require_stated([("README.md", [("# dn", "## ")], {"cases": "3"})])
+        with tempfile.TemporaryDirectory() as temp:
+            later = Path(temp) / "documented"
+            with mock.patch.dict(os.environ, {"DN_DOCUMENTED": str(later)}):
+                lanes.require_quoted({"README.md": ("no such phrase",)})
+            [requirement] = [json.loads(line) for line in later.read_text().splitlines()]
+            self.assertEqual(lanes.unheld(requirement), ["README.md does not say 'no such phrase'"])

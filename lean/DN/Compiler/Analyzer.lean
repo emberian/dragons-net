@@ -13,9 +13,15 @@ accepts never errs, so a program is shown safe by running the analysis.
 A word is abstracted by an interval of its signed value, or, for an address, of its offset from
 `@base`, with the offset's remainder by eight when it is known. A load from memory gives any value,
 except a word whose range a condition has just checked (a cell), which keeps that range until the
-next store, external call, or change of the local it is addressed by. A loop's invariant is found
+next store, external call, or change of the local it is addressed by. A condition cuts the range of
+a local or a cell it compares, or of `x` in `x + k` for a constant `k` when adding it cannot leave
+the words. A loop's invariant is found
 by running its body until the state stops growing, widening a bound that keeps moving; whatever the
 search finds is checked, and only the check is relied on.
+
+A function is analysed once, from any arguments, and only the functions defined before it may be
+called: a call's value is any word, and the memory may change. A function's arguments are numbers
+to it, so the addresses it uses come from `@base`.
 -/
 
 namespace DN.Compiler.Analyzer
@@ -86,12 +92,24 @@ def mul (a b : AVal) : AVal :=
   else if a.lo = a.hi then scale b a.lo a.res
   else AVal.top
 
+/-- `&` with a number in `[0, hi]` lies in `[0, hi]`, whatever the other operand. -/
 def and_ (a b : AVal) : AVal :=
-  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (min a.hi b.hi) none else AVal.top
+  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (min a.hi b.hi) none
+  else if !b.ptr && 0 ≤ b.lo then AVal.num 0 b.hi none
+  else if !a.ptr && 0 ≤ a.lo then AVal.num 0 a.hi none
+  else AVal.top
 
-/-- A logical shift right: any word when the distance is a number below a word, no value when
-it may be a word or more. -/
-def shiftR (b : AVal) : Option AVal :=
+/-- The largest number with no bit set above the highest of `hi`. -/
+def bitsUpTo (hi : Int) : Int := 2 ^ (hi.toNat.log2 + 1) - 1
+
+/-- `^` or `|` of numbers in `[0, hi]` sets no bit above the highest of the larger `hi`. -/
+def bitwise (a b : AVal) : AVal :=
+  if !a.ptr && !b.ptr && 0 ≤ a.lo && 0 ≤ b.lo then AVal.num 0 (bitsUpTo (max a.hi b.hi)) none
+  else AVal.top
+
+/-- A shift: any word when the distance is a number below a word, no value when it may be a word
+or more. -/
+def shift (b : AVal) : Option AVal :=
   if !b.ptr && 0 ≤ b.lo && b.hi < 64 then some AVal.top else none
 
 /-- Whether `a < b` in signed order, when the ranges decide it. -/
@@ -164,6 +182,8 @@ def evalA (size : Nat) (A : AState) : PancakeExp → Option AVal
       | .add => some (add a b)
       | .sub => some (sub a b)
       | .and_ => some (and_ a b)
+      | .xor => some (bitwise a b)
+      | .or_ => some (bitwise a b)
     | _, _ => none
   | .mul l r =>
     match evalA size A l, evalA size A r with
@@ -171,7 +191,11 @@ def evalA (size : Nat) (A : AState) : PancakeExp → Option AVal
     | _, _ => none
   | .shiftR l r =>
     match evalA size A l, evalA size A r with
-    | some _, some b => shiftR b
+    | some _, some b => shift b
+    | _, _ => none
+  | .shiftL l r =>
+    match evalA size A l, evalA size A r with
+    | some _, some b => shift b
     | _, _ => none
   | .cmp c l r =>
     match evalA size A l, evalA size A r with
@@ -204,7 +228,8 @@ def meet (v : AVal) (lo hi : Int) : Option AVal :=
   if l ≤ h then some { v with lo := l, hi := h } else none
 
 /-- The state with the range of the local or cell `e` names cut to `[lo, hi]`, when `e` names one
-and holds a number; nothing when the ranges do not meet. -/
+and holds a number — or of the local `x` cut to `[lo - k, hi - k]` when `e` is `x + k` and adding
+`k` to it cannot leave the words; nothing when the ranges do not meet. -/
 def refine (size : Nat) (A : AState) (e : PancakeExp) (lo hi : Int) : Option AState :=
   match e with
   | .var x =>
@@ -221,6 +246,15 @@ def refine (size : Nat) (A : AState) (e : PancakeExp) (lo hi : Int) : Option ASt
       else (meet v lo hi).map fun v' =>
         { A with cells := (x, k, v') :: A.cells.filter fun c => !(c.1 = x && c.2.1 = k) }
     | _, _ => some A
+  | .op .add (.var x) (.const k) =>
+    match lookup x A.locals with
+    | some v =>
+      if v.ptr then some A
+      else if wordMin ≤ v.lo + k.toInt ∧ v.hi + k.toInt ≤ wordMax then
+        (meet v (lo - k.toInt) (hi - k.toInt)).bind fun v' =>
+          (setVar x v' A.locals).map fun ls => { A with locals := ls }
+      else some A
+    | none => some A
   | _ => some A
 
 def isFlag (v : AVal) : Bool := !v.ptr && 0 ≤ v.lo && v.hi ≤ 1
@@ -342,6 +376,17 @@ def arrayOk (size : Nat) (p len : AVal) : Bool :=
 /-- Why a program was not shown safe. -/
 abbrev Alarm := String
 
+/-- The functions a statement may call, each with its parameters, the last defined first. -/
+abbrev Env := List (String × List String)
+
+/-- The parameters of `f` and the functions defined before it. -/
+def findFn (f : String) : Env → Option (List String × Env)
+  | [] => none
+  | (g, ps) :: rest => if f = g then some (ps, rest) else findFn f rest
+
+/-- A function's state on entry: its parameters, each any word. -/
+def entryState (ps : List String) : AState := ⟨ps.map fun p => (p, AVal.top), []⟩
+
 /-- The outcome of a statement: an alarm, or the state it ends normally in, if it can. -/
 abbrev Out := Except Alarm (Option AState)
 
@@ -352,15 +397,26 @@ def valOf (size : Nat) (A : AState) (e : PancakeExp) (what : String) : Except Al
   | some v => .ok v
   | none => .error s!"{what}: an expression that may have no value: {repr e}"
 
-/-- The bound the guard `e` puts on the local `x` of `X` when `x` may be as large as any word, plus
-one: where a counter stepped by one past the guard stops. -/
+/-- Every argument has a value. -/
+def argsOk (size : Nat) (A : AState) (what : String) : List PancakeExp → Except Alarm Unit
+  | [] => .ok ()
+  | e :: es => do
+    let _ ← valOf size A e what
+    argsOk size A what es
+
+/-- How large a local is taken to be while a guard's bound on it is sought: below the end of the
+words by `2 ^ 32`, so that `x + k < y` bounds it too for a constant `k` below that. -/
+def guardCap : Int := wordMax - 2 ^ 32
+
+/-- The bound the guard `e` puts on the local `x` of `X` when `x` may be as large as `guardCap`,
+plus one: where a counter stepped by one past the guard stops. -/
 def guardHi (size : Nat) (e : PancakeExp) (X : AState) (x : String) (v : AVal) : Option Int :=
-  match setVar x { v with hi := wordMax } X.locals with
+  match setVar x { v with hi := max v.lo guardCap } X.locals with
   | some ls =>
     match assume size { X with locals := ls } e true with
     | some G =>
       match lookup x G.locals with
-      | some g => if g.hi < wordMax then some (g.hi + 1) else none
+      | some g => if g.hi < guardCap then some (g.hi + 1) else none
       | none => none
     | none => none
   | none => none
@@ -432,12 +488,12 @@ def loop (size : Nat) (e : PancakeExp) (body : AState → Out) (A : AState) : Ou
   need (leOpt post I) "while: no invariant found"
   .ok (assume size I e false)
 
-def analyze (size : Nat) (A : AState) : PancakeProg → Out
+def analyze (size : Nat) (env : Env) (A : AState) : PancakeProg → Out
   | .skip => .ok (some A)
   | .dec x e c => do
     let v ← valOf size A e s!"var {x}"
     let inner := { locals := (x, v) :: A.locals, cells := killCells x A.cells }
-    match ← analyze size inner c with
+    match ← analyze size env inner c with
     | none => .ok none
     | some B =>
       let ls := dropVar x B.locals
@@ -467,22 +523,55 @@ def analyze (size : Nat) (A : AState) : PancakeProg → Out
     need (arrayOk size cp clv && arrayOk size ap alv) s!"@{name}: an array that may be off the heap"
     .ok (some { A with cells := [] })
   | .seq c1 c2 => do
-    match ← analyze size A c1 with
+    match ← analyze size env A c1 with
     | none => .ok none
-    | some B => analyze size B c2
+    | some B => analyze size env B c2
   | .cond e c1 c2 => do
     let _ ← valOf size A e "if"
-    let o1 ← branch size e true (fun X => analyze size X c1) A
-    let o2 ← branch size e false (fun X => analyze size X c2) A
+    let o1 ← branch size e true (fun X => analyze size env X c1) A
+    let o2 ← branch size e false (fun X => analyze size env X c2) A
     joinOuts o1 o2
-  | .while_ e c => loop size e (fun X => analyze size X c) A
+  | .while_ e c => loop size e (fun X => analyze size env X c) A
   | .ret e => do
     let _ ← valOf size A e "return"
     .ok none
+  | .decCall rt f args c => do
+    let what := s!"var {rt} = {f}(…)"
+    argsOk size A what args
+    match findFn f env with
+    | none => .error s!"{what}: a function not defined before this one"
+    | some (ps, _) =>
+      need (ps.length == args.length) s!"{what}: another number of arguments"
+      match ← analyze size env { locals := (rt, AVal.top) :: A.locals, cells := [] } c with
+      | none => .ok none
+      | some B =>
+        let ls := dropVar rt B.locals
+        need (lookup rt ls).isNone s!"{what}: a local declared again inside its own scope"
+        .ok (some { locals := ls, cells := killCells rt B.cells })
 
 /-- The analysis of a whole `main`: no alarm, and no run finishes without a result. -/
 def check (size : Nat) (p : PancakeProg) : Except Alarm Unit := do
-  match ← analyze size ⟨[], []⟩ p with
+  match ← analyze size [] ⟨[], []⟩ p with
+  | none => .ok ()
+  | some _ => .error "main: a run may finish without a result"
+
+/-- The functions of a program, in the order defined, each analysed from any arguments with those
+before it to call, and none finishing without a result: the functions `main` may call. -/
+def checkFns (size : Nat) : Env → List (String × List String × PancakeProg) → Except Alarm Env
+  | env, [] => .ok env
+  | env, (f, ps, body) :: fns => do
+    need (findFn f env).isNone s!"{f}: a function defined twice"
+    need (f != "main") s!"{f}: a function named as the program's entry"
+    need (decide ps.Nodup) s!"{f}: a parameter named twice"
+    match ← analyze size env (entryState ps) body with
+    | none => checkFns size ((f, ps) :: env) fns
+    | some _ => .error s!"{f}: a run may finish without a result"
+
+/-- The analysis of a program: its functions, then its `main`. -/
+def checkProgram (size : Nat) (fns : List (String × List String × PancakeProg)) (p : PancakeProg) :
+    Except Alarm Unit := do
+  let env ← checkFns size [] fns
+  match ← analyze size env ⟨[], []⟩ p with
   | none => .ok ()
   | some _ => .error "main: a run may finish without a result"
 
@@ -561,5 +650,93 @@ def regression_837 : Bool := (check heap (call 56)).toBool
 def regression_838 : Bool := !(check heap (call 57)).toBool
 def regression_839 : Bool := (check heap (shifted 63)).toBool
 def regression_840 : Bool := !(check heap (shifted 64)).toBool
+
+/-- A byte stored at `off` past `x op y`, with `x` and `y` words cut to `[0, hx]` and `[0, hy]` by
+`&`: a word loaded from memory may be any. -/
+private def bitwiseAt (op : Binop) (hx hy off : Nat) : PancakeProg :=
+  .dec "x" (.op .and_ (.loadWord (at' 0)) (c hx)) (.dec "y" (.op .and_ (.loadWord (at' 8)) (c hy))
+    (.seq (.storeByte (.op .add (at' off) (.op op (.var "x") (.var "y"))) (c 0)) (.ret (c 0))))
+
+/-- A word shifted left by `k`. -/
+private def shiftedLeft (k : Nat) : PancakeProg :=
+  .dec "n" (.shiftL (.loadWord (at' 0)) (c k)) (.ret (.var "n"))
+
+-- `^` of numbers up to 15 stays up to 15, `|` of numbers up to 15 and 16 up to 31, and no further.
+def regression_927 : Bool := (check heap (bitwiseAt .xor 15 15 48)).toBool
+def regression_928 : Bool := !(check heap (bitwiseAt .xor 15 15 49)).toBool
+def regression_929 : Bool := (check heap (bitwiseAt .or_ 15 16 32)).toBool
+def regression_930 : Bool := !(check heap (bitwiseAt .or_ 15 16 33)).toBool
+def regression_931 : Bool := (check heap (shiftedLeft 63)).toBool
+def regression_932 : Bool := !(check heap (shiftedLeft 64)).toBool
+/-- Eight bytes at a time while `off + 8 <= n`, or `off + 8 < n` when `strict`, a byte stored at
+each `off`: the guard bounds `off` by `n - 8`, or `n - 9`. -/
+private def blocks (n : Nat) (strict : Bool := false) : PancakeProg :=
+  .dec "off" (c 0) (.seq (.while_ (if strict then .cmp .less (.op .add (.var "off") (c 8)) (c n)
+        else .cmp .notLess (c n) (.op .add (.var "off") (c 8)))
+      (.seq (.storeByte (.op .add (at' 0) (.var "off")) (c 0))
+        (.assign "off" (.op .add (.var "off") (c 8)))))
+    (.ret (c 0)))
+
+-- The last block's byte, 56, lies in the heap, and with one more block, 64, it does not; a word
+-- loaded from memory is not bounded by `x + 8 < 40`, since adding 8 to it may leave the words.
+def regression_940 : Bool := (check heap (blocks 64)).toBool
+def regression_941 : Bool := !(check heap (blocks 72)).toBool
+def regression_943 : Bool := (check heap (blocks 65 true)).toBool
+def regression_944 : Bool := !(check heap (blocks 73 true)).toBool
+def regression_942 : Bool :=
+  !(check heap (.dec "x" (.loadWord (at' 0))
+    (.seq (.cond (.cmp .less (.op .add (.var "x") (c 8)) (c 40))
+        (.storeByte (.op .add (at' 0) (.var "x")) (c 0)) .skip) (.ret (c 0))))).toBool
+
+/-- An address cut by `&` to a number up to 15 is that number, no longer an address. -/
+def regression_933 : Bool :=
+  (check heap (.dec "x" (.op .and_ .base (c 15))
+    (.seq (.storeByte (.op .add (at' 48) (.var "x")) (c 0)) (.ret (c 0))))).toBool
+
+/-- A byte stored at `k` of the heap above its header, `k` checked to lie in it first (or not): to
+a function, its argument may be any word. -/
+private def put (checked : Bool) : PancakeProg :=
+  .seq (if checked then
+      .cond (.cmp .less (c 0)
+          (.op .add (.cmp .less (.var "k") (c 0)) (.cmp .less (c 63) (.var "k"))))
+        (.ret (c 1)) .skip
+    else .skip)
+    (.seq (.storeByte (.op .add (at' 0) (.var "k")) (c 0)) (.ret (c 0)))
+
+/-- `main` calling `f` with `args`, then returning what it gave. -/
+private def calls (f : String) (args : List PancakeExp) : PancakeProg :=
+  .decCall "r" f args (.ret (.var "r"))
+
+def regression_949 : Bool :=
+  (checkProgram heap [("put", ["k"], put true)] (calls "put" [c 5])).toBool
+def regression_950 : Bool :=
+  !(checkProgram heap [("put", ["k"], put false)] (calls "put" [c 5])).toBool
+/-- Another number of arguments, a function not defined, one calling itself, one that may finish
+without a result, and one defined twice are refused. -/
+def regression_951 : Bool :=
+  !(checkProgram heap [("put", ["k"], put true)] (calls "put" [c 5, c 6])).toBool &&
+    !(checkProgram heap [] (calls "put" [c 5])).toBool &&
+    !(checkProgram heap [("f", [], calls "f" [])] (calls "f" [])).toBool &&
+    !(checkProgram heap [("f", [], .skip)] (calls "f" [])).toBool &&
+    !(checkProgram heap [("f", [], .ret (c 0)), ("f", [], .ret (c 0))] (calls "f" [])).toBool
+/-- A function may call one defined before it. -/
+def regression_952 : Bool :=
+  (checkProgram heap [("put", ["k"], put true), ("twice", ["k"], .decCall "a" "put" [.var "k"]
+      (.decCall "b" "put" [.op .add (.var "k") (c 1)] (.ret (.var "b"))))]
+    (calls "twice" [c 7])).toBool
+/-- What a call returns may be any word: storing at it is refused. -/
+def regression_953 : Bool :=
+  !(checkProgram heap [("put", ["k"], put true)] (.decCall "r" "put" [c 5]
+    (.seq (.storeByte (.op .add (at' 0) (.var "r")) (c 0)) (.ret (c 0))))).toBool
+/-- Calls in a branch and in a loop are taken; a call whose result is named as a local in scope, and
+after which the run may go on, is refused, as such a declaration is. -/
+def regression_955 : Bool :=
+  let fns := [("put", ["k"], put true)]
+  (checkProgram heap fns (.cond (.loadWord (at' 0)) (calls "put" [c 1]) (.ret (c 0)))).toBool &&
+    (checkProgram heap fns (.dec "i" (c 0) (.seq (.while_ (.cmp .less (.var "i") (c 3))
+        (.decCall "r" "put" [.var "i"] (.assign "i" (.op .add (.var "i") (c 1)))))
+      (.ret (c 0))))).toBool &&
+    !(checkProgram heap fns
+      (.dec "r" (c 0) (.seq (.decCall "r" "put" [c 5] .skip) (.ret (c 0))))).toBool
 
 end DN.Compiler.Analyzer

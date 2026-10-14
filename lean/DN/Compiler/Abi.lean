@@ -35,6 +35,11 @@ def emitWord (f : PFun) : Except Checked.Reason String := do
   let _ ← Checked.emit f
   Checked.emit (wordResult f)
 
+/-- `emitWord` with the functions `f` calls, which return as they are. -/
+def emitWordWith (funs : List PFun) (f : PFun) : Except Checked.Reason String := do
+  let _ ← Checked.emitWith funs f
+  Checked.emitWith funs (wordResult f)
+
 /-- The output slot is introduced by the transformation, so a function that already reads
 that name is refused before the parameter can capture it. -/
 theorem free_output_name_is_rejected :

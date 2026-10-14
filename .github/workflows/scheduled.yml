@@ -30,6 +30,8 @@ defaults:
 env:
   PYTHONSAFEPATH: "1"
   LEAN_NUM_THREADS: "4"
+  # Every check runs here, untraced: nothing it passed on before is taken up.
+  DN_ONCE: none
 
 jobs:
   # New advisories appear without any change to the repository.

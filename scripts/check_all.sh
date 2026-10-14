@@ -14,8 +14,12 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo 'The checks require Linux x86-64; elsewhere, scripts/check.sh build runs the source gate and the build.' >&2
   exit 1
 fi
-bash scripts/lint.sh
+# A check that passed on the inputs it read is not run again (scripts/once.py); check.sh and
+# native_lanes.sh do the same for each of theirs. The documents are held last to what the checks
+# measured on their last passes, so that a change to them alone runs no check again.
+python3 scripts/once.py run lint -- bash scripts/lint.sh
 bash scripts/check.sh
-python3 scripts/check_models.py --loom
+python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom
 bash scripts/native_lanes.sh
+python3 scripts/check_documents.py
 echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the server loop, the framers, the session program, the NNTP server over sockets, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'

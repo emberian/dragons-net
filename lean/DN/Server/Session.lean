@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Compiler.Checked
 import DN.News.FramerProg
+import DN.News.RecoverProg
 import DN.News.SessionSpec
 import DN.Server.SessionLayout
 
@@ -78,15 +79,18 @@ def isKind (k : News.FrameSpec.Kind) : PExpr := eEq (v "kind") (n (News.FramerPr
 
 /-! ## The texts of the replies -/
 
-/-- The word of the texts that starts at byte `8 * w` of them, its first byte lowest, as the
-machines the host runs on lay out a word; past the last text, zeros. -/
-def textWord (w : Nat) : Nat :=
-  (List.range 8).foldr (fun j acc => acc * 256 + (texts.flatten.getD (8 * w + j) 0).toNat) 0
+/-- Bytes as words, eight a word, its first byte lowest, as the machines the host runs on lay out
+a word; the last word filled with zeros. `j` bytes of the word `acc` are taken. -/
+def textWords : List (BitVec 8) → Nat → Nat → List Nat
+  | [], 0, _ => []
+  | [], _, acc => [acc]
+  | b :: rest, j, acc =>
+    if j = 7 then (acc + b.toNat * 256 ^ 7) :: textWords rest 0 0
+    else textWords rest (j + 1) (acc + b.toNat * 256 ^ j)
 
 /-- The texts, a word at a time, into the program's own area. -/
 def textsInit : List PStmt :=
-  (List.range ((texts.flatten.length + 7) / 8)).map fun w =>
-    .store (at_ (ownOff + ownTexts + 8 * w)) (n (textWord w))
+  (textWords texts.flatten 0 0).mapIdx fun w x => .store (at_ (ownOff + ownTexts + 8 * w)) (n x)
 
 def textAddr (k : Nat) : PExpr := at_ (ownOff + ownTexts + textAt k)
 def textLen (k : Nat) : Nat := (texts.getD k []).length
@@ -447,10 +451,240 @@ def identity : List PStmt :=
 def fetch : PStmt := .ffi nextName [at_ confOff, n confLen, at_ nextOff, n nextLen]
 def hand : PStmt := .ffi emitName [at_ confOff, n confLen, at_ emitOff, n emitLen]
 
-/-- One turn of the loop. -/
+/-! ## Recovery at start -/
+
+section Start
+open DN.News
+open DN.News.RecoverProg (rw rset sw sset rp rKey rGroupCount rGroups rGroupSlot rFirst rName
+  rNameLen rEnd rJournalSize rSeq rFound rFileSize rActAt rActLen rActA rActB rAct rFresh
+  rJournalEnd rStatus rPhase asksName asksJournal asksOctets asksFile asksAside gives givesAside
+  refused actKeep actRename actRemove actSyncDir actCut actCreate)
+open DN.News.Journal (magic keyLength formatType startType headerLength firstFrame maxFrame)
+
+def drv (off : Nat) : PExpr := at_ (drvOff + off)
+def jobW (off : Nat) : PExpr := at_ (emitOff + emitJobs + off)
+def opW (i off : Nat) : PExpr := jobW (jobOpsAt + i * opSlot + off)
+def doneW (off : Nat) : PExpr := at_ (nextOff + nextDone + off)
+/-- Word `w` of the results of operation `i` of the job that completed. -/
+def result (i w : Nat) : PExpr := ld (doneW (doneResults + 16 * i + 8 * w))
+/-- The bytes of the job handed over, and of its completion. -/
+def jobBytes : PExpr := jobW jobHead
+def doneBytes : PExpr := doneW doneHead
+
+/-- An operation of a file job (decision 0005). -/
+structure Op where
+  code : Nat
+  place : PExpr := n 0
+  gen : PExpr := n 0
+  name : PExpr := n 0
+  number : PExpr := n 0
+  toName : PExpr := n 0
+  toNumber : PExpr := n 0
+  offset : PExpr := n 0
+  length : PExpr := n 0
+
+def putOp (i : Nat) (o : Op) : List PStmt :=
+  [(opCode, n o.code), (opHandle, o.place), (opHandleGen, o.gen), (opName, o.name),
+   (opNumber, o.number), (opToName, o.toName), (opToNumber, o.toNumber), (opOffset, o.offset),
+   (opLength, o.length), (opData, n 0)].map fun (f, e) => .store (opW i f) e
+
+/-- An operation on the journal. -/
+def onJournal (code : Nat) : Op := { code, place := ld (drv dJnl), gen := ld (drv dJnlGen) }
+
+/-- The job of `ops` in the first slot, handed over, and its completion awaited, the host not
+listening yet: into `dok` whether every operation succeeded, into `dcl` the error's class. -/
+def runJob (ops : List Op) : List PStmt :=
+  [.store (drv dGen) (eAdd (ld (drv dGen)) (n 1)), .store (jobW jobKind) (n job),
+   .store (jobW jobGen) (ld (drv dGen)), .store (jobW jobCount) (n ops.length)] ++
+  (ops.zipIdx.flatMap fun (o, i) => putOp i o) ++
+  [hand, .store (jobW jobKind) (n 0), .assign "dw" (n 1),
+   .while (v "dw")
+     [fetch,
+      .ite (eAnd (eEq (ld (doneW doneKind)) (n done)) (eEq (ld (doneW doneGen)) (ld (drv dGen))))
+        [.assign "dw" (n 0)] [hand]],
+   .assign "dok" (eEq (ld (doneW doneOps)) (n ops.length)), .assign "dcl" (ld (doneW doneClass))]
+
+/-- Stop when a job failed, its class where the host reads it. -/
+def failed : List PStmt := .store (drv dClass) (v "dcl") :: stop recoveryFailed
+def mustSucceed : PStmt := .ite (v "dok") [] failed
+
+/-- `x` into `k` octets at `a`, least significant first. -/
+def putLe (a x : PExpr) (k : Nat) : List PStmt :=
+  (List.range k).map fun i => .storeb (atOff a i) (eAnd (.shr x (n (8 * i))) (n 255))
+
+def putBytes (a : PExpr) (bs : List (BitVec 8)) : List PStmt :=
+  bs.zipIdx.map fun (b, i) => .storeb (atOff a i) (n b.toNat)
+
+/-- The frame of a record of `type` at journal offset `off` in the job's bytes, around the `len`
+octets of payload already there, tagged under the key at `key`: the message the tag is computed
+over is put together in the scanner's area. -/
+def frameAround (off : PExpr) (type len : Nat) (key : PExpr) : List PStmt :=
+  let msg := atOff (v "jsc") ScanProg.sMessage
+  putLe msg off 8 ++ [.storeb (atOff msg 8) (n type)] ++
+  copy "dj" (atOff msg 9) (atOff jobBytes headerLength) (n len) ++
+  [.assign "k" key, .assign "p" msg, .assign "n" (n (9 + len))] ++ SipProg.sipSrc ++
+  putLe jobBytes (n len) 4 ++ putLe (atOff jobBytes 4) (v "r") 8 ++
+  [.storeb (atOff jobBytes 12) (n type),
+   .storeb (atOff jobBytes (headerLength + len)) (n Journal.endMark.toNat)]
+
+/-- The configuration into recovery's area: the key of a new journal and the groups. -/
+def configure : List PStmt :=
+  copy "dj" (atOff rp rKey) (at_ (nextOff + nextRandom + runValueLen)) (n keyLength) ++
+  [.assign "dx" (ld (at_ (nextOff + nextGroupCount))),
+   .ite (or2 (eLt (v "dx") (n 0)) (eLt (n groupsMax) (v "dx"))) (stop badIdentity) [],
+   rset rGroupCount (v "dx"), .assign "da" (n 0),
+   .while (eLt (v "da") (v "dx"))
+     ([.assign "dl" (ld (eAdd (at_ (nextOff + nextGroups)) (eMul (v "da") (n groupSlot)))),
+       .ite (or2 (eLt (v "dl") (n 0)) (eLt (n groupMax) (v "dl"))) (stop badIdentity) [],
+       .store (eAdd (atOff rp rGroups) (eMul (v "da") (n rGroupSlot))) (v "dl")] ++
+      copy "dj" (eAdd (atOff rp (rGroups + 8)) (eMul (v "da") (n rGroupSlot)))
+        (eAdd (at_ (nextOff + nextGroups + 8)) (eMul (v "da") (n groupSlot))) (v "dl") ++
+      [inc "da"])]
+
+/-- The next name of the directory as it was opened, a page of the listing at a time, from the
+first again when a pass begins; or none left. -/
+def askName : List PStmt :=
+  [.ite (ld (drv dDirOpen)) []
+     (runJob [{ code := opOpenDir }] ++
+      [mustSucceed, .store (drv dDir) (result 0 0), .store (drv dDirGen) (result 0 1),
+       .store (drv dDirOpen) (n 1)]),
+   .ite (rw rFirst)
+     [.store (drv dIndex) (n 0), .store (drv dPageLen) (n 0), .store (drv dPagePos) (n 0)] [],
+   .assign "dpos" (ld (drv dPagePos)), .assign "dlen" (ld (drv dPageLen)),
+   keptIn (v "dlen") jobData, keptIn (v "dpos") jobData,
+   .ite (eLe (v "dlen") (v "dpos"))
+     (runJob [{ code := opList, place := ld (drv dDir), gen := ld (drv dDirGen),
+                offset := ld (drv dIndex), length := n jobData }] ++
+      [mustSucceed, .assign "dlen" (result 0 1), keptIn (v "dlen") jobData] ++
+      copy "dj" (drv dPage) doneBytes (v "dlen") ++
+      [.store (drv dPageLen) (v "dlen"), .assign "dpos" (n 0)]) [],
+   .ite (eLt (v "dpos") (v "dlen"))
+     ([.assign "dl" (.loadb (eAdd (drv dPage) (v "dpos"))),
+       .ite (eLt (v "dlen") (eAdd (eAdd (v "dpos") (v "dl")) (n 1))) (stop brokenState) []] ++
+      copy "dj" (atOff rp rName) (eAdd (eAdd (drv dPage) (v "dpos")) (n 1)) (v "dl") ++
+      [rset rNameLen (v "dl"), rset rEnd (n 0),
+       .store (drv dPagePos) (eAdd (eAdd (v "dpos") (v "dl")) (n 1)),
+       .store (drv dIndex) (eAdd (ld (drv dIndex)) (n 1))])
+     [rset rEnd (n 1)]]
+
+/-- The journal opened, synced and its length given. -/
+def askJournal : List PStmt :=
+  [.ite (ld (drv dJnlOpen)) []
+     (runJob [{ code := opOpen, name := n nameJournal }] ++
+      [mustSucceed, .store (drv dJnl) (result 0 0), .store (drv dJnlGen) (result 0 1),
+       .store (drv dJnlOpen) (n 1)])] ++
+  runJob [onJournal opSync, onJournal opSize] ++ [mustSucceed, rset rJournalSize (result 1 0)]
+
+/-- The octets of the journal the scanner wants, read after its window. -/
+def askOctets : List PStmt :=
+  [.assign "da" (sw ScanProg.sBase), .assign "dx" (sw ScanProg.sLen),
+   .assign "dy" (sw ScanProg.sWant),
+   keptIn (v "dx") ScanProg.windowMax, keptIn (v "dy") ScanProg.chunk,
+   .ite (eLt (n ScanProg.windowMax) (eAdd (v "dx") (v "dy"))) (stop brokenState) []] ++
+  runJob [{ onJournal opRead with offset := eAdd (v "da") (v "dx"), length := v "dy" }] ++
+  [mustSucceed,
+   .ite (ne (result 0 0) (v "dy")) (.store (drv dClass) (n 0) :: stop recoveryFailed) []] ++
+  copy "dj" (eAdd (atOff (v "jsc") ScanProg.sWindow) (v "dx")) doneBytes (v "dy") ++
+  [sset ScanProg.sLen (eAdd (v "dx") (v "dy"))]
+
+/-- Whether the file of kind `kind` and number `rSeq` is there: with `sized`, its size too. -/
+def askFile (kind : Nat) (sized : Bool) : List PStmt :=
+  runJob [{ code := opOpen, name := n kind, number := rw rSeq }] ++
+  [.ite (v "dok")
+     ([.assign "dx" (result 0 0), .assign "dy" (result 0 1)] ++
+      runJob ((if sized then [{ code := opSize, place := v "dx", gen := v "dy" }] else []) ++
+        [{ code := opClose, place := v "dx", gen := v "dy" }]) ++
+      [mustSucceed, rset rFound (n 1)] ++
+      (if sized then [rset rFileSize (result 0 0)] else []))
+     [.ite (eEq (v "dcl") (n classNotFound)) [rset rFound (n 0)] failed]]
+
+/-- A torn tail kept: after its offset in eight octets, the octets the action names in the area. -/
+def keep : List PStmt :=
+  [.assign "dx" (rw rActAt), .assign "dl" (rw rActLen), keptIn (v "dl") maxFrame,
+   keptIn (v "dx") (RecoverProg.size - maxFrame)] ++
+  runJob [{ code := opCreate, name := n nameTail, number := rw rActA }] ++
+  [mustSucceed, .assign "da" (result 0 0), .assign "dy" (result 0 1)] ++
+  putLe jobBytes (rw rActB) 8 ++ copy "dj" (atOff jobBytes 8) (eAdd rp (v "dx")) (v "dl") ++
+  runJob [{ code := opWrite, place := v "da", gen := v "dy", length := eAdd (v "dl") (n 8) },
+          { code := opSync, place := v "da", gen := v "dy" },
+          { code := opClose, place := v "da", gen := v "dy" }] ++ [mustSucceed]
+
+/-- A new journal: made again over an empty one, or created; its format, under the configured
+key, written and synced. -/
+def create : List PStmt :=
+  [.ite (ld (drv dJnlOpen))
+     (runJob [{ onJournal opTruncate with length := n 0 }] ++ [mustSucceed])
+     (runJob [{ code := opCreate, name := n nameJournal }] ++
+      [mustSucceed, .store (drv dJnl) (result 0 0), .store (drv dJnlGen) (result 0 1),
+       .store (drv dJnlOpen) (n 1)])] ++
+  putBytes (atOff jobBytes headerLength) magic ++
+  copy "dj" (atOff jobBytes (headerLength + magic.length)) (atOff rp rKey) (n keyLength) ++
+  frameAround (n 0) formatType (magic.length + keyLength) (atOff rp rKey) ++
+  runJob [{ onJournal opWrite with length := n firstFrame }, onJournal opSync] ++ [mustSucceed]
+
+/-- The action recovery gives, carried out. -/
+def give : List PStmt :=
+  [.assign "da" (rw rAct),
+   .ite (eEq (v "da") (n actKeep)) keep
+    [.ite (eEq (v "da") (n actRename))
+      (runJob [{ code := opRename, name := n nameFinal, number := rw rActA,
+                 toName := n nameQuarantine, toNumber := rw rActA }] ++ [mustSucceed])
+     [.ite (eEq (v "da") (n actRemove))
+       (runJob [{ code := opRemove, name := rw rActB, number := rw rActA }] ++ [mustSucceed])
+      [.ite (eEq (v "da") (n actSyncDir)) (runJob [{ code := opSyncDir }] ++ [mustSucceed])
+       [.ite (eEq (v "da") (n actCut))
+         (runJob [{ onJournal opTruncate with length := rw rActA }, onJournal opSync] ++
+          [mustSucceed])
+         [.ite (eEq (v "da") (n actCreate)) create (stop brokenState)]]]]]]
+
+/-- The store recovered: a start record appended where the journal ends and synced, the listing
+closed, and the host told to listen. -/
+def finish : List PStmt :=
+  [.ite (rw rFresh) [.assign "dx" (atOff rp rKey)]
+    [.assign "dx" (atOff (v "jsc") ScanProg.sKey)]] ++
+  frameAround (rw rJournalEnd) startType 0 (v "dx") ++
+  runJob [{ onJournal opWrite with offset := rw rJournalEnd, length := n (headerLength + 1) },
+          onJournal opDataSync] ++
+  [mustSucceed,
+   .ite (ld (drv dDirOpen))
+     (runJob [{ code := opClose, place := ld (drv dDir), gen := ld (drv dDirGen) }] ++
+      [mustSucceed, .store (drv dDirOpen) (n 0)]) [],
+   .store (at_ (emitOff + emitListen)) (n 1), hand, fetch, .assign "dgo" (n 0)]
+
+/-- What a step of recovery asks or gives, answered by file jobs. -/
+def answer : List PStmt :=
+  [.assign "dst" (rw rStatus),
+   .ite (eEq (v "dst") (n asksName)) askName
+    [.ite (eEq (v "dst") (n asksJournal)) askJournal
+     [.ite (eEq (v "dst") (n asksOctets)) askOctets
+      [.ite (eEq (v "dst") (n asksFile)) (askFile nameFinal true)
+       [.ite (eEq (v "dst") (n asksAside)) (askFile nameQuarantine false)
+        [.ite (eEq (v "dst") (n gives)) give
+         [.ite (eEq (v "dst") (n givesAside)) []
+          [.ite (eEq (v "dst") (n RecoverProg.done)) finish
+           [.ite (eEq (v "dst") (n refused)) (stop storeRefused) (stop brokenState)]]]]]]]]]
+
+/-- **Recovery at start** (decision 0005), after the first batch: the configuration taken in, the
+directory synced, and recovery's steps answered by file jobs until the store is recovered — the
+host told to listen and the next batch fetched — or refused, the run stopped with the reason in
+recovery's area. A word of the program's own area out of range stops it as anywhere else. -/
+def recoverStore : List PStmt :=
+  [.dec "jz" (n 0), .dec "rsc" (at_ recOff)] ++ RecoverProg.locals.map (.dec · (n 0)) ++
+  ["dw", "dok", "dcl", "dst", "dx", "dy", "da", "dl", "dlen", "dpos", "dj", "dgo"].map
+    (.dec · (n 0)) ++
+  [.store (drv dDirOpen) (n 0), .store (drv dJnlOpen) (n 0), .store (drv dGen) (n 0),
+   .store (drv dIndex) (n 0), .store (drv dPageLen) (n 0), .store (drv dPagePos) (n 0),
+   .store (drv dClass) (n 0), .store (at_ (emitOff + emitCount)) (n 0),
+   .store (at_ (emitOff + emitListen)) (n 0), rset rPhase (n 0)] ++
+  configure ++ runJob [{ code := opSyncDir }] ++
+  [mustSucceed, .assign "dgo" (n 1),
+   .while (v "dgo") (RecoverProg.stepWith (stop brokenState) ++ answer)]
+
+end Start
+
+/-- One turn of the loop, on the batch fetched before it: the next batch is fetched at its end. -/
 def turn : List PStmt :=
-  [fetch,
-   .dec "k" (ld (at_ (nextOff + nextCount))),
+  [.dec "k" (ld (at_ (nextOff + nextCount))),
    .ite (or2 (eLt (v "k") (n 0)) (eLt (n batch) (v "k"))) (breach .tooManyEvents) [],
    .dec "now" (ld (at_ (nextOff + nextClock))),
    .ite (or2 (eLt (v "now") (ld (at_ (ownOff + ownClock))))
@@ -465,9 +699,11 @@ def turn : List PStmt :=
    .store (at_ (emitOff + emitCount)) (v "m"),
    hand,
    .dec "sc" (n 0), .while (eLt (v "sc") (n conns)) settle] ++
-  wake
+  wake ++ [fetch]
 
-/-- `main`: the version, the texts, an empty table, then the loop. -/
+/-- `main`: the version, the texts, an empty table and no action or job, the first batch, the store
+recovered if the host has one — else the host told to listen from the first turn — then the
+loop. -/
 def main : PFun :=
   { name := "main", body :=
     [.store (at_ confOff) (n version), .store (at_ (ownOff + ownClock)) (n 0),
@@ -476,8 +712,11 @@ def main : PFun :=
     [.dec "zt" (n 0),
      .while (eLt (v "zt") (n conns))
        [.store (atOff (record (v "zt")) cLive) (n 0), .store (atOff (record (v "zt")) cActed) (n 0),
-        inc "zt"],
-     .store (at_ (nextOff + nextWake)) (n 0),
+        .store (atOff (slotOf (v "zt")) actionKind) (n 0), inc "zt"]] ++
+    (List.range jobs).map (fun k =>
+      .store (at_ (emitOff + emitJobs + k * jobSlot + jobKind)) (n 0)) ++
+    [.store (at_ (nextOff + nextWake)) (n 0), fetch,
+     .ite (ld (at_ (nextOff + nextStore))) recoverStore [.store (at_ (emitOff + emitListen)) (n 1)],
      .dec "going" (n 1),
      .while (v "going") turn,
      .ret (n 0)] }

@@ -1,4 +1,5 @@
 {
+ "functions": [],
  "input": {
   "data": {},
   "fill": [
@@ -29,6 +30,7 @@
   "seed": 1
  },
  "original": {
+  "functions": [],
   "input": {
    "data": {
     "a": 64
@@ -40,6 +42,7 @@
   },
   "plan": {
    "entries": [],
+   "functions": [],
    "params": [
     {
      "buffer": 0,
@@ -89,6 +92,7 @@
  },
  "plan": {
   "entries": [],
+  "functions": [],
   "params": [
    {
     "buffer": 0,

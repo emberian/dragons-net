@@ -123,20 +123,6 @@ def Oracle.idle {σ : Type} : Oracle σ := ⟨fun st _ _ array => .ret st array�
 /-- The oracle that fails every call. -/
 def Oracle.failing {σ : Type} : Oracle σ := ⟨fun _ _ _ _ => .final .failed⟩
 
-/-- panSem `('a,'ffi) state`, restricted to the fields the region subset reads.
-`locals` is the partial map `varname |-> v` (region uses only `Local`); `memory`
-is `α word → α word_lab` (single-ctor `Word`, so `Word → Word`); `memaddrs` is
-the address set as its `Bool` characteristic function. `globals/structs/code/
-eshapes/sh_memaddrs/top_addr` are unused by the subset and omitted. -/
-structure PancakeState (σ : Type) where
-  locals   : String → Option Value
-  memory   : Word → Word
-  memaddrs : Word → Bool
-  be       : Bool
-  clock    : Nat
-  ffi      : σ
-  baseAddr : Word
-
 variable {σ : Type}
 
 /-- `mem_load_byte m dm be w` (panSem `mem_load_byte_def`): `case m (byte_align w)
@@ -193,8 +179,8 @@ trap, see §3.1. -/
 fused-serve stages. `Sub` is the one binop panLang admits ONLY at arity 2
 (`word_op Sub [w1;w2] = SOME (w1 - w2)`, `word_op_def`), so — unlike `Add`/`And`
 — it carries no fold-identity specialisation delta: the model's binary `op .sub`
-is exactly the source. -/
-inductive Binop | add | and_ | sub
+is exactly the source. `Xor`/`Or` fold as `Add` does, with `0w` (`word_op_def`). -/
+inductive Binop | add | and_ | sub | xor | or_
 deriving Repr, DecidableEq
 
 /-- panLang `cmp` subset (`asm$cmp`). `less` is `Cmp Less`, which `word_cmp Less
@@ -223,6 +209,7 @@ inductive PancakeExp
   | loadByte (addr : PancakeExp)              -- `LoadByte addr`
   | loadWord (addr : PancakeExp)              -- `Load One addr`
   | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
+  | shiftL   (l r : PancakeExp)               -- `Shift Lsl l r`
 deriving Repr
 
 /-- The word `k`, as a constant. -/
@@ -231,6 +218,40 @@ def PancakeExp.c (k : Nat) : PancakeExp := .const (BitVec.ofNat 64 k)
 /-- `word_cmp Less` = HOL `word_lt` = SIGNED comparison. In Lean `BitVec.slt` is
 signed-less-than (`BitVec.<` / `<` would be UNSIGNED — the exact bug C1 warns of). -/
 @[inline] def signedLt (a b : Word) : Bool := BitVec.slt a b
+
+/-- panLang `prog`, the region subset. `dec` carries its continuation (panLang
+`Dec v sh e prog` scopes over `prog`); a `.pnk` statement LIST lowers to a right
+nest of `dec`/`seq` (see DN.Compiler/Lower.lean). -/
+inductive PancakeProg
+  | skip
+  | dec     (v : String) (e : PancakeExp) (cont : PancakeProg)  -- `Dec v One e cont`
+  | assign  (v : String) (e : PancakeExp)                       -- `Assign Local v e`
+  | store   (dst src : PancakeExp)                              -- `Store dst src`
+  | extCall (name : String) (confPtr confLen arrPtr arrLen : PancakeExp) -- `ExtCall …`
+  | seq     (c1 c2 : PancakeProg)                               -- `Seq c1 c2`
+  | cond    (e : PancakeExp) (c1 c2 : PancakeProg)              -- `If e c1 c2`
+  | while_  (e : PancakeExp) (c : PancakeProg)                  -- `While e c`
+  | ret     (e : PancakeExp)                                    -- `Return e`
+  | storeByte (dst src : PancakeExp)                            -- `StoreByte dst src`
+  /-- `DecCall rt One f args cont`: `rt` bound to what the call of `f` returns, for `cont`. -/
+  | decCall (rt : String) (f : String) (args : List PancakeExp) (cont : PancakeProg)
+deriving Repr
+
+/-- panSem `('a,'ffi) state`, restricted to the fields the region subset reads.
+`locals` is the partial map `varname |-> v` (region uses only `Local`); `memory`
+is `α word → α word_lab` (single-ctor `Word`, so `Word → Word`); `memaddrs` is
+the address set as its `Bool` characteristic function; `code` maps a function's
+name to its parameters and body. `globals/structs/eshapes/sh_memaddrs/top_addr` are
+unused by the subset and omitted. -/
+structure PancakeState (σ : Type) where
+  locals   : String → Option Value
+  memory   : Word → Word
+  memaddrs : Word → Bool
+  be       : Bool
+  clock    : Nat
+  ffi      : σ
+  baseAddr : Word
+  code     : String → Option (List String × PancakeProg) := fun _ => none
 
 /-- `eval s e` (panSem `eval_def`), region subset. Total; returns `none` on the
 panSem `NONE` cases (type mismatch, out-of-range load). -/
@@ -245,6 +266,8 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
       | .add  => some (a + b)       -- `word_op Add [a;b] = FOLDR word_add 0w = a+b`
       | .and_ => some (a &&& b)     -- `word_op And [a;b] = FOLDR word_and (¬0w) = a&&&b`
       | .sub  => some (a - b)       -- `word_op Sub [a;b] = SOME (a - b)` (word_op_def, arity-2)
+      | .xor  => some (a ^^^ b)     -- `word_op Xor [a;b] = FOLDR word_xor 0w = a ^^^ b`
+      | .or_  => some (a ||| b)     -- `word_op Or [a;b] = FOLDR word_or 0w = a ||| b`
     | _, _ => none
   | .mul l r =>
     match eval s l, eval s r with
@@ -257,6 +280,12 @@ def eval (s : PancakeState σ) : PancakeExp → Option Value
     | some a, some b =>
       let places := b.toNat
       if places ≠ 0 && places ≥ 64 then none else some (a >>> places)
+    | _, _ => none
+  | .shiftL l r =>
+    match eval s l, eval s r with
+    | some a, some b =>
+      let places := b.toNat
+      if places ≠ 0 && places ≥ 64 then none else some (a <<< places)
     | _, _ => none
   | .cmp .less l r =>
     match eval s l, eval s r with
@@ -327,21 +356,6 @@ well-founded recursion go through (the clamp bounds the recursive result's clock
 UNCONDITIONALLY by `Nat.min_le_left`, exactly as panSem's `fix_clock_IMP_LESS_EQ`
 supplies the decrease). -/
 
-/-- panLang `prog`, the region subset. `dec` carries its continuation (panLang
-`Dec v sh e prog` scopes over `prog`); a `.pnk` statement LIST lowers to a right
-nest of `dec`/`seq` (see DN.Compiler/Lower.lean). -/
-inductive PancakeProg
-  | skip
-  | dec     (v : String) (e : PancakeExp) (cont : PancakeProg)  -- `Dec v One e cont`
-  | assign  (v : String) (e : PancakeExp)                       -- `Assign Local v e`
-  | store   (dst src : PancakeExp)                              -- `Store dst src`
-  | extCall (name : String) (confPtr confLen arrPtr arrLen : PancakeExp) -- `ExtCall …`
-  | seq     (c1 c2 : PancakeProg)                               -- `Seq c1 c2`
-  | cond    (e : PancakeExp) (c1 c2 : PancakeProg)              -- `If e c1 c2`
-  | while_  (e : PancakeExp) (c : PancakeProg)                  -- `While e c`
-  | ret     (e : PancakeExp)                                    -- `Return e`
-  | storeByte (dst src : PancakeExp)                            -- `StoreByte dst src`
-deriving Repr
 
 /-- `FLOOKUP`-style update: `set_var v value s` writes `locals |+ (v,value)`. -/
 def setLocal (lc : String → Option Value) (v : String) (val : Value) :
@@ -367,6 +381,41 @@ returned clock to `min old.clock new.clock`. -/
 def clampClock (old : Nat) (r : Option Result × PancakeState σ) :
     Option Result × PancakeState σ :=
   (r.1, { r.2 with clock := min old r.2.clock })
+
+/-- `lookup_code code f args` (panSem `lookup_code_def`): `f`'s body, and its locals, each
+parameter bound to its argument, when its parameters are distinct and as many as the arguments
+(every value is one word, so the shapes agree). -/
+def lookupCode (code : String → Option (List String × PancakeProg)) (f : String)
+    (args : List Value) : Option (PancakeProg × (String → Option Value)) :=
+  match code f with
+  | some (params, body) =>
+    if params.Nodup ∧ params.length = args.length then
+      some (body, fun k => (params.zip args).lookup k)
+    else none
+  | none => none
+
+/-- `OPT_MMAP (eval s) args`: every argument's value, or none if one has none. -/
+def evalArgs (s : PancakeState σ) : List PancakeExp → Option (List Value)
+  | [] => some []
+  | e :: es =>
+    match eval s e, evalArgs s es with
+    | some v, some vs => some (v :: vs)
+    | _, _ => none
+
+/-- How a call ends that its body ended without returning (panSem `evaluate (DecCall …)`): falling
+off the end, a `Break` or a `Continue` is an error, in the state the body left; anything else ends
+the run, the locals gone. -/
+def callEnded (r : Option Result) (st : PancakeState σ) : Option Result × PancakeState σ :=
+  match r with
+  | none | some .break_ | some .continue_ => (some .error, st)
+  | some res => (some res, emptyLocals st)
+
+/-- The statements of a program, compound ones too: the measure `PancakeSem` recurses on, beside
+the clock (the arguments of a call are expressions, which it does not count). -/
+def PancakeProg.size : PancakeProg → Nat
+  | .dec _ _ c | .while_ _ c | .decCall _ _ _ c => c.size + 1
+  | .seq a b | .cond _ a b => a.size + b.size + 1
+  | _ => 1
 
 /-- `evaluate (prog, s)` (panSem `evaluate_def`), region subset. -/
 def PancakeSem (oracle : Oracle σ) : PancakeProg → PancakeState σ →
@@ -452,19 +501,40 @@ def PancakeSem (oracle : Oracle σ) : PancakeProg → PancakeState σ →
       | some m => (none, { s with memory := m })
       | none => (some .error, s)
     | _, _ => (some .error, s)
-  termination_by prog s => (s.clock, sizeOf prog)
+  | .decCall rt f args cont, s =>
+    -- `DecCall rt One f args prog1`: the arguments, the body run on its own locals with the
+    -- clock one down; what it returns bound to `rt` for `prog1`, `rt` restored after. A body
+    -- that ends without returning, or breaks out, is an error; any other ending ends the run.
+    -- The shape check is vacuous: every value is one word.
+    match evalArgs s args with
+    | some vs =>
+      match lookupCode s.code f vs with
+      | some (body, params) =>
+        if s.clock = 0 then (some .timeout, emptyLocals s)
+        else
+          let r := clampClock (s.clock - 1)
+            (PancakeSem oracle body { decClock s with locals := params })
+          match r.1 with
+          | some (.return_ v) =>
+            let r2 := PancakeSem oracle cont { r.2 with locals := setLocal s.locals rt v }
+            (r2.1, { r2.2 with locals := resVar r2.2.locals rt (s.locals rt) })
+          | other => callEnded other r.2
+      | none => (some .error, s)
+    | none => (some .error, s)
+  termination_by prog s => (s.clock, prog.size)
   decreasing_by
     all_goals simp_wf
     all_goals
       first
-        -- clock strictly decreases (While body via dec_clock, While recurse via clamp)
+        -- clock strictly decreases (a While body or a called body via dec_clock, a While or what
+        -- follows a call via the clamp)
         | (apply Prod.Lex.left; simp only [clampClock, decClock]; omega)
         -- clock unchanged, size decreases (Dec cont, Seq c1, If chosen branch)
-        | (apply Prod.Lex.right; (try split) <;> simp +arith)
+        | (apply Prod.Lex.right; (try split) <;> simp [PancakeProg.size] <;> omega)
         -- clamped clock (Seq c2): min s.clock _ ≤ s.clock, split eq/lt
         | (rw [Prod.lex_def]; simp only [clampClock];
            rcases Nat.eq_or_lt_of_le (Nat.min_le_left s.clock _) with h | h
-           · exact Or.inr ⟨h, by simp +arith⟩
+           · exact Or.inr ⟨h, by simp [PancakeProg.size]; omega⟩
            · exact Or.inl h)
 
 /-! ### 4.1 Refinement lemma for the byte store `StoreByte`
@@ -528,6 +598,19 @@ theorem eval_shiftR_value (ffi : σ) :
 theorem eval_shiftR_is_logical (ffi : σ) :
     eval (bareState ffi) (.shiftR (.const 0x8000000000000000) (.const 63)) = some 1 := rfl
 
+/-- The left shift has no value at a whole word either, and drops the bits it pushes out. -/
+theorem eval_shiftL_whole_word_is_none (ffi : σ) :
+    eval (bareState ffi) (.shiftL (.const 1) (.const 64)) = none := rfl
+
+theorem eval_shiftL_value (ffi : σ) :
+    eval (bareState ffi) (.shiftL (.const 0x8000000000001234) (.const 4)) = some 0x12340 := rfl
+
+/-- `^` and `|` are bitwise: one keeps the bits set in exactly one operand, the other in either. -/
+theorem eval_xor_or_value (ffi : σ) :
+    eval (bareState ffi) (.op .xor (.const 0b1100) (.const 0b1010)) = some 0b0110 ∧
+      eval (bareState ffi) (.op .or_ (.const 0b1100) (.const 0b1010)) = some 0b1110 :=
+  ⟨rfl, rfl⟩
+
 /-- A distance far beyond the word has no value either. -/
 theorem eval_shiftR_huge_is_none (ffi : σ) :
     eval (bareState ffi) (.shiftR (.const 1) (.const 0xFFFFFFFFFFFFFFFF)) = none := rfl
@@ -587,6 +670,37 @@ theorem while_out_of_clock_is_timeout (oracle : Oracle σ) (ffi : σ) :
   rw [PancakeSem]
   simp only [eval, bareState, ne_eq, show ((1 : Word) = 0) = False from by decide,
              not_false_eq_true, if_pos]
+
+/-- The code of `inc x = x + 1`, of `loose`, which ends without returning, and of `twice`, whose
+two parameters have one name. -/
+def incCode : String → Option (List String × PancakeProg)
+  | "inc" => some (["x"], .ret (.op .add (.var "x") (.const 1)))
+  | "loose" => some ([], .skip)
+  | "twice" => some (["x", "x"], .ret (.var "x"))
+  | _ => none
+
+/-- `var r = inc(41); return r` returns 42: the argument bound to the parameter, what the body
+returns to `r`. -/
+theorem call_returns (oracle : Oracle σ) (ffi : σ) :
+    (PancakeSem oracle (.decCall "r" "inc" [.const 41] (.ret (.var "r")))
+      { bareState ffi with code := incCode }).1 = some (.return_ 42) := by
+  rw [PancakeSem]
+  simp [evalArgs, eval, lookupCode, incCode, bareState, decClock, clampClock, PancakeSem, setLocal]
+
+/-- A call with an argument too many, of a function there is none of, of one whose parameters are
+not distinct, or of a body that ends without returning is an error. -/
+theorem call_errors (oracle : Oracle σ) (ffi : σ) :
+    (PancakeSem oracle (.decCall "r" "inc" [.const 1, .const 2] .skip)
+      { bareState ffi with code := incCode }).1 = some .error ∧
+    (PancakeSem oracle (.decCall "r" "none" [] .skip)
+      { bareState ffi with code := incCode }).1 = some .error ∧
+    (PancakeSem oracle (.decCall "r" "twice" [.const 1, .const 2] .skip)
+      { bareState ffi with code := incCode }).1 = some .error ∧
+    (PancakeSem oracle (.decCall "r" "loose" [] .skip)
+      { bareState ffi with code := incCode }).1 = some .error := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> rw [PancakeSem] <;>
+    simp [evalArgs, eval, lookupCode, incCode, bareState, decClock, clampClock, PancakeSem,
+      callEnded]
 
 /-- A return without a value is an error. -/
 theorem ret_without_value_is_error (oracle : Oracle σ) (ffi : σ) :

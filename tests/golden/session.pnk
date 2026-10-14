@@ -1,91 +1,2939 @@
 fun main() {
-  st @base + 64, 4;
-  st @base + 318712, 0;
-  st @base + 318720, 0;
-  st @base + 318728, 0;
-  st @base + 319016, 7449361033009901618;
-  st @base + 319024, 2338605630395477615;
-  st @base + 319032, 2318361380226691616;
-  st @base + 319040, 7598825393740607342;
-  st @base + 319048, 8247620832851617646;
-  st @base + 319056, 2334382411428685155;
-  st @base + 319064, 3544386825980245089;
-  st @base + 319072, 7811883199287608096;
-  st @base + 319080, 8391166443843581033;
-  st @base + 319088, 5283657245585444154;
-  st @base + 319096, 5568993466012159567;
-  st @base + 319104, 4707473570065108048;
-  st @base + 319112, 7021784858939574612;
-  st @base + 319120, 8387231022536617831;
-  st @base + 319128, 3472567839402626336;
-  st @base + 319136, 8367811718512386096;
-  st @base + 319144, 7812741938002819173;
-  st @base + 319152, 5782977106974832495;
-  st @base + 319160, 4992614335706120769;
-  st @base + 319168, 8032021936938360915;
-  st @base + 319176, 4703244593869448306;
-  st @base + 319184, 7022083123464314948;
-  st @base + 319192, 8461837382603072871;
-  st @base + 319200, 5190976215500284525;
-  st @base + 319208, 5284218841404034117;
-  st @base + 319216, 2329558737683615060;
-  st @base + 319224, 7306916068917079387;
-  st @base + 319232, 7092454105570101549;
-  st @base + 319240, 7021784763360703077;
-  st @base + 319248, 8387231022536617831;
-  st @base + 319256, 7310017434736992288;
-  st @base + 319264, 7023210127212879973;
-  st @base + 319272, 8243105118545798514;
-  st @base + 319280, 6146928745873175584;
-  st @base + 319288, 8295695712566853920;
-  st @base + 319296, 8026294580736587119;
-  st @base + 319304, 3472873946873881956;
-  st @base + 319312, 3749824369216593973;
-  st @base + 319320, 7308814907693085233;
-  st @base + 319328, 2337497328126489463;
-  st @base + 319336, 7234316346692756851;
-  st @base + 319344, 8020383377782999565;
-  st @base + 319352, 7308325599891841312;
-  st @base + 319360, 7526676510244697888;
-  st @base + 319368, 7022083123460469857;
-  st @base + 319376, 3821881958689760615;
-  st @base + 319384, 8029473307266920496;
-  st @base + 319392, 7020387719312338551;
-  st @base + 319400, 2319688287432565870;
-  st @base + 319408, 7286956557046020435;
-  st @base + 319416, 4702613488775688818;
-  st @base + 319424, 5283928854807855440;
-  st @base + 319432, 6147783254847542085;
-  st @base + 319440, 6076275369378862153;
-  st @base + 319448, 21569;
+  st @base + 64, 6;
+  st @base + 318744, 0;
+  st @base + 318752, 0;
+  st @base + 318760, 0;
+  st @base + 319048, 7449361033009901618;
+  st @base + 319056, 2338605630395477615;
+  st @base + 319064, 2318361380226691616;
+  st @base + 319072, 7598825393740607342;
+  st @base + 319080, 8247620832851617646;
+  st @base + 319088, 2334382411428685155;
+  st @base + 319096, 3544386825980245089;
+  st @base + 319104, 7811883199287608096;
+  st @base + 319112, 8391166443843581033;
+  st @base + 319120, 5283657245585444154;
+  st @base + 319128, 5568993466012159567;
+  st @base + 319136, 4707473570065108048;
+  st @base + 319144, 7021784858939574612;
+  st @base + 319152, 8387231022536617831;
+  st @base + 319160, 3472567839402626336;
+  st @base + 319168, 8367811718512386096;
+  st @base + 319176, 7812741938002819173;
+  st @base + 319184, 5782977106974832495;
+  st @base + 319192, 4992614335706120769;
+  st @base + 319200, 8032021936938360915;
+  st @base + 319208, 4703244593869448306;
+  st @base + 319216, 7022083123464314948;
+  st @base + 319224, 8461837382603072871;
+  st @base + 319232, 5190976215500284525;
+  st @base + 319240, 5284218841404034117;
+  st @base + 319248, 2329558737683615060;
+  st @base + 319256, 7306916068917079387;
+  st @base + 319264, 7092454105570101549;
+  st @base + 319272, 7021784763360703077;
+  st @base + 319280, 8387231022536617831;
+  st @base + 319288, 7310017434736992288;
+  st @base + 319296, 7023210127212879973;
+  st @base + 319304, 8243105118545798514;
+  st @base + 319312, 6146928745873175584;
+  st @base + 319320, 8295695712566853920;
+  st @base + 319328, 8026294580736587119;
+  st @base + 319336, 3472873946873881956;
+  st @base + 319344, 3749824369216593973;
+  st @base + 319352, 7308814907693085233;
+  st @base + 319360, 2337497328126489463;
+  st @base + 319368, 7234316346692756851;
+  st @base + 319376, 8020383377782999565;
+  st @base + 319384, 7308325599891841312;
+  st @base + 319392, 7526676510244697888;
+  st @base + 319400, 7022083123460469857;
+  st @base + 319408, 3821881958689760615;
+  st @base + 319416, 8029473307266920496;
+  st @base + 319424, 7020387719312338551;
+  st @base + 319432, 2319688287432565870;
+  st @base + 319440, 7286956557046020435;
+  st @base + 319448, 4702613488775688818;
+  st @base + 319456, 5283928854807855440;
+  st @base + 319464, 6147783254847542085;
+  st @base + 319472, 6076275369378862153;
+  st @base + 319480, 21569;
   var zt = 0;
   while zt < 64 {
-    st @base + 319456 + (zt * 1672), 0;
-    st @base + 319456 + (zt * 1672) + 88, 0;
+    st @base + 319488 + (zt * 1672), 0;
+    st @base + 319488 + (zt * 1672) + 88, 0;
+    st @base + 146520 + (zt * 560), 0;
     zt = zt + 1;
   }
+  st @base + 182360, 0;
+  st @base + 199408, 0;
+  st @base + 216456, 0;
+  st @base + 233504, 0;
+  st @base + 250552, 0;
+  st @base + 267600, 0;
+  st @base + 284648, 0;
+  st @base + 301696, 0;
   st @base + 128, 0;
+  @dn_next(@base + 64, 8, @base + 128, 146376);
+  if lds 1 (@base + 432) {
+    var jz = 0;
+    var rsc = @base + 426496;
+    var rgo = 0;
+    var rph = 0;
+    var rk = 0;
+    var rl = 0;
+    var rq = 0;
+    var rc = 0;
+    var rlet = 0;
+    var rv = 0;
+    var rok = 0;
+    var rj = 0;
+    var rm = 0;
+    var rcm = 0;
+    var rsl = 0;
+    var rgc = 0;
+    var rgn = 0;
+    var rg = 0;
+    var rgs = 0;
+    var rga = 0;
+    var rgl = 0;
+    var rx = 0;
+    var rcp = 0;
+    var rst = 0;
+    var rdup = 0;
+    var ri = 0;
+    var rbad = 0;
+    var ril = 0;
+    var rio = 0;
+    var rwp = 0;
+    var jsc = 0;
+    var jsz = 0;
+    var jb = 0;
+    var jwl = 0;
+    var jp = 0;
+    var jky = 0;
+    var jw = 0;
+    var jrem = 0;
+    var jneed = 0;
+    var jx = 0;
+    var jcnt = 0;
+    var ji = 0;
+    var jq = 0;
+    var jo = 0;
+    var jf = 0;
+    var jr = 0;
+    var jwhy = 0;
+    var jpl = 0;
+    var jt = 0;
+    var jhk = 0;
+    var jtag = 0;
+    var jmw = 0;
+    var jtorn = 0;
+    var jrec = 0;
+    var jpp = 0;
+    var jok = 0;
+    var jseq = 0;
+    var jml = 0;
+    var jgc = 0;
+    var jgi = 0;
+    var jnl = 0;
+    var jgp = 0;
+    var jnum = 0;
+    var jhs = 0;
+    var jfs = 0;
+    var jcrc = 0;
+    var ja = 0;
+    var jbb = 0;
+    var jga = 0;
+    var jgb = 0;
+    var jla = 0;
+    var jna = 0;
+    var jnb = 0;
+    var jeq = 0;
+    var k = 0;
+    var p = 0;
+    var n = 0;
+    var r = 0;
+    var m = 0;
+    var v0 = 0;
+    var v1 = 0;
+    var v2 = 0;
+    var v3 = 0;
+    var off = 0;
+    var j = 0;
+    var dw = 0;
+    var dok = 0;
+    var dcl = 0;
+    var dst = 0;
+    var dx = 0;
+    var dy = 0;
+    var da = 0;
+    var dl = 0;
+    var dlen = 0;
+    var dpos = 0;
+    var dj = 0;
+    var dgo = 0;
+    st @base + 2124536, 0;
+    st @base + 2124560, 0;
+    st @base + 2124592, 0;
+    st @base + 2124568, 0;
+    st @base + 2124576, 0;
+    st @base + 2124584, 0;
+    st @base + 2124600, 0;
+    st @base + 146504, 0;
+    st @base + 146512, 0;
+    st rsc + 8, 0;
+    dj = 0;
+    while dj < 16 {
+      st8 rsc + 616 + dj, ld8 (@base + 456 + dj);
+      dj = dj + 1;
+    }
+    dx = lds 1 (@base + 696);
+    if 0 < ((dx < 0) + (64 < dx)) {
+      st @base + 318760, 9;
+      return 9;
+    } else {
+    }
+    st rsc + 632, dx;
+    da = 0;
+    while da < dx {
+      dl = lds 1 (@base + 704 + (da * 72));
+      if 0 < ((dl < 0) + (64 < dl)) {
+        st @base + 318760, 9;
+        return 9;
+      } else {
+      }
+      st rsc + 640 + (da * 72), dl;
+      dj = 0;
+      while dj < dl {
+        st8 rsc + 648 + (da * 72) + dj, ld8 (@base + 712 + (da * 72) + dj);
+        dj = dj + 1;
+      }
+      da = da + 1;
+    }
+    st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+    st @base + 182360, 1;
+    st @base + 182368, lds 1 (@base + 2124592);
+    st @base + 182376, 1;
+    st @base + 182384, 11;
+    st @base + 182392, 0;
+    st @base + 182400, 0;
+    st @base + 182408, 0;
+    st @base + 182416, 0;
+    st @base + 182424, 0;
+    st @base + 182432, 0;
+    st @base + 182440, 0;
+    st @base + 182448, 0;
+    st @base + 182456, 0;
+    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+    st @base + 182360, 0;
+    dw = 1;
+    while dw {
+      @dn_next(@base + 64, 8, @base + 128, 146376);
+      if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+        dw = 0;
+      } else {
+        @dn_emit(@base + 64, 8, @base + 146504, 172240);
+      }
+    }
+    dok = (lds 1 (@base + 14168)) == 1;
+    dcl = lds 1 (@base + 14176);
+    if dok {
+    } else {
+      st @base + 2124600, dcl;
+      st @base + 318760, 12;
+      return 12;
+    }
+    dgo = 1;
+    while dgo {
+      jsc = rsc + 5760;
+      rgo = jz + 1;
+      while rgo {
+        rph = lds 1 (rsc + 8);
+        if rph == 0 {
+          st rsc + 344, 0;
+          st rsc + 352, 0;
+          st rsc + 360, 0;
+          st rsc + 368, 0;
+          st rsc + 376, 0;
+          st rsc + 384, 0;
+          st rsc + 392, 0;
+          st rsc + 400, 0;
+          st rsc + 480, 0;
+          st rsc + 496, 0;
+          st rsc + 528, 0;
+          st rsc + 24, 0;
+          st rsc + 32, 1;
+          st rsc + 8, 1;
+          st rsc, 1;
+          rgo = jz + 0;
+        } else {
+          if rph == 1 {
+            if lds 1 (rsc + 40) {
+              if lds 1 (rsc + 352) {
+                st rsc + 8, 2;
+                st rsc, 2;
+                rgo = jz + 0;
+              } else {
+                if (lds 1 (rsc + 344)) == 0 {
+                  st rsc + 496, 1;
+                  st rsc + 512, 1;
+                  st rsc + 520, 50;
+                  st rsc + 16, 0;
+                  st rsc + 24, 1;
+                  st rsc + 8, 10;
+                } else {
+                  st rsc + 576, 2;
+                  st rsc, 9;
+                  rgo = jz + 0;
+                }
+              }
+            } else {
+              rk = jz + 0;
+              rl = lds 1 (rsc + 48);
+              rq = rsc + 56;
+              if (rl == 7) & (((((((1 & ((ld8 rq) == 106)) & ((ld8 (rq + 1)) == 111)) & ((ld8 (rq + 2)) == 117)) & ((ld8 (rq + 3)) == 114)) & ((ld8 (rq + 4)) == 110)) & ((ld8 (rq + 5)) == 97)) & ((ld8 (rq + 6)) == 108)) {
+                rk = jz + 1;
+              } else {
+                if rl == 17 {
+                  rc = ld8 rq;
+                  rlet = jz + 0;
+                  if rc == 97 {
+                    rlet = jz + 2;
+                  } else {
+                  }
+                  if rc == 116 {
+                    rlet = jz + 3;
+                  } else {
+                  }
+                  if rc == 113 {
+                    rlet = jz + 4;
+                  } else {
+                  }
+                  if rc == 106 {
+                    rlet = jz + 5;
+                  } else {
+                  }
+                  rv = jz + 0;
+                  rok = jz + 1;
+                  rj = jz + 1;
+                  while rj < 17 {
+                    rc = ld8 (rq + rj);
+                    if (48 <= rc) & (rc <= 57) {
+                      rv = ((rv) << 4) | (rc - 48);
+                    } else {
+                      if (97 <= rc) & (rc <= 102) {
+                        rv = ((rv) << 4) | (rc - 87);
+                      } else {
+                        rok = jz + 0;
+                      }
+                    }
+                    rj = rj + 1;
+                  }
+                  if rok {
+                    rk = rlet;
+                  } else {
+                  }
+                } else {
+                }
+              }
+              if rk == 0 {
+                st rsc + 576, 1;
+                st rsc, 9;
+                rgo = jz + 0;
+              } else {
+                st rsc + 344, (lds 1 (rsc + 344)) + 1;
+                if rk == 1 {
+                  st rsc + 352, 1;
+                } else {
+                  rm = lds 1 (rsc + 360);
+                  if (rm ^ 9223372036854775808) < (rv ^ 9223372036854775808) {
+                    rm = rv;
+                  } else {
+                  }
+                  st rsc + 360, rm;
+                  if rk == 5 {
+                    st rsc + 368, 1;
+                    rm = lds 1 (rsc + 376);
+                    if (rm ^ 9223372036854775808) < (rv ^ 9223372036854775808) {
+                      rm = rv;
+                    } else {
+                    }
+                    st rsc + 376, rm;
+                  } else {
+                  }
+                }
+                st rsc + 32, 0;
+                st rsc, 1;
+                rgo = jz + 0;
+              }
+            }
+          } else {
+            if rph == 2 {
+              st jsc, lds 1 (rsc + 336);
+              st jsc + 8, 0;
+              st jsc + 16, 0;
+              st jsc + 24, 0;
+              st jsc + 32, 0;
+              st jsc + 40, 0;
+              st rsc + 8, 3;
+            } else {
+              if rph == 3 {
+                jsz = lds 1 jsc;
+                jb = lds 1 (jsc + 8);
+                jwl = lds 1 (jsc + 16);
+                if 0 < ((jwl < 0) + (17776 < jwl)) {
+                  st @base + 318760, 10;
+                  return 10;
+                } else {
+                }
+                jp = lds 1 (jsc + 24);
+                jky = lds 1 (jsc + 32);
+                jw = jsc + 1928;
+                jrem = jsz - jp;
+                if jrem == 0 {
+                  st jsc + 48, 3;
+                } else {
+                  jneed = jrem;
+                  if 1390 < jneed {
+                    jneed = jz + 1390;
+                  } else {
+                  }
+                  if (jb + jwl) < (jp + jneed) {
+                    jx = jp - jb;
+                    if 0 < ((jx < 0) + (17776 < jx)) {
+                      st @base + 318760, 10;
+                      return 10;
+                    } else {
+                    }
+                    jcnt = jwl - jx;
+                    ji = jz + 0;
+                    if jx {
+                      while ji < jcnt {
+                        st8 jw + ji, ld8 (jw + jx + ji);
+                        ji = ji + 1;
+                      }
+                    } else {
+                    }
+                    jwl = jcnt;
+                    st jsc + 8, jp;
+                    st jsc + 16, jwl;
+                    jx = jsz - (jp + jwl);
+                    if 16384 < jx {
+                      jx = jz + 16384;
+                    } else {
+                    }
+                    st jsc + 64, jx;
+                    st jsc + 48, 1;
+                  } else {
+                    jq = jp;
+                    jo = jq - jb;
+                    if 0 < ((jo < 0) + (17776 < jo)) {
+                      st @base + 318760, 10;
+                      return 10;
+                    } else {
+                    }
+                    jf = jw + jo;
+                    jpp = jf + 13;
+                    jr = jrem;
+                    jwhy = jz + 0;
+                    if jr < 13 {
+                      jwhy = jz + 1;
+                    } else {
+                      jpl = 0;
+                      jpl = ((jpl) << 8) | (ld8 (jf + 3));
+                      jpl = ((jpl) << 8) | (ld8 (jf + 2));
+                      jpl = ((jpl) << 8) | (ld8 (jf + 1));
+                      jpl = ((jpl) << 8) | (ld8 jf);
+                      if 0 < ((1376 < jpl) + (jpl < 0)) {
+                        jwhy = jz + 2;
+                      } else {
+                        if jr < (jpl + 14) {
+                          jwhy = jz + 1;
+                        } else {
+                          if ((ld8 (jf + jpl + 13)) == 165) == 0 {
+                            jwhy = jz + 3;
+                          } else {
+                            jt = ld8 (jf + 12);
+                            k = jsc + 520;
+                            jhk = jky;
+                            if jky {
+                            } else {
+                              if (jt == 1) & (jpl == 36) {
+                                if ((((((((((((((((((1 & ((ld8 (jf + 13)) == 100)) & ((ld8 (jf + 13 + 1)) == 114)) & ((ld8 (jf + 13 + 2)) == 97)) & ((ld8 (jf + 13 + 3)) == 103)) & ((ld8 (jf + 13 + 4)) == 111)) & ((ld8 (jf + 13 + 5)) == 110)) & ((ld8 (jf + 13 + 6)) == 115)) & ((ld8 (jf + 13 + 7)) == 45)) & ((ld8 (jf + 13 + 8)) == 110)) & ((ld8 (jf + 13 + 9)) == 101)) & ((ld8 (jf + 13 + 10)) == 116)) & ((ld8 (jf + 13 + 11)) == 32)) & ((ld8 (jf + 13 + 12)) == 106)) & ((ld8 (jf + 13 + 13)) == 111)) & ((ld8 (jf + 13 + 14)) == 117)) & ((ld8 (jf + 13 + 15)) == 114)) & ((ld8 (jf + 13 + 16)) == 110)) & ((ld8 (jf + 13 + 17)) == 97)) & ((ld8 (jf + 13 + 18)) == 108) {
+                                  k = jf + 33;
+                                  jhk = jz + 1;
+                                } else {
+                                }
+                              } else {
+                              }
+                            }
+                            if jhk == 0 {
+                              jwhy = jz + 4;
+                            } else {
+                              p = jsc + 536;
+                              st8 p, ((jq) >>> 0) & 255;
+                              st8 p + 1, ((jq) >>> 8) & 255;
+                              st8 p + 2, ((jq) >>> 16) & 255;
+                              st8 p + 3, ((jq) >>> 24) & 255;
+                              st8 p + 4, ((jq) >>> 32) & 255;
+                              st8 p + 5, ((jq) >>> 40) & 255;
+                              st8 p + 6, ((jq) >>> 48) & 255;
+                              st8 p + 7, ((jq) >>> 56) & 255;
+                              st8 p + 8, jt;
+                              ji = jz + 0;
+                              while ji < jpl {
+                                st8 p + 9 + ji, ld8 (jf + 13 + ji);
+                                ji = ji + 1;
+                              }
+                              n = jpl + 9;
+                              m = 0;
+                              m = ((m) << 8) | (ld8 (k + 7));
+                              m = ((m) << 8) | (ld8 (k + 6));
+                              m = ((m) << 8) | (ld8 (k + 5));
+                              m = ((m) << 8) | (ld8 (k + 4));
+                              m = ((m) << 8) | (ld8 (k + 3));
+                              m = ((m) << 8) | (ld8 (k + 2));
+                              m = ((m) << 8) | (ld8 (k + 1));
+                              m = ((m) << 8) | (ld8 (k + 0));
+                              v0 = m ^ 8317987319222330741;
+                              v2 = m ^ 7816392313619706465;
+                              m = 0;
+                              m = ((m) << 8) | (ld8 (k + 8 + 7));
+                              m = ((m) << 8) | (ld8 (k + 8 + 6));
+                              m = ((m) << 8) | (ld8 (k + 8 + 5));
+                              m = ((m) << 8) | (ld8 (k + 8 + 4));
+                              m = ((m) << 8) | (ld8 (k + 8 + 3));
+                              m = ((m) << 8) | (ld8 (k + 8 + 2));
+                              m = ((m) << 8) | (ld8 (k + 8 + 1));
+                              m = ((m) << 8) | (ld8 (k + 8 + 0));
+                              v1 = m ^ 7237128888997146477;
+                              v3 = m ^ 8387220255154660723;
+                              off = 0;
+                              while (off + 8) <= n {
+                                m = 0;
+                                m = ((m) << 8) | (ld8 (p + off + 7));
+                                m = ((m) << 8) | (ld8 (p + off + 6));
+                                m = ((m) << 8) | (ld8 (p + off + 5));
+                                m = ((m) << 8) | (ld8 (p + off + 4));
+                                m = ((m) << 8) | (ld8 (p + off + 3));
+                                m = ((m) << 8) | (ld8 (p + off + 2));
+                                m = ((m) << 8) | (ld8 (p + off + 1));
+                                m = ((m) << 8) | (ld8 (p + off + 0));
+                                v3 = v3 ^ m;
+                                v0 = v0 + v1;
+                                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                v0 = ((v0) << 32) | ((v0) >>> 32);
+                                v2 = v2 + v3;
+                                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                v0 = v0 + v3;
+                                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                v2 = v2 + v1;
+                                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                v2 = ((v2) << 32) | ((v2) >>> 32);
+                                v0 = v0 + v1;
+                                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                v0 = ((v0) << 32) | ((v0) >>> 32);
+                                v2 = v2 + v3;
+                                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                v0 = v0 + v3;
+                                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                v2 = v2 + v1;
+                                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                v2 = ((v2) << 32) | ((v2) >>> 32);
+                                v0 = v0 ^ m;
+                                off = off + 8;
+                              }
+                              j = n - off;
+                              m = 0;
+                              while 0 < j {
+                                j = j - 1;
+                                m = ((m) << 8) | (ld8 (p + off + j));
+                              }
+                              m = ((n) << 56) | m;
+                              v3 = v3 ^ m;
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 ^ m;
+                              v2 = v2 ^ 255;
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              r = v0 ^ v1 ^ v2 ^ v3;
+                              jtag = 0;
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 7));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 6));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 5));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 4));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 3));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 2));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4 + 1));
+                              jtag = ((jtag) << 8) | (ld8 (jf + 4));
+                              if (r == jtag) == 0 {
+                                jwhy = jz + 4;
+                              } else {
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                    if jwhy == 0 {
+                      jrec = jz + 0;
+                      jpp = jf + 13;
+                      if jt == 1 {
+                        if (jpl == 36) & ((((((((((((((((((((1 & ((ld8 jpp) == 100)) & ((ld8 (jpp + 1)) == 114)) & ((ld8 (jpp + 2)) == 97)) & ((ld8 (jpp + 3)) == 103)) & ((ld8 (jpp + 4)) == 111)) & ((ld8 (jpp + 5)) == 110)) & ((ld8 (jpp + 6)) == 115)) & ((ld8 (jpp + 7)) == 45)) & ((ld8 (jpp + 8)) == 110)) & ((ld8 (jpp + 9)) == 101)) & ((ld8 (jpp + 10)) == 116)) & ((ld8 (jpp + 11)) == 32)) & ((ld8 (jpp + 12)) == 106)) & ((ld8 (jpp + 13)) == 111)) & ((ld8 (jpp + 14)) == 117)) & ((ld8 (jpp + 15)) == 114)) & ((ld8 (jpp + 16)) == 110)) & ((ld8 (jpp + 17)) == 97)) & ((ld8 (jpp + 18)) == 108)) & ((ld8 (jpp + 19)) == 1)) {
+                          jrec = jz + 1;
+                        } else {
+                        }
+                      } else {
+                        if jt == 2 {
+                          jok = jz + 1;
+                          ji = jz + 8;
+                          if jpl < 8 {
+                            jok = jz + 0;
+                          } else {
+                            jseq = 0;
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 7));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 6));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 5));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 4));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 3));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 2));
+                            jseq = ((jseq) << 8) | (ld8 (jpp + 1));
+                            jseq = ((jseq) << 8) | (ld8 jpp);
+                          }
+                          if jok {
+                            if jpl < (ji + 1) {
+                              jok = jz + 0;
+                            } else {
+                              jml = ld8 (jpp + ji);
+                              ji = ji + 1;
+                              if jpl < (ji + jml) {
+                                jok = jz + 0;
+                              } else {
+                                st jsc + 88, jo + 13 + ji;
+                                st jsc + 96, jml;
+                                ji = ji + jml;
+                              }
+                            }
+                          } else {
+                          }
+                          if jok {
+                            if jpl < (ji + 1) {
+                              jok = jz + 0;
+                            } else {
+                              jgc = ld8 (jpp + ji);
+                              ji = ji + 1;
+                              if 16 < jgc {
+                                jok = jz + 0;
+                              } else {
+                              }
+                            }
+                          } else {
+                          }
+                          jgi = jz + 0;
+                          while jok & (jgi < jgc) {
+                            if 0 < ((ji < 0) + (1376 < ji)) {
+                              st @base + 318760, 10;
+                              return 10;
+                            } else {
+                            }
+                            if jpl < (ji + 1) {
+                              jok = jz + 0;
+                            } else {
+                              jnl = ld8 (jpp + ji);
+                              ji = ji + 1;
+                              if jpl < (ji + jnl) {
+                                jok = jz + 0;
+                              } else {
+                                jgp = jsc + 136 + (jgi * 24);
+                                st jgp, jo + 13 + ji;
+                                st jgp + 8, jnl;
+                                ji = ji + jnl;
+                                if jpl < (ji + 4) {
+                                  jok = jz + 0;
+                                } else {
+                                  jnum = 0;
+                                  jnum = ((jnum) << 8) | (ld8 (jpp + ji + 3));
+                                  jnum = ((jnum) << 8) | (ld8 (jpp + ji + 2));
+                                  jnum = ((jnum) << 8) | (ld8 (jpp + ji + 1));
+                                  jnum = ((jnum) << 8) | (ld8 (jpp + ji));
+                                  st jgp + 16, jnum;
+                                  ji = ji + 4;
+                                  if 0 < ((0 < ((jnl < 1) + (64 < jnl))) + (0 < ((jnum < 1) + (2147483647 < jnum)))) {
+                                    jok = jz + 0;
+                                  } else {
+                                  }
+                                }
+                              }
+                            }
+                            jgi = jgi + 1;
+                          }
+                          if 0 < ((ji < 0) + (1376 < ji)) {
+                            st @base + 318760, 10;
+                            return 10;
+                          } else {
+                          }
+                          if jok {
+                            if jpl < (ji + 12) {
+                              jok = jz + 0;
+                            } else {
+                              jhs = 0;
+                              jhs = ((jhs) << 8) | (ld8 (jpp + ji + 3));
+                              jhs = ((jhs) << 8) | (ld8 (jpp + ji + 2));
+                              jhs = ((jhs) << 8) | (ld8 (jpp + ji + 1));
+                              jhs = ((jhs) << 8) | (ld8 (jpp + ji));
+                              jfs = 0;
+                              jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 3));
+                              jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 2));
+                              jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4 + 1));
+                              jfs = ((jfs) << 8) | (ld8 (jpp + ji + 4));
+                              jcrc = 0;
+                              jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 3));
+                              jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 2));
+                              jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8 + 1));
+                              jcrc = ((jcrc) << 8) | (ld8 (jpp + ji + 8));
+                              ji = ji + 12;
+                            }
+                          } else {
+                          }
+                          if jok & ((ji == jpl) == 0) {
+                            jok = jz + 0;
+                          } else {
+                          }
+                          if jok & (0 < ((0 < ((jseq == 0) + (jml < 1))) + (0 < ((0 < ((250 < jml) + (jgc < 1))) + (jfs < jhs))))) {
+                            jok = jz + 0;
+                          } else {
+                          }
+                          ja = jz + 0;
+                          while jok & (ja < jgc) {
+                            jbb = ja + 1;
+                            while jbb < jgc {
+                              jga = jsc + 136 + (ja * 24);
+                              jgb = jsc + 136 + (jbb * 24);
+                              jeq = jz + 0;
+                              jla = lds 1 (jga + 8);
+                              if 0 < ((jla < 0) + (64 < jla)) {
+                                st @base + 318760, 10;
+                                return 10;
+                              } else {
+                              }
+                              if jla == (lds 1 (jgb + 8)) {
+                                jna = lds 1 jga;
+                                if 0 < ((jna < 0) + (19168 < jna)) {
+                                  st @base + 318760, 10;
+                                  return 10;
+                                } else {
+                                }
+                                jnb = lds 1 jgb;
+                                if 0 < ((jnb < 0) + (19168 < jnb)) {
+                                  st @base + 318760, 10;
+                                  return 10;
+                                } else {
+                                }
+                                jeq = jz + 1;
+                                jx = jz + 0;
+                                while jx < jla {
+                                  if ((ld8 (jw + jna + jx)) == (ld8 (jw + jnb + jx))) == 0 {
+                                    jeq = jz + 0;
+                                  } else {
+                                  }
+                                  jx = jx + 1;
+                                }
+                              } else {
+                              }
+                              if jeq {
+                                jok = jz + 0;
+                              } else {
+                              }
+                              jbb = jbb + 1;
+                            }
+                            ja = ja + 1;
+                          }
+                          if jok {
+                            jrec = jz + 2;
+                            st jsc + 80, jseq;
+                            st jsc + 104, jgc;
+                            st jsc + 112, jhs;
+                            st jsc + 120, jfs;
+                            st jsc + 128, jcrc;
+                          } else {
+                          }
+                        } else {
+                          if (jt == 3) & (jpl == 0) {
+                            jrec = jz + 3;
+                          } else {
+                          }
+                        }
+                      }
+                      if jrec == 0 {
+                        jwhy = jz + 5;
+                      } else {
+                      }
+                    } else {
+                    }
+                    if jwhy {
+                      jmw = jwhy;
+                      jtorn = jz + 0;
+                      if jmw < 5 {
+                        jx = jz + 50;
+                        if jky {
+                          jx = jz + 1390;
+                        } else {
+                        }
+                        if jrem <= jx {
+                          jtorn = jz + 1;
+                          if jky {
+                            jq = jp + 1;
+                            while jtorn & (jq < jsz) {
+                              jo = jq - jb;
+                              if 0 < ((jo < 0) + (17776 < jo)) {
+                                st @base + 318760, 10;
+                                return 10;
+                              } else {
+                              }
+                              jf = jw + jo;
+                              jpp = jf + 13;
+                              jr = jsz - jq;
+                              jwhy = jz + 0;
+                              if jr < 13 {
+                                jwhy = jz + 1;
+                              } else {
+                                jpl = 0;
+                                jpl = ((jpl) << 8) | (ld8 (jf + 3));
+                                jpl = ((jpl) << 8) | (ld8 (jf + 2));
+                                jpl = ((jpl) << 8) | (ld8 (jf + 1));
+                                jpl = ((jpl) << 8) | (ld8 jf);
+                                if 0 < ((1376 < jpl) + (jpl < 0)) {
+                                  jwhy = jz + 2;
+                                } else {
+                                  if jr < (jpl + 14) {
+                                    jwhy = jz + 1;
+                                  } else {
+                                    if ((ld8 (jf + jpl + 13)) == 165) == 0 {
+                                      jwhy = jz + 3;
+                                    } else {
+                                      jt = ld8 (jf + 12);
+                                      k = jsc + 520;
+                                      jhk = jz + 1;
+                                      if jhk == 0 {
+                                        jwhy = jz + 4;
+                                      } else {
+                                        p = jsc + 536;
+                                        st8 p, ((jq) >>> 0) & 255;
+                                        st8 p + 1, ((jq) >>> 8) & 255;
+                                        st8 p + 2, ((jq) >>> 16) & 255;
+                                        st8 p + 3, ((jq) >>> 24) & 255;
+                                        st8 p + 4, ((jq) >>> 32) & 255;
+                                        st8 p + 5, ((jq) >>> 40) & 255;
+                                        st8 p + 6, ((jq) >>> 48) & 255;
+                                        st8 p + 7, ((jq) >>> 56) & 255;
+                                        st8 p + 8, jt;
+                                        ji = jz + 0;
+                                        while ji < jpl {
+                                          st8 p + 9 + ji, ld8 (jf + 13 + ji);
+                                          ji = ji + 1;
+                                        }
+                                        n = jpl + 9;
+                                        m = 0;
+                                        m = ((m) << 8) | (ld8 (k + 7));
+                                        m = ((m) << 8) | (ld8 (k + 6));
+                                        m = ((m) << 8) | (ld8 (k + 5));
+                                        m = ((m) << 8) | (ld8 (k + 4));
+                                        m = ((m) << 8) | (ld8 (k + 3));
+                                        m = ((m) << 8) | (ld8 (k + 2));
+                                        m = ((m) << 8) | (ld8 (k + 1));
+                                        m = ((m) << 8) | (ld8 (k + 0));
+                                        v0 = m ^ 8317987319222330741;
+                                        v2 = m ^ 7816392313619706465;
+                                        m = 0;
+                                        m = ((m) << 8) | (ld8 (k + 8 + 7));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 6));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 5));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 4));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 3));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 2));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 1));
+                                        m = ((m) << 8) | (ld8 (k + 8 + 0));
+                                        v1 = m ^ 7237128888997146477;
+                                        v3 = m ^ 8387220255154660723;
+                                        off = 0;
+                                        while (off + 8) <= n {
+                                          m = 0;
+                                          m = ((m) << 8) | (ld8 (p + off + 7));
+                                          m = ((m) << 8) | (ld8 (p + off + 6));
+                                          m = ((m) << 8) | (ld8 (p + off + 5));
+                                          m = ((m) << 8) | (ld8 (p + off + 4));
+                                          m = ((m) << 8) | (ld8 (p + off + 3));
+                                          m = ((m) << 8) | (ld8 (p + off + 2));
+                                          m = ((m) << 8) | (ld8 (p + off + 1));
+                                          m = ((m) << 8) | (ld8 (p + off + 0));
+                                          v3 = v3 ^ m;
+                                          v0 = v0 + v1;
+                                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                                          v2 = v2 + v3;
+                                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                          v0 = v0 + v3;
+                                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                          v2 = v2 + v1;
+                                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                                          v0 = v0 + v1;
+                                          v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                          v0 = ((v0) << 32) | ((v0) >>> 32);
+                                          v2 = v2 + v3;
+                                          v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                          v0 = v0 + v3;
+                                          v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                          v2 = v2 + v1;
+                                          v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                          v2 = ((v2) << 32) | ((v2) >>> 32);
+                                          v0 = v0 ^ m;
+                                          off = off + 8;
+                                        }
+                                        j = n - off;
+                                        m = 0;
+                                        while 0 < j {
+                                          j = j - 1;
+                                          m = ((m) << 8) | (ld8 (p + off + j));
+                                        }
+                                        m = ((n) << 56) | m;
+                                        v3 = v3 ^ m;
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        v0 = v0 ^ m;
+                                        v2 = v2 ^ 255;
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        v0 = v0 + v1;
+                                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                                        v2 = v2 + v3;
+                                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                        v0 = v0 + v3;
+                                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                        v2 = v2 + v1;
+                                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                                        r = v0 ^ v1 ^ v2 ^ v3;
+                                        jtag = 0;
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 7));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 6));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 5));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 4));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 3));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 2));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4 + 1));
+                                        jtag = ((jtag) << 8) | (ld8 (jf + 4));
+                                        if (r == jtag) == 0 {
+                                          jwhy = jz + 4;
+                                        } else {
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                              if jwhy == 0 {
+                                jtorn = jz + 0;
+                              } else {
+                              }
+                              jq = jq + 1;
+                            }
+                          } else {
+                          }
+                        } else {
+                        }
+                      } else {
+                      }
+                      if jtorn {
+                        st jsc + 48, 4;
+                      } else {
+                        st jsc + 48, 5;
+                        st jsc + 56, jmw;
+                      }
+                    } else {
+                      if (0 < (lds 1 (jsc + 40))) & (jrec == 1) {
+                        st jsc + 48, 5;
+                        st jsc + 56, 6;
+                      } else {
+                        if jrec == 1 {
+                          st8 jsc + 520, ld8 (jpp + 20);
+                          st8 jsc + 521, ld8 (jpp + 21);
+                          st8 jsc + 522, ld8 (jpp + 22);
+                          st8 jsc + 523, ld8 (jpp + 23);
+                          st8 jsc + 524, ld8 (jpp + 24);
+                          st8 jsc + 525, ld8 (jpp + 25);
+                          st8 jsc + 526, ld8 (jpp + 26);
+                          st8 jsc + 527, ld8 (jpp + 27);
+                          st8 jsc + 528, ld8 (jpp + 28);
+                          st8 jsc + 529, ld8 (jpp + 29);
+                          st8 jsc + 530, ld8 (jpp + 30);
+                          st8 jsc + 531, ld8 (jpp + 31);
+                          st8 jsc + 532, ld8 (jpp + 32);
+                          st8 jsc + 533, ld8 (jpp + 33);
+                          st8 jsc + 534, ld8 (jpp + 34);
+                          st8 jsc + 535, ld8 (jpp + 35);
+                          st jsc + 32, 1;
+                        } else {
+                        }
+                        st jsc + 40, (lds 1 (jsc + 40)) + 1;
+                        st jsc + 72, jrec;
+                        st jsc + 24, jp + jpl + 14;
+                        st jsc + 48, 2;
+                      }
+                    }
+                  }
+                }
+                rst = lds 1 (jsc + 48);
+                if rst == 1 {
+                  st rsc, 3;
+                  rgo = jz + 0;
+                } else {
+                  if rst == 2 {
+                    st rsc + 392, (lds 1 (rsc + 392)) + 1;
+                    if (lds 1 (jsc + 72)) == 2 {
+                      rcm = (lds 1 (rsc + 384)) + 1;
+                      st rsc + 384, rcm;
+                      if (0 < rcm) & (rcm <= 4096) {
+                        rsl = rsc + 26856 + ((rcm - 1) * 408);
+                        st rsl, lds 1 (jsc + 80);
+                        st rsl + 8, ((lds 1 (jsc + 112)) << 32) | (lds 1 (jsc + 120));
+                        rgc = lds 1 (jsc + 104);
+                        if 0 < ((rgc < 0) + (16 < rgc)) {
+                          st @base + 318760, 10;
+                          return 10;
+                        } else {
+                        }
+                        ril = lds 1 (jsc + 96);
+                        if 0 < ((ril < 0) + (250 < ril)) {
+                          st @base + 318760, 10;
+                          return 10;
+                        } else {
+                        }
+                        rio = lds 1 (jsc + 88);
+                        if 0 < ((rio < 0) + (19168 < rio)) {
+                          st @base + 318760, 10;
+                          return 10;
+                        } else {
+                        }
+                        rwp = jsc + 1928;
+                        st rsl + 16, ((lds 1 (jsc + 128)) << 16) | ((ril) << 8) | rgc;
+                        rj = jz + 0;
+                        while rj < ril {
+                          st8 rsl + 152 + rj, ld8 (rwp + rio + rj);
+                          rj = rj + 1;
+                        }
+                        rg = jz + 0;
+                        while rg < rgc {
+                          rgs = jsc + 136 + (rg * 24);
+                          rga = lds 1 rgs;
+                          if 0 < ((rga < 0) + (19168 < rga)) {
+                            st @base + 318760, 10;
+                            return 10;
+                          } else {
+                          }
+                          rgl = lds 1 (rgs + 8);
+                          if 0 < ((rgl < 0) + (64 < rgl)) {
+                            st @base + 318760, 10;
+                            return 10;
+                          } else {
+                          }
+                          rx = jz + 64;
+                          rc = jz + 0;
+                          rgn = lds 1 (rsc + 632);
+                          if 64 < rgn {
+                            rgn = jz + 64;
+                          } else {
+                          }
+                          while rc < rgn {
+                            rcp = rsc + 640 + (rc * 72);
+                            if (lds 1 rcp) == rgl {
+                              rok = jz + 1;
+                              rj = jz + 0;
+                              while rj < rgl {
+                                if ((ld8 (rcp + 8 + rj)) == (ld8 (rwp + rga + rj))) == 0 {
+                                  rok = jz + 0;
+                                } else {
+                                }
+                                rj = rj + 1;
+                              }
+                              if rok {
+                                rx = rc;
+                              } else {
+                              }
+                            } else {
+                            }
+                            rc = rc + 1;
+                          }
+                          if rx == 64 {
+                            if lds 1 (rsc + 400) {
+                            } else {
+                              st rsc + 400, 1;
+                              st rsc + 408, rgl;
+                              rj = jz + 0;
+                              while rj < rgl {
+                                st8 rsc + 416 + rj, ld8 (rwp + rga + rj);
+                                rj = rj + 1;
+                              }
+                            }
+                          } else {
+                          }
+                          st rsl + 24 + (rg * 8), ((rx) << 32) | (lds 1 (rgs + 16));
+                          rg = rg + 1;
+                        }
+                      } else {
+                      }
+                    } else {
+                    }
+                  } else {
+                    if rst == 5 {
+                      st rsc + 584, lds 1 (jsc + 24);
+                      st rsc + 592, lds 1 (jsc + 56);
+                      st rsc + 576, 3;
+                      st rsc, 9;
+                      rgo = jz + 0;
+                    } else {
+                      if (lds 1 (rsc + 392)) == 0 {
+                        if (lds 1 (rsc + 344)) == 1 {
+                          st rsc + 496, 1;
+                          st rsc + 512, 1;
+                          st rsc + 520, 50;
+                          st rsc + 16, 0;
+                          st rsc + 24, 0;
+                          st rsc + 8, 10;
+                        } else {
+                          st rsc + 576, 2;
+                          st rsc, 9;
+                          rgo = jz + 0;
+                        }
+                      } else {
+                        st rsc + 520, lds 1 jsc;
+                        if rst == 4 {
+                          st rsc + 480, 1;
+                          st rsc + 488, lds 1 (jsc + 24);
+                          st rsc + 520, lds 1 (jsc + 24);
+                        } else {
+                        }
+                        st rsc + 8, 4;
+                      }
+                    }
+                  }
+                }
+              } else {
+                if rph == 4 {
+                  rcm = lds 1 (rsc + 384);
+                  if 4097 <= rcm {
+                    st rsc + 584, rcm;
+                    st rsc + 576, 11;
+                    st rsc, 9;
+                    rgo = jz + 0;
+                  } else {
+                    rcm = lds 1 (rsc + 384);
+                    if 4096 < rcm {
+                      rcm = jz + 4096;
+                    } else {
+                    }
+                    rdup = jz + 0;
+                    ri = jz + 0;
+                    while (rdup == 0) & (ri < rcm) {
+                      rsl = rsc + 26856 + (ri * 408);
+                      rv = lds 1 rsl;
+                      rj = ri + 1;
+                      while rj < rcm {
+                        rsl = rsc + 26856 + (rj * 408);
+                        if (lds 1 rsl) == rv {
+                          rdup = jz + 1;
+                        } else {
+                        }
+                        rj = rj + 1;
+                      }
+                      if rdup {
+                      } else {
+                        ri = ri + 1;
+                      }
+                    }
+                    if rdup {
+                      st rsc + 584, rv;
+                      st rsc + 576, 4;
+                      st rsc, 9;
+                      rgo = jz + 0;
+                    } else {
+                      if (lds 1 (rsc + 400)) == 1 {
+                        st rsc + 600, 416;
+                        st rsc + 608, lds 1 (rsc + 408);
+                        st rsc + 576, 6;
+                        st rsc, 9;
+                        rgo = jz + 0;
+                      } else {
+                        rc = jz + 0;
+                        while rc < 64 {
+                          st rsc + 5248 + (rc * 8), 0;
+                          rc = rc + 1;
+                        }
+                        rbad = jz + 0;
+                        ri = jz + 0;
+                        while (rbad == 0) & (ri < rcm) {
+                          rsl = rsc + 26856 + (ri * 408);
+                          rgc = (lds 1 (rsl + 16)) & 255;
+                          if 0 < ((rgc < 0) + (16 < rgc)) {
+                            st @base + 318760, 10;
+                            return 10;
+                          } else {
+                          }
+                          rg = jz + 0;
+                          while (rbad == 0) & (rg < rgc) {
+                            rx = lds 1 (rsl + 24 + (rg * 8));
+                            rc = jz + ((rx) >>> 32);
+                            if 0 < ((rc < 0) + (63 < rc)) {
+                              st @base + 318760, 10;
+                              return 10;
+                            } else {
+                            }
+                            rv = rx & 4294967295;
+                            if rv <= (lds 1 (rsc + 5248 + (rc * 8))) {
+                              rbad = jz + 1;
+                            } else {
+                              rg = rg + 1;
+                            }
+                          }
+                          if rbad {
+                          } else {
+                            rg = jz + 0;
+                            while rg < rgc {
+                              rx = lds 1 (rsl + 24 + (rg * 8));
+                              rc = jz + ((rx) >>> 32);
+                              if 0 < ((rc < 0) + (63 < rc)) {
+                                st @base + 318760, 10;
+                                return 10;
+                              } else {
+                              }
+                              st rsc + 5248 + (rc * 8), rx & 4294967295;
+                              rg = rg + 1;
+                            }
+                            ri = ri + 1;
+                          }
+                        }
+                        if rbad {
+                          st rsc + 584, rv;
+                          st rsc + 600, 648 + (rc * 72);
+                          st rsc + 608, lds 1 (rsc + 640 + (rc * 72));
+                          st rsc + 576, 5;
+                          st rsc, 9;
+                          rgo = jz + 0;
+                        } else {
+                          st rsc + 16, 0;
+                          st rsc + 24, 0;
+                          st rsc + 8, 5;
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  if rph == 5 {
+                    ri = lds 1 (rsc + 16);
+                    if 0 < ((ri < 0) + (4096 < ri)) {
+                      st @base + 318760, 10;
+                      return 10;
+                    } else {
+                    }
+                    rcm = lds 1 (rsc + 384);
+                    if 4096 < rcm {
+                      rcm = jz + 4096;
+                    } else {
+                    }
+                    if lds 1 (rsc + 24) {
+                      if 0 < ((ri < 0) + (4095 < ri)) {
+                        st @base + 318760, 10;
+                        return 10;
+                      } else {
+                      }
+                      rsl = rsc + 26856 + (ri * 408);
+                      st rsc + 24, 0;
+                      if (lds 1 (rsc + 320)) == 0 {
+                        st rsc + 584, lds 1 rsl;
+                        st rsc + 576, 7;
+                        st rsc, 9;
+                        rgo = jz + 0;
+                      } else {
+                        if ((lds 1 (rsc + 328)) == ((lds 1 (rsl + 8)) & 4294967295)) == 0 {
+                          st rsc + 584, lds 1 rsl;
+                          st rsc + 576, 8;
+                          st rsc, 9;
+                          rgo = jz + 0;
+                        } else {
+                          st rsc + 16, ri + 1;
+                        }
+                      }
+                    } else {
+                      if ri < rcm {
+                        rsl = rsc + 26856 + (ri * 408);
+                        st rsc + 312, lds 1 rsl;
+                        st rsc + 24, 1;
+                        st rsc, 4;
+                        rgo = jz + 0;
+                      } else {
+                        st rsc + 8, 6;
+                      }
+                    }
+                  } else {
+                    if rph == 6 {
+                      rcm = lds 1 (rsc + 384);
+                      if 4096 < rcm {
+                        rcm = jz + 4096;
+                      } else {
+                      }
+                      rm = lds 1 (rsc + 360);
+                      ri = jz + 0;
+                      while ri < rcm {
+                        rsl = rsc + 26856 + (ri * 408);
+                        if (rm ^ 9223372036854775808) < ((lds 1 rsl) ^ 9223372036854775808) {
+                          rm = lds 1 rsl;
+                        } else {
+                        }
+                        ri = ri + 1;
+                      }
+                      if 0 < ((rm == 18446744073709551615) + ((lds 1 (rsc + 480)) & (rm == 18446744073709551614))) {
+                        st rsc + 576, 9;
+                        st rsc, 9;
+                        rgo = jz + 0;
+                      } else {
+                        st rsc + 504, rm + 1;
+                        st rsc + 512, rm + 1 + (lds 1 (rsc + 480));
+                        st rsc + 16, 0;
+                        st rsc + 8, 7;
+                      }
+                    } else {
+                      if rph == 7 {
+                        ri = lds 1 (rsc + 16);
+                        if 0 < (((lds 1 (rsc + 480)) == 0) + (ri == 3)) {
+                          st rsc + 32, 1;
+                          st rsc + 8, 8;
+                          st rsc, 1;
+                          rgo = jz + 0;
+                        } else {
+                          st rsc + 16, ri + 1;
+                          if ri == 0 {
+                            st rsc + 536, 1;
+                            st rsc + 544, lds 1 (rsc + 504);
+                            st rsc + 552, lds 1 (rsc + 488);
+                            st rsc + 560, 7688 + ((lds 1 (rsc + 488)) - (lds 1 (jsc + 8)));
+                            st rsc + 568, (lds 1 jsc) - (lds 1 (rsc + 488));
+                            st rsc, 6;
+                            rgo = jz + 0;
+                          } else {
+                            if ri == 1 {
+                              st rsc + 536, 4;
+                              st rsc, 6;
+                              rgo = jz + 0;
+                            } else {
+                              st rsc + 536, 5;
+                              st rsc + 544, lds 1 (rsc + 488);
+                              st rsc, 6;
+                              rgo = jz + 0;
+                            }
+                          }
+                        }
+                      } else {
+                        if rph == 8 {
+                          if lds 1 (rsc + 40) {
+                            st rsc + 16, 0;
+                            st rsc + 8, 11;
+                          } else {
+                            rk = jz + 0;
+                            rl = lds 1 (rsc + 48);
+                            rq = rsc + 56;
+                            if (rl == 7) & (((((((1 & ((ld8 rq) == 106)) & ((ld8 (rq + 1)) == 111)) & ((ld8 (rq + 2)) == 117)) & ((ld8 (rq + 3)) == 114)) & ((ld8 (rq + 4)) == 110)) & ((ld8 (rq + 5)) == 97)) & ((ld8 (rq + 6)) == 108)) {
+                              rk = jz + 1;
+                            } else {
+                              if rl == 17 {
+                                rc = ld8 rq;
+                                rlet = jz + 0;
+                                if rc == 97 {
+                                  rlet = jz + 2;
+                                } else {
+                                }
+                                if rc == 116 {
+                                  rlet = jz + 3;
+                                } else {
+                                }
+                                if rc == 113 {
+                                  rlet = jz + 4;
+                                } else {
+                                }
+                                if rc == 106 {
+                                  rlet = jz + 5;
+                                } else {
+                                }
+                                rv = jz + 0;
+                                rok = jz + 1;
+                                rj = jz + 1;
+                                while rj < 17 {
+                                  rc = ld8 (rq + rj);
+                                  if (48 <= rc) & (rc <= 57) {
+                                    rv = ((rv) << 4) | (rc - 48);
+                                  } else {
+                                    if (97 <= rc) & (rc <= 102) {
+                                      rv = ((rv) << 4) | (rc - 87);
+                                    } else {
+                                      rok = jz + 0;
+                                    }
+                                  }
+                                  rj = rj + 1;
+                                }
+                                if rok {
+                                  rk = rlet;
+                                } else {
+                                }
+                              } else {
+                              }
+                            }
+                            st rsc + 32, 0;
+                            st rsc + 312, rv;
+                            if rk == 3 {
+                              st rsc + 536, 3;
+                              st rsc + 544, rv;
+                              st rsc + 552, 3;
+                              st rsc + 528, (lds 1 (rsc + 528)) + 1;
+                              st rsc + 8, 13;
+                              st rsc, 6;
+                              rgo = jz + 0;
+                            } else {
+                              if rk == 2 {
+                                rcm = lds 1 (rsc + 384);
+                                if 4096 < rcm {
+                                  rcm = jz + 4096;
+                                } else {
+                                }
+                                rok = jz + 0;
+                                ri = jz + 0;
+                                while (rok == 0) & (ri < rcm) {
+                                  rsl = rsc + 26856 + (ri * 408);
+                                  if (lds 1 rsl) == rv {
+                                    rok = jz + 1;
+                                  } else {
+                                  }
+                                  ri = ri + 1;
+                                }
+                                if rok {
+                                  st rsc, 1;
+                                  rgo = jz + 0;
+                                } else {
+                                  if 0 < ((lds 1 (rsc + 480)) + ((lds 1 (rsc + 368)) & ((rv ^ 9223372036854775808) < ((lds 1 (rsc + 376)) ^ 9223372036854775808)))) {
+                                    st rsc + 8, 9;
+                                    st rsc, 5;
+                                    rgo = jz + 0;
+                                  } else {
+                                    st rsc + 536, 3;
+                                    st rsc + 544, rv;
+                                    st rsc + 552, 2;
+                                    st rsc + 528, (lds 1 (rsc + 528)) + 1;
+                                    st rsc + 8, 13;
+                                    st rsc, 6;
+                                    rgo = jz + 0;
+                                  }
+                                }
+                              } else {
+                                if 3 < rk {
+                                  st rsc + 544, rv;
+                                  st rsc + 8, 13;
+                                  st rsc, 7;
+                                  rgo = jz + 0;
+                                } else {
+                                  st rsc, 1;
+                                  rgo = jz + 0;
+                                }
+                              }
+                            }
+                          }
+                        } else {
+                          if rph == 9 {
+                            st rsc + 528, (lds 1 (rsc + 528)) + 1;
+                            st rsc + 544, lds 1 (rsc + 312);
+                            if lds 1 (rsc + 320) {
+                              st rsc + 552, 2;
+                              st rsc + 8, 13;
+                              st rsc + 536, 3;
+                              st rsc, 6;
+                              rgo = jz + 0;
+                            } else {
+                              st rsc + 8, 12;
+                              st rsc + 536, 2;
+                              st rsc, 6;
+                              rgo = jz + 0;
+                            }
+                          } else {
+                            if rph == 10 {
+                              ri = lds 1 (rsc + 16);
+                              st rsc + 16, ri + 1;
+                              if ri == 0 {
+                                st rsc + 536, 6;
+                                st rsc, 6;
+                                rgo = jz + 0;
+                              } else {
+                                if (ri == 1) & (lds 1 (rsc + 24)) {
+                                  st rsc + 536, 4;
+                                  st rsc, 6;
+                                  rgo = jz + 0;
+                                } else {
+                                  st rsc, 8;
+                                  rgo = jz + 0;
+                                }
+                              }
+                            } else {
+                              if rph == 11 {
+                                ri = lds 1 (rsc + 16);
+                                st rsc + 16, ri + 1;
+                                if (ri == 0) & (0 < (lds 1 (rsc + 528))) {
+                                  st rsc + 536, 4;
+                                  st rsc, 6;
+                                  rgo = jz + 0;
+                                } else {
+                                  if (ri <= 1) & (lds 1 (rsc + 480)) {
+                                    st rsc + 16, 2;
+                                    st rsc + 544, lds 1 (rsc + 504);
+                                    st rsc, 7;
+                                    rgo = jz + 0;
+                                  } else {
+                                    st rsc, 8;
+                                    rgo = jz + 0;
+                                  }
+                                }
+                              } else {
+                                if rph == 12 {
+                                  st rsc + 544, lds 1 (rsc + 312);
+                                  st rsc + 8, 13;
+                                  st rsc, 7;
+                                  rgo = jz + 0;
+                                } else {
+                                  st rsc + 32, 0;
+                                  st rsc + 8, 8;
+                                  st rsc, 1;
+                                  rgo = jz + 0;
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      dst = lds 1 rsc;
+      if dst == 1 {
+        if lds 1 (@base + 2124536) {
+        } else {
+          st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+          st @base + 182360, 1;
+          st @base + 182368, lds 1 (@base + 2124592);
+          st @base + 182376, 1;
+          st @base + 182384, 12;
+          st @base + 182392, 0;
+          st @base + 182400, 0;
+          st @base + 182408, 0;
+          st @base + 182416, 0;
+          st @base + 182424, 0;
+          st @base + 182432, 0;
+          st @base + 182440, 0;
+          st @base + 182448, 0;
+          st @base + 182456, 0;
+          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+          st @base + 182360, 0;
+          dw = 1;
+          while dw {
+            @dn_next(@base + 64, 8, @base + 128, 146376);
+            if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+              dw = 0;
+            } else {
+              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+            }
+          }
+          dok = (lds 1 (@base + 14168)) == 1;
+          dcl = lds 1 (@base + 14176);
+          if dok {
+          } else {
+            st @base + 2124600, dcl;
+            st @base + 318760, 12;
+            return 12;
+          }
+          st @base + 2124520, lds 1 (@base + 14184);
+          st @base + 2124528, lds 1 (@base + 14192);
+          st @base + 2124536, 1;
+        }
+        if lds 1 (rsc + 32) {
+          st @base + 2124568, 0;
+          st @base + 2124576, 0;
+          st @base + 2124584, 0;
+        } else {
+        }
+        dpos = lds 1 (@base + 2124584);
+        dlen = lds 1 (@base + 2124576);
+        if 0 < ((dlen < 0) + (16384 < dlen)) {
+          st @base + 318760, 10;
+          return 10;
+        } else {
+        }
+        if 0 < ((dpos < 0) + (16384 < dpos)) {
+          st @base + 318760, 10;
+          return 10;
+        } else {
+        }
+        if dlen <= dpos {
+          st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+          st @base + 182360, 1;
+          st @base + 182368, lds 1 (@base + 2124592);
+          st @base + 182376, 1;
+          st @base + 182384, 13;
+          st @base + 182392, lds 1 (@base + 2124520);
+          st @base + 182400, lds 1 (@base + 2124528);
+          st @base + 182408, 0;
+          st @base + 182416, 0;
+          st @base + 182424, 0;
+          st @base + 182432, 0;
+          st @base + 182440, lds 1 (@base + 2124568);
+          st @base + 182448, 16384;
+          st @base + 182456, 0;
+          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+          st @base + 182360, 0;
+          dw = 1;
+          while dw {
+            @dn_next(@base + 64, 8, @base + 128, 146376);
+            if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+              dw = 0;
+            } else {
+              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+            }
+          }
+          dok = (lds 1 (@base + 14168)) == 1;
+          dcl = lds 1 (@base + 14176);
+          if dok {
+          } else {
+            st @base + 2124600, dcl;
+            st @base + 318760, 12;
+            return 12;
+          }
+          dlen = lds 1 (@base + 14192);
+          if 0 < ((dlen < 0) + (16384 < dlen)) {
+            st @base + 318760, 10;
+            return 10;
+          } else {
+          }
+          dj = 0;
+          while dj < dlen {
+            st8 @base + 2124608 + dj, ld8 (@base + 14312 + dj);
+            dj = dj + 1;
+          }
+          st @base + 2124576, dlen;
+          dpos = 0;
+        } else {
+        }
+        if dpos < dlen {
+          dl = ld8 (@base + 2124608 + dpos);
+          if dlen < (dpos + dl + 1) {
+            st @base + 318760, 10;
+            return 10;
+          } else {
+          }
+          dj = 0;
+          while dj < dl {
+            st8 rsc + 56 + dj, ld8 (@base + 2124608 + dpos + 1 + dj);
+            dj = dj + 1;
+          }
+          st rsc + 48, dl;
+          st rsc + 40, 0;
+          st @base + 2124584, dpos + dl + 1;
+          st @base + 2124568, (lds 1 (@base + 2124568)) + 1;
+        } else {
+          st rsc + 40, 1;
+        }
+      } else {
+        if dst == 2 {
+          if lds 1 (@base + 2124560) {
+          } else {
+            st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+            st @base + 182360, 1;
+            st @base + 182368, lds 1 (@base + 2124592);
+            st @base + 182376, 1;
+            st @base + 182384, 2;
+            st @base + 182392, 0;
+            st @base + 182400, 0;
+            st @base + 182408, 1;
+            st @base + 182416, 0;
+            st @base + 182424, 0;
+            st @base + 182432, 0;
+            st @base + 182440, 0;
+            st @base + 182448, 0;
+            st @base + 182456, 0;
+            @dn_emit(@base + 64, 8, @base + 146504, 172240);
+            st @base + 182360, 0;
+            dw = 1;
+            while dw {
+              @dn_next(@base + 64, 8, @base + 128, 146376);
+              if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                dw = 0;
+              } else {
+                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+              }
+            }
+            dok = (lds 1 (@base + 14168)) == 1;
+            dcl = lds 1 (@base + 14176);
+            if dok {
+            } else {
+              st @base + 2124600, dcl;
+              st @base + 318760, 12;
+              return 12;
+            }
+            st @base + 2124544, lds 1 (@base + 14184);
+            st @base + 2124552, lds 1 (@base + 14192);
+            st @base + 2124560, 1;
+          }
+          st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+          st @base + 182360, 1;
+          st @base + 182368, lds 1 (@base + 2124592);
+          st @base + 182376, 2;
+          st @base + 182384, 7;
+          st @base + 182392, lds 1 (@base + 2124544);
+          st @base + 182400, lds 1 (@base + 2124552);
+          st @base + 182408, 0;
+          st @base + 182416, 0;
+          st @base + 182424, 0;
+          st @base + 182432, 0;
+          st @base + 182440, 0;
+          st @base + 182448, 0;
+          st @base + 182456, 0;
+          st @base + 182464, 5;
+          st @base + 182472, lds 1 (@base + 2124544);
+          st @base + 182480, lds 1 (@base + 2124552);
+          st @base + 182488, 0;
+          st @base + 182496, 0;
+          st @base + 182504, 0;
+          st @base + 182512, 0;
+          st @base + 182520, 0;
+          st @base + 182528, 0;
+          st @base + 182536, 0;
+          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+          st @base + 182360, 0;
+          dw = 1;
+          while dw {
+            @dn_next(@base + 64, 8, @base + 128, 146376);
+            if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+              dw = 0;
+            } else {
+              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+            }
+          }
+          dok = (lds 1 (@base + 14168)) == 2;
+          dcl = lds 1 (@base + 14176);
+          if dok {
+          } else {
+            st @base + 2124600, dcl;
+            st @base + 318760, 12;
+            return 12;
+          }
+          st rsc + 336, lds 1 (@base + 14200);
+        } else {
+          if dst == 3 {
+            da = lds 1 (jsc + 8);
+            dx = lds 1 (jsc + 16);
+            dy = lds 1 (jsc + 64);
+            if 0 < ((dx < 0) + (17776 < dx)) {
+              st @base + 318760, 10;
+              return 10;
+            } else {
+            }
+            if 0 < ((dy < 0) + (16384 < dy)) {
+              st @base + 318760, 10;
+              return 10;
+            } else {
+            }
+            if 17776 < (dx + dy) {
+              st @base + 318760, 10;
+              return 10;
+            } else {
+            }
+            st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+            st @base + 182360, 1;
+            st @base + 182368, lds 1 (@base + 2124592);
+            st @base + 182376, 1;
+            st @base + 182384, 4;
+            st @base + 182392, lds 1 (@base + 2124544);
+            st @base + 182400, lds 1 (@base + 2124552);
+            st @base + 182408, 0;
+            st @base + 182416, 0;
+            st @base + 182424, 0;
+            st @base + 182432, 0;
+            st @base + 182440, da + dx;
+            st @base + 182448, dy;
+            st @base + 182456, 0;
+            @dn_emit(@base + 64, 8, @base + 146504, 172240);
+            st @base + 182360, 0;
+            dw = 1;
+            while dw {
+              @dn_next(@base + 64, 8, @base + 128, 146376);
+              if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                dw = 0;
+              } else {
+                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+              }
+            }
+            dok = (lds 1 (@base + 14168)) == 1;
+            dcl = lds 1 (@base + 14176);
+            if dok {
+            } else {
+              st @base + 2124600, dcl;
+              st @base + 318760, 12;
+              return 12;
+            }
+            if ((lds 1 (@base + 14184)) == dy) == 0 {
+              st @base + 2124600, 0;
+              st @base + 318760, 12;
+              return 12;
+            } else {
+            }
+            dj = 0;
+            while dj < dy {
+              st8 jsc + 1928 + dx + dj, ld8 (@base + 14312 + dj);
+              dj = dj + 1;
+            }
+            st jsc + 16, dx + dy;
+          } else {
+            if dst == 4 {
+              st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+              st @base + 182360, 1;
+              st @base + 182368, lds 1 (@base + 2124592);
+              st @base + 182376, 1;
+              st @base + 182384, 2;
+              st @base + 182392, 0;
+              st @base + 182400, 0;
+              st @base + 182408, 2;
+              st @base + 182416, lds 1 (rsc + 312);
+              st @base + 182424, 0;
+              st @base + 182432, 0;
+              st @base + 182440, 0;
+              st @base + 182448, 0;
+              st @base + 182456, 0;
+              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+              st @base + 182360, 0;
+              dw = 1;
+              while dw {
+                @dn_next(@base + 64, 8, @base + 128, 146376);
+                if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                  dw = 0;
+                } else {
+                  @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                }
+              }
+              dok = (lds 1 (@base + 14168)) == 1;
+              dcl = lds 1 (@base + 14176);
+              if dok {
+                dx = lds 1 (@base + 14184);
+                dy = lds 1 (@base + 14192);
+                st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                st @base + 182360, 1;
+                st @base + 182368, lds 1 (@base + 2124592);
+                st @base + 182376, 2;
+                st @base + 182384, 5;
+                st @base + 182392, dx;
+                st @base + 182400, dy;
+                st @base + 182408, 0;
+                st @base + 182416, 0;
+                st @base + 182424, 0;
+                st @base + 182432, 0;
+                st @base + 182440, 0;
+                st @base + 182448, 0;
+                st @base + 182456, 0;
+                st @base + 182464, 14;
+                st @base + 182472, dx;
+                st @base + 182480, dy;
+                st @base + 182488, 0;
+                st @base + 182496, 0;
+                st @base + 182504, 0;
+                st @base + 182512, 0;
+                st @base + 182520, 0;
+                st @base + 182528, 0;
+                st @base + 182536, 0;
+                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                st @base + 182360, 0;
+                dw = 1;
+                while dw {
+                  @dn_next(@base + 64, 8, @base + 128, 146376);
+                  if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                    dw = 0;
+                  } else {
+                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                  }
+                }
+                dok = (lds 1 (@base + 14168)) == 2;
+                dcl = lds 1 (@base + 14176);
+                if dok {
+                } else {
+                  st @base + 2124600, dcl;
+                  st @base + 318760, 12;
+                  return 12;
+                }
+                st rsc + 320, 1;
+                st rsc + 328, lds 1 (@base + 14184);
+              } else {
+                if dcl == 4 {
+                  st rsc + 320, 0;
+                } else {
+                  st @base + 2124600, dcl;
+                  st @base + 318760, 12;
+                  return 12;
+                }
+              }
+            } else {
+              if dst == 5 {
+                st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                st @base + 182360, 1;
+                st @base + 182368, lds 1 (@base + 2124592);
+                st @base + 182376, 1;
+                st @base + 182384, 2;
+                st @base + 182392, 0;
+                st @base + 182400, 0;
+                st @base + 182408, 4;
+                st @base + 182416, lds 1 (rsc + 312);
+                st @base + 182424, 0;
+                st @base + 182432, 0;
+                st @base + 182440, 0;
+                st @base + 182448, 0;
+                st @base + 182456, 0;
+                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                st @base + 182360, 0;
+                dw = 1;
+                while dw {
+                  @dn_next(@base + 64, 8, @base + 128, 146376);
+                  if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                    dw = 0;
+                  } else {
+                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                  }
+                }
+                dok = (lds 1 (@base + 14168)) == 1;
+                dcl = lds 1 (@base + 14176);
+                if dok {
+                  dx = lds 1 (@base + 14184);
+                  dy = lds 1 (@base + 14192);
+                  st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                  st @base + 182360, 1;
+                  st @base + 182368, lds 1 (@base + 2124592);
+                  st @base + 182376, 1;
+                  st @base + 182384, 14;
+                  st @base + 182392, dx;
+                  st @base + 182400, dy;
+                  st @base + 182408, 0;
+                  st @base + 182416, 0;
+                  st @base + 182424, 0;
+                  st @base + 182432, 0;
+                  st @base + 182440, 0;
+                  st @base + 182448, 0;
+                  st @base + 182456, 0;
+                  @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                  st @base + 182360, 0;
+                  dw = 1;
+                  while dw {
+                    @dn_next(@base + 64, 8, @base + 128, 146376);
+                    if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                      dw = 0;
+                    } else {
+                      @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                    }
+                  }
+                  dok = (lds 1 (@base + 14168)) == 1;
+                  dcl = lds 1 (@base + 14176);
+                  if dok {
+                  } else {
+                    st @base + 2124600, dcl;
+                    st @base + 318760, 12;
+                    return 12;
+                  }
+                  st rsc + 320, 1;
+                } else {
+                  if dcl == 4 {
+                    st rsc + 320, 0;
+                  } else {
+                    st @base + 2124600, dcl;
+                    st @base + 318760, 12;
+                    return 12;
+                  }
+                }
+              } else {
+                if dst == 6 {
+                  da = lds 1 (rsc + 536);
+                  if da == 1 {
+                    dx = lds 1 (rsc + 560);
+                    dl = lds 1 (rsc + 568);
+                    if 0 < ((dl < 0) + (1390 < dl)) {
+                      st @base + 318760, 10;
+                      return 10;
+                    } else {
+                    }
+                    if 0 < ((dx < 0) + (1696634 < dx)) {
+                      st @base + 318760, 10;
+                      return 10;
+                    } else {
+                    }
+                    st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                    st @base + 182360, 1;
+                    st @base + 182368, lds 1 (@base + 2124592);
+                    st @base + 182376, 1;
+                    st @base + 182384, 1;
+                    st @base + 182392, 0;
+                    st @base + 182400, 0;
+                    st @base + 182408, 5;
+                    st @base + 182416, lds 1 (rsc + 544);
+                    st @base + 182424, 0;
+                    st @base + 182432, 0;
+                    st @base + 182440, 0;
+                    st @base + 182448, 0;
+                    st @base + 182456, 0;
+                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                    st @base + 182360, 0;
+                    dw = 1;
+                    while dw {
+                      @dn_next(@base + 64, 8, @base + 128, 146376);
+                      if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                        dw = 0;
+                      } else {
+                        @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                      }
+                    }
+                    dok = (lds 1 (@base + 14168)) == 1;
+                    dcl = lds 1 (@base + 14176);
+                    if dok {
+                    } else {
+                      st @base + 2124600, dcl;
+                      st @base + 318760, 12;
+                      return 12;
+                    }
+                    da = lds 1 (@base + 14184);
+                    dy = lds 1 (@base + 14192);
+                    st8 @base + 183024, ((lds 1 (rsc + 552)) >>> 0) & 255;
+                    st8 @base + 183024 + 1, ((lds 1 (rsc + 552)) >>> 8) & 255;
+                    st8 @base + 183024 + 2, ((lds 1 (rsc + 552)) >>> 16) & 255;
+                    st8 @base + 183024 + 3, ((lds 1 (rsc + 552)) >>> 24) & 255;
+                    st8 @base + 183024 + 4, ((lds 1 (rsc + 552)) >>> 32) & 255;
+                    st8 @base + 183024 + 5, ((lds 1 (rsc + 552)) >>> 40) & 255;
+                    st8 @base + 183024 + 6, ((lds 1 (rsc + 552)) >>> 48) & 255;
+                    st8 @base + 183024 + 7, ((lds 1 (rsc + 552)) >>> 56) & 255;
+                    dj = 0;
+                    while dj < dl {
+                      st8 @base + 183024 + 8 + dj, ld8 (rsc + dx + dj);
+                      dj = dj + 1;
+                    }
+                    st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                    st @base + 182360, 1;
+                    st @base + 182368, lds 1 (@base + 2124592);
+                    st @base + 182376, 3;
+                    st @base + 182384, 3;
+                    st @base + 182392, da;
+                    st @base + 182400, dy;
+                    st @base + 182408, 0;
+                    st @base + 182416, 0;
+                    st @base + 182424, 0;
+                    st @base + 182432, 0;
+                    st @base + 182440, 0;
+                    st @base + 182448, dl + 8;
+                    st @base + 182456, 0;
+                    st @base + 182464, 7;
+                    st @base + 182472, da;
+                    st @base + 182480, dy;
+                    st @base + 182488, 0;
+                    st @base + 182496, 0;
+                    st @base + 182504, 0;
+                    st @base + 182512, 0;
+                    st @base + 182520, 0;
+                    st @base + 182528, 0;
+                    st @base + 182536, 0;
+                    st @base + 182544, 14;
+                    st @base + 182552, da;
+                    st @base + 182560, dy;
+                    st @base + 182568, 0;
+                    st @base + 182576, 0;
+                    st @base + 182584, 0;
+                    st @base + 182592, 0;
+                    st @base + 182600, 0;
+                    st @base + 182608, 0;
+                    st @base + 182616, 0;
+                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                    st @base + 182360, 0;
+                    dw = 1;
+                    while dw {
+                      @dn_next(@base + 64, 8, @base + 128, 146376);
+                      if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                        dw = 0;
+                      } else {
+                        @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                      }
+                    }
+                    dok = (lds 1 (@base + 14168)) == 3;
+                    dcl = lds 1 (@base + 14176);
+                    if dok {
+                    } else {
+                      st @base + 2124600, dcl;
+                      st @base + 318760, 12;
+                      return 12;
+                    }
+                  } else {
+                    if da == 2 {
+                      st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                      st @base + 182360, 1;
+                      st @base + 182368, lds 1 (@base + 2124592);
+                      st @base + 182376, 1;
+                      st @base + 182384, 8;
+                      st @base + 182392, 0;
+                      st @base + 182400, 0;
+                      st @base + 182408, 2;
+                      st @base + 182416, lds 1 (rsc + 544);
+                      st @base + 182424, 4;
+                      st @base + 182432, lds 1 (rsc + 544);
+                      st @base + 182440, 0;
+                      st @base + 182448, 0;
+                      st @base + 182456, 0;
+                      @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                      st @base + 182360, 0;
+                      dw = 1;
+                      while dw {
+                        @dn_next(@base + 64, 8, @base + 128, 146376);
+                        if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                          dw = 0;
+                        } else {
+                          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                        }
+                      }
+                      dok = (lds 1 (@base + 14168)) == 1;
+                      dcl = lds 1 (@base + 14176);
+                      if dok {
+                      } else {
+                        st @base + 2124600, dcl;
+                        st @base + 318760, 12;
+                        return 12;
+                      }
+                    } else {
+                      if da == 3 {
+                        st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                        st @base + 182360, 1;
+                        st @base + 182368, lds 1 (@base + 2124592);
+                        st @base + 182376, 1;
+                        st @base + 182384, 9;
+                        st @base + 182392, 0;
+                        st @base + 182400, 0;
+                        st @base + 182408, lds 1 (rsc + 552);
+                        st @base + 182416, lds 1 (rsc + 544);
+                        st @base + 182424, 0;
+                        st @base + 182432, 0;
+                        st @base + 182440, 0;
+                        st @base + 182448, 0;
+                        st @base + 182456, 0;
+                        @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                        st @base + 182360, 0;
+                        dw = 1;
+                        while dw {
+                          @dn_next(@base + 64, 8, @base + 128, 146376);
+                          if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                            dw = 0;
+                          } else {
+                            @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                          }
+                        }
+                        dok = (lds 1 (@base + 14168)) == 1;
+                        dcl = lds 1 (@base + 14176);
+                        if dok {
+                        } else {
+                          st @base + 2124600, dcl;
+                          st @base + 318760, 12;
+                          return 12;
+                        }
+                      } else {
+                        if da == 4 {
+                          st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                          st @base + 182360, 1;
+                          st @base + 182368, lds 1 (@base + 2124592);
+                          st @base + 182376, 1;
+                          st @base + 182384, 11;
+                          st @base + 182392, 0;
+                          st @base + 182400, 0;
+                          st @base + 182408, 0;
+                          st @base + 182416, 0;
+                          st @base + 182424, 0;
+                          st @base + 182432, 0;
+                          st @base + 182440, 0;
+                          st @base + 182448, 0;
+                          st @base + 182456, 0;
+                          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                          st @base + 182360, 0;
+                          dw = 1;
+                          while dw {
+                            @dn_next(@base + 64, 8, @base + 128, 146376);
+                            if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                              dw = 0;
+                            } else {
+                              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                            }
+                          }
+                          dok = (lds 1 (@base + 14168)) == 1;
+                          dcl = lds 1 (@base + 14176);
+                          if dok {
+                          } else {
+                            st @base + 2124600, dcl;
+                            st @base + 318760, 12;
+                            return 12;
+                          }
+                        } else {
+                          if da == 5 {
+                            st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                            st @base + 182360, 1;
+                            st @base + 182368, lds 1 (@base + 2124592);
+                            st @base + 182376, 2;
+                            st @base + 182384, 10;
+                            st @base + 182392, lds 1 (@base + 2124544);
+                            st @base + 182400, lds 1 (@base + 2124552);
+                            st @base + 182408, 0;
+                            st @base + 182416, 0;
+                            st @base + 182424, 0;
+                            st @base + 182432, 0;
+                            st @base + 182440, 0;
+                            st @base + 182448, lds 1 (rsc + 544);
+                            st @base + 182456, 0;
+                            st @base + 182464, 7;
+                            st @base + 182472, lds 1 (@base + 2124544);
+                            st @base + 182480, lds 1 (@base + 2124552);
+                            st @base + 182488, 0;
+                            st @base + 182496, 0;
+                            st @base + 182504, 0;
+                            st @base + 182512, 0;
+                            st @base + 182520, 0;
+                            st @base + 182528, 0;
+                            st @base + 182536, 0;
+                            @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                            st @base + 182360, 0;
+                            dw = 1;
+                            while dw {
+                              @dn_next(@base + 64, 8, @base + 128, 146376);
+                              if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                                dw = 0;
+                              } else {
+                                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                              }
+                            }
+                            dok = (lds 1 (@base + 14168)) == 2;
+                            dcl = lds 1 (@base + 14176);
+                            if dok {
+                            } else {
+                              st @base + 2124600, dcl;
+                              st @base + 318760, 12;
+                              return 12;
+                            }
+                          } else {
+                            if da == 6 {
+                              if lds 1 (@base + 2124560) {
+                                st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                                st @base + 182360, 1;
+                                st @base + 182368, lds 1 (@base + 2124592);
+                                st @base + 182376, 1;
+                                st @base + 182384, 10;
+                                st @base + 182392, lds 1 (@base + 2124544);
+                                st @base + 182400, lds 1 (@base + 2124552);
+                                st @base + 182408, 0;
+                                st @base + 182416, 0;
+                                st @base + 182424, 0;
+                                st @base + 182432, 0;
+                                st @base + 182440, 0;
+                                st @base + 182448, 0;
+                                st @base + 182456, 0;
+                                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                                st @base + 182360, 0;
+                                dw = 1;
+                                while dw {
+                                  @dn_next(@base + 64, 8, @base + 128, 146376);
+                                  if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                                    dw = 0;
+                                  } else {
+                                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                                  }
+                                }
+                                dok = (lds 1 (@base + 14168)) == 1;
+                                dcl = lds 1 (@base + 14176);
+                                if dok {
+                                } else {
+                                  st @base + 2124600, dcl;
+                                  st @base + 318760, 12;
+                                  return 12;
+                                }
+                              } else {
+                                st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                                st @base + 182360, 1;
+                                st @base + 182368, lds 1 (@base + 2124592);
+                                st @base + 182376, 1;
+                                st @base + 182384, 1;
+                                st @base + 182392, 0;
+                                st @base + 182400, 0;
+                                st @base + 182408, 1;
+                                st @base + 182416, 0;
+                                st @base + 182424, 0;
+                                st @base + 182432, 0;
+                                st @base + 182440, 0;
+                                st @base + 182448, 0;
+                                st @base + 182456, 0;
+                                @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                                st @base + 182360, 0;
+                                dw = 1;
+                                while dw {
+                                  @dn_next(@base + 64, 8, @base + 128, 146376);
+                                  if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                                    dw = 0;
+                                  } else {
+                                    @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                                  }
+                                }
+                                dok = (lds 1 (@base + 14168)) == 1;
+                                dcl = lds 1 (@base + 14176);
+                                if dok {
+                                } else {
+                                  st @base + 2124600, dcl;
+                                  st @base + 318760, 12;
+                                  return 12;
+                                }
+                                st @base + 2124544, lds 1 (@base + 14184);
+                                st @base + 2124552, lds 1 (@base + 14192);
+                                st @base + 2124560, 1;
+                              }
+                              st8 @base + 183024 + 13, 100;
+                              st8 @base + 183024 + 13 + 1, 114;
+                              st8 @base + 183024 + 13 + 2, 97;
+                              st8 @base + 183024 + 13 + 3, 103;
+                              st8 @base + 183024 + 13 + 4, 111;
+                              st8 @base + 183024 + 13 + 5, 110;
+                              st8 @base + 183024 + 13 + 6, 115;
+                              st8 @base + 183024 + 13 + 7, 45;
+                              st8 @base + 183024 + 13 + 8, 110;
+                              st8 @base + 183024 + 13 + 9, 101;
+                              st8 @base + 183024 + 13 + 10, 116;
+                              st8 @base + 183024 + 13 + 11, 32;
+                              st8 @base + 183024 + 13 + 12, 106;
+                              st8 @base + 183024 + 13 + 13, 111;
+                              st8 @base + 183024 + 13 + 14, 117;
+                              st8 @base + 183024 + 13 + 15, 114;
+                              st8 @base + 183024 + 13 + 16, 110;
+                              st8 @base + 183024 + 13 + 17, 97;
+                              st8 @base + 183024 + 13 + 18, 108;
+                              st8 @base + 183024 + 13 + 19, 1;
+                              dj = 0;
+                              while dj < 16 {
+                                st8 @base + 183024 + 33 + dj, ld8 (rsc + 616 + dj);
+                                dj = dj + 1;
+                              }
+                              st8 jsc + 536, ((0) >>> 0) & 255;
+                              st8 jsc + 536 + 1, ((0) >>> 8) & 255;
+                              st8 jsc + 536 + 2, ((0) >>> 16) & 255;
+                              st8 jsc + 536 + 3, ((0) >>> 24) & 255;
+                              st8 jsc + 536 + 4, ((0) >>> 32) & 255;
+                              st8 jsc + 536 + 5, ((0) >>> 40) & 255;
+                              st8 jsc + 536 + 6, ((0) >>> 48) & 255;
+                              st8 jsc + 536 + 7, ((0) >>> 56) & 255;
+                              st8 jsc + 536 + 8, 1;
+                              dj = 0;
+                              while dj < 36 {
+                                st8 jsc + 536 + 9 + dj, ld8 (@base + 183024 + 13 + dj);
+                                dj = dj + 1;
+                              }
+                              k = rsc + 616;
+                              p = jsc + 536;
+                              n = 45;
+                              m = 0;
+                              m = ((m) << 8) | (ld8 (k + 7));
+                              m = ((m) << 8) | (ld8 (k + 6));
+                              m = ((m) << 8) | (ld8 (k + 5));
+                              m = ((m) << 8) | (ld8 (k + 4));
+                              m = ((m) << 8) | (ld8 (k + 3));
+                              m = ((m) << 8) | (ld8 (k + 2));
+                              m = ((m) << 8) | (ld8 (k + 1));
+                              m = ((m) << 8) | (ld8 (k + 0));
+                              v0 = m ^ 8317987319222330741;
+                              v2 = m ^ 7816392313619706465;
+                              m = 0;
+                              m = ((m) << 8) | (ld8 (k + 8 + 7));
+                              m = ((m) << 8) | (ld8 (k + 8 + 6));
+                              m = ((m) << 8) | (ld8 (k + 8 + 5));
+                              m = ((m) << 8) | (ld8 (k + 8 + 4));
+                              m = ((m) << 8) | (ld8 (k + 8 + 3));
+                              m = ((m) << 8) | (ld8 (k + 8 + 2));
+                              m = ((m) << 8) | (ld8 (k + 8 + 1));
+                              m = ((m) << 8) | (ld8 (k + 8 + 0));
+                              v1 = m ^ 7237128888997146477;
+                              v3 = m ^ 8387220255154660723;
+                              off = 0;
+                              while (off + 8) <= n {
+                                m = 0;
+                                m = ((m) << 8) | (ld8 (p + off + 7));
+                                m = ((m) << 8) | (ld8 (p + off + 6));
+                                m = ((m) << 8) | (ld8 (p + off + 5));
+                                m = ((m) << 8) | (ld8 (p + off + 4));
+                                m = ((m) << 8) | (ld8 (p + off + 3));
+                                m = ((m) << 8) | (ld8 (p + off + 2));
+                                m = ((m) << 8) | (ld8 (p + off + 1));
+                                m = ((m) << 8) | (ld8 (p + off + 0));
+                                v3 = v3 ^ m;
+                                v0 = v0 + v1;
+                                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                v0 = ((v0) << 32) | ((v0) >>> 32);
+                                v2 = v2 + v3;
+                                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                v0 = v0 + v3;
+                                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                v2 = v2 + v1;
+                                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                v2 = ((v2) << 32) | ((v2) >>> 32);
+                                v0 = v0 + v1;
+                                v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                                v0 = ((v0) << 32) | ((v0) >>> 32);
+                                v2 = v2 + v3;
+                                v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                                v0 = v0 + v3;
+                                v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                                v2 = v2 + v1;
+                                v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                                v2 = ((v2) << 32) | ((v2) >>> 32);
+                                v0 = v0 ^ m;
+                                off = off + 8;
+                              }
+                              j = n - off;
+                              m = 0;
+                              while 0 < j {
+                                j = j - 1;
+                                m = ((m) << 8) | (ld8 (p + off + j));
+                              }
+                              m = ((n) << 56) | m;
+                              v3 = v3 ^ m;
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 ^ m;
+                              v2 = v2 ^ 255;
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              v0 = v0 + v1;
+                              v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                              v0 = ((v0) << 32) | ((v0) >>> 32);
+                              v2 = v2 + v3;
+                              v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                              v0 = v0 + v3;
+                              v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                              v2 = v2 + v1;
+                              v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                              v2 = ((v2) << 32) | ((v2) >>> 32);
+                              r = v0 ^ v1 ^ v2 ^ v3;
+                              st8 @base + 183024, ((36) >>> 0) & 255;
+                              st8 @base + 183024 + 1, ((36) >>> 8) & 255;
+                              st8 @base + 183024 + 2, ((36) >>> 16) & 255;
+                              st8 @base + 183024 + 3, ((36) >>> 24) & 255;
+                              st8 @base + 183024 + 4, ((r) >>> 0) & 255;
+                              st8 @base + 183024 + 4 + 1, ((r) >>> 8) & 255;
+                              st8 @base + 183024 + 4 + 2, ((r) >>> 16) & 255;
+                              st8 @base + 183024 + 4 + 3, ((r) >>> 24) & 255;
+                              st8 @base + 183024 + 4 + 4, ((r) >>> 32) & 255;
+                              st8 @base + 183024 + 4 + 5, ((r) >>> 40) & 255;
+                              st8 @base + 183024 + 4 + 6, ((r) >>> 48) & 255;
+                              st8 @base + 183024 + 4 + 7, ((r) >>> 56) & 255;
+                              st8 @base + 183024 + 12, 1;
+                              st8 @base + 183024 + 49, 165;
+                              st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                              st @base + 182360, 1;
+                              st @base + 182368, lds 1 (@base + 2124592);
+                              st @base + 182376, 2;
+                              st @base + 182384, 3;
+                              st @base + 182392, lds 1 (@base + 2124544);
+                              st @base + 182400, lds 1 (@base + 2124552);
+                              st @base + 182408, 0;
+                              st @base + 182416, 0;
+                              st @base + 182424, 0;
+                              st @base + 182432, 0;
+                              st @base + 182440, 0;
+                              st @base + 182448, 50;
+                              st @base + 182456, 0;
+                              st @base + 182464, 7;
+                              st @base + 182472, lds 1 (@base + 2124544);
+                              st @base + 182480, lds 1 (@base + 2124552);
+                              st @base + 182488, 0;
+                              st @base + 182496, 0;
+                              st @base + 182504, 0;
+                              st @base + 182512, 0;
+                              st @base + 182520, 0;
+                              st @base + 182528, 0;
+                              st @base + 182536, 0;
+                              @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                              st @base + 182360, 0;
+                              dw = 1;
+                              while dw {
+                                @dn_next(@base + 64, 8, @base + 128, 146376);
+                                if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                                  dw = 0;
+                                } else {
+                                  @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                                }
+                              }
+                              dok = (lds 1 (@base + 14168)) == 2;
+                              dcl = lds 1 (@base + 14176);
+                              if dok {
+                              } else {
+                                st @base + 2124600, dcl;
+                                st @base + 318760, 12;
+                                return 12;
+                              }
+                            } else {
+                              st @base + 318760, 10;
+                              return 10;
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  if dst == 7 {
+                  } else {
+                    if dst == 8 {
+                      if lds 1 (rsc + 496) {
+                        dx = rsc + 616;
+                      } else {
+                        dx = jsc + 520;
+                      }
+                      st8 jsc + 536, ((lds 1 (rsc + 520)) >>> 0) & 255;
+                      st8 jsc + 536 + 1, ((lds 1 (rsc + 520)) >>> 8) & 255;
+                      st8 jsc + 536 + 2, ((lds 1 (rsc + 520)) >>> 16) & 255;
+                      st8 jsc + 536 + 3, ((lds 1 (rsc + 520)) >>> 24) & 255;
+                      st8 jsc + 536 + 4, ((lds 1 (rsc + 520)) >>> 32) & 255;
+                      st8 jsc + 536 + 5, ((lds 1 (rsc + 520)) >>> 40) & 255;
+                      st8 jsc + 536 + 6, ((lds 1 (rsc + 520)) >>> 48) & 255;
+                      st8 jsc + 536 + 7, ((lds 1 (rsc + 520)) >>> 56) & 255;
+                      st8 jsc + 536 + 8, 3;
+                      dj = 0;
+                      while dj < 0 {
+                        st8 jsc + 536 + 9 + dj, ld8 (@base + 183024 + 13 + dj);
+                        dj = dj + 1;
+                      }
+                      k = dx;
+                      p = jsc + 536;
+                      n = 9;
+                      m = 0;
+                      m = ((m) << 8) | (ld8 (k + 7));
+                      m = ((m) << 8) | (ld8 (k + 6));
+                      m = ((m) << 8) | (ld8 (k + 5));
+                      m = ((m) << 8) | (ld8 (k + 4));
+                      m = ((m) << 8) | (ld8 (k + 3));
+                      m = ((m) << 8) | (ld8 (k + 2));
+                      m = ((m) << 8) | (ld8 (k + 1));
+                      m = ((m) << 8) | (ld8 (k + 0));
+                      v0 = m ^ 8317987319222330741;
+                      v2 = m ^ 7816392313619706465;
+                      m = 0;
+                      m = ((m) << 8) | (ld8 (k + 8 + 7));
+                      m = ((m) << 8) | (ld8 (k + 8 + 6));
+                      m = ((m) << 8) | (ld8 (k + 8 + 5));
+                      m = ((m) << 8) | (ld8 (k + 8 + 4));
+                      m = ((m) << 8) | (ld8 (k + 8 + 3));
+                      m = ((m) << 8) | (ld8 (k + 8 + 2));
+                      m = ((m) << 8) | (ld8 (k + 8 + 1));
+                      m = ((m) << 8) | (ld8 (k + 8 + 0));
+                      v1 = m ^ 7237128888997146477;
+                      v3 = m ^ 8387220255154660723;
+                      off = 0;
+                      while (off + 8) <= n {
+                        m = 0;
+                        m = ((m) << 8) | (ld8 (p + off + 7));
+                        m = ((m) << 8) | (ld8 (p + off + 6));
+                        m = ((m) << 8) | (ld8 (p + off + 5));
+                        m = ((m) << 8) | (ld8 (p + off + 4));
+                        m = ((m) << 8) | (ld8 (p + off + 3));
+                        m = ((m) << 8) | (ld8 (p + off + 2));
+                        m = ((m) << 8) | (ld8 (p + off + 1));
+                        m = ((m) << 8) | (ld8 (p + off + 0));
+                        v3 = v3 ^ m;
+                        v0 = v0 + v1;
+                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                        v2 = v2 + v3;
+                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                        v0 = v0 + v3;
+                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                        v2 = v2 + v1;
+                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                        v0 = v0 + v1;
+                        v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                        v0 = ((v0) << 32) | ((v0) >>> 32);
+                        v2 = v2 + v3;
+                        v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                        v0 = v0 + v3;
+                        v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                        v2 = v2 + v1;
+                        v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                        v2 = ((v2) << 32) | ((v2) >>> 32);
+                        v0 = v0 ^ m;
+                        off = off + 8;
+                      }
+                      j = n - off;
+                      m = 0;
+                      while 0 < j {
+                        j = j - 1;
+                        m = ((m) << 8) | (ld8 (p + off + j));
+                      }
+                      m = ((n) << 56) | m;
+                      v3 = v3 ^ m;
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 ^ m;
+                      v2 = v2 ^ 255;
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      r = v0 ^ v1 ^ v2 ^ v3;
+                      st8 @base + 183024, ((0) >>> 0) & 255;
+                      st8 @base + 183024 + 1, ((0) >>> 8) & 255;
+                      st8 @base + 183024 + 2, ((0) >>> 16) & 255;
+                      st8 @base + 183024 + 3, ((0) >>> 24) & 255;
+                      st8 @base + 183024 + 4, ((r) >>> 0) & 255;
+                      st8 @base + 183024 + 4 + 1, ((r) >>> 8) & 255;
+                      st8 @base + 183024 + 4 + 2, ((r) >>> 16) & 255;
+                      st8 @base + 183024 + 4 + 3, ((r) >>> 24) & 255;
+                      st8 @base + 183024 + 4 + 4, ((r) >>> 32) & 255;
+                      st8 @base + 183024 + 4 + 5, ((r) >>> 40) & 255;
+                      st8 @base + 183024 + 4 + 6, ((r) >>> 48) & 255;
+                      st8 @base + 183024 + 4 + 7, ((r) >>> 56) & 255;
+                      st8 @base + 183024 + 12, 3;
+                      st8 @base + 183024 + 13, 165;
+                      st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                      st @base + 182360, 1;
+                      st @base + 182368, lds 1 (@base + 2124592);
+                      st @base + 182376, 2;
+                      st @base + 182384, 3;
+                      st @base + 182392, lds 1 (@base + 2124544);
+                      st @base + 182400, lds 1 (@base + 2124552);
+                      st @base + 182408, 0;
+                      st @base + 182416, 0;
+                      st @base + 182424, 0;
+                      st @base + 182432, 0;
+                      st @base + 182440, lds 1 (rsc + 520);
+                      st @base + 182448, 14;
+                      st @base + 182456, 0;
+                      st @base + 182464, 6;
+                      st @base + 182472, lds 1 (@base + 2124544);
+                      st @base + 182480, lds 1 (@base + 2124552);
+                      st @base + 182488, 0;
+                      st @base + 182496, 0;
+                      st @base + 182504, 0;
+                      st @base + 182512, 0;
+                      st @base + 182520, 0;
+                      st @base + 182528, 0;
+                      st @base + 182536, 0;
+                      @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                      st @base + 182360, 0;
+                      dw = 1;
+                      while dw {
+                        @dn_next(@base + 64, 8, @base + 128, 146376);
+                        if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                          dw = 0;
+                        } else {
+                          @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                        }
+                      }
+                      dok = (lds 1 (@base + 14168)) == 2;
+                      dcl = lds 1 (@base + 14176);
+                      if dok {
+                      } else {
+                        st @base + 2124600, dcl;
+                        st @base + 318760, 12;
+                        return 12;
+                      }
+                      if lds 1 (@base + 2124536) {
+                        st @base + 2124592, (lds 1 (@base + 2124592)) + 1;
+                        st @base + 182360, 1;
+                        st @base + 182368, lds 1 (@base + 2124592);
+                        st @base + 182376, 1;
+                        st @base + 182384, 14;
+                        st @base + 182392, lds 1 (@base + 2124520);
+                        st @base + 182400, lds 1 (@base + 2124528);
+                        st @base + 182408, 0;
+                        st @base + 182416, 0;
+                        st @base + 182424, 0;
+                        st @base + 182432, 0;
+                        st @base + 182440, 0;
+                        st @base + 182448, 0;
+                        st @base + 182456, 0;
+                        @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                        st @base + 182360, 0;
+                        dw = 1;
+                        while dw {
+                          @dn_next(@base + 64, 8, @base + 128, 146376);
+                          if ((lds 1 (@base + 14152)) == 1) & ((lds 1 (@base + 14160)) == (lds 1 (@base + 2124592))) {
+                            dw = 0;
+                          } else {
+                            @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                          }
+                        }
+                        dok = (lds 1 (@base + 14168)) == 1;
+                        dcl = lds 1 (@base + 14176);
+                        if dok {
+                        } else {
+                          st @base + 2124600, dcl;
+                          st @base + 318760, 12;
+                          return 12;
+                        }
+                        st @base + 2124536, 0;
+                      } else {
+                      }
+                      st @base + 146512, 1;
+                      @dn_emit(@base + 64, 8, @base + 146504, 172240);
+                      @dn_next(@base + 64, 8, @base + 128, 146376);
+                      dgo = 0;
+                    } else {
+                      if dst == 9 {
+                        st @base + 318760, 11;
+                        return 11;
+                      } else {
+                        st @base + 318760, 10;
+                        return 10;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    st @base + 146512, 1;
+  }
   var going = 1;
   while going {
-    @dn_next(@base + 64, 8, @base + 128, 146352);
     var k = lds 1 (@base + 136);
     if 0 < ((k < 0) + (16 < k)) {
-      st @base + 318728, 1;
+      st @base + 318760, 1;
       return 1;
     } else {
     }
     var now = lds 1 (@base + 144);
-    if 0 < ((now < (lds 1 (@base + 318712))) + (4611686018427387904 <= now)) {
-      st @base + 318728, 7;
+    if 0 < ((now < (lds 1 (@base + 318744))) + (4611686018427387904 <= now)) {
+      st @base + 318760, 7;
       return 7;
     } else {
     }
-    st @base + 318712, now;
-    if (lds 1 (@base + 318720)) == 0 {
+    st @base + 318744, now;
+    if (lds 1 (@base + 318752)) == 0 {
       var rvl = lds 1 (@base + 152);
       var scl = lds 1 (@base + 224);
       if 0 < ((0 < ((rvl < 1) + (64 < rvl))) + (0 < ((scl < 1) + (200 < scl)))) {
-        st @base + 318728, 9;
+        st @base + 318760, 9;
         return 9;
       } else {
       }
@@ -93,7 +2941,7 @@ fun main() {
       while ij < rvl {
         var cz = ld8 (@base + 160 + ij);
         if 0 < ((cz < 33) + (126 < cz)) {
-          st @base + 318728, 9;
+          st @base + 318760, 9;
           return 9;
         } else {
         }
@@ -103,7 +2951,7 @@ fun main() {
       while ij < scl {
         var cz = ld8 (@base + 232 + ij);
         if 0 < ((cz < 33) + (126 < cz)) {
-          st @base + 318728, 9;
+          st @base + 318760, 9;
           return 9;
         } else {
         }
@@ -112,41 +2960,41 @@ fun main() {
       var ik = 0;
       ik = 0;
       while ik < rvl {
-        st8 @base + 318744 + ik, ld8 (@base + 160 + ik);
+        st8 @base + 318776 + ik, ld8 (@base + 160 + ik);
         ik = ik + 1;
       }
       ik = 0;
       while ik < scl {
-        st8 @base + 318816 + ik, ld8 (@base + 232 + ik);
+        st8 @base + 318848 + ik, ld8 (@base + 232 + ik);
         ik = ik + 1;
       }
-      st @base + 318736, rvl;
-      st @base + 318808, scl;
-      st @base + 318720, 1;
+      st @base + 318768, rvl;
+      st @base + 318840, scl;
+      st @base + 318752, 1;
     } else {
     }
     var e = 0;
     while e < k {
-      var ev = @base + 5288 + (e * 552);
+      var ev = @base + 5312 + (e * 552);
       var ek = lds 1 ev;
       var ex = lds 1 (ev + 8);
       var eg = lds 1 (ev + 16);
       var el = lds 1 (ev + 24);
       if 0 < ((ex < 0) + (64 <= ex)) {
-        st @base + 318728, 3;
+        st @base + 318760, 3;
         return 3;
       } else {
       }
       if 0 < ((ek < 1) + (5 < ek)) {
-        st @base + 318728, 8;
+        st @base + 318760, 8;
         return 8;
       } else {
       }
-      var cb = @base + 319456 + (ex * 1672);
+      var cb = @base + 319488 + (ex * 1672);
       var lv = (lds 1 cb) & ((lds 1 (cb + 8)) == eg);
       if ek == 1 {
         if lds 1 cb {
-          st @base + 318728, 6;
+          st @base + 318760, 6;
           return 6;
         } else {
           st cb, 1;
@@ -165,45 +3013,45 @@ fun main() {
           var ob = cb + 1160;
           var o = 0;
           var j = 0;
-          var rl = lds 1 (@base + 318736);
-          var sl = lds 1 (@base + 318808);
+          var rl = lds 1 (@base + 318768);
+          var sl = lds 1 (@base + 318840);
           if 0 < ((rl < 0) + (64 < rl)) {
-            st @base + 318728, 10;
+            st @base + 318760, 10;
             return 10;
           } else {
           }
           if 0 < ((sl < 0) + (200 < sl)) {
-            st @base + 318728, 10;
+            st @base + 318760, 10;
             return 10;
           } else {
           }
           j = 0;
           while j < 16 {
-            st8 ob + o + j, ld8 (@base + 319016 + j);
+            st8 ob + o + j, ld8 (@base + 319048 + j);
             j = j + 1;
           }
           o = o + 16;
           j = 0;
           while j < rl {
-            st8 ob + o + j, ld8 (@base + 318744 + j);
+            st8 ob + o + j, ld8 (@base + 318776 + j);
             j = j + 1;
           }
           o = o + rl;
           j = 0;
           while j < 35 {
-            st8 ob + o + j, ld8 (@base + 319032 + j);
+            st8 ob + o + j, ld8 (@base + 319064 + j);
             j = j + 1;
           }
           o = o + 35;
           j = 0;
           while j < sl {
-            st8 ob + o + j, ld8 (@base + 318816 + j);
+            st8 ob + o + j, ld8 (@base + 318848 + j);
             j = j + 1;
           }
           o = o + sl;
           j = 0;
           while j < 2 {
-            st8 ob + o + j, ld8 (@base + 319067 + j);
+            st8 ob + o + j, ld8 (@base + 319099 + j);
             j = j + 1;
           }
           o = o + 2;
@@ -213,7 +3061,7 @@ fun main() {
       }
       if ek == 2 {
         if 0 < ((el < 0) + (512 < el)) {
-          st @base + 318728, 2;
+          st @base + 318760, 2;
           return 2;
         } else {
         }
@@ -227,7 +3075,7 @@ fun main() {
             st cb + 72, el;
             st cb + 80, 0;
           } else {
-            st @base + 318728, 4;
+            st @base + 318760, 4;
             return 4;
           }
         } else {
@@ -247,7 +3095,7 @@ fun main() {
             st cb + 16, 2;
             st cb + 56, 0;
           } else {
-            st @base + 318728, 4;
+            st @base + 318760, 4;
             return 4;
           }
         } else {
@@ -266,12 +3114,12 @@ fun main() {
     var m = 0;
     var c = 0;
     while c < 64 {
-      st @base + 146488 + (c * 560), 0;
-      var cb = @base + 319456 + (c * 1672);
+      st @base + 146520 + (c * 560), 0;
+      var cb = @base + 319488 + (c * 1672);
       if lds 1 cb {
         var due = 0 < ((0 < (((((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) <= now)) + ((lds 1 (cb + 48)) <= now))) + ((((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) <= now)));
         if due {
-          var slot = @base + 146488 + (c * 560);
+          var slot = @base + 146520 + (c * 560);
           st slot, 3;
           st slot + 8, c;
           st slot + 16, lds 1 (cb + 8);
@@ -289,12 +3137,12 @@ fun main() {
             var i = lds 1 (cb + 80);
             var sv = 1;
             if 0 < ((n < 0) + (512 < n)) {
-              st @base + 318728, 10;
+              st @base + 318760, 10;
               return 10;
             } else {
             }
             if 0 < ((i < 0) + (512 < i)) {
-              st @base + 318728, 10;
+              st @base + 318760, 10;
               return 10;
             } else {
             }
@@ -303,7 +3151,7 @@ fun main() {
                 sv = 0;
               } else {
                 if 0 < (((lds 1 blk) < 0) + (512 < (lds 1 blk))) {
-                  st @base + 318728, 10;
+                  st @base + 318760, 10;
                   return 10;
                 } else {
                 }
@@ -432,7 +3280,7 @@ fun main() {
                     eqk = l0 == 12;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319422 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319454 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -445,7 +3293,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319434 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319466 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -458,7 +3306,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319438 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319470 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -471,7 +3319,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319442 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319474 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -484,7 +3332,7 @@ fun main() {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319446 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 319478 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -597,34 +3445,34 @@ fun main() {
                       var ob = cb + 1160;
                       var o = 0;
                       var j = 0;
-                      var rl = lds 1 (@base + 318736);
-                      var sl = lds 1 (@base + 318808);
+                      var rl = lds 1 (@base + 318768);
+                      var sl = lds 1 (@base + 318840);
                       if 0 < ((rl < 0) + (64 < rl)) {
-                        st @base + 318728, 10;
+                        st @base + 318760, 10;
                         return 10;
                       } else {
                       }
                       if 0 < ((sl < 0) + (200 < sl)) {
-                        st @base + 318728, 10;
+                        st @base + 318760, 10;
                         return 10;
                       } else {
                       }
                       if r == 1 {
                         j = 0;
                         while j < 60 {
-                          st8 ob + o + j, ld8 (@base + 319069 + j);
+                          st8 ob + o + j, ld8 (@base + 319101 + j);
                           j = j + 1;
                         }
                         o = o + 60;
                         j = 0;
                         while j < rl {
-                          st8 ob + o + j, ld8 (@base + 318744 + j);
+                          st8 ob + o + j, ld8 (@base + 318776 + j);
                           j = j + 1;
                         }
                         o = o + rl;
                         j = 0;
                         while j < 5 {
-                          st8 ob + o + j, ld8 (@base + 319129 + j);
+                          st8 ob + o + j, ld8 (@base + 319161 + j);
                           j = j + 1;
                         }
                         o = o + 5;
@@ -632,31 +3480,31 @@ fun main() {
                         if r == 2 {
                           j = 0;
                           while j < 123 {
-                            st8 ob + o + j, ld8 (@base + 319134 + j);
+                            st8 ob + o + j, ld8 (@base + 319166 + j);
                             j = j + 1;
                           }
                           o = o + 123;
                           j = 0;
                           while j < rl {
-                            st8 ob + o + j, ld8 (@base + 318744 + j);
+                            st8 ob + o + j, ld8 (@base + 318776 + j);
                             j = j + 1;
                           }
                           o = o + rl;
                           j = 0;
                           while j < 53 {
-                            st8 ob + o + j, ld8 (@base + 319257 + j);
+                            st8 ob + o + j, ld8 (@base + 319289 + j);
                             j = j + 1;
                           }
                           o = o + 53;
                           j = 0;
                           while j < sl {
-                            st8 ob + o + j, ld8 (@base + 318816 + j);
+                            st8 ob + o + j, ld8 (@base + 318848 + j);
                             j = j + 1;
                           }
                           o = o + sl;
                           j = 0;
                           while j < 5 {
-                            st8 ob + o + j, ld8 (@base + 319129 + j);
+                            st8 ob + o + j, ld8 (@base + 319161 + j);
                             j = j + 1;
                           }
                           o = o + 5;
@@ -664,7 +3512,7 @@ fun main() {
                           if r == 3 {
                             j = 0;
                             while j < 9 {
-                              st8 ob + o + j, ld8 (@base + 319310 + j);
+                              st8 ob + o + j, ld8 (@base + 319342 + j);
                               j = j + 1;
                             }
                             o = o + 9;
@@ -672,7 +3520,7 @@ fun main() {
                             if r == 4 {
                               j = 0;
                               while j < 27 {
-                                st8 ob + o + j, ld8 (@base + 319319 + j);
+                                st8 ob + o + j, ld8 (@base + 319351 + j);
                                 j = j + 1;
                               }
                               o = o + 27;
@@ -680,7 +3528,7 @@ fun main() {
                               if r == 5 {
                                 j = 0;
                                 while j < 37 {
-                                  st8 ob + o + j, ld8 (@base + 319346 + j);
+                                  st8 ob + o + j, ld8 (@base + 319378 + j);
                                   j = j + 1;
                                 }
                                 o = o + 37;
@@ -688,14 +3536,14 @@ fun main() {
                                 if r == 6 {
                                   j = 0;
                                   while j < 21 {
-                                    st8 ob + o + j, ld8 (@base + 319383 + j);
+                                    st8 ob + o + j, ld8 (@base + 319415 + j);
                                     j = j + 1;
                                   }
                                   o = o + 21;
                                 } else {
                                   j = 0;
                                   while j < 18 {
-                                    st8 ob + o + j, ld8 (@base + 319404 + j);
+                                    st8 ob + o + j, ld8 (@base + 319436 + j);
                                     j = j + 1;
                                   }
                                   o = o + 18;
@@ -730,10 +3578,10 @@ fun main() {
           var wants = ((lds 1 (cb + 16)) == 0) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72)));
           if ((lds 1 (cb + 64)) == 0) == 0 {
             if (lds 1 (cb + 32)) == 0 {
-              var slot = @base + 146488 + (c * 560);
+              var slot = @base + 146520 + (c * 560);
               var ol = lds 1 (cb + 64);
               if 0 < ((ol < 0) + (512 < ol)) {
-                st @base + 318728, 10;
+                st @base + 318760, 10;
                 return 10;
               } else {
               }
@@ -755,7 +3603,7 @@ fun main() {
             }
           } else {
             if 0 < (((lds 1 (cb + 16)) == 1) + (((lds 1 (cb + 16)) == 2) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72))))) {
-              var slot = @base + 146488 + (c * 560);
+              var slot = @base + 146520 + (c * 560);
               st slot, 2;
               st slot + 8, c;
               st slot + 16, lds 1 (cb + 8);
@@ -784,23 +3632,23 @@ fun main() {
       }
       c = c + 1;
     }
-    st @base + 146480, m;
-    @dn_emit(@base + 64, 8, @base + 146480, 172232);
+    st @base + 146504, m;
+    @dn_emit(@base + 64, 8, @base + 146504, 172240);
     var sc = 0;
     while sc < 64 {
-      var cb = @base + 319456 + (sc * 1672);
+      var cb = @base + 319488 + (sc * 1672);
       if lds 1 (cb + 88) {
         st cb + 88, 0;
         if lds 1 cb {
-          var tk = lds 1 (@base + 146488 + (sc * 560) + 40);
+          var tk = lds 1 (@base + 146520 + (sc * 560) + 40);
           var al = lds 1 (cb + 64);
           if 0 < ((al < 0) + (512 < al)) {
-            st @base + 318728, 10;
+            st @base + 318760, 10;
             return 10;
           } else {
           }
           if 0 < ((tk < 0) + (al < tk)) {
-            st @base + 318728, 5;
+            st @base + 318760, 5;
             return 5;
           } else {
           }
@@ -834,7 +3682,7 @@ fun main() {
     var rd = 0;
     var dt = 0;
     while dt < 64 {
-      var cb = @base + 319456 + (dt * 1672);
+      var cb = @base + 319488 + (dt * 1672);
       if lds 1 cb {
         if ((lds 1 (cb + 64)) == 0) & (0 < ((((lds 1 (cb + 80)) == (lds 1 (cb + 72))) == 0) + (((lds 1 (cb + 16)) == 0) == 0))) {
           rd = 1;
@@ -866,6 +3714,7 @@ fun main() {
     } else {
     }
     st @base + 128, dl;
+    @dn_next(@base + 64, 8, @base + 128, 146376);
   }
   return 0;
 }

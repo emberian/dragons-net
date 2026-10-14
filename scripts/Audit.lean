@@ -109,7 +109,8 @@ def isPartialDef (env : Environment) (name : Name) (info : ConstantInfo) : Bool 
 /-- The modules `dn-compiler` is built from. Pinned so that the executable compiler cannot
 start depending on another module without that being reviewed. -/
 def compilerModules : Array Name :=
-  #[`DN.Compiler.Abi, `DN.Compiler.Analyzer, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy,
+  #[`DN.Compiler.Abi, `DN.Compiler.Analyzer, `DN.Compiler.AnalyzerCert,
+    `DN.Compiler.AnalyzerCertGen, `DN.Compiler.Baseline, `DN.Compiler.ByteCopy,
     `DN.Compiler.Bytes, `DN.Compiler.Canon, `DN.Compiler.Checked, `DN.Compiler.Clock,
     `DN.Compiler.Decimal, `DN.Compiler.Div10, `DN.Compiler.Gen, `DN.Compiler.GenCorpus,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
@@ -117,11 +118,12 @@ def compilerModules : Array Name :=
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
     `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.News.Abnf,
     `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfRules, `DN.News.ArticleModel,
-    `DN.News.ArticleSpec, `DN.News.CommandSpec, `DN.News.FrameModel, `DN.News.FrameSpec,
-    `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves, `DN.News.FsModel,
-    `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash, `DN.News.JournalModel,
-    `DN.News.Recovery, `DN.News.RecoveryModel, `DN.News.RecoveryMutant, `DN.News.RecoveryRun,
-    `DN.News.SessionModel, `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash,
+    `DN.News.ArticleSpec, `DN.News.CommandSpec, `DN.News.CrcProg, `DN.News.FrameModel,
+    `DN.News.FrameSpec, `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves,
+    `DN.News.FsModel, `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash,
+    `DN.News.JournalModel, `DN.News.RecoverProg, `DN.News.Recovery, `DN.News.RecoveryModel,
+    `DN.News.RecoveryMutant, `DN.News.RecoveryRun, `DN.News.ScanProg, `DN.News.SessionModel,
+    `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash, `DN.News.SipProg,
     `DN.News.Spool, `DN.News.SpoolOps, `DN.News.StoreCases, `DN.News.StoreOps, `DN.News.StoreRun,
     `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
     `DN.Server.Skeleton]

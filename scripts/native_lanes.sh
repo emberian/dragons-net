@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The native lanes, in order, each with its log in build/evidence/. check_all.sh and CI both run
 # all of them from this one list. Named lanes run alone; the nightly run uses this to start each
-# on a fresh machine. The compiler is the one CAKE names, or else the pinned release.
+# on a fresh machine. The compiler is the one CAKE names, or else the pinned release. A lane that
+# passed on the inputs it read is not run again (scripts/once.py); DN_ONCE=none runs it untraced.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
@@ -32,5 +33,10 @@ if [[ -z "$cake" ]]; then cake=$(python3 scripts/bootstrap_tool.py cake); fi
 mkdir -p build/evidence
 for name in "${chosen[@]}"; do
   script_of "$name"
-  python3 "${script[@]}" --cake "$cake" 2>&1 | tee "build/evidence/$name.log"
+  run=(python3 "${script[@]}" --cake "$cake")
+  if [[ ${DN_ONCE:-} == none ]]; then
+    "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
+  else
+    python3 scripts/once.py run "lane-$name" --log "build/evidence/$name.log" -- "${run[@]}"
+  fi
 done

@@ -10,7 +10,8 @@ import DN.Compiler.Bytes
 heap covers `size` bytes from `@base` and whose locals and cells are as the abstract state says,
 the run of a statement the analysis accepts ends as a run may end or finishes normally in a state
 the abstract result stands for (`analyze_safe`); for a whole `main` the analysis accepts, no run
-fails (`never_fails`).
+fails (`never_fails`), nor for a program whose functions it accepts too, from code holding them
+(`program_never_fails`).
 -/
 
 namespace DN.Compiler.Analyzer
@@ -224,6 +225,21 @@ theorem toInt_of_nonneg {w : Word} (h : 0 ≤ w.toInt) : w.toInt = w.toNat := by
   have hlt := w.isLt
   split at this <;> omega
 
+/-- A word whose bits make a number below `2 ^ 63` is that number, signed. -/
+theorem toInt_of_toNat_lt {w : Word} (h : w.toNat < 2 ^ 63) : w.toInt = w.toNat := by
+  have := BitVec.toInt_eq_toNat_cond w
+  split at this <;> omega
+
+/-- `w1 &&& w2`, with `w2` a number in `[0, hi]`, is a number in `[0, hi]`. -/
+theorem and_within {w1 w2 : Word} {hi : Int} (l : 0 ≤ w2.toInt) (u : w2.toInt ≤ hi) :
+    0 ≤ (w1 &&& w2).toInt ∧ (w1 &&& w2).toInt ≤ hi := by
+  have e2 := toInt_of_nonneg l
+  have n : (w1 &&& w2).toNat ≤ w2.toNat := by rw [BitVec.toNat_and]; exact Nat.and_le_right
+  have r2 := toInt_range w2
+  simp only [wordMax] at r2
+  have e := toInt_of_toNat_lt (w := w1 &&& w2) (by omega)
+  omega
+
 theorem holds_and {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2) :
     (and_ a c).holds b (w1 &&& w2) := by
   unfold and_
@@ -248,6 +264,52 @@ theorem holds_and {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.hold
       omega
     · intro r h
       cases h
+  · split
+    · rename_i _ hc
+      simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+      simp only [AVal.holds, hc.1, Bool.false_eq_true, if_false] at h2
+      obtain ⟨l, u⟩ := and_within (w1 := w1) (by omega : 0 ≤ w2.toInt) h2.2.1
+      exact holds_num l u (fun r h => by cases h)
+    · split
+      · rename_i _ _ ha
+        simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at ha
+        simp only [AVal.holds, ha.1, Bool.false_eq_true, if_false] at h1
+        rw [BitVec.and_comm]
+        obtain ⟨l, u⟩ := and_within (w1 := w2) (by omega : 0 ≤ w1.toInt) h1.2.1
+        exact holds_num l u (fun r h => by cases h)
+      · exact holds_top b _
+
+/-- An operation that keeps every number below a power of two below it, `^` or `|`, of numbers in
+`[0, h1]` and `[0, h2]`, is a number in `[0, bitsUpTo (max h1 h2)]`. -/
+theorem bitwise_within {w1 w2 r : Word} {h1 h2 : Int} (l1 : 0 ≤ w1.toInt) (u1 : w1.toInt ≤ h1)
+    (l2 : 0 ≤ w2.toInt) (u2 : w2.toInt ≤ h2)
+    (hr : ∀ k, w1.toNat < 2 ^ k → w2.toNat < 2 ^ k → r.toNat < 2 ^ k) :
+    0 ≤ r.toInt ∧ r.toInt ≤ bitsUpTo (max h1 h2) := by
+  have e1 := toInt_of_nonneg l1
+  have e2 := toInt_of_nonneg l2
+  have r1 := toInt_range w1
+  have r2 := toInt_range w2
+  simp only [wordMin, wordMax] at r1 r2
+  have er := toInt_of_toNat_lt (hr 63 (by omega) (by omega))
+  have hm := @Nat.lt_log2_self (max h1 h2).toNat
+  have hk := hr ((max h1 h2).toNat.log2 + 1) (by omega) (by omega)
+  have cast : ((2 ^ ((max h1 h2).toNat.log2 + 1) : Nat) : Int) =
+      (2 : Int) ^ ((max h1 h2).toNat.log2 + 1) := by push_cast; rfl
+  unfold bitsUpTo
+  rw [← cast]
+  omega
+
+theorem holds_bitwise {b w1 w2 r : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2)
+    (hr : ∀ k, w1.toNat < 2 ^ k → w2.toNat < 2 ^ k → r.toNat < 2 ^ k) :
+    (bitwise a c).holds b r := by
+  unfold bitwise
+  split
+  · rename_i hc
+    simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+    obtain ⟨⟨⟨hpa, hpc⟩, la⟩, lc⟩ := hc
+    simp only [AVal.holds, hpa, hpc, Bool.false_eq_true, if_false] at h1 h2
+    obtain ⟨l, u⟩ := bitwise_within (by omega) h1.2.1 (by omega) h2.2.1 hr
+    exact holds_num l u (fun r h => by cases h)
   · exact holds_top b _
 
 theorem ltKnown_sound {b w1 w2 : Word} {a c : AVal} (h1 : a.holds b w1) (h2 : c.holds b w2) :
@@ -404,6 +466,12 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
       · exact ⟨_, by simp only [eval, e1, e2], holds_add h1 h2⟩
       · exact ⟨_, by simp only [eval, e1, e2], holds_and h1 h2⟩
       · exact ⟨_, by simp only [eval, e1, e2], holds_sub h1 h2⟩
+      · refine ⟨w1 ^^^ w2, by simp only [eval, e1, e2], holds_bitwise h1 h2 fun k a b => ?_⟩
+        rw [BitVec.toNat_xor]
+        exact Nat.xor_lt_two_pow a b
+      · refine ⟨w1 ||| w2, by simp only [eval, e1, e2], holds_bitwise h1 h2 fun k a b => ?_⟩
+        rw [BitVec.toNat_or]
+        exact Nat.or_lt_two_pow a b
     · cases hv
   | mul l r ihl ihr =>
     intro v hv
@@ -423,7 +491,7 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
     · rename_i a c hl hr
       obtain ⟨w1, e1, _⟩ := ihl a hl
       obtain ⟨w2, e2, h2⟩ := ihr c hr
-      unfold shiftR at hv
+      unfold shift at hv
       split at hv
       · rename_i hc
         simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
@@ -433,6 +501,30 @@ theorem evalA_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds s
         simp only [AVal.holds, hp, Bool.false_eq_true, if_false] at h2
         have t := toInt_of_nonneg (w := w2) (by omega)
         refine ⟨w1 >>> w2.toNat, ?_, holds_top _ _⟩
+        simp only [eval, e1, e2]
+        have : ¬ (w2.toNat ≠ 0 && w2.toNat ≥ 64) = true := by
+          simp only [Bool.and_eq_true, decide_eq_true_eq]
+          omega
+        simp only [this, Bool.false_eq_true, ↓reduceIte]
+      · cases hv
+    · cases hv
+  | shiftL l r ihl ihr =>
+    intro v hv
+    simp only [evalA] at hv
+    split at hv
+    · rename_i a c hl hr
+      obtain ⟨w1, e1, _⟩ := ihl a hl
+      obtain ⟨w2, e2, h2⟩ := ihr c hr
+      unfold shift at hv
+      split at hv
+      · rename_i hc
+        simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at hc
+        obtain ⟨⟨hp, lo⟩, hi⟩ := hc
+        simp only [Option.some.injEq] at hv
+        subst hv
+        simp only [AVal.holds, hp, Bool.false_eq_true, if_false] at h2
+        have t := toInt_of_nonneg (w := w2) (by omega)
+        refine ⟨w1 <<< w2.toNat, ?_, holds_top _ _⟩
         simp only [eval, e1, e2]
         have : ¬ (w2.toNat ≠ 0 && w2.toNat ≥ 64) = true := by
           simp only [Bool.and_eq_true, decide_eq_true_eq]
@@ -689,6 +781,16 @@ theorem lookupCell_filter {x y : String} {k j : Int} (hne : ¬ (y = x ∧ j = k)
       · rfl
       · exact lookupCell_filter hne rest
 
+theorem eval_add_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
+    (h : eval s (.op .add l r) = some w) :
+    ∃ a b, eval s l = some a ∧ eval s r = some b ∧ w = a + b := by
+  simp only [eval] at h
+  split at h
+  · rename_i a b ha hb
+    cases h
+    exact ⟨a, b, ha, hb, rfl⟩
+  · cases h
+
 theorem refine_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds size A s)
     {e : PancakeExp} {w : Word} (he : eval s e = some w) {lo hi : Int}
     (h1 : lo ≤ w.toInt) (h2 : w.toInt ≤ hi) :
@@ -748,6 +850,40 @@ theorem refine_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Holds 
           simp only [lookupCell, hq, Bool.false_eq_true, if_false] at hu
           rw [lookupCell_filter hk] at hu
           exact h.2.2 y j u hu p hp'
+    · exact ⟨A, rfl, h⟩
+  · rename_i x k
+    split
+    · rename_i v hv
+      split
+      · exact ⟨A, rfl, h⟩
+      · rename_i hp
+        split
+        · rename_i hk
+          obtain ⟨a, kw, ha, hkw, hw⟩ := eval_add_inv he
+          simp only [eval] at ha hkw
+          cases hkw
+          obtain ⟨w', e', hw'⟩ := h.2.1 x v hv
+          rw [ha] at e'
+          cases e'
+          have hnp : v.ptr = false := by simpa using hp
+          have hvh := hw'
+          simp only [AVal.holds, hnp, Bool.false_eq_true, if_false] at hvh
+          obtain ⟨l, u, _⟩ := hvh
+          have hsum : w.toInt = a.toInt + k.toInt := by
+            rw [hw, BitVec.toInt_add, bmod_small (by omega) (by omega)]
+          obtain ⟨v', hm, hv'⟩ := meet_sound hw' hnp (lo := lo - k.toInt) (hi := hi - k.toInt)
+            (by omega) (by omega)
+          obtain ⟨ls, hs⟩ := setVar_of_found (v := v') hv
+          refine ⟨{ A with locals := ls }, by simp [hm, hs], h.1, ?_, h.2.2⟩
+          intro y u' hu
+          by_cases hy : y = x
+          · subst hy
+            rw [lookup_setVar_same hs] at hu
+            cases hu
+            exact ⟨a, ha, hv'⟩
+          · rw [lookup_setVar_other hy hs] at hu
+            exact h.2.1 y u' hu
+        · exact ⟨A, rfl, h⟩
     · exact ⟨A, rfl, h⟩
   · exact ⟨A, rfl, h⟩
 
@@ -837,15 +973,6 @@ theorem assumeEq_sound {size : Nat} {A : AState} {s : PancakeState σ} (h : Hold
       obtain ⟨A2, e2, h2⟩ := refine_sound h1 hb (lo := va.lo) (hi := va.hi) (by omega) (by omega)
       exact ⟨A2, by simp [e1, e2], h2⟩
   · exact ⟨A, rfl, h⟩
-theorem eval_add_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
-    (h : eval s (.op .add l r) = some w) :
-    ∃ a b, eval s l = some a ∧ eval s r = some b ∧ w = a + b := by
-  simp only [eval] at h
-  split at h
-  · rename_i a b ha hb
-    cases h
-    exact ⟨a, b, ha, hb, rfl⟩
-  · cases h
 
 theorem eval_and_inv {s : PancakeState σ} {l r : PancakeExp} {w : Word}
     (h : eval s (.op .and_ l r) = some w) :
@@ -1392,32 +1519,204 @@ theorem joinOuts_up {o1 o2 out : Option AState} (h : joinOuts o1 o2 = .ok out) :
       | none => exact ⟨B2, rfl, hB2⟩
       | some B1 => exact absurd rfl (hne B1 B2 rfl)
 
+/-! ## Functions -/
+
+/-- The functions `env` names are in the code, each with distinct parameters and a body the
+analysis accepts from any arguments, with the functions defined before it to call, that finishes
+only with a result. -/
+def CodeOk (size : Nat) (code : String → Option (List String × PancakeProg)) : Env → Prop
+  | [] => True
+  | (f, ps) :: rest =>
+    (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧
+      analyze size rest (entryState ps) body = .ok none) ∧ CodeOk size code rest
+
+theorem codeOk_find {size : Nat} {code : String → Option (List String × PancakeProg)} {f : String}
+    {ps : List String} {rest : Env} :
+    ∀ {env : Env}, CodeOk size code env → findFn f env = some (ps, rest) →
+      (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧
+        analyze size rest (entryState ps) body = .ok none) ∧
+      CodeOk size code rest ∧ rest.length < env.length
+  | [], _, h => by cases h
+  | (g, qs) :: env, hc, h => by
+    simp only [findFn] at h
+    split at h
+    · rename_i hfg
+      cases h
+      subst hfg
+      exact ⟨hc.1, hc.2, by simp⟩
+    · obtain ⟨hb, hr, hl⟩ := codeOk_find hc.2 h
+      exact ⟨hb, hr, by simp only [List.length_cons]; omega⟩
+
+/-- The runs `A` stands for, from code with the functions `env` names. -/
+def HoldsE (size : Nat) (env : Env) (A : AState) (s : PancakeState σ) : Prop :=
+  Holds size A s ∧ CodeOk size s.code env
+
+/-- The state a statement ends normally in, if it can, from code with the functions `env` names. -/
+def PostE (size : Nat) (env : Env) (out : Option AState) (t : PancakeState σ) : Prop :=
+  ∃ B, out = some B ∧ HoldsE size env B t
+
+theorem postE_clockFree (size : Nat) (env : Env) (out : Option AState) :
+    ClockFree (σ := σ) (PostE size env out) :=
+  fun _ _ h => h
+
+theorem postE_none (o : Oracle σ) (p : PancakeProg) (size : Nat) (env : Env)
+    (Q : PancakeState σ → Prop) : Safe o (PostE size env none) p Q := fun _ h => by
+  obtain ⟨B, hB, _⟩ := h
+  cases hB
+
+theorem argsOk_eval {size : Nat} {A : AState} {s : PancakeState σ} {what : String}
+    (h : Holds size A s) :
+    ∀ {args : List PancakeExp}, argsOk size A what args = .ok () →
+      ∃ vs, evalArgs s args = some vs ∧ vs.length = args.length
+  | [], _ => ⟨[], rfl, rfl⟩
+  | e :: es, ha => by
+    simp only [argsOk, bind, Except.bind] at ha
+    split at ha
+    · cases ha
+    · rename_i v hv
+      obtain ⟨w, ew, _⟩ := eval_of h hv
+      obtain ⟨vs, evs, hl⟩ := argsOk_eval h ha
+      exact ⟨w :: vs, by simp [evalArgs, ew, evs], by simp [hl]⟩
+
+theorem lookup_zip {x : String} :
+    ∀ {ps : List String} {vs : List Value}, x ∈ ps → ps.length = vs.length →
+      ∃ w, (ps.zip vs).lookup x = some w
+  | [], _, hx, _ => by cases hx
+  | _ :: _, [], _, hl => by cases hl
+  | p :: ps, v :: vs, hx, hl => by
+    simp only [List.zip_cons_cons, List.lookup_cons]
+    by_cases hp : x = p
+    · subst hp
+      exact ⟨v, by simp⟩
+    · have hx' : x ∈ ps := by
+        rcases List.mem_cons.mp hx with h | h
+        · exact absurd h hp
+        · exact h
+      obtain ⟨w, hw⟩ := lookup_zip hx' (by simpa using hl)
+      have : (x == p) = false := by simpa using hp
+      exact ⟨w, by simp [this, hw]⟩
+
+theorem lookup_entry {x : String} {v : AVal} :
+    ∀ {ps : List String}, lookup x (ps.map fun p => (p, AVal.top)) = some v → x ∈ ps ∧ v = AVal.top
+  | [], h => by cases h
+  | p :: ps, h => by
+    simp only [List.map_cons, lookup] at h
+    split at h
+    · rename_i hx
+      cases h
+      exact ⟨by simp [hx], rfl⟩
+    · obtain ⟨hm, hv⟩ := lookup_entry h
+      exact ⟨List.mem_cons_of_mem _ hm, hv⟩
+
+/-- A call's body starts in the state its entry stands for. -/
+theorem holds_entry {size : Nat} {A : AState} {s : PancakeState σ} {ps : List String}
+    {vs : List Value} (h : Holds size A s) (hl : ps.length = vs.length) :
+    Holds size (entryState ps) { decClock s with locals := fun k => (ps.zip vs).lookup k } := by
+  refine ⟨h.1, fun x v hv => ?_, holds_empty_cells _⟩
+  obtain ⟨hm, rfl⟩ := lookup_entry hv
+  obtain ⟨w, hw⟩ := lookup_zip hm hl
+  exact ⟨w, hw, holds_top _ _⟩
+
+theorem joinOuts_upE {o1 o2 out : Option AState} (h : joinOuts o1 o2 = .ok out) (size : Nat)
+    (env : Env) :
+    (∀ (t : PancakeState σ), PostE size env o1 t → PostE size env out t) ∧
+      (∀ (t : PancakeState σ), PostE size env o2 t → PostE size env out t) := by
+  obtain ⟨u1, u2⟩ := joinOuts_up (σ := σ) h
+  constructor
+  · intro t ⟨B, e, hB, hc⟩
+    obtain ⟨B', e', hB'⟩ := u1 size t ⟨B, e, hB⟩
+    exact ⟨B', e', hB', hc⟩
+  · intro t ⟨B, e, hB, hc⟩
+    obtain ⟨B', e', hB'⟩ := u2 size t ⟨B, e, hB⟩
+    exact ⟨B', e', hB', hc⟩
+
 /-- A branch the analysis accepts, run from a state in which its condition has the value that
 leads to it, comes to what the whole statement may end in. -/
-theorem branch_safe {o : Oracle σ} {size : Nat} {A : AState} {e : PancakeExp} {t : Bool}
-    {c : PancakeProg} {ob out : Option AState} {s : PancakeState σ} {w : Word}
-    (ih : ∀ (A : AState) (out : Option AState), analyze size A c = .ok out →
-      Safe o (Holds size A) c (Post size out))
-    (hb : branch size e t (fun X => analyze size X c) A = .ok ob) (hs : Holds size A s)
+theorem branch_safe {o : Oracle σ} {size : Nat} {env : Env} {A : AState} {e : PancakeExp}
+    {t : Bool} {c : PancakeProg} {ob out : Option AState} {s : PancakeState σ} {w : Word}
+    (ih : ∀ (A : AState) (out : Option AState), analyze size env A c = .ok out →
+      Safe o (HoldsE size env A) c (PostE size env out))
+    (hb : branch size e t (fun X => analyze size env X c) A = .ok ob) (hs : HoldsE size env A s)
     (ew : eval s e = some w) (hw : decide (w ≠ 0) = t)
-    (up : ∀ size (t : PancakeState σ), Post size ob t → Post size out t) :
-    Ok (Post size out) (PancakeSem o c s) := by
-  obtain ⟨G, hG, hsG⟩ := assume_sound A e t hs w ew hw
+    (up : ∀ (t : PancakeState σ), PostE size env ob t → PostE size env out t) :
+    Ok (PostE size env out) (PancakeSem o c s) := by
+  obtain ⟨G, hG, hsG⟩ := assume_sound A e t hs.1 w ew hw
   simp only [branch, hG] at hb
-  have k := ih G ob hb s hsG
+  have k := ih G ob hb s ⟨hsG, hs.2⟩
   revert k
   cases PancakeSem o c s with
   | mk r t =>
     cases r with
-    | none => exact up size t
+    | none => exact up t
+    | some _ => exact id
+
+/-- The state after a statement that declared `x` for what it holds, `x` restored. -/
+theorem holds_restore {size : Nat} {env : Env} {x : String} {B : AState} {s t : PancakeState σ}
+    (hB : HoldsE size env B t) (hn : (lookup x (dropVar x B.locals)).isNone = true) :
+    HoldsE size env { locals := dropVar x B.locals, cells := killCells x B.cells }
+      { t with locals := resVar t.locals x (s.locals x) } := by
+  simp only [Option.isNone_iff_eq_none] at hn
+  refine ⟨⟨hB.1.1, fun y u hu => ?_, cells_locals hB.1.2.2 fun y hy => by simp [resVar, hy]⟩, hB.2⟩
+  have hy : y ≠ x := by
+    intro hyx
+    subst hyx
+    rw [hn] at hu
+    cases hu
+  rw [lookup_dropVar_other hy] at hu
+  obtain ⟨w, e', hw⟩ := hB.1.2.1 y u hu
+  exact ⟨w, by simp [resVar, hy, e'], hw⟩
+
+/-- What follows a call, from the state the call returned in, with the locals of the caller and
+the value it returned. -/
+theorem call_cont {o : Oracle σ} {size : Nat} {env : Env} {A : AState} {rt : String}
+    {c : PancakeProg} {r out : Option AState} {s u : PancakeState σ} {v : Value}
+    (inner : Safe o (HoldsE size env { locals := (rt, AVal.top) :: A.locals, cells := [] }) c
+      (PostE size env r))
+    (hs : HoldsE size env A s) (hm : u.memaddrs = s.memaddrs) (hb : u.baseAddr = s.baseAddr)
+    (hc : u.code = s.code) (hl : u.locals = setLocal s.locals rt v)
+    (hpost : ∀ B, r = some B → (lookup rt (dropVar rt B.locals)).isNone = true ∧
+      out = some { locals := dropVar rt B.locals, cells := killCells rt B.cells }) :
+    Ok (PostE size env out) ((PancakeSem o c u).1,
+      { (PancakeSem o c u).2 with
+        locals := resVar (PancakeSem o c u).2.locals rt (s.locals rt) }) := by
+  have hstart : HoldsE size env { locals := (rt, AVal.top) :: A.locals, cells := [] } u := by
+    refine ⟨⟨?_, fun y w hw => ?_, holds_empty_cells _⟩, ?_⟩
+    · rw [hm, hb]
+      exact hs.1.1
+    · rw [hl, hb]
+      simp only [lookup] at hw
+      split at hw
+      · rename_i hy
+        cases hw
+        exact ⟨v, by simp [setLocal, hy], holds_top _ _⟩
+      · rename_i hy
+        obtain ⟨w', e', hw'⟩ := hs.1.2.1 y w hw
+        exact ⟨w', by simp [setLocal, hy, e'], hw'⟩
+    · rw [hc]
+      exact hs.2
+  have kc := inner u hstart
+  revert kc
+  cases PancakeSem o c u with
+  | mk r2 t2 =>
+    cases r2 with
+    | none =>
+      intro ⟨B, hB, hsB⟩
+      obtain ⟨hn, rfl⟩ := hpost B hB
+      exact ⟨_, rfl, holds_restore hsB hn⟩
     | some _ => exact id
 
 /-- **A statement the analysis accepts never errs**: from every state the abstract one stands
-for, a run ends as a run may end, or finishes normally in a state the result stands for. -/
+for, with code holding the functions it may call, a run ends as a run may end, or finishes
+normally in a state the result stands for. A called function's body is safe by the same theorem
+for the functions defined before it, which are fewer. -/
 theorem analyze_safe (o : Oracle σ) (size : Nat) :
-    ∀ (p : PancakeProg) (A : AState) (out : Option AState), analyze size A p = .ok out →
-      Safe o (Holds size A) p (Post size out) := by
-  intro p
+    ∀ (n : Nat) (env : Env), env.length ≤ n →
+      ∀ (p : PancakeProg) (A : AState) (out : Option AState), analyze size env A p = .ok out →
+        Safe o (HoldsE size env A) p (PostE size env out) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ihn =>
+  intro env hn p
   induction p with
   | skip =>
     intro A out h
@@ -1435,19 +1734,19 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
       · rename_i r hr
         have inner := ih _ r hr
         apply Safe.dec
-          (P' := Holds size { locals := (x, v) :: A.locals, cells := killCells x A.cells })
-          (Q' := Post size r)
+          (P' := HoldsE size env { locals := (x, v) :: A.locals, cells := killCells x A.cells })
+          (Q' := PostE size env r)
         · intro s hs
-          obtain ⟨w, ew, hw⟩ := eval_of hs hv
-          refine ⟨w, ew, hs.1, fun y u hu => ?_, cells_locals hs.2.2 fun y hy => by
-            simp [setLocal, hy]⟩
+          obtain ⟨w, ew, hw⟩ := eval_of hs.1 hv
+          refine ⟨w, ew, ⟨hs.1.1, fun y u hu => ?_, cells_locals hs.1.2.2 fun y hy => by
+            simp [setLocal, hy]⟩, hs.2⟩
           simp only [lookup] at hu
           split at hu
           · rename_i hy
             cases hu
             exact ⟨w, by simp [setLocal, hy], hw⟩
           · rename_i hy
-            obtain ⟨w', e', hw'⟩ := hs.2.1 y u hu
+            obtain ⟨w', e', hw'⟩ := hs.1.2.1 y u hu
             exact ⟨w', by simp [setLocal, hy, e'], hw'⟩
         · exact inner
         · intro s t _ ht
@@ -1457,18 +1756,7 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
           · cases h
           · rename_i u hn
             cases h
-            have hnone := need_ok hn
-            simp only [Option.isNone_iff_eq_none] at hnone
-            refine ⟨_, rfl, hB.1, fun y u hu => ?_, cells_locals hB.2.2 fun y hy => by
-              simp [resVar, hy]⟩
-            have hy : y ≠ x := by
-              intro hyx
-              subst hyx
-              rw [hnone] at hu
-              cases hu
-            rw [lookup_dropVar_other hy] at hu
-            obtain ⟨w, e', hw⟩ := hB.2.1 y u hu
-            exact ⟨w, by simp [resVar, hy, e'], hw⟩
+            exact ⟨_, rfl, holds_restore hB (need_ok hn)⟩
   | assign x e =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
@@ -1480,11 +1768,11 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
         cases h
         apply Safe.assign
         intro s hs
-        obtain ⟨w, ew, hw⟩ := eval_of hs hv
+        obtain ⟨w, ew, hw⟩ := eval_of hs.1 hv
         obtain ⟨u, hu⟩ := setVar_found hls
-        obtain ⟨old, eold, _⟩ := hs.2.1 x u hu
-        exact ⟨w, old, ew, eold, _, rfl, hs.1, holds_setLocal hs.2.1 hls hw,
-          cells_setLocal hs.2.2⟩
+        obtain ⟨old, eold, _⟩ := hs.1.2.1 x u hu
+        exact ⟨w, old, ew, eold, _, rfl, ⟨hs.1.1, holds_setLocal hs.1.2.1 hls hw,
+          cells_setLocal hs.1.2.2⟩, hs.2⟩
       · cases h
   | store d e =>
     intro A out h
@@ -1501,11 +1789,11 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
           cases h
           apply Safe.store
           intro s hs
-          obtain ⟨a, ea, ha⟩ := eval_of hs hp
-          obtain ⟨w, ew, _⟩ := eval_of hs hv
-          have hd := word_in_heap hs.1 ha (need_ok hok)
+          obtain ⟨a, ea, ha⟩ := eval_of hs.1 hp
+          obtain ⟨w, ew, _⟩ := eval_of hs.1 hv
+          have hd := word_in_heap hs.1.1 ha (need_ok hok)
           exact ⟨a, w, fun k => if k = a then w else s.memory k, ea, ew,
-            by simp [memStoreWord, hd], _, rfl, holds_store hs _⟩
+            by simp [memStoreWord, hd], _, rfl, holds_store hs.1 _, hs.2⟩
   | storeByte d e =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
@@ -1521,12 +1809,12 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
           cases h
           apply Safe.storeByte
           intro s hs
-          obtain ⟨a, ea, ha⟩ := eval_of hs hp
-          obtain ⟨w, ew, _⟩ := eval_of hs hv
-          have hd := byte_in_heap hs.1 ha (need_ok hok)
+          obtain ⟨a, ea, ha⟩ := eval_of hs.1 hp
+          obtain ⟨w, ew, _⟩ := eval_of hs.1 hv
+          have hd := byte_in_heap hs.1.1 ha (need_ok hok)
           exact ⟨a, w, fun k => if k = byteAlign a then
               setByte a (w.setWidth 8) (s.memory (byteAlign a)) s.be else s.memory k, ea, ew,
-            by simp [memStoreByte, hd], _, rfl, holds_store hs _⟩
+            by simp [memStoreByte, hd], _, rfl, holds_store hs.1 _, hs.2⟩
   | extCall name c cl a al =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
@@ -1550,24 +1838,24 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
               simp only [Bool.and_eq_true] at ok
               apply Safe.extCall
               intro s hs
-              obtain ⟨wc, ec, hc⟩ := eval_of hs hcp
-              obtain ⟨wcl, ecl, hcl⟩ := eval_of hs hclv
-              obtain ⟨wa, ea, ha⟩ := eval_of hs hap
-              obtain ⟨wal, eal, hal⟩ := eval_of hs halv
-              obtain ⟨conf, hconf⟩ := array_readable s.memory s.be hs.1 hc hcl ok.1
-              obtain ⟨arr, harr⟩ := array_readable s.memory s.be hs.1 ha hal ok.2
+              obtain ⟨wc, ec, hc⟩ := eval_of hs.1 hcp
+              obtain ⟨wcl, ecl, hcl⟩ := eval_of hs.1 hclv
+              obtain ⟨wa, ea, ha⟩ := eval_of hs.1 hap
+              obtain ⟨wal, eal, hal⟩ := eval_of hs.1 halv
+              obtain ⟨conf, hconf⟩ := array_readable s.memory s.be hs.1.1 hc hcl ok.1
+              obtain ⟨arr, harr⟩ := array_readable s.memory s.be hs.1.1 ha hal ok.2
               exact ⟨wc, wcl, wa, wal, conf, arr, ec, ecl, ea, eal, hconf, harr,
-                fun _ _ _ => ⟨_, rfl, hs.1, hs.2.1, holds_empty_cells _⟩⟩
+                fun _ _ _ => ⟨_, rfl, ⟨hs.1.1, hs.1.2.1, holds_empty_cells _⟩, hs.2⟩⟩
   | seq c1 c2 ih1 ih2 =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
     split at h
     · cases h
     · rename_i r hr
-      apply Safe.seq (ih1 A r hr) _ (post_clockFree size r)
+      apply Safe.seq (ih1 A r hr) _ (postE_clockFree size env r)
       split at h
       · cases h
-        exact post_none o c2 size _
+        exact postE_none o c2 size env _
       · rename_i B
         intro s hs
         obtain ⟨B', hB', hsB⟩ := hs
@@ -1585,13 +1873,13 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
         split at h
         · cases h
         · rename_i o2 ho2
-          obtain ⟨up1, up2⟩ := joinOuts_up h
+          obtain ⟨up1, up2⟩ := joinOuts_upE (σ := σ) h size env
           apply Safe.cond
           · intro s hs
-            obtain ⟨w, ew, _⟩ := eval_of hs hv
+            obtain ⟨w, ew, _⟩ := eval_of hs.1 hv
             exact ⟨w, ew⟩
           · intro s ⟨hs, hne⟩
-            obtain ⟨w, ew, _⟩ := eval_of hs hv
+            obtain ⟨w, ew, _⟩ := eval_of hs.1 hv
             have hw : decide (w ≠ 0) = true := by
               simp only [ne_eq, decide_eq_true_eq]
               intro z
@@ -1603,16 +1891,17 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
     intro A out h
     simp only [analyze] at h
     obtain ⟨I, post, hinto, hle, ⟨v, hv⟩, hlp, rfl⟩ := loop_spec h
-    have body : Safe o (fun s => Holds size I s ∧ eval s e ≠ some 0) c (Holds size I) := by
+    have body : Safe o (fun s => HoldsE size env I s ∧ eval s e ≠ some 0) c
+        (HoldsE size env I) := by
       intro s ⟨hs, hne⟩
-      obtain ⟨w, ew, _⟩ := evalA_sound hs e v hv
+      obtain ⟨w, ew, _⟩ := evalA_sound hs.1 e v hv
       have hw : decide (w ≠ 0) = true := by
         simp only [ne_eq, decide_eq_true_eq]
         intro z
         exact hne (by rw [ew, z])
-      obtain ⟨G, hG, hsG⟩ := assume_sound I e true hs w ew hw
+      obtain ⟨G, hG, hsG⟩ := assume_sound I e true hs.1 w ew hw
       simp only [branch, hG] at hinto
-      have k := ih G post hinto s hsG
+      have k := ih G post hinto s ⟨hsG, hs.2⟩
       revert k
       cases PancakeSem o c s with
       | mk r t =>
@@ -1621,15 +1910,16 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
           intro ⟨B, hB, hsB⟩
           subst hB
           simp only [leOpt] at hlp
-          exact le_holds hlp hsB
+          exact ⟨le_holds hlp hsB.1, hsB.2⟩
         | some _ => exact id
-    have loopI := Safe.while_ (fun s hs => (evalA_sound hs e v hv).elim fun w hw => ⟨w, hw.1⟩)
-      body (holds_clockFree size I)
-    refine Safe.conseq loopI (fun s hs => le_holds hle hs) ?_
+    have loopI := Safe.while_
+      (fun s hs => (evalA_sound hs.1 e v hv).elim fun w hw => ⟨w, hw.1⟩)
+      body (fun _ _ h => h)
+    refine Safe.conseq loopI (fun s hs => ⟨le_holds hle hs.1, hs.2⟩) ?_
     intro s ⟨hs, hz⟩
     have hw : decide ((0 : Word) ≠ 0) = false := by decide
-    obtain ⟨A', hA', hsA'⟩ := assume_sound I e false hs 0 hz hw
-    exact ⟨A', hA', hsA'⟩
+    obtain ⟨A', hA', hsA'⟩ := assume_sound I e false hs.1 0 hz hw
+    exact ⟨A', hA', hsA', hs.2⟩
   | ret e =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
@@ -1638,8 +1928,83 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
     · rename_i v hv
       apply Safe.ret
       intro s hs
-      obtain ⟨w, ew, _⟩ := eval_of hs hv
+      obtain ⟨w, ew, _⟩ := eval_of hs.1 hv
       exact ⟨w, ew⟩
+  | decCall rt f args c ih =>
+    intro A out h
+    simp only [analyze, bind, Except.bind] at h
+    split at h
+    · cases h
+    · rename_i u hargs
+      split at h
+      · cases h
+      · rename_i ps rest hfind
+        split at h
+        · cases h
+        · rename_i u2 hlen
+          split at h
+          · cases h
+          · rename_i r hr
+            have inner := ih _ r hr
+            intro s hs
+            obtain ⟨vs, evs, hvl⟩ := argsOk_eval hs.1 hargs
+            obtain ⟨⟨body, hcode, hnd, hbody⟩, hrest, hshort⟩ := codeOk_find hs.2 hfind
+            have hpl : ps.length = vs.length := by
+              have := need_ok hlen
+              simp only [beq_iff_eq] at this
+              omega
+            have hlc : lookupCode s.code f vs = some (body, fun k => (ps.zip vs).lookup k) := by
+              simp [lookupCode, hcode, hnd, hpl]
+            have bodySafe := ihn rest.length (by omega) rest (Nat.le_refl _) body
+              (entryState ps) none hbody
+            rw [PancakeSem]
+            simp only [evs, hlc]
+            split
+            · rfl
+            · rename_i hc0
+              have k := bodySafe { decClock s with locals := fun k => (ps.zip vs).lookup k }
+                ⟨holds_entry hs.1 hpl, hrest⟩
+              have hsame := sem_same o _ body
+                { decClock s with locals := fun k => (ps.zip vs).lookup k } (Nat.le_refl _)
+              revert k hsame
+              cases PancakeSem o body
+                  { decClock s with locals := fun k => (ps.zip vs).lookup k } with
+              | mk rb tb =>
+                intro k hsame
+                simp only [clampClock]
+                cases rb with
+                | none =>
+                  obtain ⟨B, hB, _⟩ := k
+                  cases hB
+                | some res =>
+                  cases res with
+                  | return_ v =>
+                    obtain ⟨hm, hbase, _, hcd⟩ := hsame
+                    refine call_cont inner hs hm hbase hcd rfl fun B hB => ?_
+                    subst hB
+                    simp only at h
+                    split at h
+                    · cases h
+                    · rename_i u3 hn
+                      cases h
+                      exact ⟨need_ok hn, rfl⟩
+                  | timeout => rfl
+                  | finalFFI ev => rfl
+                  | error => simp [Ok, Entry.ends] at k
+                  | break_ => simp [Ok, Entry.ends] at k
+                  | continue_ => simp [Ok, Entry.ends] at k
+
+/-- With no functions to call, as `analyze_safe`, of the states alone. -/
+theorem analyze_safe0 (o : Oracle σ) (size : Nat) (p : PancakeProg) (A : AState)
+    (out : Option AState) (h : analyze size [] A p = .ok out) :
+    Safe o (Holds size A) p (Post size out) := fun s hs => by
+  have k := analyze_safe o size 0 [] (Nat.le_refl _) p A out h s ⟨hs, trivial⟩
+  revert k
+  cases PancakeSem o p s with
+  | mk r t =>
+    cases r with
+    | none => exact fun ⟨B, hB, hsB⟩ => ⟨B, hB, hsB.1⟩
+    | some _ => exact id
 
 /-- The analysis of a whole `main`, accepted: from every state whose heap covers the bytes from
 `floor` to `size` after `@base`, the run never finishes normally and never errs. -/
@@ -1651,7 +2016,8 @@ theorem check_safe (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check siz
   · rename_i r hr
     cases r with
     | none =>
-      refine Safe.conseq (analyze_safe o size p _ none hr) (fun s hc => ⟨hc, ?_, ?_⟩) ?_
+      refine Safe.conseq (analyze_safe o size 0 [] (Nat.le_refl _) p _ none hr)
+        (fun s hc => ⟨⟨hc, ?_, ?_⟩, trivial⟩) ?_
       · intro x v hv
         cases hv
       · exact holds_empty_cells s
@@ -1670,6 +2036,57 @@ that leaves out the bytes below `floor` too. -/
 theorem never_fails (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check size p = .ok ())
     (s : PancakeState σ) (hc : Covers size s.memaddrs s.baseAddr) : ¬ Entry.Fails o p s :=
   Safe.not_fails (check_safe o h) (fun _ => hc)
+
+theorem checkFns_codeOk {size : Nat} {code : String → Option (List String × PancakeProg)} :
+    ∀ {env env' : Env} {fns : List (String × List String × PancakeProg)},
+      checkFns size env fns = .ok env' → CodeOk size code env →
+      (∀ f ps body, (f, ps, body) ∈ fns → code f = some (ps, body)) → CodeOk size code env'
+  | env, env', [], h, hc, _ => by
+    simp only [checkFns] at h
+    cases h
+    exact hc
+  | env, env', (f, ps, body) :: fns, h, hc, hcode => by
+    simp only [checkFns, bind, Except.bind] at h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · split at h
+        · cases h
+        · rename_i u hnd
+          split at h
+          · cases h
+          · rename_i r hr
+            split at h
+            · exact checkFns_codeOk h
+                ⟨⟨body, hcode f ps body (by simp), by simpa using need_ok hnd, hr⟩, hc⟩
+                fun g qs b hm => hcode g qs b (List.mem_cons_of_mem _ hm)
+            · cases h
+
+/-- **No run of a program the analysis accepts fails**: its `main`, from any heap that covers the
+bytes from `floor` to `size` after `@base` and code that holds its functions, whatever the
+external world answers and whatever the clock. -/
+theorem program_never_fails (o : Oracle σ) {size : Nat}
+    {fns : List (String × List String × PancakeProg)} {p : PancakeProg}
+    (h : checkProgram size fns p = .ok ()) (s : PancakeState σ)
+    (hc : Covers size s.memaddrs s.baseAddr)
+    (hcode : ∀ f ps body, (f, ps, body) ∈ fns → s.code f = some (ps, body)) :
+    ¬ Entry.Fails o p s := by
+  simp only [checkProgram, bind, Except.bind] at h
+  split at h
+  · cases h
+  · rename_i env henv
+    split at h
+    · cases h
+    · rename_i r hr
+      cases r with
+      | some B => cases h
+      | none =>
+        have hok : CodeOk size s.code env := checkFns_codeOk henv trivial hcode
+        refine Safe.not_fails (P := HoldsE size env ⟨[], []⟩)
+          (Safe.conseq (analyze_safe o size env.length env (Nat.le_refl _) p _ none hr)
+            (fun _ h => h) fun _ ⟨B, hB, _⟩ => by cases hB) fun _ => ?_
+        exact ⟨⟨hc, fun _ _ hv => by simp [lookup] at hv, holds_empty_cells _⟩, hok⟩
 
 /-! ## The premise -/
 
@@ -1721,5 +2138,20 @@ theorem holds_state_witness : Holds 128 ⟨[], []⟩ heapState :=
     holds_empty_cells _⟩
 
 theorem post_witness : Post 128 (some ⟨[], []⟩) heapState := ⟨_, rfl, holds_state_witness⟩
+
+/-- Code holding a function that returns at once. -/
+def returnsCode (g : String) : Option (List String × PancakeProg) :=
+  if g = "f" then some (["k"], .ret (.var "k")) else none
+
+theorem codeOk_witness : CodeOk 128 returnsCode [("f", ["k"])] :=
+  ⟨⟨_, rfl, by decide, rfl⟩, trivial⟩
+
+theorem holdsE_witness :
+    HoldsE 128 [("f", ["k"])] ⟨[], []⟩ { heapState with code := returnsCode } :=
+  ⟨holds_state_witness, codeOk_witness⟩
+
+theorem postE_witness :
+    PostE 128 [("f", ["k"])] (some ⟨[], []⟩) { heapState with code := returnsCode } :=
+  ⟨_, rfl, holdsE_witness⟩
 
 end DN.Compiler.Analyzer

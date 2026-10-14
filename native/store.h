@@ -4,6 +4,7 @@
  * start; and which clients may post. A store refused at start ends the host with status 4. */
 #ifndef DN_STORE_H
 #define DN_STORE_H
+#include <stdint.h>
 #include <sys/socket.h>
 
 /* Take a store option; 0 if `name` is none. */
@@ -22,6 +23,10 @@ int dn_store_spool(void);
 /* Leave the mark of a failed sync, of this boot, in the spool and the run directory; the host ends if
  * it is left in neither. Safe from any thread. */
 void dn_store_mark_failed(void);
+
+/* The run stopped by recovery at start, `stop` its code: why, from recovery's area `rec`, or the
+ * class of the file job that failed; the host ends with status 4. */
+__attribute__((noreturn)) void dn_store_recovery_stopped(uint64_t stop, const unsigned char *rec, uint64_t job_class);
 
 /* Whether a client at `peer` may post: never without a spool. */
 int dn_store_may_post(const struct sockaddr_storage *peer);

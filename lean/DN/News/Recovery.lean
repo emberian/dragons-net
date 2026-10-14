@@ -6,7 +6,8 @@ import DN.News.Journal
 
 How the store recovers at start, as docs/decisions/0005-article-store.md ("On disk") fixes it. After
 syncing the journal and the directory it reads each name with its file's octets and finds either the
-corruption that keeps the store from starting, or the store it starts with — the journal's key, its
+corruption that keeps the store from starting, more articles than the store holds (`capacity`; not
+corruption: a build with more room wrote them), or the store it starts with — the journal's key, its
 articles as the commits give them, the files set aside, the next sequence number, where the journal
 ends — and its actions: a torn tail's octets kept under a number of their own and the directory
 synced; the tail truncated and the truncation synced; then names tidied — temporary files removed,
@@ -44,7 +45,11 @@ structure Config where
   /-- sixteen random octets, the key of a journal recovery creates -/
   key : Bytes
 
-/-- Why the store is corrupt. -/
+/-- The most articles the store holds (docs/decisions/0005-article-store.md, "Bounds"): recovery
+counts commits against it; the program, accepting, the files set aside too. -/
+def capacity : Nat := 4096
+
+/-- Why the store does not start: it is corrupt, past a bound, or given a bad key. -/
 inductive Fault
   /-- a name of no shape the store gives -/
   | badName (name : Bytes)
@@ -66,6 +71,8 @@ inductive Fault
   | exhausted
   /-- a key for a new journal that is not of sixteen octets -/
   | badKey
+  /-- more articles than `capacity`, as many as this -/
+  | tooMany (count : Nat)
   deriving DecidableEq
 
 /-- What recovery does to the directory. -/
@@ -183,14 +190,16 @@ def asideOf (recorded : List Bytes) (names : List Name) (torn : Bool) : Name →
   | .quarantine s | .tail s => some s
   | _ => none
 
-/-- Recovery once the journal's format and commits are read: the rules across records, the files
-the records name, and what is done to the directory, given where a torn tail starts, if any. -/
+/-- Recovery once the journal's format and commits are read: the number of articles, the rules
+across records, the files the records name, and what is done to the directory, given where a torn
+tail starts, if any. -/
 def recoverRecords (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
     (cs : List Commit) (cut : Option Nat) : Except Fault (Store × List Action) :=
-  match seqTwice? cs, notAbove? [] cs, unknownGroup? cfg cs, fileFault? img cs with
+  if capacity < cs.length then .error (.tooMany cs.length) else
+  match seqTwice? cs, unknownGroup? cfg cs, notAbove? [] cs, fileFault? img cs with
   | some s, _, _, _ => .error (.seqTwice s)
-  | none, some (g, n), _, _ => .error (.numberNotAbove g n)
-  | none, none, some g, _ => .error (.unknownGroup g)
+  | none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
   | none, none, none, some f => .error f
   | none, none, none, none =>
     let next0 := nextSeq cs names
@@ -423,11 +432,13 @@ theorem recoverRecords_ok (cfg : Config) (img : Image) (names : List Name) (cont
       st.next < 2 ^ 64 ∧ st.journalEnd = cut.getD content.length := by
   unfold recoverRecords at h
   split at h
+  · cases h
+  split at h
   · simp at h
   · simp at h
   · simp at h
   · simp at h
-  · rename_i h1 h2 h3 h4
+  · rename_i h1 h3 h2 h4
     dsimp only at h
     by_cases hlt : 2 ^ 64 ≤ (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names)
     · rw [if_pos hlt] at h
@@ -497,6 +508,8 @@ theorem recoverRecords_ops (cfg : Config) (img : Image) (names : List Name) (con
       (if (names.filterMap (tidyName (cs.map (finalName ·.seq)) names cut.isSome)).isEmpty then []
         else [.syncDir]) := by
   unfold recoverRecords at h
+  split at h
+  · cases h
   split at h
   · simp at h
   · simp at h
@@ -776,6 +789,8 @@ theorem recoverRecords_planned (cfg : Config) (img : Image) (names : List Name)
     ∀ a ∈ ops, Planned content cs names cut (nextSeq cs names) a := by
   unfold recoverRecords at h
   split at h
+  · cases h
+  split at h
   · simp at h
   · simp at h
   · simp at h
@@ -956,13 +971,25 @@ theorem partly_keeps (img : Image) (content : Bytes) (cs : List Commit) (names :
         (left_keeps img content cs names cut next0 hnext hnames J J1 a
           (ha a (List.mem_cons_self ..)) hk hl) hp'
 
+/-- Recovery gives a store only of `capacity` articles or fewer. -/
+theorem recoverRecords_fits (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
+    (cs : List Commit) (cut : Option Nat) (st : Store) (ops : List Action)
+    (h : recoverRecords cfg img names content key cs cut = .ok (st, ops)) :
+    cs.length ≤ capacity := by
+  unfold recoverRecords at h
+  split at h
+  · cases h
+  · omega
+
 theorem recoverRecords_of (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
-    (cs : List Commit) (cut : Option Nat) (h1 : seqTwice? cs = none) (h2 : notAbove? [] cs = none)
+    (cs : List Commit) (cut : Option Nat) (h0 : cs.length ≤ capacity)
+    (h1 : seqTwice? cs = none) (h2 : notAbove? [] cs = none)
     (h3 : unknownGroup? cfg cs = none) (h4 : fileFault? img cs = none)
     (hn : (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names) < 2 ^ 64) :
     ∃ st ops, recoverRecords cfg img names content key cs cut = .ok (st, ops) ∧ st.articles = cs ∧
       st.key = key := by
   unfold recoverRecords
+  rw [if_neg (by omega)]
   simp only [h1, h2, h3, h4]
   rw [if_neg (by omega)]
   exact ⟨_, _, rfl, rfl, rfl⟩
@@ -995,7 +1022,7 @@ theorem recover_new (cfg : Config) (hkey : cfg.key.length = keyLength) (k : Byte
     (by intro p hp; simp only [List.mem_singleton] at hp; subst hp
         rw [show journalName = Name.journal.bytes from rfl, parseName_bytes _ rfl]; rfl)
     (by simp) hs (by simp)]
-  exact recoverRecords_of cfg _ _ _ _ [] none rfl rfl rfl rfl
+  exact recoverRecords_of cfg _ _ _ _ [] none (Nat.zero_le _) rfl rfl rfl rfl
     (by simp [nextSeq, List.filterMap]; decide)
 
 theorem parse_journal : parseName journalName = some .journal := by
@@ -1085,6 +1112,7 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
         simpa [apply, setName] using h'
   · -- a journal with records
     obtain ⟨h1, h2, h3, h4, hkeyst, harts, hnext, hlt, -⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+    have h0 := recoverRecords_fits _ _ _ _ _ _ _ _ _ hr
     have h3' : unknownGroup? cfg' (commitsOf rest) = none := by
       rw [← h3]; simp [unknownGroup?, hgroups]
     have hplan := recoverRecords_planned _ _ _ _ _ _ _ _ _ hr
@@ -1092,7 +1120,7 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
     have hsc : scan content = ⟨.format key :: rest, e⟩ := by rw [← hrs, ← he]
     rw [he] at hcor hnext hplan
     generalize hnamesdef : img.filterMap (parseName ·.1) = names at hnext hplan
-    generalize hcsdef : commitsOf rest = cs at h1 h2 h3 h3' h4 harts hnext hplan
+    generalize hcsdef : commitsOf rest = cs at h0 h1 h2 h3 h3' h4 harts hnext hplan
     generalize hcutdef : cutOf e = cut at hnext hplan
     have hmem : ∀ n, n ∈ names ↔ ∃ q ∈ img, parseName q.1 = some n := by
       intro n; rw [← hnamesdef]; exact mem_names img n
@@ -1137,7 +1165,7 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
           (.create cfg.key ∉ ops → st'.key = st.key) := by
       intro content' e' cut' hj' hs' hc' hcut' hn'
       rw [recover_of cfg' hkey' img' content' key rest e' hall' hj' hs' hc', hcut', hcsdef]
-      obtain ⟨st', ops', h', ha, hk⟩ := recoverRecords_of cfg' img' _ content' key cs cut' h1 h2
+      obtain ⟨st', ops', h', ha, hk⟩ := recoverRecords_of cfg' img' _ content' key cs cut' h0 h1 h2
         h3' h4' hn'
       exact ⟨st', ops', h', by rw [ha, harts], fun _ => by rw [hk, hkeyst]⟩
     rcases k2 with hj' | ⟨x, hx, hj'⟩
@@ -1660,5 +1688,16 @@ def regression_911 : Bool :=
   let img := sampleImage [] ++ [(tailName 9, []), (finalName 20, [1])]
   (actionsOf (recover (cfgOf ["local.test"]) img)).any fun ops =>
     ops.contains (.rename (finalName 4) (quarantineName 4)) && ops.contains (.remove (finalName 20))
+
+/-- More articles than the store holds keep it from starting, before the rules across them; as many
+as it holds go on to the rules. -/
+def regression_912 : Bool :=
+  let cs (k : Nat) := List.replicate k (commitOf 1 1 3)
+  (match recoverRecords (cfgOf ["local.test"]) [] [] [] sampleKey (cs (capacity + 1)) none with
+    | .error (.tooMany n) => n == capacity + 1
+    | _ => false) &&
+    match recoverRecords (cfgOf ["local.test"]) [] [] [] sampleKey (cs capacity) none with
+    | .error (.seqTwice 1) => true
+    | _ => false
 
 end DN.News.Recovery

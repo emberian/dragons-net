@@ -13,10 +13,11 @@ each; octets are hex, `-` for none:
                                IMAGE (`NAME=OCTETS;NAME=OCTETS`, in the order it lists them)
     apply IMAGE ACTIONS        the directory once ACTIONS are done and durable
 
-A finding reads as `corrupt WHY` or `ok KEY NEXT END ARTICLES ASIDE ACTIONS`: the journal's key, the
-next sequence number, where the journal ends, its commits (`C:…` as `dn-compiler journal-model`
-writes them, separated by `;`), the numbers of the files set aside (`N,N`) and the actions
-(`keep:NAME:OCTETS`, `rename:NAME:NAME`, `remove:NAME`, `sync-dir`, `cut:N`, `create:KEY`,
+A finding reads as `corrupt WHY`, why the store does not start — corruption, or `too-many`,
+`exhausted` or `bad-key`, which are not — or `ok KEY NEXT END ARTICLES ASIDE ACTIONS`: the journal's
+key, the next sequence number, where the journal ends, its commits (`C:…` as `dn-compiler
+journal-model` writes them, separated by `;`), the numbers of the files set aside (`N,N`) and the
+actions (`keep:NAME:OCTETS`, `rename:NAME:NAME`, `remove:NAME`, `sync-dir`, `cut:N`, `create:KEY`,
 separated by `;`). With a mutant, recovery follows its rules.
 -/
 
@@ -40,6 +41,7 @@ def faultText : Fault → String
   | .wrongSize s => s!"wrong-size {s}"
   | .exhausted => "exhausted"
   | .badKey => "bad-key"
+  | .tooMany n => s!"too-many {n}"
 
 def actionText : Action → String
   | .keep n o => s!"keep:{hex n}:{hex o}"

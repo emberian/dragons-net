@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import store_ref as J  # the path above is what makes it importable
 
 LIMIT = 2**64
+# The most articles the store holds (0005, "Bounds").
+CAPACITY = 4096
 NAME = re.compile(rb"([atqj])([0-9a-f]{16})")
 NUMBER = re.compile(r"[0-9]+")
 HEX = re.compile(r"(?:[0-9a-f]{2})*")
@@ -84,12 +86,18 @@ def fresh(key: bytes, actions: list[str]) -> Found:
 
 
 def check_records(commits: list[J.Commit], groups: list[bytes], files: dict[bytes, bytes]) -> None:
-    """The rules across records, each over the records in the journal's order before the next: a
-    number a later record repeats, an article number not above, a group the configuration lacks, a
-    file missing or of another size."""
+    """The rules across records, after more articles than the store holds, each over the records in
+    the journal's order before the next: a number a later record repeats, a group the configuration
+    lacks, an article number not above, a file missing or of another size."""
+    if len(commits) > CAPACITY:
+        raise Corrupt(f"too-many {len(commits)}")
     for at, c in enumerate(commits):
         if any(later[0] == c[0] for later in commits[at + 1:]):
             raise Corrupt(f"seq-twice {c[0]}")
+    for c in commits:
+        for name, _ in c[2]:
+            if name not in groups:
+                raise Corrupt(f"unknown-group {hexed(name)}")
     highest: dict[bytes, int] = {}
     for c in commits:
         for name, number in c[2]:
@@ -97,10 +105,6 @@ def check_records(commits: list[J.Commit], groups: list[bytes], files: dict[byte
                 raise Corrupt(f"number-not-above {hexed(name)} {number}")
         for name, number in c[2]:
             highest[name] = max(highest.get(name, 0), number)
-    for c in commits:
-        for name, _ in c[2]:
-            if name not in groups:
-                raise Corrupt(f"unknown-group {hexed(name)}")
     for c in commits:
         held = files.get(name_of("a", c[0]))
         if held is None:

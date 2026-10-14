@@ -6,6 +6,10 @@ import DN.Dsl.Example
 import DN.Server.Skeleton
 import DN.Server.Session
 import DN.News.FramerProg
+import DN.News.CrcProg
+import DN.News.SipProg
+import DN.News.ScanProg
+import DN.News.RecoverProg
 
 /-!
 # DN.Printed
@@ -27,9 +31,11 @@ structure Program where
   tree : Lean.Json
 
 /-- A function as the given gate prints it. -/
-def checkedBy (gate : PFun → Except Checked.Reason String) (f : PFun) : Except String Program := do
+def checkedBy (gate : PFun → Except Checked.Reason String) (f : PFun)
+    (helpers : List PFun := []) :
+    Except String Program := do
   let source ← (gate f).mapError Checked.Reason.message
-  return ⟨source, ← Canon.program f source⟩
+  return ⟨source, ← Canon.program f source helpers⟩
 
 /-- An exported function as the gate prints it. -/
 def checked (f : PFun) : Except String Program := checkedBy Checked.emit f
@@ -68,7 +74,10 @@ def framers : List (String × Except String Program) :=
 /-- The programs `emit-NAME` prints, by name. -/
 def named : List (String × Except String Program) :=
   [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
-   ("reply", reply), ("skeleton", skeleton), ("session", session)] ++ framers
+   ("reply", reply), ("skeleton", skeleton), ("session", session),
+   ("crc", checked News.CrcProg.crcKernel), ("sip", checked News.SipProg.sipKernel),
+   ("scan", checked News.ScanProg.scanKernel),
+   ("recover", checked News.RecoverProg.recoverKernel)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/
@@ -76,7 +85,9 @@ def all : Except String (List Program) := do
   let fixtures := Baseline.functions ++ [Baseline.control, Baseline.control2] ++
     Baseline.nestedFunctions
   return (← named.mapM (·.2)) ++
-    (← Checked.catalog.mapM fun (c : Checked.RuleCase) => checkedBy c.gate c.accepted) ++
+    (← Checked.catalog.mapM fun (c : Checked.RuleCase) =>
+      let fs := c.twinFunctions.getD c.functions
+      checkedBy (c.gate fs) c.accepted fs) ++
     (← fixtures.mapM word)
 
 end DN.Printed

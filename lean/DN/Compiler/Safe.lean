@@ -50,6 +50,7 @@ theorem eval_clock (s : PancakeState σ) (k : Nat) :
   | loadByte a ih => simp only [eval, ih]
   | loadWord a ih => simp only [eval, ih]
   | shiftR l r ihl ihr => simp only [eval, ihl, ihr]
+  | shiftL l r ihl ihr => simp only [eval, ihl, ihr]
 
 theorem skip (o : Oracle σ) (P : PancakeState σ → Prop) : Safe o P .skip P := by
   intro s hs
@@ -258,6 +259,126 @@ theorem not_fails {o : Oracle σ} {P : PancakeState σ → Prop} {body : Pancake
         | timeout => intro _; rfl
         | return_ v => intro _; rfl
         | finalFFI ev => intro _; rfl
+
+/-- What no statement changes: the memory's domain, `@base`, the byte order and the code. -/
+def Same (s t : PancakeState σ) : Prop :=
+  t.memaddrs = s.memaddrs ∧ t.baseAddr = s.baseAddr ∧ t.be = s.be ∧ t.code = s.code
+
+theorem same_refl (s : PancakeState σ) : Same s s := ⟨rfl, rfl, rfl, rfl⟩
+
+theorem same_trans {s t u : PancakeState σ} (h1 : Same s t) (h2 : Same t u) : Same s u :=
+  ⟨h2.1.trans h1.1, h2.2.1.trans h1.2.1, h2.2.2.1.trans h1.2.2.1, h2.2.2.2.trans h1.2.2.2⟩
+
+/-- **No run changes the memory's domain, `@base`, the byte order or the code.** -/
+theorem sem_same (o : Oracle σ) :
+    ∀ (n : Nat) (p : PancakeProg) (s : PancakeState σ), s.clock ≤ n →
+      Same s (PancakeSem o p s).2 := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ihn =>
+  intro p
+  induction p with
+  | skip => intro s _; rw [PancakeSem]; exact same_refl s
+  | dec v e c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · exact ih _ hc
+    · exact same_refl s
+  | assign v e =>
+    intro s _
+    rw [PancakeSem]
+    split <;> exact same_refl s
+  | store d e =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals exact same_refl s
+  | storeByte d e =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals exact same_refl s
+  | extCall name c cl a al =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals exact same_refl s
+  | seq c1 c2 ih1 ih2 =>
+    intro s hc
+    rw [PancakeSem]
+    have h1 := ih1 s hc
+    revert h1
+    cases PancakeSem o c1 s with
+    | mk r t =>
+      intro h1
+      simp only [clampClock]
+      have h1' : Same s { t with clock := min s.clock t.clock } := h1
+      cases r with
+      | none => exact same_trans h1' (ih2 _ (by simp only; omega))
+      | some res => exact h1'
+  | cond e c1 c2 ih1 ih2 =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · exact ih1 s hc
+      · exact ih2 s hc
+    · exact same_refl s
+  | while_ e c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · split
+        · exact same_refl s
+        · have hb := ihn (s.clock - 1) (by omega) c (decClock s) (by simp [decClock])
+          revert hb
+          cases PancakeSem o c (decClock s) with
+          | mk r t =>
+            intro hb
+            simp only [clampClock]
+            have hb' : Same s { t with clock := min (s.clock - 1) t.clock } := hb
+            have hw := ihn (s.clock - 1) (by omega) (.while_ e c)
+              { t with clock := min (s.clock - 1) t.clock } (by simp only; omega)
+            split
+            · exact same_trans hb' hw
+            · exact same_trans hb' hw
+            · exact hb'
+            · exact hb'
+      · exact same_refl s
+    · exact same_refl s
+  | ret e =>
+    intro s _
+    rw [PancakeSem]
+    split
+    · exact same_refl s
+    · exact same_refl s
+  | decCall rt f args c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · rename_i body params _
+        split
+        · exact same_refl s
+        · have hb := ihn (s.clock - 1) (by omega) body { decClock s with locals := params }
+            (by simp [decClock])
+          revert hb
+          cases PancakeSem o body { decClock s with locals := params } with
+          | mk r t =>
+            intro hb
+            simp only [clampClock]
+            have hb' : Same s { t with clock := min (s.clock - 1) t.clock } := hb
+            split
+            · exact same_trans hb'
+                (ihn (s.clock - 1) (by omega) c _ (by simp only; omega))
+            · unfold callEnded
+              split <;> exact hb'
+      · exact same_refl s
+    · exact same_refl s
+
+theorem same_witness : Same (σ := Unit) Entry.bare Entry.bare := same_refl _
 
 /-- The rules ask for assertions free of the clock, and one about a local is. -/
 theorem clockFree_witness : ClockFree (fun s : PancakeState Unit => s.locals "x" = some 1) :=

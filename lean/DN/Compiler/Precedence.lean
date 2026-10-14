@@ -20,10 +20,10 @@ namespace DN.Compiler.Precedence
 open Lean DN.Compiler.Syntax
 
 /-- Where an operand stands: the whole expression, an operand of a comparison, of `==`, the
-address after `lds 1` or `ld8`, an operand of `&`, the left of `>>>`, or an operand of `+`, `-`
-or `*`. -/
+address after `lds 1` or `ld8`, an operand of `|`, `^` or `&`, the left of a shift, or an operand
+of `+`, `-` or `*`. -/
 inductive Slot
-  | top | cmp | eq | lds | ld8 | and_ | shiftLeft | add | sub | mul
+  | top | cmp | eq | lds | ld8 | or_ | xor | and_ | shifted | add | sub | mul
   deriving DecidableEq
 
 inductive Side
@@ -32,7 +32,7 @@ inductive Side
 
 /-- The head of a printed expression, as far as the grammar's levels tell them apart. -/
 inductive Kind
-  | atom | add | sub | mul | and_ | lt | le | eq | lds | ld8 | shr
+  | atom | add | sub | mul | and_ | lt | le | eq | lds | ld8 | shr | xor | or_ | shl
   deriving DecidableEq
 
 def kind : PExpr → Kind
@@ -44,14 +44,19 @@ def kind : PExpr → Kind
   | .binop .lt _ _ => .lt
   | .binop .le _ _ => .le
   | .binop .eq _ _ => .eq
+  | .binop .xor _ _ => .xor
+  | .binop .or_ _ _ => .or_
   | .loadw _ _ => .lds
   | .loadb _ => .ld8
   | .shr _ _ => .shr
+  | .shl _ _ => .shl
 
 /-- Whether both pinned parsers read an operand of head `k`, printed bare in `slot` on `side`,
 as one operand there. A comparison operand is at `ELoadNT`, so a load may stand there but a
 second comparison may not; the address after `lds 1` is at `ELoadByteNT` and after `ld8` at
-`ELoad32NT`, so `lds 1 ld8 x` reads and `ld8 ld8 x` does not; `+` and `-` operands are at
+`ELoad32NT`, so `lds 1 ld8 x` reads and `ld8 ld8 x` does not; `|` operands are at `EXorNT`, `^`
+operands at `EAndNT`, `&` operands at `EShiftNT`, and the left of a shift at `EAddNT`, a chain of
+shifts reading as one; `+` and `-` operands are at
 `EMulNT` and `*` operands one level below `EMulNT` (`ENotNT` in the release, `EFieldNT` in the
 patched source), where of the printed heads only atoms stand. A chain of one associative
 operator reads as that chain, which the canonical form nests to the right. -/
@@ -60,10 +65,12 @@ def reads : Slot → Side → Kind → Bool
   | .top, _, _ => true
   | .cmp, _, k => !(k == .lt || k == .le || k == .eq)
   | .eq, _, k => k != .eq
-  | .lds, _, k => [Kind.add, .sub, .mul, .and_, .ld8, .shr].contains k
-  | .ld8, _, k => [Kind.add, .sub, .mul, .and_, .shr].contains k
-  | .and_, _, k => [Kind.add, .sub, .mul, .and_, .shr].contains k
-  | .shiftLeft, _, k => [Kind.add, .sub, .mul, .shr].contains k
+  | .lds, _, k => [Kind.add, .sub, .mul, .and_, .ld8, .shr, .shl, .xor, .or_].contains k
+  | .ld8, _, k => [Kind.add, .sub, .mul, .and_, .shr, .shl, .xor, .or_].contains k
+  | .or_, _, k => [Kind.add, .sub, .mul, .and_, .shr, .shl, .xor, .or_].contains k
+  | .xor, _, k => [Kind.add, .sub, .mul, .and_, .shr, .shl, .xor].contains k
+  | .and_, _, k => [Kind.add, .sub, .mul, .and_, .shr, .shl].contains k
+  | .shifted, _, k => [Kind.add, .sub, .mul, .shr, .shl].contains k
   | .add, .left, k => [Kind.add, .sub, .mul].contains k
   | .add, .right, k => [Kind.add, .mul].contains k
   | .sub, .left, k => [Kind.add, .sub, .mul].contains k
@@ -73,14 +80,14 @@ def reads : Slot → Side → Kind → Bool
 /-- Where the operands of a binary operator stand. -/
 def slotOf : POp → Slot
   | .add => .add | .sub => .sub | .mul => .mul | .and_ => .and_
-  | .lt => .cmp | .le => .cmp | .eq => .eq
+  | .lt => .cmp | .le => .cmp | .eq => .eq | .xor => .xor | .or_ => .or_
 
 /-! ## What the printer leaves bare -/
 
 /-- Whether `wrapOperand` leaves `child` without parentheses. -/
 def operandBare (parent : POp) : PExpr → Bool
   | .binop op _ _ => isAssoc parent && parent == op
-  | .loadw _ _ | .loadb _ | .shr _ _ => false
+  | .loadw _ _ | .loadb _ | .shr _ _ | .shl _ _ => false
   | _ => true
 
 /-- Whether `wrapAtom` leaves a load's address without parentheses. -/
@@ -116,13 +123,16 @@ theorem ppExpr_loadb (a : PExpr) :
     ppExpr (.loadb a) = "ld8 " ++ (if addressBare a then ppExpr a else "(" ++ ppExpr a ++ ")") := by
   simp only [ppExpr, wrapAtom_eq]
 
-/-- The left of `>>>` is always parenthesized, and the distance printed as it stands. -/
+/-- The left of a shift is always parenthesized, and the distance printed as it stands. -/
 theorem ppExpr_shr (l r : PExpr) : ppExpr (.shr l r) = "(" ++ ppExpr l ++ ") >>> " ++ ppExpr r := by
+  simp only [ppExpr]
+
+theorem ppExpr_shl (l r : PExpr) : ppExpr (.shl l r) = "(" ++ ppExpr l ++ ") << " ++ ppExpr r := by
   simp only [ppExpr]
 
 /-- Every operand the printer leaves bare, anywhere in `e`, stands where the parsers read it as
 one operand, and every shift distance is a literal, which prints as the bare number the grammar
-expects after `>>>` (the left of `>>>` is always parenthesized, `ppExpr_shr`). -/
+expects after a shift (the left of a shift is always parenthesized, `ppExpr_shr`, `ppExpr_shl`). -/
 def PrintedWell : PExpr → Prop
   | .binop op l r =>
     (operandBare op l = true → reads (slotOf op) .left (kind l) = true) ∧
@@ -130,7 +140,7 @@ def PrintedWell : PExpr → Prop
     PrintedWell l ∧ PrintedWell r
   | .loadw _ a => (addressBare a = true → reads .lds .left (kind a) = true) ∧ PrintedWell a
   | .loadb a => (addressBare a = true → reads .ld8 .left (kind a) = true) ∧ PrintedWell a
-  | .shr l r => (∃ k, r = .const k) ∧ PrintedWell l
+  | .shr l r | .shl l r => (∃ k, r = .const k) ∧ PrintedWell l
   | .const _ | .var _ | .base => True
 
 theorem operand_reads (op : POp) (side : Side) (child : PExpr) :
@@ -168,6 +178,15 @@ theorem printed_well {p : Checked.Profile} {scope : List String} :
         · simp [Checked.expression, hk] at h
       exact ⟨⟨k, rfl⟩, printed_well l hl⟩
     | _ => simp [Checked.expression] at h
+  | .shl l r, h => by
+    cases r with
+    | const k =>
+      have hl : Checked.expression p scope l = .ok () := by
+        by_cases hk : k < 64
+        · simpa [Checked.expression, hk] using h
+        · simp [Checked.expression, hk] at h
+      exact ⟨⟨k, rfl⟩, printed_well l hl⟩
+    | _ => simp [Checked.expression] at h
   | .const _, _ | .var _, _ | .base, _ => trivial
 
 /-! ## Every cell, for the parsers to be held to
@@ -178,14 +197,16 @@ that operand bare there, which makes it a cell `printed_well` relies on. -/
 
 def slots : List (Slot × Side) :=
   [(.top, .left), (.cmp, .left), (.cmp, .right), (.eq, .left), (.eq, .right), (.lds, .left),
-   (.ld8, .left), (.and_, .left), (.and_, .right), (.shiftLeft, .left), (.add, .left),
+   (.ld8, .left), (.or_, .left), (.or_, .right), (.xor, .left), (.xor, .right), (.and_, .left),
+   (.and_, .right), (.shifted, .left), (.add, .left),
    (.add, .right), (.sub, .left), (.sub, .right), (.mul, .left), (.mul, .right)]
 
 /-- A representative operand of each head, over the parameters `x` and `y`. -/
 def operands : List PExpr :=
   [v "x", n 7, .base, eAdd (v "x") (v "y"), eSub (v "x") (v "y"), eMul (v "x") (v "y"),
    eAnd (v "x") (v "y"), eLt (v "x") (v "y"), eLe (v "x") (v "y"), eEq (v "x") (v "y"),
-   .loadw 1 (v "x"), .loadb (v "x"), .shr (v "x") (n 2)]
+   .loadw 1 (v "x"), .loadb (v "x"), .shr (v "x") (n 2), eXor (v "x") (v "y"), eOr (v "x") (v "y"),
+   .shl (v "x") (n 2)]
 
 /-- `child`, printed bare, in its place, the expression that placement is meant to be, and
 whether the printer leaves `child` bare there. -/
@@ -200,15 +221,18 @@ def placed (slot : Slot) (side : Side) (child : PExpr) : String × PExpr × Bool
   | .eq => pair .eq
   | .lds => ("lds 1 " ++ c, .loadw 1 child, addressBare child)
   | .ld8 => ("ld8 " ++ c, .loadb child, addressBare child)
+  | .or_ => pair .or_
+  | .xor => pair .xor
   | .and_ => pair .and_
-  | .shiftLeft => (c ++ " >>> 3", .shr child (n 3), false)
+  | .shifted => (c ++ " >>> 3", .shr child (n 3), false)
   | .add => pair .add
   | .sub => pair .sub
   | .mul => pair .mul
 
 def Slot.label : Slot → String
-  | .top => "top" | .cmp => "cmp" | .eq => "eq" | .lds => "lds" | .ld8 => "ld8" | .and_ => "and"
-  | .shiftLeft => "shift-left" | .add => "add" | .sub => "sub" | .mul => "mul"
+  | .top => "top" | .cmp => "cmp" | .eq => "eq" | .lds => "lds" | .ld8 => "ld8" | .or_ => "or"
+  | .xor => "xor" | .and_ => "and" | .shifted => "shifted" | .add => "add" | .sub => "sub"
+  | .mul => "mul"
 
 def Side.label : Side → String
   | .left => "left" | .right => "right"

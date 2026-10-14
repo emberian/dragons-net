@@ -544,15 +544,11 @@ def check() -> Report:
     most = depth()
     measured = {"cases": f"{len(cases):,}", "defects planted in the reference's grammar": f"{len(DEFECTS):,}",
                 "mutants of the interpreter": f"{len(MUTANTS):,}", "examples the RFCs print": f"{len(expected):,}"}
-    baseline = (lanes.ROOT / "docs/baseline.md").read_text()
-    assurance = (lanes.ROOT / "docs/assurance.md").read_text()
-    stated = lanes.section(baseline, "\n| Header field grammar |", "\n|") + lanes.section(
-        baseline, "\n### Header field grammar\n", "\n### ")
-    wrong = lanes.misstated(stated, measured)
-    wrong += lanes.misstated(lanes.section(assurance, "\n| Header field grammar (", "\n|"),
-                             {k: v for k, v in measured.items() if k != "examples the RFCs print"})
-    if wrong:
-        raise LaneError(f"the documents state otherwise than measured: {wrong}")
+    lanes.require_stated([
+        ("docs/baseline.md", [("\n| Header field grammar |", "\n|"), ("\n### Header field grammar\n", "\n### ")],
+         measured),
+        ("docs/assurance.md", [("\n| Header field grammar (", "\n|")],
+         {k: v for k, v in measured.items() if k != "examples the RFCs print"})])
     lanes.require_quoted({"docs/baseline.md": [f"refused, {len(refusals)} in all", f"{most} for this grammar"]})
     return Report("checked", None, [GRAMMAR, REFERENCE, REQUIREMENTS], {
         "fields": len(G.FIELDS) + 1, "grammar_rules": len(grammar()), "cases": len(cases),

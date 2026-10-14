@@ -2,9 +2,11 @@
  * File jobs; see jobs.h. A job is checked when it is taken, inside dn_emit, and copied out of the
  * heap with the bytes it writes; a worker takes it from a queue and runs it without the lock, on
  * files no other job in flight may name; the bytes it reads go back into the heap inside dn_next.
- * Names are made from a kind and a number as DN.News.Journal makes them, relative to the spool. A
- * signal's interruption is retried and never reported; a short write is written on, and one that
- * makes no progress fails as no space; a short read is reported as it is. A failed sync, or close,
+ * Names are made from a kind and a number as DN.News.Journal makes them, relative to the spool. The
+ * directory's names are read when it is opened and listed from that reading, whatever jobs do to the
+ * directory after: POSIX leaves a name added or removed during a reading unspecified. A signal's
+ * interruption is retried and never reported; a short write is written on, and one that makes no
+ * progress fails as no space; a short read is reported as it is. A failed sync, or close,
  * leaves the mark of store.c before the program learns of it. The test build fails each operation
  * at a point of its name (faults.h); `dn/write-short` shortens a write to the number given, and
  * `dn/sync-slow` delays a sync by that many milliseconds. */
@@ -19,6 +21,7 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -38,9 +41,9 @@ struct job {
 };
 
 struct file {
-    int fd, open, busy, reserved;
-    DIR *dir;         /* a directory opened to list it */
-    uint64_t gen;
+    int fd, open, busy, reserved, listing;
+    unsigned char *names;   /* a listing's names, each a length octet and its bytes */
+    uint64_t size, count, gen;
 };
 
 static struct job jobs[JOBS];
@@ -129,9 +132,11 @@ static void take(int k, const unsigned char *slot) {
                              op->place, op->gen);
             if (f->busy && f->busy != k + 1)
                 dn_violation("dn_emit: job %d names place %" PRIu64 ", which a job in flight names", k, op->place);
-            if ((op->code == DN_SESSION_OP_LIST) != (f->dir != NULL) && op->code != DN_SESSION_OP_CLOSE)
+            if ((op->code == DN_SESSION_OP_LIST) != f->listing && op->code != DN_SESSION_OP_CLOSE)
                 dn_violation("dn_emit: job %d, operation %" PRIu64 " on place %" PRIu64 " of the other kind", k, i,
                              op->place);
+            if (op->code == DN_SESSION_OP_LIST && op->offset > f->count)
+                dn_violation("dn_emit: job %d lists from name %" PRIu64 " of %" PRIu64, k, op->offset, f->count);
             f->busy = k + 1;
             if (op->code == DN_SESSION_OP_CLOSE) closed[op->place] = 1;
         }
@@ -182,32 +187,60 @@ static int write_all(int fd, const unsigned char *p, uint64_t n, uint64_t offset
     return 0;
 }
 
-/* A page of the directory's names, each a length octet and its bytes, without `.` and `..`. */
-static int list(DIR *dir, unsigned char *page, uint64_t room, uint64_t result[2]) {
-    uint64_t used = 0, count = 0;
-    if (DN_FAULT("dn/list")) return -1;
+/* The names of the directory `fd` opens, without `.` and `..`, into `f`; the descriptor is closed. */
+static int read_names(int fd, struct file *f) {
+    DIR *dir = fdopendir(fd);
+    if (!dir) {
+        int error = errno;
+        close(fd);
+        errno = error;
+        return -1;
+    }
+    uint64_t room = 0;
     for (;;) {
-        long at = telldir(dir);
         errno = 0;
-        struct dirent *e = readdir(dir);
-        if (!e) {
-            if (errno) return -1;
-            break;
-        }
+        struct dirent *e = DN_FAULT("dn/read-dir") ? NULL : readdir(dir);
+        if (!e) break;
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         size_t len = strlen(e->d_name);
-        if (len > 255 || 1 + len > room - used) {
-            seekdir(dir, at);
-            if (!count) {
-                errno = ENAMETOOLONG;
-                return -1;
-            }
+        if (len > 255) {
+            errno = ENAMETOOLONG;
             break;
         }
-        page[used] = (unsigned char)len;
-        memcpy(page + used + 1, e->d_name, len);
-        used += 1 + len;
+        if (f->size + 1 + len > room) {
+            room = 2 * room + 4096;
+            unsigned char *more = realloc(f->names, room);
+            if (!more) break;
+            f->names = more;
+        }
+        f->names[f->size] = (unsigned char)len;
+        memcpy(f->names + f->size + 1, e->d_name, len);
+        f->size += 1 + len;
+        ++f->count;
+    }
+    int error = errno;
+    closedir(dir);   /* read only: nothing to lose */
+    if (!error) return 0;
+    free(f->names);
+    errno = error;
+    return -1;
+}
+
+/* A page of the names of listing `f` from the `from`-th on, each a length octet and its bytes. */
+static int list(const struct file *f, uint64_t from, unsigned char *page, uint64_t room, uint64_t result[2]) {
+    uint64_t at = 0, used = 0, count = 0;
+    if (DN_FAULT("dn/list")) return -1;
+    for (uint64_t k = 0; k < from; ++k) at += 1 + (uint64_t)f->names[at];
+    while (at < f->size && 1 + (uint64_t)f->names[at] <= room - used) {
+        uint64_t n = 1 + (uint64_t)f->names[at];
+        memcpy(page + used, f->names + at, n);
+        used += n;
+        at += n;
         ++count;
+    }
+    if (at < f->size && !count) {
+        errno = ENAMETOOLONG;
+        return -1;
     }
     result[0] = count;
     result[1] = used;
@@ -235,25 +268,23 @@ static int run(struct job *j, uint64_t i) {
     case DN_SESSION_OP_CREATE:
     case DN_SESSION_OP_OPEN:
     case DN_SESSION_OP_OPEN_DIR: {
-        DIR *dir = NULL;
+        struct file listing = {.fd = -1};
         if (op->code == DN_SESSION_OP_OPEN_DIR) {
             fd = RETRIED(DN_FAULT("dn/open-dir") ? -1 : openat(spool, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-            if (fd >= 0 && !(dir = fdopendir(fd))) {
-                int error = errno;
-                close(fd);
-                errno = error;
-                fd = -1;
-            }
+            if (fd < 0 || read_names(fd, &listing)) return -1;
+            listing.listing = 1;
         } else {
             name_of(op->name, op->number, name);
             int flags = op->code == DN_SESSION_OP_CREATE ? O_RDWR | O_CREAT | O_EXCL : O_RDWR;
             fd = RETRIED(DN_FAULT(op->code == DN_SESSION_OP_CREATE ? "dn/create" : "dn/open")
                              ? -1 : openat(spool, name, flags | O_CLOEXEC | O_NOFOLLOW, 0644));
         }
-        if (fd < 0) return -1;
+        if (fd < 0 && !listing.listing) return -1;
         int p = j->place[i];
         pthread_mutex_lock(&lock);
-        files[p] = (struct file){.fd = fd, .open = 1, .busy = (int)(j - jobs) + 1, .dir = dir, .gen = files[p].gen};
+        files[p] = (struct file){.fd = listing.listing ? -1 : fd, .open = 1, .busy = (int)(j - jobs) + 1,
+                                 .listing = listing.listing, .names = listing.names, .size = listing.size,
+                                 .count = listing.count, .gen = files[p].gen};
         result[0] = (uint64_t)p;
         result[1] = files[p].gen;
         pthread_mutex_unlock(&lock);
@@ -277,7 +308,7 @@ static int run(struct job *j, uint64_t i) {
     case DN_SESSION_OP_SYNC: return synced("dn/sync", f->fd, fsync);
     case DN_SESSION_OP_TRUNCATE: return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
     case DN_SESSION_OP_SYNC_DIR: return synced("dn/sync-dir", spool, fsync);
-    case DN_SESSION_OP_LIST: return list(f->dir, j->data + op->at, op->length, result);
+    case DN_SESSION_OP_LIST: return list(f, op->offset, j->data + op->at, op->length, result);
     case DN_SESSION_OP_RENAME:
         name_of(op->name, op->number, name);
         name_of(op->to_name, op->to_number, to);
@@ -286,9 +317,10 @@ static int run(struct job *j, uint64_t i) {
         name_of(op->name, op->number, name);
         return RETRIED(DN_FAULT("dn/remove") ? -1 : unlinkat(spool, name, 0));
     case DN_SESSION_OP_CLOSE: {
-        /* Never retried: the descriptor is gone whatever close says. */
-        int r = f->dir ? closedir(f->dir) : close(f->fd);
-        if (DN_FAULT("dn/close")) r = -1;
+        /* Never retried: the descriptor is gone whatever close says. A listing holds none. */
+        int r = f->listing ? 0 : close(f->fd);
+        free(f->names);
+        if (!f->listing && DN_FAULT("dn/close")) r = -1;
         pthread_mutex_lock(&lock);
         *f = (struct file){.fd = -1, .gen = f->gen + 1};
         pthread_mutex_unlock(&lock);

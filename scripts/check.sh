@@ -49,8 +49,11 @@ main() {
   fi
   case "${1:-all}" in
     guard) ;;
-    build | proofs | tests) "$1" ;;
-    all) build; proofs; tests ;;
+    build) build ;;
+    proofs) once check-proofs bash scripts/check.sh proofs-now ;;
+    proofs-now) proofs ;;
+    tests) tests ;;
+    all) build; once check-proofs bash scripts/check.sh proofs-now; tests ;;
     *)
       echo 'usage: check.sh [guard | build | proofs | tests]' >&2
       exit 2
@@ -63,11 +66,20 @@ main() {
   fi
 }
 
+# A check that passed on the inputs it read is not run again (scripts/once.py); DN_ONCE=none runs it
+# untraced, as CI does where a job's inputs decide instead. The build always runs: Lake rebuilds only
+# what changed, and the outputs must match the sources.
+once() {
+  local name=$1
+  shift
+  if [[ ${DN_ONCE:-} == none ]]; then "$@"; else python3 scripts/once.py run "$name" -- "$@"; fi
+}
+
 # Source gate and build.
 build() {
   local before
   before=$(snapshot)
-  python3 scripts/check_structure.py
+  once check-gate python3 scripts/check_structure.py
   # --wfail: a warning fails the build. Lake replays a module's stored log, so
   # this holds on a warm cache as well as on a fresh checkout. The kernel's runs of the
   # safety analyses make most of its cost, which the log shows as it grows.
@@ -98,45 +110,55 @@ proofs() {
   "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
   mapfile -d '' -t args <build/proofs/export-list
   LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 220
+  "$lean" --run scripts/Audit.lean --regressions 252
 }
 
 # Tests that run the built code, and the Rust crates.
 tests() {
-  local before
+  local before module name
   before=$(checkers)
-  python3 -m unittest discover -s tests -v
-  cargo clippy --locked --workspace --all-targets -- -D warnings
+  # Each module of tests on its own, so that a change reruns only the modules that read it. The
+  # tracer's own test runs untraced, since a traced process cannot trace another.
+  for module in $(git ls-files --cached --others --exclude-standard 'tests/test_*.py'); do
+    module=$(basename "$module")
+    if [[ $module == test_once.py ]]; then
+      python3 -m unittest discover -s tests -p "$module" -v
+    else
+      name=${module%.py}
+      once "unit-${name//_/-}" python3 -m unittest discover -s tests -p "$module" -v
+    fi
+  done
+  once clippy cargo clippy --locked --workspace --all-targets -- -D warnings
   # The models are a second workspace, and both configurations have to lint:
   # the loom code paths are compiled only under the cfg.
-  cargo clippy --locked --manifest-path models/Cargo.toml --workspace --all-targets \
+  once clippy-models cargo clippy --locked --manifest-path models/Cargo.toml --workspace --all-targets \
     -- -D warnings
-  RUSTFLAGS='--cfg loom' cargo clippy --locked --manifest-path models/Cargo.toml \
+  once clippy-models-loom env RUSTFLAGS='--cfg loom' cargo clippy --locked --manifest-path models/Cargo.toml \
     --workspace --all-targets -- -D warnings
-  RUSTFLAGS='--cfg loom' cargo clippy --locked --workspace --all-targets -- -D warnings
-  cargo test --locked --workspace
-  python3 scripts/check_models.py
+  once clippy-loom env RUSTFLAGS='--cfg loom' cargo clippy --locked --workspace --all-targets -- -D warnings
+  once cargo-test cargo test --locked --workspace
+  once models python3 scripts/check_models.py
   # The states a run stops in, against an independent implementation of the same
   # clauses: the differential lanes compare computed values and never reach them.
-  python3 scripts/state_check.py
+  once states python3 scripts/state_check.py
   # The session model driven by a simulated host and judged by an independent reference.
-  python3 scripts/session_check.py
+  once session-model python3 scripts/session_check.py
   # The grammar of header fields, taken from the RFCs, against an independent ABNF library.
-  python3 scripts/abnf_check.py
+  once abnf python3 scripts/abnf_check.py
   # Which proto-articles a POST accepts and what it adds, against an independent reference.
-  python3 scripts/article_check.py
+  once article python3 scripts/article_check.py
   # The store's journal and the names of its files, against an independent reference.
-  python3 scripts/journal_check.py
+  once journal python3 scripts/journal_check.py
   # The file system and what a crash may leave of it, against an independent reference.
-  python3 scripts/fs_check.py
+  once fs python3 scripts/fs_check.py
   # How the store recovers when it starts, against an independent reference.
-  python3 scripts/store_check.py
+  once store python3 scripts/store_check.py
   # The store's program, every point of its runs held to what a crash may leave there.
-  python3 scripts/runs_check.py
+  once runs python3 scripts/runs_check.py
   # The points of failure the host's test build carries, held to what its tests take of libfiu.
-  python3 scripts/fiu_check.py
+  once fiu python3 scripts/fiu_check.py
   # The host's side of the store, with a stand-in for the program.
-  python3 scripts/host_check.py
+  once host python3 scripts/host_check.py
   # shellcheck disable=SC2310,SC2312 # a failed snapshot compares unequal, which refuses
   if [[ "$(checkers)" != "$before" ]]; then
     echo 'check: the scripts, workflows or gate tests changed while the tests ran' >&2

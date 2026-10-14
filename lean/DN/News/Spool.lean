@@ -256,9 +256,9 @@ structure View where
   files : Nat → Bytes
   next : Nat
 
-/-- The rules recovery checks across commits, kept. -/
+/-- The rules recovery checks across commits, kept, and no more of them than the store holds. -/
 def Rules (cfg : Config) (cs : List Commit) : Prop :=
-  seqTwice? cs = none ∧ notAbove? [] cs = none ∧ unknownGroup? cfg cs = none
+  seqTwice? cs = none ∧ notAbove? [] cs = none ∧ unknownGroup? cfg cs = none ∧ cs.length ≤ capacity
 
 /-- **The file of a commit in place**: its final name settled, holding a file all of whose octets
 are kept, the octets the store wrote for it, of the size and CRC-32C the commit gives. -/
@@ -311,7 +311,7 @@ theorem unknownGroup_mono (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) 
 
 theorem rules_mono (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) (cs : List Commit)
     (h : Rules cfg cs) : Rules cfg' cs :=
-  ⟨h.1, h.2.1, unknownGroup_mono cfg cfg' hg cs h.2.2⟩
+  ⟨h.1, h.2.1, unknownGroup_mono cfg cfg' hg cs h.2.2.1, h.2.2.2⟩
 
 /-- **A spool is one under any key, and with groups added.** -/
 theorem spool_config (cfg cfg' : Config) (hg : cfg.groups ⊆ cfg'.groups) (s : Fs) (v : View)
@@ -541,30 +541,9 @@ theorem recoverRecords_next (cfg : Config) (img : Image) (names : List Name) (co
     (cs : List Commit) (cut : Option Nat) (st : Store) (ops : List Action)
     (h : recoverRecords cfg img names content key cs cut = .ok (st, ops)) :
     st.next ≤ nextSeq cs names + 1 := by
-  revert h
-  unfold recoverRecords
-  split
-  · intro h; cases h
-  · intro h; cases h
-  · intro h; cases h
-  · intro h; cases h
-  · dsimp only
-    intro h
-    cases hcut : cut.isSome
-    · simp only [hcut, Bool.false_eq_true, ↓reduceIte] at h
-      split at h
-      · cases h
-      · simp only [Except.ok.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, _⟩ := h
-        dsimp only
-        omega
-    · simp only [hcut, ↓reduceIte] at h
-      split at h
-      · cases h
-      · simp only [Except.ok.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, _⟩ := h
-        dsimp only
-        omega
+  obtain ⟨_, _, _, _, _, _, hnext, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ h
+  rw [hnext]
+  split <;> omega
 
 theorem commitsOf_append (a b : List Record) : commitsOf (a ++ b) = commitsOf a ++ commitsOf b := by
   simp [commitsOf]
@@ -661,8 +640,8 @@ theorem crash_spool_found (cfg : Config) (hkey : cfg.key.length = keyLength) (s 
     have := h.room.1
     omega
   obtain ⟨st, ops, hrec, harts, hkey'⟩ := recoverRecords_of cfg (image t)
-    ((image t).filterMap (parseName ·.1)) d'.seen k (commitsOf rs') _ hrules.1.1 hrules.1.2.1
-    hrules.1.2.2 hfile (by have := h.room.2; split <;> omega)
+    ((image t).filterMap (parseName ·.1)) d'.seen k (commitsOf rs') _ hrules.1.2.2.2 hrules.1.1
+    hrules.1.2.1 hrules.1.2.2.1 hfile (by have := h.room.2; split <;> omega)
   refine ⟨st, ops, hrec, ⟨fun c hcm => ?_, fun c hcm => ?_⟩, ?_, harts, hkey',
     Nat.le_trans (recoverRecords_next _ _ _ _ _ _ _ _ _ hrec) (Nat.add_le_add_right hle 1)⟩
   · have := h.answered c hcm
@@ -695,7 +674,7 @@ theorem crash_spool_found (cfg : Config) (hkey : cfg.key.length = keyLength) (s 
       rw [← hk, ← hb] at this
       exact h.appended c this
 
-theorem rules_nil (cfg : Config) : Rules cfg (commitsOf []) := ⟨rfl, rfl, rfl⟩
+theorem rules_nil (cfg : Config) : Rules cfg (commitsOf []) := ⟨rfl, rfl, rfl, Nat.zero_le _⟩
 
 /-- **A crash of the spool that leaves the journal with no format**, alone: recovery makes it again,
 with no article, and the spool it leaves is one again. -/
@@ -1210,7 +1189,7 @@ theorem wFile_eq : wFile = ⟨body, body, body.length, [(0, body)], true⟩ := b
 theorem wRules (q : Nat) (hq : q = 1 ∨ q = 2) :
     Rules sampleConfig
       (commitsOf (wRecords ++ (if q = 1 then [] else [.commit (articleOf 2)]))) := by
-  rcases hq with rfl | rfl <;> exact ⟨by decide, by decide, by decide⟩
+  rcases hq with rfl | rfl <;> exact ⟨by decide, by decide, by decide, by decide⟩
 
 /-- The premise `Spool` can hold: of a journal with a run's start, the commit of an article answered
 and synced, and the commit of another appended after it and not synced, with both articles' files

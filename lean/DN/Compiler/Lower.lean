@@ -37,6 +37,8 @@ def lowerExp : PExpr → Option PancakeExp
       | .eq   => some (.cmp .equal a b)     -- `a == b` parses to `Cmp Equal a b`
       | .le   => some (.cmp .notLess b a)   -- `a <= b` parses to `Cmp NotLess b a` (parser SWAPS operands)
       | .sub  => some (.op .sub a b)        -- `a - b` parses to `Op Sub [a;b]`
+      | .xor  => some (.op .xor a b)        -- `a ^ b` parses to `Op Xor [a;b]`
+      | .or_  => some (.op .or_ a b)        -- `a | b` parses to `Op Or [a;b]`
     | _, _ => none
   | .loadw 1 a   =>
     match lowerExp a with
@@ -51,11 +53,22 @@ def lowerExp : PExpr → Option PancakeExp
     match lowerExp l, lowerExp r with
     | some l', some r' => some (.shiftR l' r')
     | _, _             => none
+  | .shl l r     =>
+    match lowerExp l, lowerExp r with
+    | some l', some r' => some (.shiftL l' r')
+    | _, _             => none
+
+/-- Lower the arguments of a call, each of which has to lower. -/
+def lowerArgs : List PExpr → Option (List PancakeExp)
+  | [] => some []
+  | e :: es =>
+    match lowerExp e, lowerArgs es with
+    | some e', some es' => some (e' :: es')
+    | _, _ => none
 
 mutual
-/-- Lower a single non-`dec` statement (the `dec` scoping is handled by
-`lowerStmtsFold`, which threads the continuation). Returns `none` on the
-function calls, which the semantics model does not cover. -/
+/-- Lower a single statement; the scope of a `dec` or of a call, which declares what it returns,
+is threaded by `lowerStmtsFold`. -/
 def lowerStmt1 : PStmt → Option PancakeProg
   | .dec n v    =>                          -- `dec` as a trailing stmt (unused by region)
     match lowerExp v with
@@ -78,7 +91,10 @@ def lowerStmt1 : PStmt → Option PancakeProg
     | some c', some cl', some a', some al' => some (.extCall name c' cl' a' al')
     | _, _, _, _                           => none
   | .ffi _ _ => none
-  | .call _ _ _ => none                     -- `var r = f(..)`: outside the modelled subset
+  | .call r f as =>                         -- `var r = f(..)` as a trailing statement
+    match lowerArgs as with
+    | some as' => some (.decCall r f as' .skip)
+    | none     => none
   | .ret v      =>
     match lowerExp v with
     | some v' => some (.ret v')
@@ -101,6 +117,10 @@ def lowerStmtsFold : List PStmt → Option PancakeProg
     match lowerExp v, lowerStmtsFold rest with
     | some v', some r' => some (.dec n v' r')
     | _, _             => none
+  | (.call r f as) :: rest =>
+    match lowerArgs as, lowerStmtsFold rest with
+    | some as', some r' => some (.decCall r f as' r')
+    | _, _              => none
   | s :: rest     =>
     match lowerStmt1 s, lowerStmtsFold rest with
     | some s', some r' => some (.seq s' r')
@@ -120,6 +140,7 @@ theorem lowers_cons {x : PStmt} {cx : PancakeProg} (hx : lowerStmt1 x = some cx)
   | cons y ys =>
     cases x with
     | dec nm e => simp [PStmt.isDec] at hnd
+    | call r f as => simp [PStmt.isDec] at hnd
     | _ => exact ⟨.seq cx crest, by simp [lowerStmtsFold, hx, hrest]⟩
 
 /-- Lower a whole emitter function (partial: `none` if any construct is outside

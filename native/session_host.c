@@ -21,7 +21,7 @@
  * Before the run the whole heap past its header is filled, so the program cannot lean on what it
  * did not write; on every call and when the run ends, the heap header, the heap before the first
  * area and the heap past the program's layout have to be as they were, and each array the program
- * hands over has to be its area of the layout. */
+ * hands over has to be its area of the layout; the word to listen has to be 0 or 1, and stay 1. */
 #include "session_calls.h"
 
 enum { MAX_LINE = 1 << 16 };
@@ -29,7 +29,7 @@ static const uint64_t FILL = UINT64_C(0x5A5A5A5A5A5A5A5A);
 
 static unsigned char revision[DN_SESSION_REV_MAX], source[DN_SESSION_SRC_MAX];
 static size_t revision_len, source_len;
-static int started, awaiting_emit;
+static int started, awaiting_emit, listening;
 static long sends;
 static char line[MAX_LINE];
 
@@ -100,6 +100,7 @@ static void batch(unsigned char *a) {
     char *word = strtok(text, " "), *now = strtok(NULL, " ");
     if (!word || strcmp(word, "turn") || !now || strtok(NULL, " ")) dn_harness("bad input: not a turn");
     dn_put_word(a + DN_SESSION_NEXT_CLOCK, number(now));
+    dn_put_word(a + DN_SESSION_NEXT_STORE, 0);
     dn_put_word(a + DN_SESSION_NEXT_REV_LEN, revision_len);
     memcpy(a + DN_SESSION_NEXT_REV, revision, smaller(revision_len, sizeof revision));
     dn_put_word(a + DN_SESSION_NEXT_SRC_LEN, source_len);
@@ -181,6 +182,10 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     }
     if (actions != count)
         dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, actions);
+    uint64_t listen_word = dn_word(a + DN_SESSION_EMIT_LISTEN);
+    if (listen_word > 1 || (listening && !listen_word))
+        dn_violation("dn_emit: listening %" PRIu64 ", having listened %d", listen_word, listening);
+    listening = (int)listen_word;
     printf("done\n");
     answer();
     char *text = next_line();

@@ -22,6 +22,7 @@ def exprJson : PExpr → Json
   | .loadw sh a => Json.arr #["lds", toJson sh, exprJson a]
   | .loadb a => Json.arr #["ld8", exprJson a]
   | .shr l r => Json.arr #[">>>", exprJson l, exprJson r]
+  | .shl l r => Json.arr #["<<", exprJson l, exprJson r]
 
 mutual
 def stmtJson : PStmt → Json
@@ -58,6 +59,7 @@ def exprOfJson : Nat → Json → Except String PExpr
     | [.str "lds", sh, a] => return .loadw (← sh.getNat?) (← exprOfJson fuel a)
     | [.str "ld8", a] => return .loadb (← exprOfJson fuel a)
     | [.str ">>>", l, r] => return .shr (← exprOfJson fuel l) (← exprOfJson fuel r)
+    | [.str "<<", l, r] => return .shl (← exprOfJson fuel l) (← exprOfJson fuel r)
     | [.str s, l, r] =>
       match opOfSym s with
       | some op => return .binop op (← exprOfJson fuel l) (← exprOfJson fuel r)

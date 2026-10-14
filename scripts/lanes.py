@@ -82,10 +82,12 @@ def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = 
             main_return: bool = True, timeout: int = 300) -> bytes:
     """What the Pancake compiler prints for `source`. A warning (a redeclared variable, say) leaves
     the exit status at zero, so any diagnostic fails; with `warnings` off, for a source whose
-    warnings are beside what is asked of it, only the status does, and nothing is silenced."""
+    warnings are beside what is asked of it, only the status does, and nothing is silenced. The
+    simple register allocator: the compiler's theorem holds for every allocator, and its default,
+    IRC, takes minutes on a function the size of the session's `main` with recovery embedded."""
     options = ["--explore"] if explore else []
     with source.open("rb") as inp:
-        done = subprocess.run([cake, "--pancake", *options, f"--main_return={str(main_return).lower()}"],
+        done = subprocess.run([cake, "--pancake", "--reg_alg=0", *options, f"--main_return={str(main_return).lower()}"],
                               stdin=inp, capture_output=True, timeout=timeout, check=False)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
@@ -226,13 +228,43 @@ def pinned_python(requirements: Path) -> Path:
     return venv / "bin/python"
 
 
+def unheld(requirement: dict[str, Any]) -> list[str]:
+    """What the documents do not say of a run's requirement: phrases each file has to carry
+    (`quoted`), and numbers sections have to state as measured (`stated`, as `misstated` reads)."""
+    wrong = []
+    for name, phrases in requirement.get("quoted", {}).items():
+        text = (ROOT / name).read_text()
+        wrong += [f"{name} does not say {phrase!r}" for phrase in phrases if phrase not in text]
+    for name, sections, measured in requirement.get("stated", []):
+        text = (ROOT / name).read_text()
+        stated = "".join(section(text, start, end) for start, end in sections)
+        wrong += [f"{name} states otherwise than measured: {w}" for w in misstated(stated, measured)]
+    return wrong
+
+
+def require(requirement: dict[str, Any]) -> None:
+    """Hold the documents to what this run measured. When `DN_DOCUMENTED` names a file, the
+    requirement is added to it instead, for `scripts/check_documents.py` to hold them to after the
+    run: then a change to the documents alone runs no lane again (`scripts/once.py`)."""
+    later = os.environ.get("DN_DOCUMENTED")
+    if later:
+        with Path(later).open("a", encoding="utf-8") as f:
+            f.write(json.dumps(requirement) + "\n")
+        return
+    wrong = unheld(requirement)
+    if wrong:
+        raise LaneError("; ".join(wrong))
+
+
 def require_quoted(quotes: Mapping[str, Iterable[str]]) -> None:
     """The documents quote what this run measured: each file has to carry each phrase."""
-    for name, phrases in quotes.items():
-        text = (ROOT / name).read_text()
-        for phrase in phrases:
-            if phrase not in text:
-                raise LaneError(f"{name} does not say {phrase!r}")
+    require({"quoted": {name: list(phrases) for name, phrases in quotes.items()}})
+
+
+def require_stated(stated: list[tuple[str, list[tuple[str, str]], dict[str, str]]]) -> None:
+    """Each document's sections, from each start to the first end after it, state each measured
+    number as measured."""
+    require({"stated": [[name, [list(s) for s in sections], measured] for name, sections, measured in stated]})
 
 
 def differing(asked: list[str], model: list[str], reference: list[str]) -> str | None:

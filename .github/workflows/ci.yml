@@ -28,21 +28,56 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      # A tree this job passed on before is not checked again.
+      - name: The tree
+        id: tree
+        run: echo "key=lint-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.tree.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the job is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.tree.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP lint: passed on this tree ($KEY)" | tee build/evidence/lint.log
       - name: Check that failing pipelines fail the step
+        if: steps.passed.outputs.run-id == ''
         run: |
           if (exit 23) | tee /dev/null; then
             echo 'the shell does not propagate a failing pipeline' >&2
             exit 1
           fi
       - name: Lint
+        if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/lint.sh
+      # Recorded only once every step above has passed; artifacts are seen across branches, so the
+      # run on main after a merge finds it too (scripts/prior_pass.py).
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.tree.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          # Lint asks the network too, whose answers change: a week, not months.
+          retention-days: 7
 
   build:
     needs: lint
@@ -50,17 +85,49 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
+    # This job's inputs decide whether it runs, so its checks are not traced.
+    env:
+      DN_ONCE: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A build of the same inputs (scripts/once.py) that passed before is not run again: its archive
+      # is taken from the run that built it.
+      - name: The build's inputs
+        id: inputs
+        run: echo "key=$(python3 scripts/once.py key check-build)" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.passed.outputs.run-id != ''
+        with:
+          name: lean-build
+          path: build
+          run-id: ${{ steps.passed.outputs.run-id }}
+          github-token: ${{ github.token }}
       - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
         run: |
           python3 scripts/bootstrap_tool.py elan
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
+      - name: Say the build is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP build: passed on these inputs ($KEY)" | tee build/evidence/build.log
       - name: Source gate and build without network
+        if: steps.passed.outputs.run-id == ''
         run: |
           mkdir -p build/evidence
           # No network, no supplementary groups (docker) and no way back to root through sudo.
@@ -71,14 +138,29 @@ jobs:
              bash scripts/check.sh build' \
             2>&1 | tee build/evidence/build.log
       - name: Pack the build
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/build_archive.py pack build/lean-build.tar
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lean-build
           path: build/lean-build.tar
           if-no-files-found: error
-          # Only the next jobs of this run need the build; the evidence below is kept for review.
+          # The next jobs of this run need the build, and a later run of the same inputs takes it from
+          # here; the evidence below is kept for review.
           retention-days: 7
+      # Kept for less time than the archive, so that a record found always has one.
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 6
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -93,26 +175,66 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      actions: read
+    # This job's inputs decide whether it runs, so its checks are not traced.
+    env:
+      DN_ONCE: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Proofs of the same inputs (scripts/once.py) that passed before are not checked again.
+      - name: The proofs' inputs
+        id: inputs
+        run: echo "key=$(python3 scripts/once.py key check-proofs)" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the proofs are not checked again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP proofs: passed on these inputs ($KEY)" | tee build/evidence/proofs.log
       - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
         run: |
           python3 scripts/bootstrap_tool.py elan
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.passed.outputs.run-id == ''
         with:
           name: lean-build
           path: build
       - name: Unpack the build
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/build_archive.py unpack build/lean-build.tar
       - name: Kernel re-checks and proof audit
+        if: steps.passed.outputs.run-id == ''
         run: |
           mkdir -p build/evidence
           bash scripts/check.sh proofs 2>&1 | tee build/evidence/proofs.log
+      # Recorded only once every step above has passed; artifacts are seen across branches, so the
+      # run on main after a merge finds it too (scripts/prior_pass.py).
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -123,37 +245,105 @@ jobs:
   test:
     needs: proofs
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A tree this job passed on before is not checked again.
+      - name: The tree
+        id: tree
+        run: echo "key=test-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.tree.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the job is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.tree.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP test: passed on this tree ($KEY)" | tee build/evidence/test.log
       - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
         run: |
           python3 scripts/bootstrap_tool.py elan
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.passed.outputs.run-id == ''
         with:
           name: lean-build
           path: build
       - name: Unpack the build
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/build_archive.py unpack build/lean-build.tar
-      - name: Valgrind, for the host lane's check of races
+      - name: Valgrind, for the host lane's check of races, and strace, which records what a check reads
+        if: steps.passed.outputs.run-id == ''
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends valgrind
+          sudo apt-get install --yes --no-install-recommends valgrind strace
+      # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
+      # the last run of this repository's branches to record them are taken up.
+      - name: The checks' last passes
+        id: stamps
+        if: steps.passed.outputs.run-id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prior_pass.py checks-test >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
+        with:
+          name: checks-test
+          path: build/stamps
+          run-id: ${{ steps.stamps.outputs.run-id }}
+          github-token: ${{ github.token }}
       - name: Gate tests, Rust crates and models
+        if: steps.passed.outputs.run-id == ''
         run: |
           mkdir -p build/evidence
           bash scripts/check.sh tests 2>&1 | tee build/evidence/tests.log
       - name: Native compiler artifact and execution
+        if: steps.passed.outputs.run-id == ''
         run: bash scripts/native_lanes.sh
       - name: Bounded interleaving exploration
-        run: python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
+      - name: The documents held to what the checks measured
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/check_documents.py
+      # Kept even when a check failed: a stamp records only a check that passed.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.passed.outputs.run-id == ''
+        with:
+          name: checks-test
+          path: |
+            build/stamps/*.json
+            !build/stamps/hashes.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # Recorded only once every step above has passed; artifacts are seen across branches, so the
+      # run on main after a merge finds it too (scripts/prior_pass.py).
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.tree.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -220,20 +410,55 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A tree this job passed on before is not checked again.
+      - name: The tree
+        id: tree
+        run: echo "key=lazyfs-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.tree.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the job is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.tree.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP lazyfs: passed on this tree ($KEY)" | tee build/evidence/lazyfs.log
       - name: FUSE 3 and its headers
+        if: steps.passed.outputs.run-id == ''
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends fuse3 libfuse3-dev
       - name: LazyFS from its pinned source
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lazyfs
       - name: What the crash lanes take of LazyFS
+        if: steps.passed.outputs.run-id == ''
         run: |
           mkdir -p build/evidence
           python3 scripts/lazyfs_check.py 2>&1 | tee build/evidence/lazyfs.log
+      # Recorded only once every step above has passed; artifacts are seen across branches, so the
+      # run on main after a merge finds it too (scripts/prior_pass.py).
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.tree.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
