@@ -65,6 +65,9 @@ main() {
     ':!:CONTRIBUTING.md' ':!:SECURITY.md' ':!:backend/README.md' ':!:docs/architecture.md' ':!:docs/echo.md' \
     ':!:docs/handoff.md' ':!:docs/nntp.md' ':!:docs/pancake-semantics.md' ':!:docs/porting-risks.md' \
     ':!:docs/project.md' ':!:models/README.md' | xargs -0 python3 -P scripts/check_prose.py
+  # Cargo here keeps a cache of its own: the build rewrites the shared one under other flags, which
+  # would change what this read and run it again (scripts/once.py).
+  local -x CARGO_TARGET_DIR=build/lint-target
   cargo fmt --all -- --check
   cargo fmt --manifest-path models/Cargo.toml --all -- --check
   "$deny" --locked check

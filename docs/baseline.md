@@ -16,7 +16,9 @@ The native lanes are listed once, in `scripts/native_lanes.sh` (`bash scripts/na
 
 Each lane writes `build/<lane>/report.json` with the platform, the digests of the compiler, `dn-compiler` and the host sources and its time, removes its last report before it starts, and says why it refuses in one line starting with `DN`.
 
-A check that passed is not run again on the inputs it read (`scripts/once.py`): under strace it records each file it read, directory it listed and path it missed, and `dn-compiler` by the modules its commands run (`scripts/Fingerprint.lean`). `DN_ONCE=off` runs all.
+A check that passed is not run again on the inputs it read (`scripts/once.py`): under strace it records each file it read, directory it listed and path it missed. `DN_ONCE=off` runs all.
+
+A run of git in the repository that only reads, in the same environment, counts by its answer; `dn-compiler` by the declarations its commands reach, their compiled code and how it starts (`scripts/Fingerprint.lean`). A skipped lane keeps the report of the run it stands for.
 
 What the checks require of the documents is kept with their stamps and held by `scripts/check_documents.py`, so a change to the documents alone runs no check again.
 

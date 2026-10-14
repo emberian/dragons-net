@@ -111,6 +111,67 @@ class Hashes(unittest.TestCase):
             self.assertEqual(hashes.known[str(file)][3], kept)
 
 
+class Git(unittest.TestCase):
+    """Runs of git in a check, kept apart from it and run again."""
+
+    def test_a_run_of_git_is_kept_apart_with_its_arguments_and_environment(self) -> None:
+        """What git and its children touch is the run of git's; the rest the check's."""
+        log = """\
+5 execve("/usr/bin/git", ["git", "ls-files", "--", "a\\"b"], ["GIT_X=1", "HOME=/h"]) = 0
+5 openat(AT_FDCWD</r>, "/r/.git/index", O_RDONLY) = 3</r/.git/index>
+5 clone(child_stack=NULL, flags=SIGCHLD) = 6
+6 openat(AT_FDCWD</r>, "child", O_RDONLY) = 3</r/child>
+7 openat(AT_FDCWD</r>, "own", O_RDONLY) = 3</r/own>
+"""
+        t = parsed(log)
+        [call] = t.git
+        self.assertEqual((call.cwd, call.argv, call.env),
+                         ("/r", ["git", "ls-files", "--", 'a"b'], {"GIT_X": "1", "HOME": "/h"}))
+        self.assertEqual(call.read, {"/usr/bin/git", "/r/.git/index", "/r/child"})
+        self.assertEqual(t.read, {"/r/own"})
+
+    def test_only_a_run_of_git_that_reads_here_is_run_again(self) -> None:
+        def replayable(argv: list[str], env: dict[str, str] | None = None, cwd: str = str(ROOT),
+                       wrote: str | None = None) -> bool:
+            call = once.GitCall(cwd, argv, dict(os.environ) if env is None else env)
+            if wrote:
+                call.written.add(wrote)
+            return bool(once.replayable(call))
+
+        for argv in (["git", "ls-files"], ["git", "--icase-pathspecs", "ls-files", "--", "x"],
+                     ["git", "-c", "core.quotePath=false", "rev-parse", "HEAD"]):
+            with self.subTest(argv=argv):
+                self.assertTrue(replayable(argv))
+        for argv in (["git", "status"], ["git", "-C", ".", "ls-files"], ["git", "--git-dir=x", "log"],
+                     ["git", "cat-file", "--batch"], ["git", "check-ignore", "--stdin"], ["git"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(replayable(argv))
+        for argv in (["git", "describe", "--dirty"], ["git", "-c", "http.extraheader=Authorization: x", "log"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(replayable(argv))
+        self.assertFalse(replayable(["git", "ls-files"], env={**os.environ, "GIT_INDEX_FILE": "other"}))
+        self.assertFalse(replayable(["git", "ls-files"], env={**os.environ, "LEAN_PATH": "other"}))
+        self.assertFalse(replayable(["git", "ls-files"], cwd="/elsewhere"))
+        self.assertFalse(replayable(["git", "ls-files"], wrote=str(ROOT / ".git/index")))
+
+    def test_a_run_of_git_strace_did_not_print_whole_is_not_run_again(self) -> None:
+        """A string or an array cut short, or a variable given twice, leaves the run unknown."""
+        whole = 'execve("/usr/bin/git", ["git", "ls-files"], ["A=1", "B=2"]) = 0'
+        for args in (whole, whole.replace('"ls-files"', '"ls-fi"...'), whole.replace('"B=2"', '"B=2", ...'),
+                     whole.replace('"B=2"', '"A=2"'), whole.replace(', ["A=1", "B=2"]', ", 0x1 /* 2 vars */")):
+            with self.subTest(args=args):
+                [call] = parsed(f"5 {args}\n").git
+                self.assertEqual(call.whole, args == whole)
+
+    def test_an_answer_git_cannot_give_counts_as_changed(self) -> None:
+        self.assertIsNone(once.answer("no/such/directory", ["git", "ls-files"]))
+        deps: dict[str, Any] = {"git": None, "compiler": None, "links": {}, "files": {}, "dirs": {}, "absent": {},
+                "commands": [["no/such/directory", ["git", "ls-files"], "0" * 64]]}
+        self.assertFalse(once.current(deps, once.Hashes(Path(tempfile.mkdtemp()) / "hashes.json")))
+        self.assertIsNone(once.key_of("/etc/hosts"))
+        self.assertEqual(once.key_of("/etc/passwd"), "/etc/passwd")
+
+
 class Live(unittest.TestCase):
     """A real run under strace, in a repository of its own."""
 
@@ -138,6 +199,55 @@ class Live(unittest.TestCase):
 
     def check(self, body: str) -> None:
         (self.tree / "check.py").write_text(body)
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.example", "-c", "commit.gpgsign=false",
+                        *args], cwd=self.tree, check=True, capture_output=True, timeout=60)
+
+    def test_a_check_on_what_git_answers_runs_again_only_when_the_answer_changes(self) -> None:
+        self.check("import subprocess\nprint(subprocess.run(['git', 'ls-files', '--cached', '--others', "
+                   "'--exclude-standard'], capture_output=True, text=True, check=True).stdout.split())\n")
+        self.git("add", "-A")
+        self.assertIn("check.py", self.run_check())
+        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        self.assertIsNone(inputs["git"])
+        self.assertEqual([c[1] for c in inputs["commands"]],
+                         [["git", "ls-files", "--cached", "--others", "--exclude-standard"]])
+        # A commit moves HEAD, not what git answers; a file git now lists changes the answer.
+        self.git("commit", "-qm", "first")
+        self.assertIn("DN SKIP", self.run_check())
+        (self.tree / "new.txt").write_text("")
+        self.assertIn("new.txt", self.run_check())
+        self.assertIn("DN SKIP", self.run_check())
+
+    def test_a_check_on_git_s_own_state_runs_again_on_a_commit(self) -> None:
+        """A run of git that writes, one in an environment of its own or pointed elsewhere, and git's
+        files read without git, stand for git's whole state."""
+        for body in ("import subprocess\nsubprocess.run(['git', 'status', '--porcelain'], check=True)\n",
+                     "print(open('.git/HEAD').read())\n",
+                     ("import os, subprocess\nsubprocess.run(['git', 'ls-files'], check=True, "
+                      "env={**os.environ, 'GIT_INDEX_FILE': '.git/index'})\n"),
+                     "import subprocess\nsubprocess.run(['git', '-C', '.', 'ls-files'], check=True)\n"):
+            with self.subTest(body=body):
+                self.check(body)
+                self.git("add", "-A")
+                self.git("commit", "-qm", "c", "--allow-empty")
+                self.run_check()
+                self.assertIn("DN SKIP", self.run_check())
+                self.git("commit", "-qm", "next", "--allow-empty")
+                self.assertNotIn("DN SKIP", self.run_check())
+
+    def test_a_check_whose_git_files_change_while_it_runs_runs_every_time(self) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-qm", "c")
+        self.check("import os, subprocess\nsubprocess.run(['git', 'ls-files'], check=True)\n"
+                   "os.utime('.git/index')\n")
+        self.assertIn("runs every time, .git/index changed while it ran", self.run_check())
+
+    def test_a_check_that_changes_what_git_lists_runs_every_time(self) -> None:
+        self.check("import subprocess\nopen('made.txt', 'a').close()\n"
+                   "subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], check=True)\n")
+        self.assertIn("runs every time, the files git lists, HEAD or the refs changed while it ran", self.run_check())
 
     def test_a_check_runs_again_only_when_what_it_read_changes(self) -> None:
         self.assertIn("one", self.run_check())
@@ -291,22 +401,130 @@ class Documents(unittest.TestCase):
 
 
 class Fingerprint(unittest.TestCase):
-    """The modules of the library a command of `dn-compiler` runs."""
+    """What a command of `dn-compiler` runs, on a library of its own: `DN.Compiler.Main` picks a
+    handler from its table, which reaches the rest."""
 
-    def test_a_command_rests_on_the_modules_it_reaches(self) -> None:
-        prefix = subprocess.run(["lean", "--print-prefix"], cwd=ROOT, capture_output=True, text=True,
-                                check=True).stdout.strip()
-        env = {**os.environ, "LEAN_PATH": f"{prefix}/lib/lean:{ROOT}/.lake/build/lib/lean"}
-        done = subprocess.run(["lean", "--run", "scripts/Fingerprint.lean", "frame-model", "emit-crc", "nope"],
-                              cwd=ROOT, env=env, capture_output=True, text=True, check=False, timeout=600)
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("no command nope", done.stderr)
-        lines = {line.split()[0]: line.split()[1:] for line in done.stdout.splitlines()}
-        self.assertIn("DN.News.FrameModel", lines["frame-model"])
-        self.assertIn("DN.Compiler.Main", lines["frame-model"])
-        self.assertNotIn("DN.Compiler.Analyzer", lines["frame-model"])
-        self.assertIn("DN.News.CrcProg", lines["emit-crc"])
-        self.assertNotIn("DN.News.SipProg", lines["emit-crc"])
+    # `f` carries a proof of `t`, which the code erases.
+    LIB = ("def g (x : Nat) : Nat := x + 1\n"
+           "theorem t : g 0 = 1 := rfl\n"
+           "def f (x : Nat) : Nat := have _ : g 0 = 1 := t; g x * 2\n"
+           "def h : Nat := 7\n")
+    MAIN = ("import DN.Lib\nimport DN.Printed\n"
+            "def DN.Compiler.Cli.table : List (Prod String (List String → IO UInt32)) :=\n"
+            "  [(\"a\", fun _ => pure (f 1).toUInt32), (\"b\", fun _ => pure h.toUInt32),\n"
+            "   (\"emit-p\", fun _ => pure 5)]\n"
+            "def main (args : List String) : IO UInt32 :=\n"
+            "  match (DN.Compiler.Cli.table.find? (args.head? == some ·.1)), DN.Printed.named with\n"
+            "  | some (_, run), _ => run args\n"
+            "  | none, _ => pure 2\n")
+
+    PRINTED = "def DN.Printed.named : List (Prod String String) := [(\"p\", \"q\")]\n"
+
+    def digests(self, lib: str = LIB, main: str = MAIN, printed: str = PRINTED) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as temp:
+            tree, built = Path(temp) / "src", Path(temp) / "lib"
+            sources = {"DN/Lib.lean": lib,
+                       "DN/Printed.lean": printed,
+                       "DN/Compiler/Main.lean": main}
+            prefix = subprocess.run(["lean", "--print-prefix"], cwd=ROOT, capture_output=True, text=True,
+                                    check=True).stdout.strip()
+            env = {**os.environ, "LEAN_PATH": f"{prefix}/lib/lean:{built}"}
+            for name, text in sources.items():
+                (tree / name).parent.mkdir(parents=True, exist_ok=True)
+                (tree / name).write_text(text)
+                (built / name).parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["lean", f"--root={tree}", "-o", str(built / name.replace(".lean", ".olean")),
+                                str(tree / name)], cwd=ROOT, env=env, check=True, capture_output=True, timeout=300)
+            done = subprocess.run(["lean", "--run", str(ROOT / "scripts/Fingerprint.lean"), "a", "b", "emit-p", "nope"],
+                                  cwd=ROOT, env=env, capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(done.returncode, 1)
+            self.assertIn("no command nope", done.stderr)
+            out: dict[str, str] = once.digests(done.stdout)
+            return out
+
+    def test_a_command_rests_on_the_code_it_reaches(self) -> None:
+        base = self.digests()
+        self.assertEqual(sorted(base), ["a", "b", "emit-p"])
+        unrelated = [self.LIB.replace(":= 7", ":= 8"), self.LIB.replace(":= rfl", ":= by decide"),
+                     "-- a comment\n" + self.LIB.replace("(x : Nat) : Nat := x + 1", "(y : Nat) : Nat := y + 1")]
+        for lib in unrelated:
+            with self.subTest(lib=lib):
+                self.assertEqual(self.digests(lib)["a"], base["a"])
+        for lib in (self.LIB.replace("x + 1", "x + 1 + 0"), "@[inline] " + self.LIB):
+            with self.subTest(lib=lib):
+                self.assertNotEqual(self.digests(lib)["a"], base["a"])
+        changed = self.digests(main=self.MAIN.replace("(f 1)", "(f 2)"))
+        self.assertNotEqual(changed["a"], base["a"])
+        self.assertEqual(changed["b"], base["b"])
+        self.assertNotEqual(self.digests(main=self.MAIN.replace("pure 2", "pure 3"))["b"], base["b"])
+        # `emit-NAME` is a printed program's before it is the table's, as `main` looks it up.
+        self.assertNotEqual(self.digests(printed=self.PRINTED.replace('"q"', '"r"'))["emit-p"], base["emit-p"])
+        self.assertEqual(self.digests(main=self.MAIN.replace("pure 5", "pure 6"))["emit-p"], base["emit-p"])
+
+
+class Compiled(unittest.TestCase):
+    """`dn-compiler` counted by what its commands run, in a tree of its own: an executable that says
+    what it ran, and a fingerprint that prints what `fp.txt` holds."""
+
+    def setUp(self) -> None:
+        self.tree = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tree)
+        (self.tree / "scripts").mkdir()
+        shutil.copy(ROOT / "scripts/once.py", self.tree / "scripts")
+        shutil.copy(ROOT / "lean-toolchain", self.tree)
+        (self.tree / "scripts/Fingerprint.lean").write_text(
+            "def main (_ : List String) : IO UInt32 := do\n  IO.print (← IO.FS.readFile \"fp.txt\")\n  return 0\n")
+        (self.tree / ".gitignore").write_text("build/\n")
+        (self.tree / "lakefile.lean").write_text("-- one\n")
+        (self.tree / "lake-manifest.json").write_text("{}\n")
+        self.binary = self.tree / ".lake/build/bin/dn-compiler"
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_text('#!/bin/sh\nif [ "$1" = --help ]; then cat help.txt; exit 0; fi\necho "ran $1"\n')
+        self.binary.chmod(0o755)
+        (self.tree / "help.txt").write_text("usage\n")
+        self.olean = self.tree / ".lake/build/lib/lean/DN/A.olean"
+        self.olean.parent.mkdir(parents=True)
+        (self.tree / "check.py").write_text("import subprocess\nprint(subprocess.run(['.lake/build/bin/dn-compiler', "
+                                            "'a'], capture_output=True, text=True, check=True).stdout)\n")
+        subprocess.run(["git", "init", "-q", str(self.tree)], check=True)
+        self.rebuild(b"one", "one")
+
+    def rebuild(self, olean: bytes, code: str) -> None:
+        """The library compiled anew to `olean`, its command's code `code`, and the executable after it."""
+        (self.tree / "fp.txt").write_text(f'["Q",["{code}"],[]]\n["c",["a"],[0]]\n')
+        self.olean.write_bytes(olean)
+        later = self.olean.stat().st_mtime_ns + 10**9
+        os.utime(self.binary, ns=(later, later))
+
+    def run_check(self) -> str:
+        done = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", "--", sys.executable, "check.py"],
+                              cwd=self.tree, capture_output=True, text=True, check=True, timeout=300)
+        return done.stdout + done.stderr
+
+    def test_dn_compiler_counts_by_what_its_commands_run_and_how_it_starts(self) -> None:
+        self.assertIn("ran a", self.run_check())
+        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        self.assertEqual(list(inputs["compiler"]), ["a"])
+        self.assertNotIn(".lake/build/bin/dn-compiler", inputs["files"])
+        self.assertIn("lakefile.lean", inputs["files"])
+        self.assertIn("DN SKIP", self.run_check())
+        # The library built anew to the same code runs nothing again.
+        self.rebuild(b"two", "one")
+        self.assertIn("DN SKIP", self.run_check())
+        # Other code for the command, or another start of the executable, does.
+        self.rebuild(b"three", "two")
+        self.assertIn("ran a", self.run_check())
+        self.assertIn("DN SKIP", self.run_check())
+        (self.tree / "help.txt").write_text("other usage\n")
+        self.rebuild(b"four", "two")
+        self.assertIn("ran a", self.run_check())
+        # An executable older than the library may not be what it compiles to.
+        later = self.binary.stat().st_mtime_ns + 10**9
+        os.utime(self.olean, ns=(later, later))
+        self.assertIn("ran a", self.run_check())
+        self.rebuild(b"four", "two")
+        (self.tree / "lakefile.lean").write_text("-- two\n")
+        self.assertIn("ran a", self.run_check())
 
 
 class TreeKey(unittest.TestCase):
