@@ -650,7 +650,8 @@ class StandIn:
 
 
 def record(name: str, result: int, program: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"name": name, "source": f"export fun {name}() {{}}\n", "tree": {"name": name},
+    source = f"export fun {name}() {{}}\n"
+    return {"name": name, "source": source, "tree": {"name": name, "source": source},
             "program": program or {"name": name, "params": [], "body": [["return", result]]}, "functions": [],
             "plan": {"params": [], "entries": []},
             "vectors": [{"data": {}, "fill": [0, 0], "result": result, "changed": []}]}
@@ -731,22 +732,38 @@ class GeneratedOnStandIns(unittest.TestCase):
                     self.assertEqual((kept["kind"], kept["name"], kept["origin"]), (kind, "disagreement", {"seed": 1}))
                     self.assertIn(said, str(kept[field]))
 
+    def test_the_contract_takes_runs_within_its_bytes(self) -> None:
+        """Every record goes to one run, in order; a run stays within the limit unless it is one
+        record alone, and is cut only where the next record would take it past."""
+        records = [{"tree": {"source": "x" * n}} for n in (3, 4, 2, 9, 1, 1, 5)]
+        runs = native_fuzz.runs_within(records, 7)
+        self.assertEqual([(k, [len(r["tree"]["source"]) for r in run]) for k, run in runs],
+                         [(0, [3, 4]), (2, [2]), (3, [9]), (4, [1, 1, 5])])
+        first = native_fuzz.runs_within([{"tree": {"source": "x" * n}} for n in (9, 1)], 7)
+        self.assertEqual([(k, len(run)) for k, run in first], [(0, 1), (1, 1)])
+        self.assertEqual(native_fuzz.runs_within([], 7), [])
+
     def test_a_batch_the_parser_refuses_but_no_program_alone_is_reported(self) -> None:
-        records = [record("dn_0", 1), record("dn_1", 2)]
+        """The run that fails is named by the programs in it, past the runs before it."""
+        records = [record(f"dn_{i}", 1 + i % 2) for i in range(4)]
+        tags: list[str] = []
 
         def compare(cake: str, trees: list[dict[str, Any]], tag: str, **_: Any) -> int:
-            del cake, tag
-            if len(trees) > 1:
-                raise parser_contract.ContractError("dn_0: the parser's tree is not the lowered one")
+            del cake
+            tags.append(tag)
+            if len(trees) > 1 and trees[0]["name"] == "dn_2":
+                raise parser_contract.ContractError("dn_2: the parser's tree is not the lowered one")
             return len(trees)
 
         def replay(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return [record(c["program"]["name"], 1) for c in cases]
 
+        two = 2 * len(records[0]["tree"]["source"])
         with (mock.patch.object(native_fuzz.contract, "compare", compare),
-              mock.patch.object(native_fuzz, "replay", replay),
-              self.assertRaisesRegex(lanes.LaneError, "together and on none alone")):
+              mock.patch.multiple(native_fuzz, replay=replay, CONTRACT_BYTES=two),
+              self.assertRaisesRegex(lanes.LaneError, "programs 2-3 together and on none alone")):
             native_fuzz.parsed_as_lowered("cake", records, {})
+        self.assertEqual(tags[:2], ["fuzz-0", "fuzz-2"])
 
     def test_the_contract_is_held_in_the_lanes_own_directory(self) -> None:
         """The nightly run starts this lane on an empty build/, with no other lane before it: what
