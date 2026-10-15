@@ -104,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.inputs.outputs.key }}
         run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id != ''
         with:
           name: lean-build
@@ -208,7 +208,7 @@ jobs:
       - name: Link the digest-pinned Lean toolchain
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: lean-build
@@ -278,7 +278,7 @@ jobs:
       - name: Link the digest-pinned Lean toolchain
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: lean-build
@@ -299,7 +299,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/prior_pass.py checks-test >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
         with:
           name: checks-test
