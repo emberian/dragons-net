@@ -155,6 +155,8 @@ tests() {
   once store python3 scripts/store_check.py
   # The store's program, every point of its runs held to what a crash may leave there.
   once runs python3 scripts/runs_check.py
+  # Each source of native/ on its own, as the nightly CodeQL job builds it.
+  once sources python3 scripts/compile_sources.py
   # The points of failure the host's test build carries, held to what its tests take of libfiu.
   once fiu python3 scripts/fiu_check.py
   # The host's side of the store, with a stand-in for the program.

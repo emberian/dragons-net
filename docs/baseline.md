@@ -125,7 +125,7 @@ On 49,838 cases, among them 107 examples the RFCs print, the interpreter and the
 
 ### Fault points
 
-`scripts/fiu_check.py` builds `native/fault_probe.c` with and without `FIU_ENABLE` and checks its point fails only as enabled.
+`scripts/fiu_check.py` builds `native/fault_probe.c`, a point as the host writes them (`native/faults.h`), with `FIU_ENABLE` and without it or libfiu's headers, and checks its point fails only as enabled.
 
 ### LazyFS
 

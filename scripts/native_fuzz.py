@@ -472,22 +472,42 @@ def check_corpus(native: Native) -> dict[str, int]:
     return {"mutants": len(held["mutants"]), "found": len(held["found"])}
 
 
+# `cake --explore` prints every intermediate program, and on a large source at once it runs out of
+# its heap and stops with status 1, saying only that it did: the 500 generated programs from seed
+# 20261015, 236 KB of source, do. The contract takes the programs a run of at most this many bytes
+# at a time.
+CONTRACT_BYTES = 100_000
+
+
+def runs_within(records: list[dict[str, Any]], limit: int) -> list[tuple[int, list[dict[str, Any]]]]:
+    """The records cut into runs, each with the index of its first: the sources a run compiles are
+    at most `limit` bytes together, unless it is one record alone."""
+    runs: list[tuple[int, list[dict[str, Any]]]] = []
+    start, size = 0, 0
+    for i, r in enumerate(records):
+        if i > start and size + len(r["tree"]["source"]) > limit:
+            runs.append((start, records[start:i]))
+            start, size = i, 0
+        size += len(r["tree"]["source"])
+    if start < len(records):
+        runs.append((start, records[start:]))
+    return runs
+
+
 def parsed_as_lowered(cake: str, records: list[dict[str, Any]], origin: dict[str, Any]) -> int:
     """Every program read by the parser as its lowering: how many functions matched. A program
     that is not is reduced; a batch that fails with every program in it read right alone is
     reported as such."""
-    # `cake --explore` prints every intermediate program, and on thousands of functions at once
-    # it runs out of its own memory, so the contract takes them a few hundred at a time.
     matched = 0
-    for k in range(0, len(records), 500):
-        chunk = records[k:k + 500]
+    for k, chunk in runs_within(records, CONTRACT_BYTES):
         try:
             matched += contract.compare(cake, [r["tree"] for r in chunk], f"fuzz-{k}", out=OUT / "parser")
         except contract.ContractError as error:
             record = next((r for r in chunk if parser_failure(cake)([case_of(r, 0)])[0]), None)
             if record is None:
                 raise LaneError(f"the parser contract fails on programs {k}-{k + len(chunk) - 1} together and "
-                                f"on none alone:\n{error}") from error
+                                f"on none alone (a run too large for cake's heap fails so: CONTRACT_BYTES):\n"
+                                f"{error}") from error
             # The contract's message starts with the function's name already.
             raise LaneError(f"{error}\n" + minimized(
                 "parser", case_of(record, 0), parser_failure(cake),

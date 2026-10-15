@@ -5,6 +5,7 @@
 #ifndef DN_FAULTS_H
 #define DN_FAULTS_H
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #ifdef FIU_ENABLE
 #include <fiu.h>
