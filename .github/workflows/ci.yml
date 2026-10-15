@@ -70,7 +70,7 @@ jobs:
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.tree.outputs.key }}
@@ -140,7 +140,7 @@ jobs:
       - name: Pack the build
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/build_archive.py pack build/lean-build.tar
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lean-build
           path: build/lean-build.tar
@@ -154,14 +154,14 @@ jobs:
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.inputs.outputs.key }}
           path: build/stamps/job
           if-no-files-found: error
           retention-days: 6
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: build-log
@@ -228,14 +228,14 @@ jobs:
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.inputs.outputs.key }}
           path: build/stamps/job
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: proofs-log
@@ -321,7 +321,7 @@ jobs:
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/check_documents.py
       # Kept even when a check failed: a stamp records only a check that passed.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.passed.outputs.run-id == ''
         with:
           name: checks-test
@@ -337,14 +337,14 @@ jobs:
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.tree.outputs.key }}
           path: build/stamps/job
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: test-evidence
@@ -452,14 +452,14 @@ jobs:
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.tree.outputs.key }}
           path: build/stamps/job
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: lazyfs-evidence
