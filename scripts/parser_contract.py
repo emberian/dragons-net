@@ -46,6 +46,11 @@ BARE_LOAD = ("ld8 (ld8 p)", "ld8 ld8 p")
 EXTRA = "\nfun dn_extra() {\n  return 0;\n}\n"
 # What the two ways of not reading an operand as one look like.
 PARSE_ERROR = "### ERROR: parse error"
+# `cake --explore` prints every intermediate program, and on a large source at once it runs out of
+# its heap and stops with status 1, saying only that it did (`lanes.EXPLORE_HEAP_MB`): at its default
+# heap the 500 generated programs from seed 20261015, 236 KB of source, do. A compilation takes
+# programs of at most this many bytes together.
+BATCH_BYTES = 100_000
 MISREAD = "is not the lowered one"
 # A cell the parsers read, and one they read otherwise, each with what turning it has to raise.
 TURNED = (("lds/left: lds 1 ld8 x", "and it does"), ("sub/right: a - x - y", MISREAD))
@@ -241,11 +246,13 @@ def names_of(programs: list[dict[str, Any]]) -> set[str]:
 
 
 def batches(programs: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Programs grouped so that no two in a group share a name, to compile them together."""
+    """Programs grouped so that no two in a group share a name, to compile them together, and a
+    group's sources are at most `BATCH_BYTES` unless it is one program."""
     groups: list[list[dict[str, Any]]] = []
     for program in programs:
         for group in groups:
-            if not names_of([program]) & names_of(group):
+            size = sum(len(p["source"]) for p in [*group, program])
+            if not names_of([program]) & names_of(group) and size <= BATCH_BYTES:
                 group.append(program)
                 break
         else:

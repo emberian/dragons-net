@@ -16,11 +16,11 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.News.CommandSpec` | Of the specification: each command line's reply, each rule mattering (`mutants_differ`); every reply and the greeting fit one action (`text_fits`, `greeting_fits`); with no rule broken, the lane's mutated session is this one (`turnM_none`) | That it is decision 0003's session (tested) |
 | `DN.News.SessionSpec` | A turn acts at most once a connection (`turn_ordered`), resends only once ready (`act_resends`, `act_blocked`), adds at most one reply (`serve_one`), keeps a line's deadline (`act_keeps_line`), and after QUIT only sends the 205's rest or closes (`serve_quit`, `quit_rest`, `act_quitting`) | That the program is it (tested) |
 | `Certificate.witness` | A packaged precondition has a satisfying state | Adequacy for real callers |
-| 252 executable examples | Those computations return their expected values | Universal proofs |
+| 256 executable examples | Those computations return their expected values | Universal proofs |
 | Rust unit tests | Selected host primitives | Model refinement or OS integration |
 | 30 Loom tests | Selected algorithms under schedule exploration, three driving `dn-runtime` | Unbounded executions, weak memory Loom does not model |
 | State corpus (`scripts/state_check.py`) | On 110 cases of the ways a run stops, the model and an independent implementation of the same clauses agree field by field | Not a proof against HOL |
-| `scripts/parser_contract.py` | Each of the 238 programs the compiler prints is read by the pinned parsers as exactly its lowering, and both agree with every cell of the precedence table | Every possible printed program |
+| `scripts/parser_contract.py` | Each of the 239 programs the compiler prints is read by the pinned parsers as exactly its lowering, and both agree with every cell of the precedence table | Every possible printed program |
 | `scripts/native_fuzz.py` | On 300 generated programs, model, interpreter and compiled code agree on the result and memory | Programs outside the generator's reach |
 | Native region check | Generated machine code agrees with a C reference on 99,240 cases | A compiler theorem |
 | Native differential and TCP checks | 35,520 arithmetic/control cases; CRC-32C on 311 buffers, SipHash-2-4 on 370 messages, the journal scanner on 28,704 readings, recovery on 2,066 directories, the reply table on 5,790 calls | Compiler preservation, a verified host |
@@ -34,6 +34,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Session program (`scripts/session_native.py`) | The compiled session answers as the model on its scenarios and 200 drawn hosts, and stops on hosts the model cannot describe | That it is the specification on every run |
 | NNTP server (`scripts/nntp_check.py`) | Over loopback the server answers as `session_ref` computes, on 1,831 cuts of recorded transcripts among other runs, keeps its deadlines, recovers its store at start, and 44 planted defects are caught | The host is tested, not proven; performance |
 | Header field grammar (`scripts/abnf_check.py`) | The grammar is the RFCs' ABNF with verified errata; `DN.News.Abnf` and the `abnf` library agree on 49,838 cases; 21 defects planted in the reference's grammar and 5 mutants of the interpreter are caught, each mutant proven to differ | RFC 5234's semantics; RFC 5536's rules outside its ABNF |
+| Header field grammar in Pancake (`DN.News.AbnfProg`, `scripts/grammar_check.py`) | The compiled functions answer the grammar lane's cases, 17 hostile fields and cases from several starts as `DN.News.Abnf` does, and the hostile fields at 64 KiB as at 4 KiB; 7 mutants are caught; decision 0004's analysis accepts the program | That it matches on every input; no theorem yet |
 | Article acceptance (`DN.News.ArticleSpec`, `scripts/article_check.py`) | Each of 24 versions of the rules answers its witness otherwise (`mutants_differ`); tested against `scripts/article_ref.py` on 18,360 cases | That the rules are all the RFCs ask; that the program is this specification |
 | File system and crashes (`DN.News.FsModel`, `scripts/fs_check.py`) | `mayLeave_iff` decides exactly what a crash may leave; each of 16 versions of the model answers its witness otherwise; tested against `scripts/fs_ref.py` on 25,874 cases ([details](baseline.md#file-system)) | That devices and file systems stay within the model |
 | Crashes (`DN.News.FsModel`) | In 0005's model a crash may lose nothing (`crash_nothing_lost`); a trusted sync is a barrier for a file, a directory sync for names (`leaves_sync`, `settle_leaves`) | A read after a failed sync |
@@ -56,7 +57,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 16,402 declarations, including 7,712 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 16,641 declarations, including 7,730 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -70,9 +71,9 @@ A job's pass recorded by a run of this repository's branches lets a run on the s
 
 1. **Semantics correspondence.** `DN.Compiler.Semantics` is a transcription of HOL4's, compared clause by clause in [pancake-semantics](pancake-semantics.md), not a certified translation.
 
-2. **Source representation.** The programs `dn-compiler` prints, 238 in all, are each read by the pinned parser as its lowering in canonical form, which `Canon.canon_eval` proves keeps evaluation. `printed_well` relies on 62 of that table's 320 cells; the parser's theorem is open, and the differential suite runs 35,520 cases.
+2. **Source representation.** The programs `dn-compiler` prints, 239 in all, are each read by the pinned parser as its lowering in canonical form, which `Canon.canon_eval` proves keeps evaluation. `printed_well` relies on 62 of that table's 320 cells; the parser's theorem is open, and the differential suite runs 35,520 cases.
 
-3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 238 programs the same way, but no theorem covers the binary.
+3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 239 programs the same way, but no theorem covers the binary.
 
 4. **Shift distances.** `Checked.emit` takes only a literal distance below 64, since the release accepts larger ones the semantics gives no value.
 

@@ -472,11 +472,9 @@ def check_corpus(native: Native) -> dict[str, int]:
     return {"mutants": len(held["mutants"]), "found": len(held["found"])}
 
 
-# `cake --explore` prints every intermediate program, and on a large source at once it runs out of
-# its heap and stops with status 1, saying only that it did: the 500 generated programs from seed
-# 20261015, 236 KB of source, do. The contract takes the programs a run of at most this many bytes
-# at a time.
-CONTRACT_BYTES = 100_000
+# The contract takes the programs a run of at most this many bytes at a time, as a compilation of
+# `parser_contract.compare` does.
+CONTRACT_BYTES = contract.BATCH_BYTES
 
 
 def runs_within(records: list[dict[str, Any]], limit: int) -> list[tuple[int, list[dict[str, Any]]]]:

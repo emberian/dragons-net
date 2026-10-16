@@ -374,6 +374,8 @@ from them are done; what needs the program or the host comes with them, as marke
   LazyFS, each held to what the tests below take of it. The program's journal scanner
   (`DN.News.ScanProg`) and recovery (`DN.News.RecoverProg`) are held to the models on the journal
   and store lanes' cases.
+- The grammar of header fields as the program's functions (`DN.News.AbnfProg`) is held to its
+  interpreter on the grammar lane's cases and on hostile fields (`scripts/grammar_check.py`).
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the model, an independent reference
     in Python and the compiled program against each other;

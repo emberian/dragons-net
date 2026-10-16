@@ -665,15 +665,21 @@ def abnf_file(rules: dict[str, A.Term], origin: dict[str, str]) -> str:
     return "\n".join(out) + "\n"
 
 
+def taken() -> tuple[Grammar, dict[str, A.Term]]:
+    """The grammar every field's rule reaches in the RFCs, and its rules once the obsolete syntax
+    is gone: rule `k` of `DN.News.AbnfRules` is the `k`-th of their names in order."""
+    g = Grammar()
+    for rule, _ in [*FIELDS.values(), OPTIONAL]:
+        g.take(rule)
+    return g, g.pruned()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--check", action="store_true", help="fail if the written files differ")
     args = parser.parse_args()
     check_transcriptions()
-    g = Grammar()
-    for rule, _ in [*FIELDS.values(), OPTIONAL]:
-        g.take(rule)
-    rules = g.pruned()
+    g, rules = taken()
     most = depth(rules)
     outputs = {TEXT_OUT: abnf_file(rules, g.origin), LEAN_OUT: lean_file(rules, g.origin, most)}
     stale = [path for path, text in outputs.items()

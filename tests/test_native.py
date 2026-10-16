@@ -63,6 +63,13 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_grammar_passes_the_safety_analysis(self) -> None:
+        """The analysis of decision 0004 on the grammar's program, its area above the heap's header:
+        the grammar is to be embedded in the session's program, whose theorem then needs it."""
+        done = subprocess.run([str(DN_COMPILER), "analyze-grammar"], text=True, capture_output=True,
+                              check=False, timeout=600)
+        self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator
         prints for the programs as they are."""
@@ -331,6 +338,14 @@ class ParserContract(unittest.TestCase):
             names = [p["name"] for p in group]
             self.assertEqual(len(names), len(set(names)))
         self.assertEqual(len(groups), 3)
+
+    def test_parser_contract_batches_keep_within_their_bytes(self) -> None:
+        """A group's sources are at most `BATCH_BYTES` together, unless it is one program larger."""
+        half = parser_contract.BATCH_BYTES // 2
+        programs = [{"name": name, "source": "x" * size}
+                    for name, size in (("a", half), ("b", half), ("c", 1), ("d", 3 * half), ("e", half))]
+        groups = parser_contract.batches(programs)
+        self.assertEqual([[p["name"] for p in g] for g in groups], [["a", "b"], ["c", "e"], ["d"]])
 
 
 class Generated(unittest.TestCase):
