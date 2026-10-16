@@ -359,8 +359,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--grammar", type=Path, default=HERE / "netnews.abnf",
                         help="the grammar text the fields are held to")
-    grammar.text = parser.parse_args().grammar
+    parser.add_argument("--each", action="store_true", help="answer each line as it comes")
+    args = parser.parse_args()
+    grammar.text = args.grammar
     Netnews.load_grammar(grammar.text.read_text(encoding="ascii"))
+    if args.each:
+        for line in sys.stdin:
+            if line.strip():
+                print(answer(line), flush=True)
+        return
     sys.stdout.write("".join(answer(line) + "\n" for line in sys.stdin if line.strip()))
 
 

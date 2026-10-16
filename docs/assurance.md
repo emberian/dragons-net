@@ -15,8 +15,9 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.News.FramerCode` | The framers' statements make exactly the framer's call, a tick a byte, changing nothing else (`lineFrag_run`, `blockFrag_run`); the printed functions return where they stopped, refusing bad counts before reading (`frameLine_run`, `frameBlock_run`, `frameLine_refuses`, `frameBlock_refuses`) | Items 1 and 2; the C caller; the framer inside the session's `main` (tested) |
 | `DN.News.CommandSpec` | Of the specification: each command line's reply, each rule mattering (`mutants_differ`); every reply and the greeting fit one action (`text_fits`, `greeting_fits`); with no rule broken, the lane's mutated session is this one (`turnM_none`) | That it is decision 0003's session (tested) |
 | `DN.News.SessionSpec` | A turn acts at most once a connection (`turn_ordered`), resends only once ready (`act_resends`, `act_blocked`), adds at most one reply (`serve_one`), keeps a line's deadline (`act_keeps_line`), and after QUIT only sends the 205's rest or closes (`serve_quit`, `quit_rest`, `act_quitting`) | That the program is it (tested) |
+| `DN.News.PostSpec` | Nothing: the store's side of POST is a specification | That it is decision 0005's (tested against `scripts/post_ref.py`); that the program is it |
 | `Certificate.witness` | A packaged precondition has a satisfying state | Adequacy for real callers |
-| 256 executable examples | Those computations return their expected values | Universal proofs |
+| 257 executable examples | Those computations return their expected values | Universal proofs |
 | Rust unit tests | Selected host primitives | Model refinement or OS integration |
 | 30 Loom tests | Selected algorithms under schedule exploration, three driving `dn-runtime` | Unbounded executions, weak memory Loom does not model |
 | State corpus (`scripts/state_check.py`) | On 110 cases of the ways a run stops, the model and an independent implementation of the same clauses agree field by field | Not a proof against HOL |
@@ -57,7 +58,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 16,641 declarations, including 7,730 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 17,689 declarations, including 8,186 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -85,7 +86,7 @@ A job's pass recorded by a run of this repository's branches lets a run on the s
 
 8. **Addresses the theorem admits.** The theorem's memory is CakeML's heap, so every buffer lives there, the hosts write and check the heap header it fixes, and the analysis keeps off the heap's first 64 bytes. The stack bound (`max_depth`) is not yet obtained; for every other run here, whose buffers the C host owns, the premise is false.
 
-9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`; article acceptance and reading are not yet in the program.
+9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`. The session with POST is specified and tested, not proven; article acceptance and reading are not yet in the program.
 
 ## Reproducibility boundaries
 

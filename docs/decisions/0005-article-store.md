@@ -121,6 +121,7 @@ knows nothing of articles.
   same digits; the journal is `journal`.
 - The file holds the article as a reader receives it, without Xref: lines ending in CRLF,
   dot-stuffed, without the final dot line, the fields the server added in place.
+- The header section's size, as a commit records it, does not count the empty line after it.
 - An article is accepted in four phases:
   1. reserve: the program checks the header section, reserves the Message-ID in the index and a
      sequence number, and counts the article against the bounds;
@@ -151,6 +152,8 @@ knows nothing of articles.
   a mark of this boot, or one it cannot read whole, until the machine restarts or the store is
   repaired (#21), and removes a whole mark of another boot. Not covered: a process killed between
   the failure and its mark.
+- A record whose sync completes after the store has stopped is not answered either, the sync
+  succeeding or not.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -245,6 +248,7 @@ knows nothing of articles.
 
 - At most four connections are in a POST at once; another POST waits, unanswered and not read,
   until one ends. Each POST holds a header buffer of 65,536 octets and a write buffer of 16,384.
+- POSTs that wait get the slots that free in the order they came.
 - The article is framed as it arrives by a streaming block framer: it checks each line — CRLF only,
   no NUL or bare CR or LF — and finds the end of the block, keeping only its state. The header
   section is gathered in the header buffer and checked when it ends; the file is then created and
@@ -376,9 +380,12 @@ from them are done; what needs the program or the host comes with them, as marke
   and store lanes' cases.
 - The grammar of header fields as the program's functions (`DN.News.AbnfProg`) is held to its
   interpreter on the grammar lane's cases and on hostile fields (`scripts/grammar_check.py`).
+- The session with POST, as a specification (`DN.News.PostSpec`, `DN.News.SessionSpec`), is held to
+  an independent reference in Python, a crash of the spool's model after each 240 included
+  (`scripts/session_check.py`); done.
 - To be tested with the program and the host:
-  - that the program is the specification, as for the session: the model, an independent reference
-    in Python and the compiled program against each other;
+  - that the program is the specification, as for the session: the compiled program against the
+    model;
   - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
     points of failure;
   - process crashes: the server killed at each operation of a job, then restarted;
