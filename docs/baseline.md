@@ -12,7 +12,7 @@ bash scripts/check_all.sh
 
 It fails if any lane fails and skips nothing on an unsupported host; `scripts/check.sh` is the baseline without the native lanes and `scripts/lint.sh` the static checks.
 
-The native lanes are listed once, in `scripts/native_lanes.sh` (`bash scripts/native_lanes.sh parser` runs only the ones named). CI runs them after lint, a build without network and the proofs on a fresh machine, with LazyFS beside them; the nightly run starts each lane alone.
+The native lanes are listed once, in `scripts/native_lanes.sh` (`bash scripts/native_lanes.sh parser` runs only the ones named). CI runs them after lint, a build without network and the proofs on a fresh machine, beside the tests and LazyFS; the nightly run starts each lane alone.
 
 Each lane writes `build/<lane>/report.json` with the platform, the digests of the compiler, `dn-compiler` and the host sources and its time, removes its last report before it starts, and says why it refuses in one line starting with `DN`.
 

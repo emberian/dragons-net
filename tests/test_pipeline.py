@@ -212,10 +212,26 @@ class CheckScript(unittest.TestCase):
         for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
             name, _, body = block.partition(":\n")
             jobs[name] = body
-        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test", "lazyfs"])
+        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test", "native", "documents", "lazyfs"])
         chain = ["lint", "build", "proofs", "test"]
         for job, previous in zip(chain[1:], chain, strict=False):
             self.assertIn(f"needs: {previous}\n", jobs[job])
+        # The native lanes run beside the tests; the documents are held to the stamps of both.
+        self.assertIn("needs: proofs\n", jobs["native"])
+        self.assertIn("run: bash scripts/native_lanes.sh\n", jobs["native"])
+        self.assertNotIn("native_lanes.sh", jobs["test"])
+        self.assertIn("needs: [test, native]\n", jobs["documents"])
+        self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
+        # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
+        # names the run that holds it; the documents job takes both records by them.
+        self.assertEqual(jobs["test"].count("!build/stamps/lane-*.json\n"), 2)
+        self.assertEqual(jobs["native"].count(" build/stamps/lane-*.json\n"), 2)
+        self.assertNotIn("build/stamps/*.json", jobs["native"])
+        for job in ("test", "native"):
+            self.assertIn("      record: passed-${{ steps.tree.outputs.key }}\n"
+                          "      run: ${{ steps.passed.outputs.run-id || github.run_id }}\n", jobs[job])
+            self.assertIn(f"name: ${{{{ needs.{job}.outputs.record }}}}\n          path: build/stamps\n"
+                          f"          run-id: ${{{{ needs.{job}.outputs.run }}}}\n", jobs["documents"])
         # The LazyFS lane mounts FUSE, so it runs beside the chain once the lint has passed.
         self.assertIn("needs: lint\n", jobs["lazyfs"])
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
