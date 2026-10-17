@@ -1521,21 +1521,22 @@ theorem joinOuts_up {o1 o2 out : Option AState} (h : joinOuts o1 o2 = .ok out) :
 
 /-! ## Functions -/
 
-/-- The functions `env` names are in the code, each with distinct parameters and a body the
-analysis accepts from any arguments, with the functions defined before it to call, that finishes
-only with a result. -/
+/-- The functions `env` names are in the code, each with distinct parameters and a body that, from
+any arguments, with code holding the functions defined before it, never errs and finishes only
+with a result, whatever the external world answers: as the analysis or a certificate shows. -/
 def CodeOk (size : Nat) (code : String → Option (List String × PancakeProg)) : Env → Prop
   | [] => True
   | (f, ps) :: rest =>
-    (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧
-      analyze size rest (entryState ps) body = .ok none) ∧ CodeOk size code rest
+    (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧ ∀ o : Oracle σ,
+      Safe o (fun s => Holds size (entryState ps) s ∧ CodeOk size s.code rest) body
+        (fun _ => False)) ∧ CodeOk size code rest
 
 theorem codeOk_find {size : Nat} {code : String → Option (List String × PancakeProg)} {f : String}
     {ps : List String} {rest : Env} :
-    ∀ {env : Env}, CodeOk size code env → findFn f env = some (ps, rest) →
-      (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧
-        analyze size rest (entryState ps) body = .ok none) ∧
-      CodeOk size code rest ∧ rest.length < env.length
+    ∀ {env : Env}, CodeOk (σ := σ) size code env → findFn f env = some (ps, rest) →
+      (∃ body, code f = some (ps, body) ∧ ps.Nodup ∧ ∀ o : Oracle σ,
+        Safe o (fun s => Holds size (entryState ps) s ∧ CodeOk (σ := σ) size s.code rest) body
+          (fun _ => False)) ∧ CodeOk (σ := σ) size code rest
   | [], _, h => by cases h
   | (g, qs) :: env, hc, h => by
     simp only [findFn] at h
@@ -1543,13 +1544,12 @@ theorem codeOk_find {size : Nat} {code : String → Option (List String × Panca
     · rename_i hfg
       cases h
       subst hfg
-      exact ⟨hc.1, hc.2, by simp⟩
-    · obtain ⟨hb, hr, hl⟩ := codeOk_find hc.2 h
-      exact ⟨hb, hr, by simp only [List.length_cons]; omega⟩
+      exact hc
+    · exact codeOk_find hc.2 h
 
 /-- The runs `A` stands for, from code with the functions `env` names. -/
 def HoldsE (size : Nat) (env : Env) (A : AState) (s : PancakeState σ) : Prop :=
-  Holds size A s ∧ CodeOk size s.code env
+  Holds size A s ∧ CodeOk (σ := σ) size s.code env
 
 /-- The state a statement ends normally in, if it can, from code with the functions `env` names. -/
 def PostE (size : Nat) (env : Env) (out : Option AState) (t : PancakeState σ) : Prop :=
@@ -1705,18 +1705,87 @@ theorem call_cont {o : Oracle σ} {size : Nat} {env : Env} {A : AState} {rt : St
       exact ⟨_, rfl, holds_restore hsB hn⟩
     | some _ => exact id
 
+/-- A local declared with a value the analysis has: safe when its scope is, from the state with
+the local added, ending where the scope ends with the local dropped. -/
+theorem dec_safe {o : Oracle σ} {size : Nat} {env : Env} {A : AState} {x : String}
+    {e : PancakeExp} {c : PancakeProg} {v : AVal} {r out : Option AState} {what : String}
+    (hv : valOf size A e what = .ok v)
+    (inner : Safe o (HoldsE size env { locals := (x, v) :: A.locals, cells := killCells x A.cells })
+      c (PostE size env r))
+    (hpost : ∀ B, r = some B → (lookup x (dropVar x B.locals)).isNone = true ∧
+      out = some { locals := dropVar x B.locals, cells := killCells x B.cells }) :
+    Safe o (HoldsE size env A) (.dec x e c) (PostE size env out) := by
+  apply Safe.dec
+    (P' := HoldsE size env { locals := (x, v) :: A.locals, cells := killCells x A.cells })
+    (Q' := PostE size env r)
+  · intro s hs
+    obtain ⟨w, ew, hw⟩ := eval_of hs.1 hv
+    refine ⟨w, ew, ⟨hs.1.1, fun y u hu => ?_, cells_locals hs.1.2.2 fun y hy => by
+      simp [setLocal, hy]⟩, hs.2⟩
+    simp only [lookup] at hu
+    split at hu
+    · rename_i hy
+      cases hu
+      exact ⟨w, by simp [setLocal, hy], hw⟩
+    · rename_i hy
+      obtain ⟨w', e', hw'⟩ := hs.1.2.1 y u hu
+      exact ⟨w', by simp [setLocal, hy, e'], hw'⟩
+  · exact inner
+  · intro s t _ ⟨B, hB, hsB⟩
+    obtain ⟨hn, rfl⟩ := hpost B hB
+    exact ⟨_, rfl, holds_restore hsB hn⟩
+
+/-- A call of a function the code holds, with as many arguments as it has parameters, each with a
+value: safe when what follows is, from the state with the result any word. -/
+theorem call_safe {o : Oracle σ} {size : Nat} {env : Env} {A : AState} {rt f : String}
+    {args : List PancakeExp} {c : PancakeProg} {ps : List String} {rest : Env}
+    {r out : Option AState} {what : String}
+    (hargs : argsOk size A what args = .ok ()) (hfind : findFn f env = some (ps, rest))
+    (hlen : ps.length = args.length)
+    (inner : Safe o (HoldsE size env { locals := (rt, AVal.top) :: A.locals, cells := [] }) c
+      (PostE size env r))
+    (hpost : ∀ B, r = some B → (lookup rt (dropVar rt B.locals)).isNone = true ∧
+      out = some { locals := dropVar rt B.locals, cells := killCells rt B.cells }) :
+    Safe o (HoldsE size env A) (.decCall rt f args c) (PostE size env out) := by
+  intro s hs
+  obtain ⟨vs, evs, hvl⟩ := argsOk_eval hs.1 hargs
+  obtain ⟨⟨body, hcode, hnd, hbody⟩, hrest⟩ := codeOk_find hs.2 hfind
+  have hpl : ps.length = vs.length := by omega
+  have hlc : lookupCode s.code f vs = some (body, fun k => (ps.zip vs).lookup k) := by
+    simp [lookupCode, hcode, hnd, hpl]
+  rw [PancakeSem]
+  simp only [evs, hlc]
+  split
+  · rfl
+  · have k := hbody o { decClock s with locals := fun k => (ps.zip vs).lookup k }
+      ⟨holds_entry hs.1 hpl, hrest⟩
+    have hsame := sem_same o _ body
+      { decClock s with locals := fun k => (ps.zip vs).lookup k } (Nat.le_refl _)
+    revert k hsame
+    cases PancakeSem o body { decClock s with locals := fun k => (ps.zip vs).lookup k } with
+    | mk rb tb =>
+      intro k hsame
+      simp only [clampClock]
+      cases rb with
+      | none => exact False.elim k
+      | some res =>
+        cases res with
+        | return_ v =>
+          obtain ⟨hm, hbase, _, hcd⟩ := hsame
+          exact call_cont inner hs hm hbase hcd rfl hpost
+        | timeout => rfl
+        | finalFFI ev => rfl
+        | error => simp [Ok, Entry.ends] at k
+        | break_ => simp [Ok, Entry.ends] at k
+        | continue_ => simp [Ok, Entry.ends] at k
+
 /-- **A statement the analysis accepts never errs**: from every state the abstract one stands
 for, with code holding the functions it may call, a run ends as a run may end, or finishes
-normally in a state the result stands for. A called function's body is safe by the same theorem
-for the functions defined before it, which are fewer. -/
-theorem analyze_safe (o : Oracle σ) (size : Nat) :
-    ∀ (n : Nat) (env : Env), env.length ≤ n →
-      ∀ (p : PancakeProg) (A : AState) (out : Option AState), analyze size env A p = .ok out →
-        Safe o (HoldsE size env A) p (PostE size env out) := by
-  intro n
-  induction n using Nat.strongRecOn with
-  | _ n ihn =>
-  intro env hn p
+normally in a state the result stands for. -/
+theorem analyze_safe (o : Oracle σ) (size : Nat) (env : Env) :
+    ∀ (p : PancakeProg) (A : AState) (out : Option AState), analyze size env A p = .ok out →
+      Safe o (HoldsE size env A) p (PostE size env out) := by
+  intro p
   induction p with
   | skip =>
     intro A out h
@@ -1732,31 +1801,14 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
       split at h
       · cases h
       · rename_i r hr
-        have inner := ih _ r hr
-        apply Safe.dec
-          (P' := HoldsE size env { locals := (x, v) :: A.locals, cells := killCells x A.cells })
-          (Q' := PostE size env r)
-        · intro s hs
-          obtain ⟨w, ew, hw⟩ := eval_of hs.1 hv
-          refine ⟨w, ew, ⟨hs.1.1, fun y u hu => ?_, cells_locals hs.1.2.2 fun y hy => by
-            simp [setLocal, hy]⟩, hs.2⟩
-          simp only [lookup] at hu
-          split at hu
-          · rename_i hy
-            cases hu
-            exact ⟨w, by simp [setLocal, hy], hw⟩
-          · rename_i hy
-            obtain ⟨w', e', hw'⟩ := hs.1.2.1 y u hu
-            exact ⟨w', by simp [setLocal, hy, e'], hw'⟩
-        · exact inner
-        · intro s t _ ht
-          obtain ⟨B, rfl, hB⟩ := ht
-          simp only at h
-          split at h
-          · cases h
-          · rename_i u hn
-            cases h
-            exact ⟨_, rfl, holds_restore hB (need_ok hn)⟩
+        refine dec_safe hv (ih _ r hr) fun B hB => ?_
+        subst hB
+        simp only at h
+        split at h
+        · cases h
+        · rename_i u hn
+          cases h
+          exact ⟨need_ok hn, rfl⟩
   | assign x e =>
     intro A out h
     simp only [analyze, bind, Except.bind] at h
@@ -1945,60 +1997,22 @@ theorem analyze_safe (o : Oracle σ) (size : Nat) :
           split at h
           · cases h
           · rename_i r hr
-            have inner := ih _ r hr
-            intro s hs
-            obtain ⟨vs, evs, hvl⟩ := argsOk_eval hs.1 hargs
-            obtain ⟨⟨body, hcode, hnd, hbody⟩, hrest, hshort⟩ := codeOk_find hs.2 hfind
-            have hpl : ps.length = vs.length := by
-              have := need_ok hlen
-              simp only [beq_iff_eq] at this
-              omega
-            have hlc : lookupCode s.code f vs = some (body, fun k => (ps.zip vs).lookup k) := by
-              simp [lookupCode, hcode, hnd, hpl]
-            have bodySafe := ihn rest.length (by omega) rest (Nat.le_refl _) body
-              (entryState ps) none hbody
-            rw [PancakeSem]
-            simp only [evs, hlc]
-            split
-            · rfl
-            · rename_i hc0
-              have k := bodySafe { decClock s with locals := fun k => (ps.zip vs).lookup k }
-                ⟨holds_entry hs.1 hpl, hrest⟩
-              have hsame := sem_same o _ body
-                { decClock s with locals := fun k => (ps.zip vs).lookup k } (Nat.le_refl _)
-              revert k hsame
-              cases PancakeSem o body
-                  { decClock s with locals := fun k => (ps.zip vs).lookup k } with
-              | mk rb tb =>
-                intro k hsame
-                simp only [clampClock]
-                cases rb with
-                | none =>
-                  obtain ⟨B, hB, _⟩ := k
-                  cases hB
-                | some res =>
-                  cases res with
-                  | return_ v =>
-                    obtain ⟨hm, hbase, _, hcd⟩ := hsame
-                    refine call_cont inner hs hm hbase hcd rfl fun B hB => ?_
-                    subst hB
-                    simp only at h
-                    split at h
-                    · cases h
-                    · rename_i u3 hn
-                      cases h
-                      exact ⟨need_ok hn, rfl⟩
-                  | timeout => rfl
-                  | finalFFI ev => rfl
-                  | error => simp [Ok, Entry.ends] at k
-                  | break_ => simp [Ok, Entry.ends] at k
-                  | continue_ => simp [Ok, Entry.ends] at k
+            have hl := need_ok hlen
+            simp only [beq_iff_eq] at hl
+            refine call_safe hargs hfind hl (ih _ r hr) fun B hB => ?_
+            subst hB
+            simp only at h
+            split at h
+            · cases h
+            · rename_i u3 hn
+              cases h
+              exact ⟨need_ok hn, rfl⟩
 
 /-- With no functions to call, as `analyze_safe`, of the states alone. -/
 theorem analyze_safe0 (o : Oracle σ) (size : Nat) (p : PancakeProg) (A : AState)
     (out : Option AState) (h : analyze size [] A p = .ok out) :
     Safe o (Holds size A) p (Post size out) := fun s hs => by
-  have k := analyze_safe o size 0 [] (Nat.le_refl _) p A out h s ⟨hs, trivial⟩
+  have k := analyze_safe o size [] p A out h s ⟨hs, trivial⟩
   revert k
   cases PancakeSem o p s with
   | mk r t =>
@@ -2016,7 +2030,7 @@ theorem check_safe (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check siz
   · rename_i r hr
     cases r with
     | none =>
-      refine Safe.conseq (analyze_safe o size 0 [] (Nat.le_refl _) p _ none hr)
+      refine Safe.conseq (analyze_safe o size [] p _ none hr)
         (fun s hc => ⟨⟨hc, ?_, ?_⟩, trivial⟩) ?_
       · intro x v hv
         cases hv
@@ -2039,8 +2053,8 @@ theorem never_fails (o : Oracle σ) {size : Nat} {p : PancakeProg} (h : check si
 
 theorem checkFns_codeOk {size : Nat} {code : String → Option (List String × PancakeProg)} :
     ∀ {env env' : Env} {fns : List (String × List String × PancakeProg)},
-      checkFns size env fns = .ok env' → CodeOk size code env →
-      (∀ f ps body, (f, ps, body) ∈ fns → code f = some (ps, body)) → CodeOk size code env'
+      checkFns size env fns = .ok env' → CodeOk (σ := σ) size code env →
+      (∀ f ps body, (f, ps, body) ∈ fns → code f = some (ps, body)) → CodeOk (σ := σ) size code env'
   | env, env', [], h, hc, _ => by
     simp only [checkFns] at h
     cases h
@@ -2059,7 +2073,9 @@ theorem checkFns_codeOk {size : Nat} {code : String → Option (List String × P
           · rename_i r hr
             split at h
             · exact checkFns_codeOk h
-                ⟨⟨body, hcode f ps body (by simp), by simpa using need_ok hnd, hr⟩, hc⟩
+                ⟨⟨body, hcode f ps body (by simp), by simpa using need_ok hnd, fun o =>
+                  Safe.conseq (analyze_safe o size env body _ none hr) (fun _ h => h)
+                    fun _ ⟨_, hB, _⟩ => by cases hB⟩, hc⟩
                 fun g qs b hm => hcode g qs b (List.mem_cons_of_mem _ hm)
             · cases h
 
@@ -2082,9 +2098,9 @@ theorem program_never_fails (o : Oracle σ) {size : Nat}
       cases r with
       | some B => cases h
       | none =>
-        have hok : CodeOk size s.code env := checkFns_codeOk henv trivial hcode
+        have hok : CodeOk (σ := σ) size s.code env := checkFns_codeOk henv trivial hcode
         refine Safe.not_fails (P := HoldsE size env ⟨[], []⟩)
-          (Safe.conseq (analyze_safe o size env.length env (Nat.le_refl _) p _ none hr)
+          (Safe.conseq (analyze_safe o size env p _ none hr)
             (fun _ h => h) fun _ ⟨B, hB, _⟩ => by cases hB) fun _ => ?_
         exact ⟨⟨hc, fun _ _ hv => by simp [lookup] at hv, holds_empty_cells _⟩, hok⟩
 
@@ -2143,8 +2159,9 @@ theorem post_witness : Post 128 (some ⟨[], []⟩) heapState := ⟨_, rfl, hold
 def returnsCode (g : String) : Option (List String × PancakeProg) :=
   if g = "f" then some (["k"], .ret (.var "k")) else none
 
-theorem codeOk_witness : CodeOk 128 returnsCode [("f", ["k"])] :=
-  ⟨⟨_, rfl, by decide, rfl⟩, trivial⟩
+theorem codeOk_witness : CodeOk (σ := Unit) 128 returnsCode [("f", ["k"])] :=
+  ⟨⟨_, rfl, by decide, fun o => Safe.conseq (analyze_safe o 128 [] _ _ none rfl) (fun _ h => h)
+    fun _ ⟨_, hB, _⟩ => by cases hB⟩, trivial⟩
 
 theorem holdsE_witness :
     HoldsE 128 [("f", ["k"])] ⟨[], []⟩ { heapState with code := returnsCode } :=

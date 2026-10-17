@@ -17,7 +17,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.News.SessionSpec` | A turn acts at most once a connection (`turn_ordered`), resends only once ready (`act_resends`, `act_blocked`), adds at most one reply (`serve_one`), keeps a line's deadline (`act_keeps_line`), and after QUIT only sends the 205's rest or closes (`serve_quit`, `quit_rest`, `act_quitting`) | That the program is it (tested) |
 | `DN.News.PostSpec` | Nothing: the store's side of POST is a specification | That it is decision 0005's (tested against `scripts/post_ref.py`); that the program is it |
 | `Certificate.witness` | A packaged precondition has a satisfying state | Adequacy for real callers |
-| 257 executable examples | Those computations return their expected values | Universal proofs |
+| 259 executable examples | Those computations return their expected values | Universal proofs |
 | Rust unit tests | Selected host primitives | Model refinement or OS integration |
 | 30 Loom tests | Selected algorithms under schedule exploration, three driving `dn-runtime` | Unbounded executions, weak memory Loom does not model |
 | State corpus (`scripts/state_check.py`) | On 110 cases of the ways a run stops, the model and an independent implementation of the same clauses agree field by field | Not a proof against HOL |
@@ -26,7 +26,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Native region check | Generated machine code agrees with a C reference on 99,240 cases | A compiler theorem |
 | Native differential and TCP checks | 35,520 arithmetic/control cases; CRC-32C on 311 buffers, SipHash-2-4 on 370 messages, the journal scanner on 28,704 readings, recovery on 2,066 directories, the reply table on 5,790 calls | Compiler preservation, a verified host |
 | `DN.Compiler.AnalyzerSound` | In the model, a program decision 0004's analysis accepts never errs from a heap covering its size above the header, even without the header's words (`analyze_safe`, `never_fails`) | Items 1, 2 and 8; anything beyond not failing |
-| `DN.Compiler.AnalyzerCertSound` | So does one a certificate of the analysis in pieces accepts, its claims holding (`analyzeC_safe`, `never_failsC`) | As above |
+| `DN.Compiler.AnalyzerCertSound` | So does one a certificate of the analysis in pieces accepts, its claims holding (`analyzeC_safe`, `never_failsC`), and one with functions, each with a certificate of its own (`programC_never_fails`); `programC_witness` holds its premises | As above; with functions, that declaring them puts them in the code |
 | `DN.Server.SessionSafe`, `DN.News.RecoverSafe` | No run of the session's program, recovery at start included, fails for any host, clock or heap (`SessionSafe.never_fails`, `printed_never_fails`), nor recovery's step, whatever its call writes (`RecoverSafe.never_fails`); `covers_witness` holds the premise | As above |
 | `DN.Compiler.AnalyzerSound`, calls | In the model, a program whose functions the analysis accepts in the order defined, each from any arguments calling only earlier ones, and whose `main` it accepts never fails from code holding them (`program_never_fails`) | Item 1, including that declaring the functions puts them in the code |
 | `DN.Compiler.Safe` | No run changes the code, the memory's domain, the byte order or `@base` (`sem_same`) | Anything about the memory's contents |
@@ -58,7 +58,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 17,689 declarations, including 8,186 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 17,754 declarations, including 8,210 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
