@@ -380,6 +380,8 @@ from them are done; what needs the program or the host comes with them, as marke
   and store lanes' cases.
 - The grammar of header fields as the program's functions (`DN.News.AbnfProg`) is held to its
   interpreter on the grammar lane's cases and on hostile fields (`scripts/grammar_check.py`).
+- The article's check as the program's functions (`DN.News.ArticleProg`) is held to the model on the
+  article lane's cases and dates and on hard forms (`scripts/accept_check.py`).
 - The session with POST, as a specification (`DN.News.PostSpec`, `DN.News.SessionSpec`), is held to
   an independent reference in Python, a crash of the spool's model after each 240 included
   (`scripts/session_check.py`); done.

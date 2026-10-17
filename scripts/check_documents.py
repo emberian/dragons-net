@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CHECKS = {"abnf_check.py": "abnf", "article_check.py": "article", "journal_check.py": "journal",
           "fs_check.py": "fs", "store_check.py": "store", "runs_check.py": "runs",
           "session_check.py": "session-model", "framing_check.py": "lane-framing",
-          "grammar_check.py": "lane-grammar",
+          "grammar_check.py": "lane-grammar", "accept_check.py": "lane-accept",
           "native_baseline.py": "lane-baseline", "native_fuzz.py": "lane-fuzz", "nntp_check.py": "lane-nntp",
           "parser_contract.py": "lane-parser", "session_native.py": "lane-session"}
 

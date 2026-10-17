@@ -22,7 +22,8 @@ import lanes  # the path above is what makes it importable
 
 COMPILE = [flag for flag in lanes.HARDENING if flag != "-pie" and not flag.startswith("-Wl,")]
 # The headers the sources include that dn-compiler prints, with the command that prints each.
-GENERATED = {"dn_grammar_layout.h": "emit-grammar-layout", "dn_layout.h": "emit-layout",
+GENERATED = {"dn_article_layout.h": "emit-article-layout", "dn_grammar_layout.h": "emit-grammar-layout",
+             "dn_layout.h": "emit-layout",
              "dn_recover_layout.h": "emit-recover-layout",
              "dn_scan_layout.h": "emit-scan-layout", "dn_session_layout.h": "emit-session-layout"}
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.MULTILINE)

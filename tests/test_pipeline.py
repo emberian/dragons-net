@@ -247,6 +247,7 @@ class CheckScript(unittest.TestCase):
         runs, or it would run nothing and pass."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
+                   "accept_check.py": "accept",
                    "session_native.py": "session",
                    "nntp_check.py": "nntp", "parser_contract.py": "parser",
                    "native_fuzz.py": "fuzz"}
@@ -273,6 +274,7 @@ class CheckScript(unittest.TestCase):
             self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
                                               "entry check --cake /pinned/cake", "server --cake /pinned/cake",
                                               "framing --cake /pinned/cake", "grammar --cake /pinned/cake",
+                                              "accept --cake /pinned/cake",
                                               "session --cake /pinned/cake",
                                               "nntp --cake /pinned/cake", "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))

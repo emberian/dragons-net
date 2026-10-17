@@ -499,6 +499,11 @@ jobs:
             build/grammar/grammar.S
             build/grammar/grammar
             build/grammar/dn_grammar_layout.h
+            build/accept/report.json
+            build/accept/article.pnk
+            build/accept/article.S
+            build/accept/article
+            build/accept/dn_article_layout.h
             build/session/report.json
             build/session/session.pnk
             build/session/session.S

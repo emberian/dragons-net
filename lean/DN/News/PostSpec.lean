@@ -242,6 +242,18 @@ def frameOctet (s : BlockState) (x : Byte) : BlockState × List Byte × Option B
   | (s', some r) => (s', [], some (r.kind == .accepted))
   | (s', none) => ({ s' with size := 0, buf := [] }, s'.buf, none)
 
+/-- One octet adds at most two to what the block holds: a CR held back, and the octet after it. -/
+theorem frameOctet_adds (s : BlockState) (x : Byte) : (frameOctet s x).2.1.length ≤ 2 := by
+  have h : (blockStep 2 { s with size := 0, buf := [] } x).1.buf.length ≤ 2 := by
+    unfold blockStep
+    cases s.phase <;> simp only [] <;> (repeat' split) <;> simp [put, BlockState.at, BlockState.fresh]
+  unfold frameOctet
+  split
+  · simp
+  · rename_i s' heq
+    rw [heq] at h
+    exact h
+
 /-- Octets of lines as a reader receives them: a dot put before a line that starts with one;
 `bol` whether the first octet starts a line, and the same after the last. -/
 def stuff (bol : Bool) : List Byte → List Byte × Bool

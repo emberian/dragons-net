@@ -11,6 +11,7 @@ import DN.News.SipProg
 import DN.News.ScanProg
 import DN.News.RecoverProg
 import DN.News.AbnfProg
+import DN.News.ArticleProg
 
 /-!
 # DN.Printed
@@ -69,6 +70,12 @@ def grammar (m : News.AbnfProg.Mutant := .none) : Except String Program :=
   let (fs, f) := News.AbnfProg.program m
   checkedBy (Checked.emitProgram ["dn_next"] fs) f fs
 
+/-- The article's check over the grammar's functions, a whole program that reaches its host through
+one external call, or a version of it with a defect planted. -/
+def article (m : News.ArticleProg.Mutant := .none) : Except String Program :=
+  let (fs, f) := News.ArticleProg.program (m := m)
+  checkedBy (Checked.emitProgram ["dn_next"] fs) f fs
+
 /-- The framers: command lines of at most 512 octets, as the session reads them, and of at most
 four, for the lane's exhaustive run; blocks for a buffer of 64 bytes and of four. The buffer the
 store needs is set by the store; the framing is proven for every size below 2^62. -/
@@ -84,7 +91,8 @@ def named : List (String × Except String Program) :=
    ("reply", reply), ("skeleton", skeleton), ("session", session),
    ("crc", checked News.CrcProg.crcKernel), ("sip", checked News.SipProg.sipKernel),
    ("scan", checked News.ScanProg.scanKernel),
-   ("recover", checked News.RecoverProg.recoverKernel), ("grammar", grammar)] ++ framers
+   ("recover", checked News.RecoverProg.recoverKernel), ("grammar", grammar),
+   ("article", article)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/

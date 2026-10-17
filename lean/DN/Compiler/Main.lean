@@ -27,7 +27,7 @@ open DN.Compiler
 
 private def commands : List String :=
   ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-crc",
-   "emit-sip", "emit-scan", "emit-recover", "emit-grammar", "emit-frame-line", "emit-frame-line-4",
+   "emit-sip", "emit-scan", "emit-recover", "emit-grammar", "emit-article", "emit-frame-line", "emit-frame-line-4",
    "emit-frame-block-64", "emit-frame-block-4",
    "frame-model",
    "session-model [--mutant NAME]", "abnf-model [--mutant NAME]", "article-model [--mutant NAME]",
@@ -35,6 +35,7 @@ private def commands : List String :=
    "store-model",
    "emit-layout", "emit-session", "emit-session-layout", "emit-scan-layout",
    "emit-recover-layout", "emit-grammar-layout", "emit-grammar-mutant NAME",
+   "emit-article-layout", "emit-article-mutant NAME",
    "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
@@ -128,6 +129,12 @@ def table : List (String × (List String → IO UInt32)) :=
    ("emit-grammar-mutant", fun
     | [name] => match DN.News.AbnfProg.mutantNames.lookup name with
       | some m => output ((DN.Printed.grammar m).map (·.source))
+      | none => noMutant name
+    | _ => usageError),
+   ("emit-article-layout", plain fun _ => (output (.ok DN.News.ArticleProg.header))),
+   ("emit-article-mutant", fun
+    | [name] => match DN.News.ArticleProg.mutantNames.lookup name with
+      | some m => output ((DN.Printed.article m).map (·.source))
       | none => noMutant name
     | _ => usageError),
    ("analyze-grammar", plain fun _ =>
