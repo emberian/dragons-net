@@ -52,7 +52,7 @@ NAME = re.compile(r"[a-z0-9-]+")
 # Variables a check is keyed by: all but those that change from run to run without changing what a
 # check does, and secrets, of which only the presence counts.
 VOLATILE = re.compile(r"(HOSTNAME|PWD|OLDPWD|SHLVL|_|TERM|COLUMNS|LINES|INVOCATION_ID|JOURNAL_STREAM|DISPLAY"
-                      r"|SSH_[A-Z_]+|XDG_[A-Z_]+|GITHUB_[A-Z_]+|RUNNER_[A-Z_]+|ACTIONS_[A-Z_]+"
+                      r"|SYSTEMD_EXEC_PID|SSH_[A-Z_]+|XDG_[A-Z_]+|GITHUB_[A-Z_]+|RUNNER_[A-Z_]+|ACTIONS_[A-Z_]+"
                       r"|DN_ONCE|DN_STAMPS|DN_DOCUMENTED)")
 SECRET = re.compile(r"[A-Z_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z_]*")
 # What no check's outcome rests on.

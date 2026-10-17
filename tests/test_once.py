@@ -192,9 +192,10 @@ class Live(unittest.TestCase):
             "    open(os.environ['DN_DOCUMENTED'], 'a').write(json.dumps({'quoted': {'a': ['b']}}) + '\\n')\n")
         subprocess.run(["git", "init", "-q", str(self.tree)], check=True)
 
-    def run_check(self, *log: str) -> str:
+    def run_check(self, *log: str, env: dict[str, str] | None = None) -> str:
         done = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", *log, "--", sys.executable,
-                               "check.py"], cwd=self.tree, capture_output=True, text=True, check=True, timeout=120)
+                               "check.py"], cwd=self.tree, env=env, capture_output=True, text=True, check=True,
+                              timeout=120)
         return done.stdout + done.stderr
 
     def check(self, body: str) -> None:
@@ -258,6 +259,9 @@ class Live(unittest.TestCase):
         self.assertIn("maybe.txt", stamp["inputs"]["absent"])
         self.assertEqual(stamp["documented"], [{"quoted": {"a": ["b"]}}])
         self.assertIn("DN SKIP probe", self.run_check())
+        # A variable naming only the service it runs under changes nothing.
+        other = os.environ.get("SYSTEMD_EXEC_PID", "") + "1"
+        self.assertIn("DN SKIP probe", self.run_check(env={**os.environ, "SYSTEMD_EXEC_PID": other}))
         # What it writes, and a file it never reads, change nothing; a new name where it looked for
         # modules would.
         (self.tree / "build-output.txt").write_text("other")
