@@ -22,27 +22,39 @@ Every trace has to be one `session_ref.judge` accepts, and every scenario has to
 connection closed. Hosts that break the contract are answered with the code of the breach. Each rule
 of the session broken in the model (`DN.News.SessionMutant`) has to be caught by the judge on some
 scenario, and each defect planted in a recorded trace by the judge's check for it.
+
+Scenarios with a store (decision 0005) also give the session a spool: the host keeps it on the file
+system of scripts/fs_ref.py, does each job's operations when the job completes, a delay after it is
+handed over, and fails the operations a scenario names, leaving what `fs_ref.fail` allows; the
+judge checks the header sections with scripts/article_ref.py, run by the Python of
+scripts/requirements-tests.txt.
 """
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 import copy
 from dataclasses import dataclass, field
 import itertools
+import os
 from pathlib import Path
 import queue
 import random
 import subprocess
 import sys
 import threading
-from typing import IO, Self
+from typing import IO, Any, Self
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fs_ref
 import lanes  # the path above is what makes these importable
 from lanes import LaneError, Report
+import post_ref as P
+import recovery_ref
 import session_ref as ref
 from session_ref import Action, Event, Turn, Violation
+import store_ref as J
 
 REVISION, SOURCE = b"0123abc", b"https://example.org/dragons-net"
 Identity = tuple[bytes, bytes]
@@ -56,7 +68,15 @@ BATCH, TURNS, TIMEOUT = 16, 20_000, 60
 # The rules `DN.News.SessionMutant` breaks, by the name `dn-compiler session-model --mutant` takes.
 MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-renewed", "zero-take-counts",
            "blank-counts", "first-not-cleared", "read-not-resumed", "no-greeting", "stale-applied",
-           "end-ignored", "resend-anytime", "wake-early", "answer-while-busy", "quit-tail")
+           "end-ignored", "resend-anytime", "wake-early", "answer-while-busy", "quit-tail",
+           "article-renewed", "no-article-deadline", "wait-deadlines", "greet-all", "post-after-stop",
+           "post-unpermitted", "capabilities-stale", "no-read-control", "fifth-post", "article-longer",
+           "unstuffed", "reserved-taken", "no-file-sync", "no-dir-sync",
+           "no-journal-sync", "dir-syncs-overlap", "appends-overlap", "numbers-not-above",
+           "sync-failure-ignored", "unknown-answered", "names-left", "unseparated", "capacity-over",
+           "refused-reserves", "stop-spares-flight", "commit-after-stop", "wait-through-stop", "lowest-first")
+REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
+ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
 
 class Unfinished(LaneError):
@@ -81,6 +101,8 @@ class Client:
     pause: tuple[int, int] = (0, 0)
     # it is reported ready to write even while it takes nothing
     false_ready: bool = False
+    # it may post
+    post: bool = False
 
     def stream(self, now: int) -> bytes:
         return b"".join(data for at, data in self.sends if at <= now)
@@ -214,6 +236,34 @@ class Speaker:
                     raise LaneError(f"the session answered {' '.join(words)}")
         return actions
 
+    def turn_post(self, now: int, wall: int, events: list[Event], dones: list[P.Done]) -> \
+            tuple[list[Action], list[tuple[int, int, list[P.Op]]]] | int:
+        """A turn with a store: the wall clock, the completions, and the jobs the session answers."""
+        self.say(f"turn {now} {wall}")
+        for e in events:
+            extra = [e.data.hex() or "-"] if e.kind == "recv" else ["1"] if e.kind == "open" and e.post else []
+            self.say(" ".join([e.kind, str(e.idx), str(e.gen), *extra]))
+        for done in dones:
+            said = ",".join(f"{a}:{b}" for a, b in done[3]) or "-"
+            self.say(f"complete {done[0]} {done[1]} {done[2]} {said}")
+        self.say("go")
+        actions: list[Action] = []
+        jobs: list[tuple[int, int, list[P.Op]]] = []
+        while (words := self.hear()) != ["done"]:
+            match words:
+                case ["stop", code]:
+                    return int(code)
+                case ["send", idx, gen, data, "0" | "1" as read]:
+                    actions.append(Action("send", int(idx), int(gen), b"" if data == "-" else bytes.fromhex(data),
+                                          read == "1"))
+                case ["graceful" | "close" as kind, idx, gen]:
+                    actions.append(Action(kind, int(idx), int(gen)))
+                case ["job", slot, gen, *ops]:
+                    jobs.append((int(slot), int(gen), [operation(op) for op in ops]))
+                case _:
+                    raise LaneError(f"the session answered {' '.join(words)}")
+        return actions, jobs
+
     def settle(self, took: list[int]) -> int | str:
         self.say(" ".join(["took", *map(str, took)]))
         match self.hear():
@@ -223,6 +273,22 @@ class Speaker:
                 return f"stop {code}"
             case words:
                 raise LaneError(f"the session answered {' '.join(words)} to what was taken")
+
+
+def operation(token: str) -> P.Op:
+    """An operation of a job, as `dn-compiler session-model` writes it."""
+    match token.split(":"):
+        case ["create" | "remove" as kind, name]:
+            return P.Op(kind, name=name.encode())
+        case ["write", place, gen, offset, data]:
+            return P.Op("write", int(place), int(gen), int(offset), bytes.fromhex(data))
+        case ["datasync" | "close" as kind, place, gen]:
+            return P.Op(kind, int(place), int(gen))
+        case ["rename", src, dst]:
+            return P.Op("rename", name=src.encode(), to=dst.encode())
+        case ["syncdir"]:
+            return P.Op("syncdir")
+    raise LaneError(f"not an operation: {token}")
 
 
 def run(clients: list[Client], command: list[str], ghosts: bool = False, identity: Identity = IDENTITY) -> list[Turn]:
@@ -306,8 +372,250 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
         trace.append(Turn(now, events, answer, took, deadline))
         if not links and not waiting and not echoes:
             return
-        now = next_time(now, deadline, links, clients, waiting, cut or bool(echoes))
+        later = next_time(now, deadline, links, clients, waiting, cut or bool(echoes))
+        if later is None:
+            raise LaneError(f"nothing left to happen after {now}, with connections open")
+        now = later
     raise LaneError(f"the scenario had not ended after {TURNS} turns, at {now}")
+
+
+KEY = bytes(range(16))
+WALL = 1_790_000_000_000
+
+
+def fresh_spool() -> list[tuple[bytes, bytes]]:
+    """An empty spool as recovery leaves it: a journal of its format and a start record."""
+    journal = J.frame(KEY, 0, J.FORMAT, J.MAGIC + KEY)
+    return [(b"journal", journal + J.frame(KEY, len(journal), J.START, b""))]
+
+
+def spool_with(groups: list[list[tuple[bytes, int]]]) -> list[tuple[bytes, bytes]]:
+    """A spool holding an article for each list of groups and numbers, then a start record."""
+    journal = J.frame(KEY, 0, J.FORMAT, J.MAGIC + KEY)
+    files = []
+    for seq, gs in enumerate(groups, 1):
+        octets = b"From: a@b.example\r\n\r\nold\r\n"
+        c = (seq, b"<%d@old.example>" % seq, gs, 19, len(octets), J.crc32c(octets))
+        journal += J.frame(KEY, len(journal), J.COMMIT, J.payload(c))
+        files.append((recovery_ref.name_of("a", seq), octets))
+    return [(b"journal", journal + J.frame(KEY, len(journal), J.START, b"")), *files]
+
+
+@dataclass
+class Failure:
+    """The `nth` operation of `kind` failing, leaving what `fs_ref.fail` makes of `partial`; the
+    operations on the journal are `journal-write` and `journal-sync`."""
+    kind: str
+    nth: int = 1
+    partial: int = 0
+
+
+@dataclass
+class Spool:
+    """A store for a scenario: its groups, the spool as recovered, how long a job of each kind takes
+    (a write, a sync, a rename, ...; one by default) and the operations that fail."""
+    groups: list[bytes]
+    image: list[tuple[bytes, bytes]] = field(default_factory=fresh_spool)
+    delays: dict[str, int] = field(default_factory=dict)
+    failures: list[Failure] = field(default_factory=list)
+    identity: bytes = b"dn.example"
+    run: bytes = bytes.fromhex("0011223344556677")
+    journal: tuple[int, int] = (1, 0)
+    job_gen: int = 7
+
+    def start(self) -> P.Start:
+        return P.Start(self.groups, self.identity, self.run, self.image, self.journal, self.job_gen)
+
+    def line(self) -> str:
+        groups = ",".join(g.hex() for g in self.groups) or "-"
+        image = ";".join(f"{n.hex()}={o.hex() or '-'}" for n, o in self.image) or "-"
+        return (f"store {groups} {self.identity.hex()} {self.run.hex()} {self.journal[0]} {self.journal[1]} "
+                f"{self.job_gen} {image}")
+
+
+class Host:
+    """The host's side of the store: the spool on `fs_ref`'s file system, the places of open files,
+    and the jobs in flight, each done when it completes."""
+
+    def __init__(self, spool: Spool) -> None:
+        self.spool = spool
+        self.disk = fs_ref.Disk()
+        for name, octets in spool.image:
+            self.disk.files.append(fs_ref.File(seen=octets, kept=octets, most=len(octets)))
+            self.disk.names[name] = fs_ref.Name(synced=len(self.disk.files) - 1)
+        self.gens = [0] * P.PLACES
+        place, gen = spool.journal
+        self.gens[place] = gen
+        self.places = {place: self.disk.holding(b"journal") or 0}
+        self.jobs: dict[int, tuple[int, int, list[P.Op]]] = {}
+        self.counts: dict[str, int] = {}
+
+    def take(self, now: int, jobs: list[tuple[int, int, list[P.Op]]]) -> None:
+        for slot, gen, ops in jobs:
+            if slot in self.jobs:
+                raise LaneError(f"a job in slot {slot}, still in flight")
+            delay = max(self.spool.delays.get(self.label(op), 1) for op in ops)
+            self.jobs[slot] = (now + delay, gen, ops)
+
+    def label(self, op: P.Op) -> str:
+        on_journal = op.kind in ("write", "datasync") and (op.place, op.gen) == self.spool.journal
+        return {"write": "journal-write", "datasync": "journal-sync"}[op.kind] if on_journal else op.kind
+
+    def due(self) -> int | None:
+        return min((at for at, _, _ in self.jobs.values()), default=None)
+
+    def complete(self, now: int) -> list[P.Done]:
+        """The jobs due by `now`, done, in the order of their slots."""
+        done: list[P.Done] = []
+        for slot in sorted(self.jobs):
+            at, gen, ops = self.jobs[slot]
+            if at <= now:
+                del self.jobs[slot]
+                done.append(self.run(slot, gen, ops))
+        return done
+
+    def run(self, slot: int, gen: int, ops: list[P.Op]) -> P.Done:
+        results: list[tuple[int, int]] = []
+        for k, op in enumerate(ops):
+            label = self.label(op)
+            self.counts[label] = self.counts.get(label, 0) + 1
+            failure = next((f for f in self.spool.failures if f.kind == label and f.nth == self.counts[label]), None)
+            fop = self.disk_op(op)
+            if failure is not None:
+                if fop is not None:
+                    fs_ref.fail(self.disk, fop, failure.partial)
+                if op.kind == "close":
+                    self.closed(op)
+                return slot, gen, k, results, failure.partial
+            result = self.done(op, fop)
+            if result is None:
+                return slot, gen, k, results, 0
+            results.append(result)
+        return slot, gen, len(ops), results, 0
+
+    def file(self, op: P.Op) -> int:
+        if self.places.get(op.place) is None or self.gens[op.place] != op.gen:
+            raise LaneError(f"an operation on place {op.place}/{op.gen}, not open")
+        return self.places[op.place]
+
+    def disk_op(self, op: P.Op) -> fs_ref.Op | None:
+        match op.kind:
+            case "create":
+                return "create", [op.name.hex()]
+            case "write":
+                f = self.file(op)
+                if op.offset != len(self.disk.files[f].seen):
+                    raise LaneError(f"a write at {op.offset}, not where its file ends")
+                return "append", [str(f), op.data.hex()]
+            case "datasync":
+                return "sync", [str(self.file(op))]
+            case "rename":
+                return "rename", [op.name.hex(), op.to.hex()]
+            case "remove":
+                return "remove", [op.name.hex()]
+            case "syncdir":
+                return "sync-dir", []
+        self.file(op)
+        return None
+
+    def closed(self, op: P.Op) -> None:
+        del self.places[op.place]
+        self.gens[op.place] += 1
+
+    def done(self, op: P.Op, fop: fs_ref.Op | None) -> tuple[int, int] | None:
+        """An operation that succeeds, its result; none when the file system refuses it."""
+        if fop is None:
+            self.closed(op)
+            return 0, 0
+        said = fs_ref.do(self.disk, fop)
+        if said in ("exists", "missing"):
+            return None
+        if op.kind == "create":
+            place = next(p for p in range(P.PLACES) if p not in self.places)
+            self.places[place] = int(said[5:])
+            return place, self.gens[place]
+        return 0, 0
+
+
+def run_post(clients: list[Client], spool: Spool, command: list[str]) -> list[Turn]:
+    """The turns of a scenario with a store, as the simulated host lives them."""
+    trace: list[Turn] = []
+    with Speaker(command) as session:
+        session.say(spool.line())
+        try:
+            simulate_post(session, clients, Host(spool), trace)
+        except LaneError as error:
+            raise Unfinished(str(error), trace) from None
+    return trace
+
+
+def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: list[Turn]) -> None:
+    links: dict[int, Link] = {}
+    gens = [0] * ref.CONNS
+    waiting = sorted(range(len(clients)), key=lambda k: clients[k].opens)
+    now = min((c.opens for c in clients), default=1)
+    for _ in range(TURNS):
+        events: list[Event] = []
+        for idx in sorted(links):
+            link = links[idx]
+            report = news(link, now)
+            if report is None or len(events) == BATCH:
+                continue
+            events.append(report)
+            if report.kind == "closed":
+                del links[idx]
+            elif report.kind == "recv":
+                link.read += len(report.data)
+            elif report.kind == "end":
+                link.ended = True
+        while waiting and clients[waiting[0]].opens <= now and len(events) < BATCH:
+            free = [i for i in range(ref.CONNS) if i not in links]
+            if not free:
+                break
+            idx = free[0]
+            gens[idx] += 1
+            client = clients[waiting.pop(0)]
+            links[idx] = Link(client, idx, gens[idx])
+            events.append(Event("open", idx, gens[idx], post=client.post))
+        dones = host.complete(now)
+        wall = WALL + now
+        answer = session.turn_post(now, wall, events, dones)
+        if isinstance(answer, int):
+            raise LaneError(f"the session stopped with code {answer} on a host that kept the contract")
+        actions, jobs = answer
+        took = []
+        for action in actions:
+            target = links.get(action.idx)
+            if target is None or target.gen != action.gen:
+                raise LaneError(f"an action for {action.idx}/{action.gen}, which the host does not hold")
+            if action.kind == "send":
+                k = target.client.takes(now, len(action.data))
+                took.append(k)
+                target.unsent = k < len(action.data)
+                target.ready = target.client.ready_at(now)
+                target.reading = action.read
+            else:
+                del links[action.idx]
+        host.take(now, jobs)
+        deadline = session.settle(took)
+        if isinstance(deadline, str):
+            raise LaneError(f"the session answered {deadline} to what the host took")
+        trace.append(Turn(now, events, actions, took, deadline, wall, dones, jobs))
+        if not links and not waiting and not host.jobs:
+            return
+        now = next_post_time(now, deadline, links, clients, waiting, host)
+    raise LaneError(f"the scenario had not ended after {TURNS} turns, at {now}")
+
+
+def next_post_time(now: int, deadline: int, links: dict[int, Link], clients: list[Client], waiting: list[int],
+                   host: Host) -> int:
+    due = host.due()
+    if due is not None and due <= now:
+        return now
+    later = [t for t in (next_time(now, deadline, links, clients, waiting, False), due) if t is not None]
+    if not later:
+        raise LaneError(f"nothing left to happen after {now}, with connections open")
+    return min(later)
 
 
 def haunting(idx: int, gen: int) -> list[Event]:
@@ -333,9 +641,9 @@ def news(link: Link, now: int) -> Event | None:
 
 
 def next_time(now: int, deadline: int, links: dict[int, Link], clients: list[Client], waiting: list[int],
-              pending: bool) -> int:
+              pending: bool) -> int | None:
     """When the host's next turn comes: at once if something waits to be reported, else the
-    program's deadline or the first thing that happens."""
+    program's deadline or the first thing that happens; none when nothing is left to happen."""
     free = len(links) < ref.CONNS
     if pending or (deadline and deadline <= now) or (waiting and free and clients[waiting[0]].opens <= now):
         return now
@@ -350,10 +658,7 @@ def next_time(now: int, deadline: int, links: dict[int, Link], clients: list[Cli
             times.append(link.ready)
         elif link.asked():
             times += [at for at, _ in c.sends]
-    later = [t for t in times if t > now]
-    if not later:
-        raise LaneError(f"nothing left to happen after {now}, with connections open")
-    return min(later)
+    return min((t for t in times if t > now), default=None)
 
 
 def ascii_lines(*lines: str) -> bytes:
@@ -470,6 +775,183 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
         Client(1, [(5 + 7 * k, HELP) for k in range(30)]) for _ in range(3)], False
 
 
+class Articles:
+    """scripts/article_ref.py as a process, answering a header section at a time: the judge's
+    checker (`post_ref.Checker`)."""
+
+    def __init__(self) -> None:
+        python = str(lanes.pinned_python(REQUIREMENTS))
+        self.proc = subprocess.Popen([python, str(ARTICLES), "--each"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, text=True, bufsize=1)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self.proc.stdin:
+            self.proc.stdin.close()
+        self.proc.wait(timeout=TIMEOUT)
+        if self.proc.stdout:
+            self.proc.stdout.close()
+
+    def __call__(self, wall: int, seq: int, run: int, conn: int, identity: bytes, random: bytes,
+                 groups: list[bytes], header: bytes) -> P.Verdict:
+        if self.proc.stdin is None or self.proc.stdout is None:
+            raise LaneError("the article reference has no pipe")
+        listed = ",".join(g.hex() for g in groups) or "-"
+        self.proc.stdin.write(f"check {wall} {seq} {run} {conn} {identity.hex()} {random.hex()} {listed} "
+                              f"{header.hex()}\n")
+        self.proc.stdin.flush()
+        match self.proc.stdout.readline().split():
+            case ["refused", *_]:
+                return None
+            case ["accepted", stored, message_id, carried]:
+                return (bytes.fromhex(stored), bytes.fromhex(message_id),
+                        [] if carried == "-" else [bytes.fromhex(g) for g in carried.split(",")])
+            case words:
+                raise LaneError(f"the article reference answered {words}")
+
+
+def article(*fields: str, body: tuple[str, ...] = ("body",)) -> bytes:
+    """An article as a client sends it: its lines dot-stuffed, then the terminator."""
+    return b"".join(((b"." if line.startswith(".") else b"") + line.encode() + b"\r\n")
+                    for line in (*fields, "", *body)) + b".\r\n"
+
+
+BASIC = ("From: a@b.example", "Newsgroups: local.test", "Subject: hi")
+GROUPS = [b"local.test", b"local.other"]
+QUIT = ascii_lines("QUIT")
+
+
+ARTICLE_MAX = P.ARTICLE_MAX
+
+
+def chunks(total: int, most: int, least: int) -> list[int]:
+    """`total` cut into pieces of at most `most` and at least `least`."""
+    out = []
+    while total > 0:
+        take = min(most, total)
+        if 0 < total - take < least:
+            take -= least
+        out.append(take)
+        total -= take
+    return out
+
+
+def sized(n: int) -> bytes:
+    """An article of `n` octets as sent, its terminator counted: lines of `y` after the header."""
+    head = article(*BASIC, body=())[:-3]
+    body = b"".join(b"y" * (k - 2) + b"\r\n" for k in chunks(n - len(head) - 3, 900, 2))
+    return head + body + b".\r\n"
+
+
+def header_sized(n: int) -> bytes:
+    """An article whose header section is of `n` octets, CRLFs counted: X-Pad fields after the
+    others."""
+    used = sum(len(f) + 2 for f in BASIC)
+    pads = ["X-Pad: " + "p" * (k - 9) for k in chunks(n - used, 900, 10)]
+    return article(*BASIC, *pads)
+
+
+def poster(at: int = 5, sent: bytes = article(*BASIC), after: bytes = QUIT, **more: Any) -> Client:
+    """A client that posts at `at`, sends the article a moment later, then `after`."""
+    return Client(1, [(at, ascii_lines("POST")), (at + 1, sent), (at + 2, after)], post=True, **more)
+
+
+PostScenario = tuple[str, list[Client], Spool]
+
+
+def post_scenarios() -> Iterator[PostScenario]:
+    yield "a post", [poster()], Spool(GROUPS)
+    yield "a post with lines that start with a dot", [
+        poster(sent=article(*BASIC, body=(".x", "..y", ".", "...", "")))], Spool(GROUPS)
+    yield "a post refused", [poster(sent=article("Newsgroups: local.test", "Subject: hi"))], Spool(GROUPS)
+    yield "the capabilities and help, then a post", [
+        Client(1, [(5, ascii_lines("CAPABILITIES", "HELP", "POST")), (6, article(*BASIC)), (7, QUIT)],
+               post=True)], Spool(GROUPS)
+    yield "a client that may not post", [Client(1, [(5, ascii_lines("CAPABILITIES", "POST", "QUIT"))])], Spool(GROUPS)
+    yield "a store with no group", [poster()], Spool([])
+    yield "an article sent with its POST", [
+        Client(1, [(5, ascii_lines("POST") + article(*BASIC) + QUIT)], post=True)], Spool(GROUPS)
+    yield "an article, then commands in the same send", [
+        Client(1, [(5, ascii_lines("POST")), (6, article(*BASIC) + ascii_lines("HELP", "QUIT"))], post=True)], \
+        Spool(GROUPS)
+    yield "two posts on one connection", [
+        Client(1, [(5, ascii_lines("POST")), (6, article(*BASIC)), (7, ascii_lines("POST")), (8, article(*BASIC)),
+                   (9, QUIT)], post=True)], Spool(GROUPS)
+    yield "five posts at once", [poster() for _ in range(5)], Spool(GROUPS, delays={"syncdir": 20_000})
+    yield "a post waiting longer than a first command may", [poster() for _ in range(4)] + [
+        Client(1, [(6, ascii_lines("POST")), (7, article(*BASIC)), (8, QUIT)], post=True)], \
+        Spool(GROUPS, delays={"create": 30_000})
+    same = article(*BASIC, "Message-ID: <same@x.example>")
+    yield "one Message-ID twice at once", [poster(sent=same), poster(sent=same)], \
+        Spool(GROUPS, delays={"create": 1_000})
+    yield "one Message-ID after another", [poster(sent=same), poster(at=100, sent=same)], Spool(GROUPS)
+    lines = tuple(f"line {k} " + "x" * 60 for k in range(700))
+    big = article(*BASIC, body=lines)
+    yield "a big article", [poster(sent=big)], Spool(GROUPS, delays={"write": 1_000})
+    yield "a big article read slowly", [Client(1, [(5, ascii_lines("POST")), *((6 + k, big[k * 400:(k + 1) * 400])
+                                                    for k in range(len(big) // 400 + 1)), (999, QUIT)], post=True)], \
+        Spool(GROUPS, delays={"write": 3})
+    yield "an article of the most octets", [poster(sent=sized(ARTICLE_MAX))], Spool(GROUPS)
+    yield "an article one octet longer", [poster(sent=sized(ARTICLE_MAX + 1))], Spool(GROUPS)
+    yield "a header section of the most octets", [poster(sent=header_sized(P.HEADER_MAX))], Spool(GROUPS)
+    yield "a header section one octet longer", [poster(sent=header_sized(P.HEADER_MAX + 1))], Spool(GROUPS)
+    after = [Client(1, [(200, ascii_lines("CAPABILITIES", "POST")), (201, article(*BASIC)), (202, QUIT)],
+                    post=True), Client(150, [(200, ascii_lines("CAPABILITIES", "POST", "QUIT"))], post=True)]
+    for kind, partial in (("create", 0), ("create", 1), ("write", 0), ("write", 100), ("datasync", 0), ("close", 0),
+                          ("rename", 0), ("rename", 1), ("syncdir", 0), ("journal-write", 0),
+                          ("journal-write", 40), ("journal-sync", 0)):
+        yield f"a {kind} that fails, leaving {partial}", [poster(sent=big), *after], \
+            Spool(GROUPS, failures=[Failure(kind, partial=partial)])
+    yield "a removal that fails", [poster(sent=big)], \
+        Spool(GROUPS, failures=[Failure("write"), Failure("remove")])
+    yield "posts to groups with articles", [
+        poster(sent=article("From: a@b.example", "Newsgroups: local.other,local.test,local.none", "Subject: s"))], \
+        Spool(GROUPS, image=spool_with([[(b"local.test", 1)], [(b"local.test", 2), (b"local.other", 7)]]))
+    yield "two articles placed at once", [poster(), poster()], \
+        Spool(GROUPS, delays={"syncdir": 5_000, "journal-sync": 20_000})
+    half = article(*BASIC)[:30]
+    yield "an article not finished", [Client(1, [(5, ascii_lines("POST")), (6, half)], post=True)], Spool(GROUPS)
+    yield "an article sent a line every ten minutes", [
+        Client(1, [(5, ascii_lines("POST")), *((6 + 600_000 * k, line + b"\r\n")
+                                               for k, line in enumerate(article(*BASIC).split(b"\r\n")[:-1]))],
+               post=True)], Spool(GROUPS)
+    yield "input ending inside an article", [Client(1, [(5, ascii_lines("POST")), (6, big[:20_000])], post=True,
+                                                    shut=7)], Spool(GROUPS, delays={"write": 100})
+    yield "a reset inside an article", [Client(1, [(5, ascii_lines("POST")), (6, big[:20_000])], post=True,
+                                               reset=50)], Spool(GROUPS, delays={"write": 100})
+    yield "a reset while the store commits", [poster(after=b"", reset=8)], \
+        Spool(GROUPS, delays={"journal-sync": 100})
+    yield "an article with no empty line", [poster(sent=b"".join(f.encode() + b"\r\n" for f in BASIC) + b".\r\n")], \
+        Spool(GROUPS)
+    yield "a line answered and the next begun in one batch, with a store", [
+        Client(1, [(5, HELP), (10, b"HEL"), (11, b"P\r\nHE")], post=True)], Spool(GROUPS)
+    yield "an article, then the start of a line", [
+        Client(1, [(5, ascii_lines("POST")), (6, article(*BASIC) + b"QU"), (20, b"IT\r\n")], post=True)], Spool(GROUPS)
+    yield "a close that fails while names are removed", [poster(sent=big)], \
+        Spool(GROUPS, failures=[Failure("write"), Failure("close")])
+    yield "a store at its capacity", [poster(), poster(at=100)], \
+        Spool(GROUPS, image=spool_with([[(b"local.test", k)] for k in range(1, 4096)]))
+    named = article(*BASIC, "Message-ID: <again@x.example>")
+    yield "a Message-ID free again once its article is refused", [
+        poster(sent=article(*BASIC, "Message-ID: <again@x.example>", body=lines)), poster(at=20, sent=named)], \
+        Spool(GROUPS, failures=[Failure("write")], delays={"remove": 5_000})
+    slow_big = [(6 + k, big[k * 4_000:(k + 1) * 4_000]) for k in range(len(big) // 4_000 + 1)]
+    yield "the store stopping with another article in flight", [
+        poster(), Client(1, [(5, ascii_lines("POST")), *slow_big, (999, QUIT)], post=True)], \
+        Spool(GROUPS, failures=[Failure("datasync")])
+    yield "a commit completing after the store stopped", [poster(), poster(at=1_000)], \
+        Spool(GROUPS, delays={"journal-sync": 10_000}, failures=[Failure("datasync", nth=2)])
+    yield "the store stopping while a POST waits", [poster() for _ in range(5)], \
+        Spool(GROUPS, delays={"syncdir": 20_000}, failures=[Failure("datasync")])
+    holders = [Client(1, [(5, ascii_lines("POST")), (8 if k == 0 else 400_000, article(*BASIC)),
+                          (400_001, QUIT)], post=True) for k in range(4)]
+    yield "POSTs waiting in the order they came", [
+        *holders, Client(1, [(7, ascii_lines("POST")), (8, article(*BASIC)), (9, QUIT)], post=True),
+        Client(1, [(6, ascii_lines("POST")), (8, article(*BASIC)), (9, QUIT)], post=True)], Spool(GROUPS)
+
+
 def breaches() -> Iterator[tuple[str, list[str], int]]:
     """Scripts a host breaks the contract in, and the code the session has to stop with."""
     begin = ["turn 1", "open 0 1", "go", f"took {GREETING}"]
@@ -485,6 +967,24 @@ def breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "an index opened twice", [*begin, "turn 2", "open 0 2", "go"], 6
     yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
     yield "a clock past its limit", [f"turn {2 ** 62}", "go"], 7
+
+
+def post_breaches() -> Iterator[tuple[str, list[str], int]]:
+    """Scripts with a store in which a host reports a completion it may not, and the code of the
+    breach: 13 for one of no job in flight, 14 for one the job cannot have."""
+    spool = Spool(GROUPS)
+    greeting = len(ref.texts(*IDENTITY)["greeting-post"])
+    posted = [spool.line(), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeting}",
+              f"turn 5 {WALL + 5}", "recv 0 1 " + ascii_lines("POST").hex(), "go", "took 31",
+              f"turn 6 {WALL + 6}", "recv 0 1 " + article(*BASIC).hex(), "go", "took 0", f"turn 7 {WALL + 7}"]
+    yield "a completion with no store", ["turn 1", "complete 0 1 0 -", "go"], 13
+    yield "a completion of no job", [spool.line(), f"turn 1 {WALL}", "complete 0 1 0 -", "go"], 13
+    yield "a completion of another generation", [*posted, "complete 0 9 1 2:0", "go"], 13
+    yield "more completions than jobs", [spool.line(), f"turn 1 {WALL}",
+                                         *(f"complete {k} 1 0 -" for k in range(9)), "go"], 14
+    yield "more operations done than the job has", [*posted, "complete 0 8 2 2:0,0:0", "go"], 14
+    yield "results for operations not done", [*posted, "complete 0 8 0 2:0", "go"], 14
+    yield "a file at a place past the table", [*posted, "complete 0 8 1 16:0", "go"], 14
 
 
 def breach_output(script: list[str], command: list[str], identity: Identity = IDENTITY) -> tuple[list[str], str]:
@@ -631,19 +1131,83 @@ PLANTS: list[tuple[str, str, str, Plant]] = [
 ]
 
 
-def caught(mutant: str, all_scenarios: list[Scenario]) -> str:
-    """The first scenario on which the judge refuses the session with `mutant` broken; a scenario
-    the broken session cannot finish is judged on the turns it had."""
+def changed_write(trace: list[Turn]) -> None:
+    """A byte of an article's file changed as it is written."""
+    for t in trace:
+        for k, (slot, gen, ops) in enumerate(t.jobs):
+            for i, op in enumerate(ops):
+                if op.kind == "write" and op.place != 1:
+                    data = op.data[:-1] + bytes([op.data[-1] ^ 1])
+                    t.jobs[k] = (slot, gen, [*ops[:i], op._replace(data=data), *ops[i + 1:]])
+                    return
+    raise LaneError("no write of an article to plant a defect on")
+
+
+def changed_commit(trace: list[Turn]) -> None:
+    """An article number changed in a commit appended."""
+    for t in trace:
+        for k, (slot, gen, ops) in enumerate(t.jobs):
+            if ops[0].kind == "write" and ops[0].place == 1:
+                data = bytearray(ops[0].data)
+                data[-14] ^= 1
+                t.jobs[k] = (slot, gen, [ops[0]._replace(data=bytes(data)), *ops[1:]])
+                return
+    raise LaneError("no commit to plant a defect on")
+
+
+def posted_refused(trace: list[Turn]) -> None:
+    """A refused article answered 240."""
+    t, k, _ = next(s for s in sends(trace) if s[0].actions[s[1]].data.startswith(b"441"))
+    t.actions[k] = t.actions[k]._replace(data=b"240 Article received OK\r\n")
+
+
+POST_PLANTS: list[tuple[str, str, str, Plant]] = [
+    ("an article's octets changed in a write", "a post", "write", changed_write),
+    ("an article number changed in a commit", "posts to groups with articles", "journal", changed_commit),
+    ("a refused article answered 240", "a post refused", "outcome", posted_refused),
+]
+
+
+Played = Iterator[tuple[str, list[Turn], Identity, Spool | None]]
+
+
+def played(mutant: str, all_scenarios: list[Scenario]) -> Played:
+    """The scenarios with `mutant` broken, each as far as the broken session gets."""
     for name, clients, ghosts, identity in all_scenarios:
         try:
             trace = run(clients, model_command(mutant), ghosts, identity)
         except Unfinished as error:
             trace = error.trace
+        yield name, trace, identity, None
+
+
+def played_post(mutant: str, posts: list[PostScenario]) -> Played:
+    for name, clients, spool in posts:
         try:
-            ref.judge(*identity, trace)
+            trace = run_post(clients, spool, model_command(mutant))
+        except Unfinished as error:
+            trace = error.trace
+        yield name, trace, IDENTITY, spool
+
+
+def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario], checker: Articles) -> str:
+    """The first scenario on which the judge refuses the session with `mutant` broken, those with a
+    store first for a rule of POST; a scenario the broken session cannot finish is judged on the
+    turns it had."""
+    plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
+    order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
+    for name, trace, identity, spool in order:
+        try:
+            ref.judge(*identity, trace, spool.start() if spool else None, checker if spool else None)
         except Violation as error:
             return f"{name}: {error}"
     raise LaneError(f"the judge accepted the session with {mutant} on every scenario")
+
+
+def caught_apart(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario]) -> str:
+    """`caught`, with an article reference of its own, so that mutants can be run at once."""
+    with Articles() as checker:
+        return caught(mutant, all_scenarios, posts, checker)
 
 
 def check() -> Report:
@@ -658,28 +1222,45 @@ def check() -> Report:
             raise LaneError(f"scenario {name!r}: {error}") from None
         traces[name] = trace
         turns += len(trace)
-    for name, script, code in breaches():
+    for name, script, code in (*breaches(), *post_breaches()):
         try:
             check_breach(script, code, model_command())
         except LaneError as error:
             raise LaneError(f"breach {name!r}: {error}") from None
-    mutants = {m: caught(m, all_scenarios) for m in MUTANTS}
-    planted = {}
-    for name, scenario, kind, plant in PLANTS:
-        trace = copy.deepcopy(traces[scenario])
-        plant(trace)
-        try:
-            ref.judge(REVISION, SOURCE, trace)
-        except Violation as error:
-            if error.kind != kind:
-                raise LaneError(f"the planted {name!r} was caught as {error.kind}, not {kind}: {error}") from None
-            planted[name] = str(error)
-            continue
-        raise LaneError(f"the planted {name!r} was not caught")
-    lanes.require_quoted({"docs/baseline.md": [f"{len(traces)} scenarios and {turns:,} turns"]})
-    return Report("checked", None, [], {"scenarios": len(traces), "turns": turns,
-                                        "breaches": sum(1 for _ in breaches()), "mutants_caught": mutants,
-                                        "planted_defects_caught": planted})
+    posts = list(post_scenarios())
+    post_traces = {}
+    with Articles() as checker:
+        for name, clients, spool in posts:
+            trace = run_post(clients, spool, model_command())
+            try:
+                ref.judge(REVISION, SOURCE, trace, spool.start(), checker)
+            except Violation as error:
+                raise LaneError(f"scenario {name!r}: {error}") from None
+            post_traces[name] = trace
+        with ThreadPoolExecutor(os.cpu_count()) as pool:
+            mutants = dict(zip(MUTANTS, pool.map(lambda m: caught_apart(m, all_scenarios, posts), MUTANTS),
+                               strict=True))
+        planted = {}
+        spools = {name: given for name, _, given in posts}
+        for name, scenario, kind, plant in PLANTS + POST_PLANTS:
+            trace = copy.deepcopy(traces.get(scenario) or post_traces[scenario])
+            plant(trace)
+            on = spools.get(scenario) if scenario not in traces else None
+            try:
+                ref.judge(REVISION, SOURCE, trace, on.start() if on else None, checker if on else None)
+            except Violation as error:
+                if error.kind != kind:
+                    raise LaneError(f"the planted {name!r} was caught as {error.kind}, not {kind}: {error}") from None
+                planted[name] = str(error)
+                continue
+            raise LaneError(f"the planted {name!r} was not caught")
+    post_turns = sum(len(t) for t in post_traces.values())
+    lanes.require_quoted({"docs/baseline.md": [f"{len(traces)} scenarios and {turns:,} turns",
+                                               f"{len(post_traces)} with a store and {post_turns:,} turns"]})
+    return Report("checked", None, [ARTICLES, REQUIREMENTS], {
+        "scenarios": len(traces), "turns": turns, "store_scenarios": len(post_traces), "store_turns": post_turns,
+        "breaches": sum(1 for _ in breaches()) + sum(1 for _ in post_breaches()), "mutants_caught": mutants,
+        "planted_defects_caught": planted})
 
 
 def main() -> None:

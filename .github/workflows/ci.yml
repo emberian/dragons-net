@@ -20,7 +20,8 @@ env:
   PYTHONSAFEPATH: "1"
   LEAN_NUM_THREADS: "4"
 
-# One run, jobs in sequence, and the LazyFS lane beside them. The build job runs code from the change
+# One run, jobs in sequence, the native lanes beside the tests, and the LazyFS lane beside them all;
+# the documents are held to what both measured. The build job runs code from the change
 # without network; the proof checks run on a fresh machine before any built code is executed.
 jobs:
   lint:
@@ -249,6 +250,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # The record of this tree's pass, with the stamps: of this run, or of the one that passed on it.
+    outputs:
+      record: passed-${{ steps.tree.outputs.key }}
+      run: ${{ steps.passed.outputs.run-id || github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,15 +316,9 @@ jobs:
         run: |
           mkdir -p build/evidence
           bash scripts/check.sh tests 2>&1 | tee build/evidence/tests.log
-      - name: Native compiler artifact and execution
-        if: steps.passed.outputs.run-id == ''
-        run: bash scripts/native_lanes.sh
       - name: Bounded interleaving exploration
         if: steps.passed.outputs.run-id == ''
         run: python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom 2>&1 | tee build/evidence/loom.log
-      - name: The documents held to what the checks measured
-        if: steps.passed.outputs.run-id == ''
-        run: python3 scripts/check_documents.py
       # Kept even when a check failed: a stamp records only a check that passed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.passed.outputs.run-id == ''
@@ -328,10 +327,12 @@ jobs:
           path: |
             build/stamps/*.json
             !build/stamps/hashes.json
+            !build/stamps/lane-*.json
           if-no-files-found: ignore
           retention-days: 30
       # Recorded only once every step above has passed; artifacts are seen across branches, so the
-      # run on main after a merge finds it too (scripts/prior_pass.py).
+      # run on main after a merge finds it too (scripts/prior_pass.py). The stamps go with it, for the
+      # documents job.
       - name: Record the pass
         if: steps.passed.outputs.run-id == ''
         run: |
@@ -341,7 +342,11 @@ jobs:
         if: steps.passed.outputs.run-id == ''
         with:
           name: passed-${{ steps.tree.outputs.key }}
-          path: build/stamps/job
+          path: |
+            build/stamps/job
+            build/stamps/*.json
+            !build/stamps/hashes.json
+            !build/stamps/lane-*.json
           if-no-files-found: error
           retention-days: 90
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -360,6 +365,111 @@ jobs:
             build/host/report.json
             build/runs/report.json
             build/store/report.json
+
+  native:
+    needs: proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    # The record of this tree's pass, with the stamps: of this run, or of the one that passed on it.
+    outputs:
+      record: passed-${{ steps.tree.outputs.key }}
+      run: ${{ steps.passed.outputs.run-id || github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A tree this job passed on before is not checked again.
+      - name: The tree
+        id: tree
+        run: echo "key=native-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.tree.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the job is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.tree.outputs.key }}
+        run: |
+          mkdir -p build/evidence
+          echo "DN SKIP native: passed on this tree ($KEY)" | tee build/evidence/native.log
+      - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/bootstrap_tool.py lean
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/build_archive.py unpack build/lean-build.tar
+      - name: Strace, which records what a check reads
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends strace
+      # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
+      # the last run of this repository's branches to record them are taken up.
+      - name: The checks' last passes
+        id: stamps
+        if: steps.passed.outputs.run-id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prior_pass.py checks-native >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
+        with:
+          name: checks-native
+          path: build/stamps
+          run-id: ${{ steps.stamps.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Native compiler artifact and execution
+        if: steps.passed.outputs.run-id == ''
+        run: bash scripts/native_lanes.sh
+      # Kept even when a check failed: a stamp records only a check that passed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.passed.outputs.run-id == ''
+        with:
+          name: checks-native
+          path: build/stamps/lane-*.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # Recorded only once every step above has passed; artifacts are seen across branches, so the
+      # run on main after a merge finds it too (scripts/prior_pass.py). The stamps go with it, for the
+      # documents job.
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.tree.outputs.key }}
+          path: |
+            build/stamps/job
+            build/stamps/lane-*.json
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-evidence
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            build/evidence/
             build/native/report.json
             build/native/region.pnk
             build/native/region.S
@@ -384,6 +494,11 @@ jobs:
             build/framing/framers.pnk
             build/framing/framers.S
             build/framing/framers
+            build/grammar/report.json
+            build/grammar/grammar.pnk
+            build/grammar/grammar.S
+            build/grammar/grammar
+            build/grammar/dn_grammar_layout.h
             build/session/report.json
             build/session/session.pnk
             build/session/session.S
@@ -401,6 +516,64 @@ jobs:
             build/fuzz/programs.pnk
             build/fuzz/parser/*.pnk
             build/fuzz/minimized/
+
+  # The stamps in the records of both jobs' passes on this tree, held against the documents.
+  documents:
+    needs: [test, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A tree this job passed on before is not checked again.
+      - name: The tree
+        id: tree
+        run: echo "key=documents-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.tree.outputs.key }}
+        run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Say the job is not run again
+        if: steps.passed.outputs.run-id != ''
+        env:
+          KEY: ${{ steps.tree.outputs.key }}
+        run: |
+          echo "DN SKIP documents: passed on this tree ($KEY)"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: ${{ needs.test.outputs.record }}
+          path: build/stamps
+          run-id: ${{ needs.test.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: ${{ needs.native.outputs.record }}
+          path: build/stamps
+          run-id: ${{ needs.native.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: The documents held to what the checks measured
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/check_documents.py
+      - name: Record the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.tree.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
 
   # LazyFS mounts a FUSE file system, which the runner allows through fusermount3; the lane runs
   # beside the chain, needing neither the build nor the proofs.

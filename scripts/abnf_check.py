@@ -446,25 +446,23 @@ def first_difference(command: list[str], tried: list[tuple[str, str]]) -> str | 
     return None
 
 
-def check() -> Report:
-    OUT.mkdir(parents=True, exist_ok=True)
-    current = subprocess.run([sys.executable, str(lanes.ROOT / "scripts/gen_abnf.py"), "--check"],
-                             capture_output=True, text=True, check=False)
-    if current.returncode:
-        raise LaneError(current.stderr.strip() or current.stdout.strip())
-    abnfgen = subprocess.run([sys.executable, str(lanes.ROOT / "scripts/bootstrap_tool.py"), "abnfgen"],
-                             capture_output=True, text=True, check=True).stdout.strip()
-    python = str(lanes.pinned_python(REQUIREMENTS))
-    backend = subprocess.run([python, "-c", "import abnf.parser; print(abnf.parser._BACKEND)"],
-                             capture_output=True, text=True, check=True).stdout.strip()
-    if backend != "rust":
-        raise LaneError(f"the reference runs on its {backend} backend, not the Rust one pinned")
+def asked() -> list[str]:
+    """The rules the cases are drawn for: every field's, and the inner rules."""
+    return [r for r, _ in G.FIELDS.values()] + [G.OPTIONAL[0]] + INNER
+
+
+Example = tuple[tuple[str, bytes], str, str]
+
+
+def corpus(abnfgen: str) -> tuple[list[tuple[str, bytes]], list[tuple[str, bytes]], int, list[Example]]:
+    """The cases, the derivations among them, how many of those abnfgen gave, and the RFCs'
+    examples with the answer each should get and why: abnfgen's derivations of every rule asked
+    and those of `covering`, each with its changes; comments nested deep; the examples; and cases
+    past a repetition's bound. The grammar's native lane answers the same cases."""
     rng = random.Random(SEED)  # noqa: S311 -- a fixed seed, so that every run draws the same cases
-    rules = [r for r, _ in G.FIELDS.values()] + [G.OPTIONAL[0]] + INNER
-    steps, mark = {}, time.monotonic()
     cases: list[tuple[str, bytes]] = []
     derived: list[tuple[str, bytes]] = []
-    for k, rule in enumerate(rules):
+    for k, rule in enumerate(asked()):
         for case in generated(abnfgen, rule, SEED + k):
             derived.append((rule, case))
             cases.append((rule, case))
@@ -479,6 +477,25 @@ def check() -> Report:
     expected = examples()
     cases += [c for c, _, _ in expected]
     cases += PAST_BOUNDS
+    return cases, derived, raw, expected
+
+
+def check() -> Report:
+    OUT.mkdir(parents=True, exist_ok=True)
+    current = subprocess.run([sys.executable, str(lanes.ROOT / "scripts/gen_abnf.py"), "--check"],
+                             capture_output=True, text=True, check=False)
+    if current.returncode:
+        raise LaneError(current.stderr.strip() or current.stdout.strip())
+    abnfgen = subprocess.run([sys.executable, str(lanes.ROOT / "scripts/bootstrap_tool.py"), "abnfgen"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    python = str(lanes.pinned_python(REQUIREMENTS))
+    backend = subprocess.run([python, "-c", "import abnf.parser; print(abnf.parser._BACKEND)"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    if backend != "rust":
+        raise LaneError(f"the reference runs on its {backend} backend, not the Rust one pinned")
+    rules = asked()
+    steps, mark = {}, time.monotonic()
+    cases, derived, raw, expected = corpus(abnfgen)
     steps["cases"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     model_command = [str(lanes.DN_COMPILER), "abnf-model"]
     model = answers(model_command, cases, WORKERS)

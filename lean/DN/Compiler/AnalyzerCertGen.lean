@@ -48,33 +48,38 @@ def branchW (size : Nat) (e : PancakeExp) (t : Bool) (body : AState → W (Optio
   | none => return none
   | some G => body G
 
-/-- `analyze`, counting what it costs. -/
-def analyzeW (size : Nat) (A : AState) : PancakeProg → W (Option AState)
+/-- `analyze` with the functions `env` to call, counting what it costs. -/
+def analyzeW (size : Nat) (env : Env) (A : AState) : PancakeProg → W (Option AState)
   | .dec x e c => do
     count A
     let v ← lift (valOf size A e s!"var {x}")
-    match ← analyzeW size { locals := (x, v) :: A.locals, cells := killCells x A.cells } c with
+    match ← analyzeW size env { locals := (x, v) :: A.locals, cells := killCells x A.cells } c with
     | none => return none
     | some B => return some { locals := dropVar x B.locals, cells := killCells x B.cells }
-  | .seq c1 c2 => do
-    match ← analyzeW size A c1 with
+  | .decCall rt _ _ c => do
+    count A
+    match ← analyzeW size env { locals := (rt, AVal.top) :: A.locals, cells := [] } c with
     | none => return none
-    | some B => analyzeW size B c2
+    | some B => return some { locals := dropVar rt B.locals, cells := killCells rt B.cells }
+  | .seq c1 c2 => do
+    match ← analyzeW size env A c1 with
+    | none => return none
+    | some B => analyzeW size env B c2
   | .cond e c1 c2 => do
     count A
-    let o1 ← branchW size e true (fun X => analyzeW size X c1) A
-    let o2 ← branchW size e false (fun X => analyzeW size X c2) A
+    let o1 ← branchW size e true (fun X => analyzeW size env X c1) A
+    let o2 ← branchW size e false (fun X => analyzeW size env X c2) A
     lift (joinOuts o1 o2)
   | .while_ e c => do
     count A
-    let (I, _) ← searchW size e (branchW size e true (fun X => analyzeW size X c)) searchFuel A
+    let (I, _) ← searchW size e (branchW size e true (fun X => analyzeW size env X c)) searchFuel A
     return assume size I e false
   | p => do
     count A
-    lift (analyze size [] A p)
+    lift (analyze size env A p)
 
-def cost (size : Nat) (A : AState) (p : PancakeProg) : Nat :=
-  match (analyzeW size A p).run 0 with
+def cost (size : Nat) (env : Env) (A : AState) (p : PancakeProg) : Nat :=
+  match (analyzeW size env A p).run 0 with
   | .ok (_, k) => k
   | .error _ => 0
 
@@ -86,8 +91,8 @@ def deltaOf (A B : AState) : Delta :=
       if decide (a = b) then none else some (y, b)
     cells := if decide (A.cells = B.cells) then none else some B.cells }
 
-def leafOf (size : Nat) (A : AState) (p : PancakeProg) : Except Alarm Cert := do
-  match ← analyze size [] A p with
+def leafOf (size : Nat) (env : Env) (A : AState) (p : PancakeProg) : Except Alarm Cert := do
+  match ← analyze size env A p with
   | none => .ok (.leaf none)
   | some B =>
     let d := deltaOf A B
@@ -95,75 +100,92 @@ def leafOf (size : Nat) (A : AState) (p : PancakeProg) : Except Alarm Cert := do
     else .error "a piece's end is not its start changed"
 
 /-- What the certificate claims a statement ends in. -/
-def outC (size : Nat) (A : AState) (p : PancakeProg) (k : Cert) : Except Alarm (Option AState) :=
-  (analyzeC size A p k).map (·.1)
+def outC (size : Nat) (env : Env) (A : AState) (p : PancakeProg) (k : Cert) :
+    Except Alarm (Option AState) :=
+  (analyzeC size env A p k).map (·.1)
 
 /-- How many of the first statements of the chain `p` fit in `budget` together, from `A`. -/
-def chainFits (size budget : Nat) (A : AState) (spent : Nat) : PancakeProg → Nat
+def chainFits (size budget : Nat) (env : Env) (A : AState) (spent : Nat) : PancakeProg → Nat
   | .seq c1 c2 =>
-    let c := cost size A c1
+    let c := cost size env A c1
     if budget < spent + c then 0 else
-    match analyze size [] A c1 with
-    | .ok (some B) => 1 + chainFits size budget B (spent + c) c2
+    match analyze size env A c1 with
+    | .ok (some B) => 1 + chainFits size budget env B (spent + c) c2
     | _ => 1
   | _ => 0
 
-/-- A certificate for `p` from `A`, cut where a piece costs more than `budget`, no deeper than
-`fuel`. -/
-def certify (size budget : Nat) : Nat → AState → PancakeProg → Except Alarm Cert
-  | 0, A, p => leafOf size A p
+/-- A certificate for `p` from `A`, with the functions `env` to call, cut where a piece costs more
+than `budget`, no deeper than `fuel`. -/
+def certify (size budget : Nat) (env : Env) : Nat → AState → PancakeProg → Except Alarm Cert
+  | 0, A, p => leafOf size env A p
   | fuel + 1, A, p =>
-    if cost size A p ≤ budget then leafOf size A p else
+    if cost size env A p ≤ budget then leafOf size env A p else
     match p with
     | .seq c1 c2 => do
-      let m := chainFits size budget A 0 p
+      let m := chainFits size budget env A 0 p
       if 2 ≤ m then
         let rest ← (dropChain m p).elim (.error "a chain shorter than counted") .ok
-        match ← prefixOut size m A p with
+        match ← prefixOut size env m A p with
         | none => return .chain m none (.leaf none)
         | some B =>
           let d := deltaOf A B
           if !decide (d.apply A = some B) then .error "a chain's end is not its start changed"
-          else return .chain m (some d) (← certify size budget fuel B rest)
-      let k1 ← certify size budget fuel A c1
-      match ← outC size A c1 k1 with
+          else return .chain m (some d) (← certify size budget env fuel B rest)
+      let k1 ← certify size budget env fuel A c1
+      match ← outC size env A c1 k1 with
       | none => .ok (.seq k1 (.leaf none))
-      | some B => .ok (.seq k1 (← certify size budget fuel B c2))
+      | some B => .ok (.seq k1 (← certify size budget env fuel B c2))
     | .dec x e c => do
       let v ← valOf size A e s!"var {x}"
       let inner := { locals := (x, v) :: A.locals, cells := killCells x A.cells }
-      .ok (.dec (← certify size budget fuel inner c))
+      .ok (.dec (← certify size budget env fuel inner c))
+    | .decCall rt _ _ c =>
+      return .dec (← certify size budget env fuel
+        { locals := (rt, AVal.top) :: A.locals, cells := [] } c)
     | .cond e c1 c2 => do
       let k1 ← match assume size A e true with
         | none => .ok (.leaf none)
-        | some G => certify size budget fuel G c1
+        | some G => certify size budget env fuel G c1
       let k2 ← match assume size A e false with
         | none => .ok (.leaf none)
-        | some G => certify size budget fuel G c2
+        | some G => certify size budget env fuel G c2
       .ok (.cond k1 k2)
     | .while_ e c => do
-      let (I, _) ← search size e (branch size e true (fun X => analyze size [] X c)) searchFuel A
+      let (I, _) ← search size e (branch size e true (fun X => analyze size env X c)) searchFuel A
       let d := deltaOf A I
       if !decide (d.apply A = some I) then .error "while: the invariant is not its entry changed"
       else
         let k ← match assume size I e true with
           | none => .ok (.leaf none)
-          | some G => certify size budget fuel G c
+          | some G => certify size budget env fuel G c
         .ok (.loop d k)
-    | p => leafOf size A p
+    | p => leafOf size env A p
 
 /-- The statements of a program, compound ones too. -/
 def nodes : PancakeProg → Nat
-  | .dec _ _ c | .while_ _ c => nodes c + 1
+  | .dec _ _ c | .while_ _ c | .decCall _ _ _ c => nodes c + 1
   | .seq a b | .cond _ a b => nodes a + nodes b + 1
   | _ => 1
 
 /-- A certificate for a whole `main`, and how many claims it makes; the cuts nest no deeper than
 the program does. -/
 def certifyMain (size budget : Nat) (p : PancakeProg) : Except Alarm (Cert × Nat) := do
-  let k ← certify size budget (nodes p) ⟨[], []⟩ p
+  let k ← certify size budget [] (nodes p) ⟨[], []⟩ p
   let obs ← checkC size p k
   .ok (k, obs.length)
+
+/-- Certificates for a program's functions, each from any arguments with those before it to call,
+and for its `main`: the functions with theirs, `main`'s, and how many claims each makes. -/
+def certifyProgram (size budget : Nat) (fns : List (String × List String × PancakeProg))
+    (p : PancakeProg) : Except Alarm (List FnC × Cert × List Nat) := do
+  let (env, cs) ← fns.foldlM (init := (([] : Env), ([] : List FnC)))
+    fun (env, cs) (f, ps, body) => do
+      let k ← certify size budget env (nodes body) (entryState ps) body
+      .ok ((f, ps) :: env, cs ++ [(f, ps, body, k)])
+  need (fnsOk size [] cs) "a function its certificate does not accept"
+  let k ← certify size budget env (nodes p) ⟨[], []⟩ p
+  let obs ← checkC size p k env
+  .ok (cs, k, (List.range cs.length).map (fnClaims size [] cs · |>.length) ++ [obs.length])
 
 /-! ## Printing -/
 
@@ -305,5 +327,42 @@ def regression_947 (_ : Unit) : Bool := !(checkC heap counter (counterCert 7 8))
 def regression_948 (_ : Unit) : Bool :=
   (checkC heap counter (counterCert 8 7)).toBool &&
     !(claims heap counter (counterCert 8 7)).all (·.ok heap)
+
+/-- A byte stored at `k` of the heap above its header, `k` checked first to lie in 64 bytes. -/
+private def put : PancakeProg :=
+  .seq (.cond (.cmp .less (c 0) (.op .add (.cmp .less (.var "k") (c 0))
+      (.cmp .less (c 63) (.var "k")))) (.ret (c 1)) .skip)
+    (.seq (.storeByte (.op .add (.op .add .base (c floor)) (.var "k")) (c 0)) (.ret (c 0)))
+
+/-- `put` called for each `i` below 8, then `twice`, which calls `put` twice. -/
+private def caller : PancakeProg :=
+  .dec "i" (c 0) (.seq (.while_ (.cmp .less (.var "i") (c 8))
+      (.decCall "r" "put" [.var "i"] (.assign "i" (.op .add (.var "i") (c 1)))))
+    (.decCall "r" "twice" [c 3] (.ret (.var "r"))))
+
+private def callees : List (String × List String × PancakeProg) :=
+  [("put", ["k"], put), ("twice", ["k"], .decCall "a" "put" [.var "k"]
+      (.decCall "b" "put" [.op .add (.var "k") (c 1)] (.ret (.var "b"))))]
+
+/-- Certificates found for a program with functions, cut as small as they go, fit it, and each
+claim of each function and of `main` holds. -/
+def regression_962 (_ : Unit) : Bool :=
+  match certifyProgram heap 0 callees caller with
+  | .ok (fs, k, ns) =>
+    1 < ns.headD 0 && (List.range fs.length).all (fun i => (fnClaims heap [] fs i).all (·.ok heap)) &&
+      (claims heap caller k (envAfter [] fs)).all (·.ok heap)
+  | .error _ => false
+
+/-- A call of a function not before it, a function defined twice and one named as the entry are
+refused; a function claimed to finish only with a result when it may not fits its certificate, and
+its claim fails its own check. -/
+def regression_963 (_ : Unit) : Bool :=
+  let leaf : Cert := .leaf none
+  let fs : List FnC := [("f", [], .skip, leaf)]
+  let ret : PancakeProg := .ret (c 0)
+  !(checkC heap (.decCall "r" "f" [] (.ret (.var "r"))) (.dec leaf) [("put", ["k"])]).toBool &&
+    !fnsOk heap [] [("f", [], ret, leaf), ("f", [], ret, leaf)] &&
+    !fnsOk heap [] [("main", [], ret, leaf)] &&
+    fnsOk heap [] fs && !(fnClaims heap [] fs 0).all (·.ok heap)
 
 end DN.Compiler.Analyzer.Gen

@@ -28,7 +28,8 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
   changed freely.
 - Functions are analysed in the order defined, each from any arguments, and may call only those
   before it: a call gives any word and forgets the cells. `checkProgram` takes a program so, and
-  `program_never_fails` proves it from code holding its functions; certificates take no calls yet.
+  `program_never_fails` proves it from code holding its functions. A certificate takes calls too:
+  each function has one, and claims of its own (`programC_never_fails`).
 - The analysis is written in structural recursion over `Nat` and `Int`, so the kernel reduces it.
   `dn-compiler analyze-session` runs the same analysis compiled and names the first alarm, which
   the kernel does not.

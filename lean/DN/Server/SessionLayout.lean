@@ -98,11 +98,12 @@ def eventHead : Nat := 40
 def eventSlot : Nat := eventHead + data
 
 /-- File jobs in flight, operations in a job, octets a job moves, and files open at once
-(decision 0005: four POSTs, the journal, eight reads and room to spare). -/
-def jobs : Nat := 8
-def jobOps : Nat := 8
-def jobData : Nat := 16384
-def handles : Nat := 16
+(decision 0005: four POSTs, the journal, eight reads and room to spare), as the specification has
+them (`DN.News.PostSpec`). -/
+def jobs : Nat := News.PostSpec.jobs
+def jobOps : Nat := News.PostSpec.jobOps
+def jobData : Nat := News.PostSpec.jobData
+def handles : Nat := News.PostSpec.places
 
 def nextDoneCount : Nat := nextEvents + batch * eventSlot
 def nextDone : Nat := nextDoneCount + 8

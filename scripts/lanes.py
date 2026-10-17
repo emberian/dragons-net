@@ -45,6 +45,10 @@ RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
                    "cml_heap", "cml_main", "cml_stack", "cml_stackend"}
 # Must stay equal to Checked.exportPrefix; a test holds the two together.
 EXPORT_PREFIX = "dn_"
+# The heap, in MiB, of the compiler's runtime when it prints every intermediate program, which it
+# takes whole: at its default and at 1024 the grammar's program alone, 174 KB of source, runs it out,
+# at 2048 not; twice that leaves room for the session's program with the grammar in it.
+EXPLORE_HEAP_MB = 4096
 
 
 class LaneError(Exception):
@@ -84,11 +88,14 @@ def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = 
     the exit status at zero, so any diagnostic fails; with `warnings` off, for a source whose
     warnings are beside what is asked of it, only the status does, and nothing is silenced. The
     simple register allocator: the compiler's theorem holds for every allocator, and its default,
-    IRC, takes minutes on a function the size of the session's `main` with recovery embedded."""
+    IRC, takes minutes on a function the size of the session's `main` with recovery embedded. With
+    `explore` the compiler keeps every intermediate program, and takes the heap `EXPLORE_HEAP_MB`
+    gives its own runtime."""
     options = ["--explore"] if explore else []
+    env = {**os.environ, "CML_HEAP_SIZE": str(EXPLORE_HEAP_MB)} if explore else None
     with source.open("rb") as inp:
         done = subprocess.run([cake, "--pancake", "--reg_alg=0", *options, f"--main_return={str(main_return).lower()}"],
-                              stdin=inp, capture_output=True, timeout=timeout, check=False)
+                              stdin=inp, capture_output=True, timeout=timeout, check=False, env=env)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
                           f"{done.stderr.decode(errors='replace')}")

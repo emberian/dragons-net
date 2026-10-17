@@ -17,6 +17,9 @@ take gets 501. An overlong line is never ignored: only its first bytes are kept,
 there says nothing of the rest. Keywords are compared without regard to case (§3.1); the arguments
 follow the grammar of §9.8 and the range of article numbers in §6.
 
+With a store (docs/decisions/0005-article-store.md), POST is a command too (`replyIn`): the session
+decides what a well-formed one gets.
+
 Each rule is shown to matter: a version with it broken (`Mutant`) answers some line otherwise.
 -/
 
@@ -45,7 +48,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 /-- The byte in upper case, for ASCII letters. -/
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
-inductive Cmd | capabilities | help | quit | head | stat
+inductive Cmd | capabilities | help | quit | head | stat | post
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -57,6 +60,10 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "HEAD" then some .head
   else if u = ascii "STAT" then some .stat
   else none
+
+/-- The command a word names, POST among them when the server has a store. -/
+def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
+  if offered && w.map upper = ascii "POST" then some .post else command? w
 
 def isDigit (b : Byte) : Bool := 48 ≤ b.toNat && b.toNat ≤ 57
 def isAlpha (b : Byte) : Bool := (65 ≤ b.toNat && b.toNat ≤ 90) || (97 ≤ b.toNat && b.toNat ≤ 122)
@@ -100,6 +107,18 @@ inductive Reply
   | unknown
   /-- 501: a command the server has, but not well formed -/
   | syntax
+  /-- 340: send the article (RFC 3977 §6.3.1), for a well-formed POST; the session decides -/
+  | post
+  /-- 240 and 441: the article taken, or not -/
+  | posted
+  | failed
+  /-- 440: the connection was not greeted as one that may post -/
+  | notPermitted
+  /-- 403: the store has stopped accepting (§3.2.1) -/
+  | unavailable
+  /-- the capabilities and the help text of a server that offers POST -/
+  | capabilitiesPost
+  | helpPost
   deriving DecidableEq, Repr
 
 /-- The reply to a command with these arguments, on a well-formed line. -/
@@ -111,16 +130,20 @@ def answer : Cmd → List (List Byte) → Reply
   | .head, [] | .stat, [] => .noGroup
   | .head, [a] | .stat, [a] =>
     if isArticleNumber a then .noGroup else if isMessageId a then .noSuchId else .syntax
+  | .post, [] => .post
   | _, _ => .syntax
 
-/-- **The reply to a line.** -/
-def reply (l : Line) : Reply :=
+/-- **The reply to a line**, POST a command when `offered`. -/
+def replyIn (offered : Bool) (l : Line) : Reply :=
   match words l.kept with
   | [] => if l.kind = .overlong then .unknown else .ignore
   | w :: args =>
-    match command? w with
+    match commandIn offered w with
     | none => .unknown
     | some c => if l.kind = .command then answer c args else .syntax
+
+/-- The reply to a line of a server without a store. -/
+def reply : Line → Reply := replyIn false
 
 /-! ## What each reply says -/
 
@@ -151,10 +174,20 @@ def helpHead : List Byte :=
     ascii "HELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net "
 def helpMid : List Byte := ascii " is free software under the GNU AGPL; source code at "
 def blockEnd : List Byte := ascii "\r\n.\r\n"
+def greetingPostHead : List Byte := ascii "200 dragons-net "
+def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
+def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
+def helpPostHead : List Byte :=
+  ascii "100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\n" ++
+    ascii "HELP\r\nPOST\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net "
 
 /-- The greeting (§5.1): posting is not allowed, and the source is offered. -/
 def greeting (i : Identity) : List Byte :=
   greetingHead ++ i.revision ++ greetingMid ++ i.source ++ crlf
+
+/-- The greeting of a connection that may post. -/
+def greetingPost (i : Identity) : List Byte :=
+  greetingPostHead ++ i.revision ++ greetingPostMid ++ i.source ++ crlf
 
 /-- The bytes of a reply; a multi-line one ends with its terminating dot line (§3.1.1). -/
 def text (i : Identity) : Reply → List Byte
@@ -166,6 +199,13 @@ def text (i : Identity) : Reply → List Byte
   | .noSuchId => ascii "430 No article with that message-id\r\n"
   | .unknown => ascii "500 Unknown command\r\n"
   | .syntax => ascii "501 Syntax error\r\n"
+  | .post => ascii "340 Send article to be posted\r\n"
+  | .posted => ascii "240 Article received OK\r\n"
+  | .failed => ascii "441 Posting failed\r\n"
+  | .notPermitted => ascii "440 Posting not permitted\r\n"
+  | .unavailable => ascii "403 Not accepting articles\r\n"
+  | .capabilitiesPost => capabilitiesHead ++ i.revision ++ capabilitiesPostTail ++ blockEnd
+  | .helpPost => helpPostHead ++ i.revision ++ helpMid ++ i.source ++ blockEnd
 
 /-- The most bytes one action carries. -/
 def actionData : Nat := 512
@@ -173,28 +213,39 @@ def actionData : Nat := 512
 theorem parts_short :
     greetingHead.length ≤ 16 ∧ greetingMid.length ≤ 35 ∧ capabilitiesHead.length ≤ 60 ∧
       helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
-      ∀ r, r ≠ .capabilities → r ≠ .help → ∀ i, (text i r).length ≤ 40 := by
+      greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
+      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 138 ∧
+      ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → ∀ i,
+        (text i r).length ≤ 40 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, rfl, ?_⟩
-  intro r h1 h2 i
-  cases r <;> first | exact absurd rfl h1 | exact absurd rfl h2 | (simp only [text]; decide +kernel)
+    by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
+    by decide +kernel, by decide +kernel, ?_⟩
+  intro r h1 h2 h3 h4 i
+  cases r <;> first
+    | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
+    | (simp only [text]; decide +kernel)
 
 /-- **Every reply, and the greeting, fits one action** when the identity fits. -/
-theorem greeting_fits (i : Identity) (h : i.ok = true) : (greeting i).length ≤ actionData := by
+theorem greeting_fits (i : Identity) (h : i.ok = true) :
+    (greeting i).length ≤ actionData ∧ (greetingPost i).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
-  obtain ⟨h1, h2, _, _, _, _, _, _⟩ := parts_short
-  simp only [greeting, List.length_append, actionData]
+  obtain ⟨h1, h2, _, _, _, _, _, h8, h9, _⟩ := parts_short
+  simp only [greeting, greetingPost, List.length_append, actionData]
   omega
 
 theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) :
     (text i r).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
-  obtain ⟨_, _, h3, h4, h5, h6, _, h8⟩ := parts_short
+  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h12⟩ := parts_short
   by_cases hc : r = .capabilities
   · subst hc; simp only [text, List.length_append, actionData]; omega
   by_cases hh : r = .help
   · subst hh; simp only [text, List.length_append, actionData]; omega
-  have := h8 r hc hh i
+  by_cases hcp : r = .capabilitiesPost
+  · subst hcp; simp only [text, List.length_append, actionData]; omega
+  by_cases hhp : r = .helpPost
+  · subst hhp; simp only [text, List.length_append, actionData]; omega
+  have := h12 r hc hh hcp hhp i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -278,6 +329,7 @@ def answerM (m : Mutant) (c : Cmd) (args : List (List Byte)) : Reply :=
           a.getLast? == some 62#8) then
       if m = .idAsNumber then .noGroup else .noSuchId
     else .syntax
+  | .post, [] => .post
   | _, _ => .syntax
 
 def replyM (m : Mutant) (l : Line) : Reply :=
@@ -303,9 +355,9 @@ theorem answerM_none : answerM .none = answer := by
 
 theorem replyM_none : replyM .none = reply := by
   funext l
-  unfold replyM reply words
+  unfold replyM reply replyIn words
   rw [wordsFromM_none]
-  split <;> simp [command?M, answerM_none]
+  split <;> simp [command?M, commandIn, answerM_none]
 
 /-- A line that tells the mutant from the specification. -/
 def witness : Mutant → Line
@@ -353,7 +405,10 @@ theorem examples :
     reply (line "XY") = .unknown ∧ reply (line "") = .ignore ∧ reply (line " \t") = .ignore ∧
     reply ⟨.malformed, []⟩ = .ignore ∧ reply ⟨.malformed, ascii "HELP"⟩ = .syntax ∧
     reply ⟨.malformed, ascii "FOO"⟩ = .unknown ∧ reply ⟨.overlong, ascii "HELP"⟩ = .syntax ∧
-    reply ⟨.overlong, ascii "FOO"⟩ = .unknown ∧ reply ⟨.overlong, ascii "  "⟩ = .unknown := by
+    reply ⟨.overlong, ascii "FOO"⟩ = .unknown ∧ reply ⟨.overlong, ascii "  "⟩ = .unknown ∧
+    reply (line "POST") = .unknown ∧ replyIn true (line "post") = .post ∧
+    replyIn true (line "POST x") = .syntax ∧ replyIn true ⟨.malformed, ascii "POST"⟩ = .syntax ∧
+    replyIn true (line "HELP") = .help := by
   decide +kernel
 
 /-- An identity that fits. -/

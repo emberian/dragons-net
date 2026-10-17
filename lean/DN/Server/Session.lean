@@ -66,7 +66,8 @@ def copyNew (j : String) (dst src len : PExpr) : List PStmt :=
 /-- The code the local `r` holds for a reply; zero is none. -/
 def replyCode : News.CommandSpec.Reply → Nat
   | .ignore => 0 | .capabilities => 1 | .help => 2 | .quit => 3 | .noGroup => 4
-  | .noSuchId => 5 | .unknown => 6 | .syntax => 7
+  | .noSuchId => 5 | .unknown => 6 | .syntax => 7 | .post => 8 | .posted => 9 | .failed => 10
+  | .notPermitted => 11 | .unavailable => 12 | .capabilitiesPost => 13 | .helpPost => 14
 
 /-- The code a connection's record keeps for its phase. -/
 def phaseCode : News.SessionSpec.Phase → Nat
