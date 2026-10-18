@@ -84,12 +84,18 @@ private def analyzed (size : Nat) : Option PancakeProg → Except String String
 (`Analyzer.Gen.cost`). -/
 private def certBudget : Nat := 150000
 
-private def sessionCert : Analyzer.Gen.Target :=
+/-- How much the claims one declaration of a program's checks may cost together. -/
+private def claimsBudget : Nat := 60000
+
+private def sessionCert : Analyzer.Gen.ProgramTarget :=
   { module := "DN.Server.SessionCert", imports := ["DN.Server.Session"],
-    program := "DN.Server.Session.main", size := "DN.Server.SessionLayout.size",
-    doc := "The safety analysis of the session's `main` (decision 0004) in pieces: the claims " ++
-      "of a\n" ++
-      "certificate of `DN.Compiler.AnalyzerCert`, one declaration each." }
+    functions := "DN.Server.Session.functions", program := "DN.Server.Session.main",
+    size := "DN.Server.SessionLayout.size",
+    doc := "The safety analysis of the session's program (decision 0004) in pieces: the claims " ++
+      "of\n" ++
+      "certificates of `DN.Compiler.AnalyzerCert`, of its functions together as their costs " ++
+      "allow and\n" ++
+      "of its `main` one declaration each." }
 
 private def recoverCert : Analyzer.Gen.Target :=
   { module := "DN.News.RecoverCert", imports := ["DN.News.RecoverProg"],
@@ -146,24 +152,36 @@ def table : List (String × (List String → IO UInt32)) :=
    ("analyze-recover", plain fun _ => (output (analyzed (DN.News.RecoverProg.analysisAt +
       DN.News.RecoverProg.size) (Lower.lower DN.News.RecoverProg.analysisMain)))),
    ("analysis-cert", fun
+    | "session" :: rest =>
+      let budget := (rest.head?.bind String.toNat?).getD certBudget
+      let size := DN.Server.SessionLayout.size
+      let fns := DN.Server.Session.functions.map fun g =>
+        (g.name, g.params.map (·.2), (Lower.lower g).getD .skip)
+      match Lower.lower DN.Server.Session.main with
+      | some p => output ((Analyzer.Gen.certifyProgram size budget fns p).map fun (cs, k, _) =>
+          Analyzer.Gen.renderProgram sessionCert size claimsBudget cs p k)
+      | none => output (.error "the program does not lower")
     | what :: rest =>
       let budget := (rest.head?.bind String.toNat?).getD certBudget
       let target : Option (Analyzer.Gen.Target × Nat × Option PancakeProg) := match what with
-        | "session" => some (sessionCert, DN.Server.SessionLayout.size,
-            Lower.lower DN.Server.Session.main)
         | "recover" => some (recoverCert,
             DN.News.RecoverProg.analysisAt + DN.News.RecoverProg.size,
             Lower.lower DN.News.RecoverProg.analysisMain)
         | _ => none
       match target with
       | some (t, size, some p) =>
-        output ((Analyzer.Gen.certifyMain size budget p).map fun (k, n) =>
-          Analyzer.Gen.render t k n)
+        output ((Analyzer.Gen.certifyMain size budget p).map fun (k, _) =>
+          Analyzer.Gen.render t size claimsBudget p k)
       | some (_, _, none) => output (.error "the program does not lower")
       | none => output (.error s!"no certificate for {what}")
     | [] => usageError),
-   ("analyze-session", plain fun _ => (output (analyzed DN.Server.SessionLayout.size
-      (Lower.lower DN.Server.Session.main)))),
+   ("analyze-session", plain fun _ =>
+    output (match DN.Server.Session.functions.mapM (fun g =>
+        (Lower.lower g).map (g.name, g.params.map (·.2), ·)),
+      Lower.lower DN.Server.Session.main with
+      | some fns, some p =>
+        (Analyzer.checkProgram DN.Server.SessionLayout.size fns p).map fun _ => "safe\n"
+      | _, _ => .error "the program does not lower")),
    -- Framing cases, answered by the framers whose programs (`DN.News.FramerProg`)
    -- `DN.News.FramerCode` proves to make the same steps.
    ("frame-model", plain fun _ => (onInput DN.News.FrameModel.runAll)),

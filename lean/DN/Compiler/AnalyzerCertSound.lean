@@ -350,10 +350,11 @@ theorem checkC_safe (o : Oracle σ) {size : Nat} {p : PancakeProg} {k : Cert} {o
   · cases h
 
 /-- The claims of an accepted certificate, each holding: whatever is listed is as `checkC` lists. -/
-theorem claims_of {size : Nat} {p : PancakeProg} {k : Cert}
-    (h : (checkC size p k).toBool = true) : checkC size p k = .ok (claims size p k) := by
+theorem claims_of {size : Nat} {p : PancakeProg} {k : Cert} {env : Env}
+    (h : (checkC size p k env).toBool = true) :
+    checkC size p k env = .ok (claims size p k env) := by
   unfold claims
-  cases hc : checkC size p k with
+  cases hc : checkC size p k env with
   | ok obs => rfl
   | error m => rw [hc] at h; cases h
 
@@ -380,7 +381,35 @@ theorem never_failsC (o : Oracle σ) {size : Nat} {p : PancakeProg} {k : Cert}
     (s : PancakeState σ) (hc : Covers size s.memaddrs s.baseAddr) : ¬ Entry.Fails o p s :=
   Safe.not_fails (checkC_safe o (claims_of h) (obsOk_of_get hobs)) (fun _ => hc)
 
+
+
+
+theorem obsOk_all {size : Nat} {l : List Ob} (h : l.all (·.ok size) = true) : ObsOk size l :=
+  fun ob hm => Ob.ok_sound (List.all_eq_true.mp h ob hm)
+
 /-! ## Functions -/
+
+/-- `fnsOk` from its checks of each function. -/
+theorem fnsOk_of_each {size : Nat} : ∀ {env : Env} {fns : List FnC},
+    (∀ i, i < fns.length → fnOkAt size env fns i = true) → fnsOk size env fns = true
+  | _, [], _ => rfl
+  | env, (f, ps, body, k) :: fns, h => by
+    have h0 := h 0 (by simp)
+    simp only [fnOkAt] at h0
+    simp only [fnsOk]
+    rw [h0, Bool.true_and]
+    exact fnsOk_of_each fun i hi => h (i + 1) (by simp only [List.length_cons]; omega)
+
+/-- A run of functions checked at once: `fnsOk`'s checks of each, and its claims. -/
+theorem fnChecks_range {size : Nat} {env : Env} {fns : List FnC} {a n : Nat}
+    (h : (List.range' a n).all
+      (fun i => fnOkAt size env fns i && (fnClaims size env fns i).all (·.ok size)) = true) :
+    ∀ i, a ≤ i → i < a + n →
+      fnOkAt size env fns i = true ∧ ObsOk size (fnClaims size env fns i) :=
+  fun i h1 h2 => by
+    have := all_range h i h1 h2
+    simp only [Bool.and_eq_true] at this
+    exact ⟨this.1, obsOk_all this.2⟩
 
 /-- The functions of `fns`, defined after those `env` names and each accepted by its certificate,
 its claims holding, in code that holds them: the code holds them all, as `CodeOk` asks. -/
@@ -433,6 +462,53 @@ theorem programC_never_fails (o : Oracle σ) {size : Nat} {fns : List FnC} {p : 
     exact ⟨⟨hc, fun _ _ hv => by simp [lookup] at hv, holds_empty_cells _⟩, hco⟩
   · cases h
   · cases h
+
+/-- The code that holds the functions of `fns`: each name, the first function of it. -/
+def codeOf (fns : List FnC) (f : String) : Option (List String × PancakeProg) :=
+  (fns.find? (·.1 == f)).map fun g => (g.2.1, g.2.2.1)
+
+/-- A function `fnsOk` takes is not one `env` names. -/
+theorem fnsOk_fresh {size : Nat} :
+    ∀ {env : Env} {fns : List FnC}, fnsOk size env fns = true →
+      ∀ f ps body k, (f, ps, body, k) ∈ fns → findFn f env = none
+  | _, [], _, _, _, _, _, hm => by cases hm
+  | env, (g, qs, b, k') :: fns, h, f, ps, body, k, hm => by
+    simp only [fnsOk, Bool.and_eq_true, decide_eq_true_eq, Option.isNone_iff_eq_none] at h
+    obtain ⟨⟨⟨⟨hg, -⟩, -⟩, -⟩, hrest⟩ := h
+    rcases List.mem_cons.mp hm with he | hm
+    · simp only [Prod.mk.injEq] at he
+      rw [he.1]
+      exact hg
+    · have := fnsOk_fresh hrest f ps body k hm
+      simp only [findFn] at this
+      split at this
+      · cases this
+      · exact this
+
+/-- **The code `codeOf` gives holds the functions `fnsOk` takes**: their names are distinct. -/
+theorem codeOf_holds {size : Nat} :
+    ∀ {env : Env} {fns : List FnC}, fnsOk size env fns = true →
+      ∀ f ps body k, (f, ps, body, k) ∈ fns → codeOf fns f = some (ps, body)
+  | _, [], _, _, _, _, _, hm => by cases hm
+  | env, (g, qs, b, k') :: fns, h, f, ps, body, k, hm => by
+    have hrest : fnsOk size ((g, qs) :: env) fns = true := by
+      simp only [fnsOk, Bool.and_eq_true] at h
+      exact h.2
+    rcases List.mem_cons.mp hm with he | hm
+    · simp only [Prod.mk.injEq] at he
+      obtain ⟨rfl, rfl, rfl, -⟩ := he
+      simp [codeOf]
+    · have hf := fnsOk_fresh hrest f ps body k hm
+      have hne : (g == f) = false := by
+        simp only [findFn] at hf
+        split at hf
+        · cases hf
+        · rename_i hgf
+          simp only [beq_eq_false_iff_ne]
+          exact fun e => hgf e.symm
+      have := codeOf_holds hrest f ps body k hm
+      simp only [codeOf, List.find?_cons, hne] at this ⊢
+      exact this
 
 /-! ## The premises can hold -/
 

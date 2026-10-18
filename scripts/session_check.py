@@ -381,6 +381,7 @@ def simulate(session: Speaker, clients: list[Client], ghosts: bool, trace: list[
 
 KEY = bytes(range(16))
 WALL = 1_790_000_000_000
+WALL_LIMIT = 1000 * 2 ** 40
 
 
 def fresh_spool() -> list[tuple[bytes, bytes]]:
@@ -537,11 +538,12 @@ class Host:
         return 0, 0
 
 
-def run_post(clients: list[Client], spool: Spool, command: list[str]) -> list[Turn]:
-    """The turns of a scenario with a store, as the simulated host lives them."""
+def run_post(clients: list[Client], spool: Spool, command: list[str], line: str | None = None) -> list[Turn]:
+    """The turns of a scenario with a store, as the simulated host lives them; `line` tells the
+    session of the store, if not the spool's own line."""
     trace: list[Turn] = []
     with Speaker(command) as session:
-        session.say(spool.line())
+        session.say(line or spool.line())
         try:
             simulate_post(session, clients, Host(spool), trace)
         except LaneError as error:
@@ -967,6 +969,7 @@ def breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "an index opened twice", [*begin, "turn 2", "open 0 2", "go"], 6
     yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
     yield "a clock past its limit", [f"turn {2 ** 62}", "go"], 7
+    yield "a wall clock past its limit", [f"turn 1 {WALL_LIMIT}", "go"], 7
 
 
 def post_breaches() -> Iterator[tuple[str, list[str], int]]:

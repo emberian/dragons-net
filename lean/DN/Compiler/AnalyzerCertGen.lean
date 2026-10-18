@@ -104,22 +104,31 @@ def outC (size : Nat) (env : Env) (A : AState) (p : PancakeProg) (k : Cert) :
     Except Alarm (Option AState) :=
   (analyzeC size env A p k).map (·.1)
 
-/-- How many of the first statements of the chain `p` fit in `budget` together, from `A`. -/
+/-- Whether a statement holds no loop: a piece that does would make its claim search for the
+loop's invariant, which the certificate gives instead. -/
+def loopFree : PancakeProg → Bool
+  | .while_ _ _ => false
+  | .dec _ _ c | .decCall _ _ _ c => loopFree c
+  | .seq a b | .cond _ a b => loopFree a && loopFree b
+  | _ => true
+
+/-- How many of the first statements of the chain `p` fit in `budget` together, from `A`, none of
+them a loop. -/
 def chainFits (size budget : Nat) (env : Env) (A : AState) (spent : Nat) : PancakeProg → Nat
   | .seq c1 c2 =>
     let c := cost size env A c1
-    if budget < spent + c then 0 else
+    if budget < spent + c || !loopFree c1 then 0 else
     match analyze size env A c1 with
     | .ok (some B) => 1 + chainFits size budget env B (spent + c) c2
     | _ => 1
   | _ => 0
 
-/-- A certificate for `p` from `A`, with the functions `env` to call, cut where a piece costs more
-than `budget`, no deeper than `fuel`. -/
+/-- A certificate for `p` from `A`, with the functions `env` to call, cut at every loop and where a
+piece costs more than `budget`, no deeper than `fuel`. -/
 def certify (size budget : Nat) (env : Env) : Nat → AState → PancakeProg → Except Alarm Cert
   | 0, A, p => leafOf size env A p
   | fuel + 1, A, p =>
-    if cost size env A p ≤ budget then leafOf size env A p else
+    if cost size env A p ≤ budget && loopFree p then leafOf size env A p else
     match p with
     | .seq c1 c2 => do
       let m := chainFits size budget env A 0 p
@@ -166,6 +175,15 @@ def nodes : PancakeProg → Nat
   | .dec _ _ c | .while_ _ c | .decCall _ _ _ c => nodes c + 1
   | .seq a b | .cond _ a b => nodes a + nodes b + 1
   | _ => 1
+
+/-- What checking a claim costs. -/
+def claimCost (size : Nat) (ob : Ob) : Nat :=
+  if ob.n = 0 then cost size ob.env ob.A ob.p
+  else ((List.range ob.n).foldl (init := (0, ob.A, ob.p)) fun (acc, A, q) _ =>
+    match q with
+    | .seq c1 c2 => (acc + cost size ob.env A c1,
+        match analyze size ob.env A c1 with | .ok (some B) => B | _ => A, c2)
+    | _ => (acc, A, q)).1
 
 /-- A certificate for a whole `main`, and how many claims it makes; the cuts nest no deeper than
 the program does. -/
@@ -219,8 +237,10 @@ def ppDelta (ind head tail : String) (d : Delta) : List String :=
   match d.cells with
   | none => ppList ind (head ++ "{ locals := ") (", cells := none }" ++ tail) (d.locals.map ppLocal)
   | some cs =>
+    -- a field on a line of its own starts where the first one does
+    let col := String.ofList (List.replicate (ind ++ head ++ "{ ").length ' ')
     ppList ind (head ++ "{ locals := ") "" (d.locals.map ppLocal) ++
-      ppList ind "  cells := some " (" }" ++ tail) (cs.map ppCell)
+      ppList col "cells := some " (" }" ++ tail) (cs.map ppCell)
 
 /-- Lines closed by a parenthesis, on the last if it fits in 100 columns. -/
 def closed (ind : String) (ls : List String) : List String :=
@@ -249,12 +269,47 @@ structure Target where
   program : String
   size : String
 
-/-- The module: the certificate, a declaration for each claim, and the claims together. -/
-def render (t : Target) (k : Cert) (n : Nat) : String :=
-  let claim (i : Nat) : List String :=
-    [s!"theorem claim_{i} : ((claims size mainP cert).getD {i} default).ok size = true := by",
-     "  decide +kernel"]
-  let cases := (List.range n).map fun i => s!"  | {i}, _ => exact claim_{i}"
+/-- Consecutive runs, from the first, of the items of these costs: each run's costs together no
+more than `budget`, or a single item that costs more; as starts and lengths. -/
+def runs (budget : Nat) (costs : List Nat) : List (Nat × Nat) :=
+  let close (acc : List (Nat × Nat)) (a n : Nat) := if n = 0 then acc else acc ++ [(a, n)]
+  let (acc, a, n, _) := costs.zipIdx.foldl (init := (([] : List (Nat × Nat)), 0, 0, 0))
+    fun (acc, a, n, spent) (w, i) =>
+      if 0 < n && budget < spent + w then (close acc a n, i, 1, w) else (acc, a, n + 1, spent + w)
+  close acc a n
+
+/-- Claims `rs` of the list `l` by declarations `{name}_{a}`, and from them `name`, that each holds,
+the number of claims by the theorem `count`. -/
+def claimRuns (name l count : String) (rs : List (Nat × Nat)) : List String :=
+  (rs.flatMap fun (a, m) =>
+    [s!"theorem {name}_{a} :",
+     s!"    (List.range' {a} {m}).all (fun j => (({l}).getD j default).ok size) = true := by",
+     "  decide +kernel", ""]) ++
+  [s!"theorem {name} : ∀ j, j < ({l}).length → (({l}).getD j default).ok size = true := by",
+   "  intro j hj",
+   s!"  rw [{count}] at hj"] ++
+  (rs.flatMap fun (a, m) =>
+    [s!"  by_cases h{a} : j < {a + m}",
+     s!"  · exact all_range {name}_{a} j (by omega) (by omega)"]) ++
+  ["  exact absurd hj (by omega)", ""]
+
+/-- The theorems on `main`'s claims `l`: the certificate fits, how many claims it makes, and each
+holds, in runs of at most `budget`. -/
+def mainLines (l checkE : String) (n : Nat) (rs : List (Nat × Nat)) : List String :=
+  ["/-- The certificate fits `main`, and how many claims it makes. -/",
+   "theorem checked :",
+   s!"    (({checkE}).toBool && ({l}).length == {n}) = true := by",
+   "  decide +kernel", "",
+   s!"theorem accepted : ({checkE}).toBool = true := by",
+   "  have h := checked", "  simp only [Bool.and_eq_true] at h", "  exact h.1", "",
+   s!"theorem count : ({l}).length = {n} := by",
+   "  have h := checked", "  simp only [Bool.and_eq_true, beq_iff_eq] at h", "  exact h.2", ""] ++
+  claimRuns "claims_ok" l "count" rs
+
+/-- The module: the certificate, and its claims in declarations of at most `budget` each, as
+`claimCost` counts. -/
+def render (t : Target) (size budget : Nat) (p : PancakeProg) (k : Cert) : String :=
+  let obs := claims size p k
   let lines : List String :=
     ["-- SPDX-License-Identifier: AGPL-3.0-or-later",
      "-- Generated by `dn-compiler analysis-cert`; a test checks it is current."] ++
@@ -268,18 +323,119 @@ def render (t : Target) (k : Cert) (n : Nat) : String :=
      s!"theorem lower_main : Lower.lower {t.program} = some mainP :=",
      "  (Option.some_get lowers).symm", "",
      "/-- Where the analysis is cut, and what each piece ends in. -/",
+     "def cert : Cert :="] ++ ppCert "  " k ++ [""] ++
+    mainLines "claims size mainP cert" "checkC size mainP cert" obs.length
+      (runs budget (obs.map (claimCost size))) ++
+    [s!"end {t.module}"]
+  "\n".intercalate lines ++ "\n"
+
+/-- What a module of a program's claims is about: as `Target`, with the names of its functions and
+of its `main`. -/
+structure ProgramTarget where
+  module : String
+  doc : String
+  imports : List String
+  functions : String
+  program : String
+  size : String
+
+/-- How the claims of a program's functions are checked: a run of `n` functions from `a`, whose
+claims together cost no more than the budget, in one declaration; or the claims of function `i`,
+which cost more, in runs of their own. -/
+inductive Piece
+  | group (a n : Nat)
+  | alone (i c : Nat) (rs : List (Nat × Nat))
+
+/-- What a statement of a function a declaration checks weighs besides its claims: the kernel
+lowers the function's body and checks its certificate's parts there, which costs about as much
+memory as a claim of this cost does. -/
+def nodeWeight : Nat := 20
+
+/-- The module of a program: each function's certificate, the claims of its functions and of its
+`main` in declarations of at most `budget` each, as `claimCost` and `nodeWeight` count. -/
+def renderProgram (t : ProgramTarget) (size budget : Nat) (cs : List FnC) (p : PancakeProg)
+    (k : Cert) : String :=
+  let env := envAfter [] cs
+  let fnObs := (List.range cs.length).map (fnClaims size [] cs ·)
+  let costsOf (obs : List Ob) := obs.map (claimCost size)
+  let fnCost := (fnObs.zip cs).map fun (obs, (_, _, body, _)) =>
+    (costsOf obs).sum + nodeWeight * nodes body
+  let mainObs := claims size p k env
+  let ps : List Piece := (runs budget fnCost).map fun (a, m) =>
+    if m = 1 && budget < fnCost.getD a 0 then
+      let obs := fnObs.getD a []
+      .alone a obs.length (runs budget (costsOf obs))
+    else .group a m
+  let fnClaimsAt (i : Nat) : String := s!"fnClaims size [] fnsC {i}"
+  let piece : Piece → List String
+    | .group a m =>
+      [s!"theorem group_{a} :",
+       s!"    (List.range' {a} {m}).all (fun i => fnOkAt size [] fnsC i &&",
+       "      (fnClaims size [] fnsC i).all (·.ok size)) = true := by",
+       "  decide +kernel", ""]
+    | .alone i c rs =>
+      [s!"theorem fn_{i}_checked :",
+       s!"    (fnOkAt size [] fnsC {i} && ({fnClaimsAt i}).length == {c}) = true := by",
+       "  decide +kernel", "",
+       s!"theorem fn_{i}_count : ({fnClaimsAt i}).length = {c} := by",
+       s!"  have h := fn_{i}_checked", "  simp only [Bool.and_eq_true, beq_iff_eq] at h",
+       "  exact h.2", ""] ++
+      claimRuns s!"fn_{i}" (fnClaimsAt i) s!"fn_{i}_count" rs
+  let dispatch : Piece → List String
+    | .group a m =>
+      [s!"  by_cases h{a} : i < {a + m}",
+       s!"  · exact fnChecks_range group_{a} i (by omega) (by omega)"]
+    | .alone i _ _ =>
+      [s!"  by_cases h{i} : i < {i + 1}",
+       s!"  · obtain rfl : i = {i} := by omega",
+       s!"    have h := fn_{i}_checked",
+       "    simp only [Bool.and_eq_true] at h",
+       s!"    exact ⟨h.1, obsOk_of_get fn_{i}⟩"]
+  let mainClaims := "claims size mainP cert (envAfter [] fnsC)"
+  let lines : List String :=
+    ["-- SPDX-License-Identifier: AGPL-3.0-or-later",
+     "-- Generated by `dn-compiler analysis-cert`; a test checks it is current."] ++
+    t.imports.map (s!"import {·}") ++
+    ["import DN.Compiler.AnalyzerCertSound", "", "/-!", s!"# {t.module}", "", t.doc, "-/", "",
+     s!"namespace {t.module}", "", "open DN.Compiler DN.Compiler.Analyzer", "",
+     s!"def size : Nat := {t.size}", "",
+     "/-- A function as it lowers. -/",
+     "def lowerFn (g : Syntax.PFun) : String × List String × PancakeProg :=",
+     "  (g.name, g.params.map (·.2), (Lower.lower g).getD .skip)", "",
+     s!"theorem lowers : (Lower.lower {t.program}).isSome = true := by decide +kernel", "",
+     "/-- The program's `main`, as it lowers. -/",
+     s!"def mainP : PancakeProg := (Lower.lower {t.program}).get lowers", "",
+     s!"theorem lower_main : Lower.lower {t.program} = some mainP :=",
+     "  (Option.some_get lowers).symm", ""] ++
+    (cs.zipIdx.flatMap fun ((_, _, _, c), i) =>
+      [s!"def cert_{i} : Cert :="] ++ ppCert "  " c ++ [""]) ++
+    ppList "" "def certs : List Cert := " "" ((List.range cs.length).map (s!"cert_{·}")) ++ ["",
+     "/-- The functions with their certificates. -/",
+     "def fnsC : List FnC :=",
+     s!"  (({t.functions}.map lowerFn).zip certs).map fun ((f, ps, b), k) => (f, ps, b, k)", "",
+     "/-- …which are the program's functions as they lower. -/",
+     "theorem fnsC_lowers :",
+     s!"    fnsC.map (fun g => (g.1, g.2.1, g.2.2.1)) = {t.functions}.map lowerFn := by",
+     "  unfold fnsC",
+     "  rw [List.map_map]",
+     "  exact List.map_fst_zip (by decide +kernel)", "",
+     "/-- Where the analysis of `main` is cut, and what each piece ends in. -/",
      "def cert : Cert :="] ++ ppCert "  " k ++
-    ["", "/-- The certificate fits the program. -/",
-     "theorem accepted : (checkC size mainP cert).toBool = true := by decide +kernel", "",
-     s!"theorem count : (claims size mainP cert).length = {n} := by decide +kernel", ""] ++
-    ((List.range n).flatMap fun i => claim i ++ [""]) ++
-    ["/-- Every claim holds. -/",
-     "theorem claims_ok : ∀ i, i < (claims size mainP cert).length →",
-     "    ((claims size mainP cert).getD i default).ok size = true := by",
-     "  intro i hi",
-     "  rw [count] at hi",
-     "  match i, hi with"] ++ cases ++
-    [s!"  | _ + {n}, h => exact absurd h (by omega)", "", s!"end {t.module}"]
+    ["", s!"theorem fns_count : fnsC.length = {cs.length} := by decide +kernel", ""] ++
+    ps.flatMap piece ++
+    ["/-- Each function's certificate fits it, and its claims hold. -/",
+     "theorem fns_each :",
+     "    ∀ i, i < fnsC.length →",
+     "      fnOkAt size [] fnsC i = true ∧ ObsOk size (fnClaims size [] fnsC i) := by",
+     "  intro i hi", "  rw [fns_count] at hi"] ++ ps.flatMap dispatch ++
+    ["  exact absurd hi (by omega)", "",
+     "theorem fns_ok : fnsOk size [] fnsC = true :=",
+     "  fnsOk_of_each fun i hi => (fns_each i hi).1", "",
+     "theorem fns_claims : ∀ i, i < fnsC.length → ObsOk size (fnClaims size [] fnsC i) :=",
+     "  fun i hi => (fns_each i hi).2", ""] ++
+    mainLines mainClaims "checkC size mainP cert (envAfter [] fnsC)" mainObs.length
+      (runs budget (costsOf mainObs)) ++
+    [s!"end {t.module}"]
   "\n".intercalate lines ++ "\n"
 
 /-! ## Examples, in a heap of 64 bytes above its header -/

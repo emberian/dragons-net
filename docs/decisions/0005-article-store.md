@@ -123,14 +123,15 @@ knows nothing of articles.
   dot-stuffed, without the final dot line, the fields the server added in place.
 - The header section's size, as a commit records it, does not count the empty line after it.
 - An article is accepted in four phases:
-  1. reserve: the program checks the header section, reserves the Message-ID in the index and a
-     sequence number, and counts the article against the bounds;
+  1. reserve: the program checks the header section, reserves the Message-ID — its slot holds it,
+     and no other slot or article may have it — and a sequence number, and counts the article
+     against the bounds;
   2. body: it creates the temporary file, writes the article, syncs it, renames it to its final
      name and syncs the directory;
   3. commit: it appends one journal record — the sequence number, the Message-ID, each group by
      name with the number it allocates there, the sizes of the header section and of the file, and
      the file's CRC-32C — and syncs the journal;
-  4. publish: it adds the article to the index and answers 240.
+  4. publish: it adds the article to the index of Message-IDs and answers 240.
 
   Numbers are allocated when the record is appended, one record at a time, so articles are numbered
   in commit order, and a crosspost is one record. ARTICLE and HEAD insert the Xref field, built from
@@ -262,6 +263,8 @@ knows nothing of articles.
   for a POST slot or for the store is not inactivity. A connection that ends before the terminator
   abandons its article once its job in flight completes: the file is removed and the reservation
   released. One that ends after the terminator does not stop the commit.
+- After the terminator no deadline runs: a job the host never completes keeps its slot, and four
+  such keep every POST waiting. Bounding a job's time is the host's, with operations (#21).
 - The heap holds the index, the group table, the POST and read buffers and the session's layout:
   4 MiB in all, which the host provisions.
 
@@ -364,11 +367,10 @@ from them are done; what needs the program or the host comes with them, as marke
     After its actions a start finds the same articles again (`recover_again`, while numbers last);
     that it then has nothing left to do is tested. A restart after a failed sync of the journal or
     the directory without a loss of power is not covered, as above.
-- To be proved of the program, once it is written: the CRC-32C and SipHash-2-4 functions it prints
-  compute what `DN.News.Journal` and `DN.News.SipHash` define, through `DN.Compiler.Wp` (both
-  do: `DN.News.CrcCode`, `DN.News.SipHashCode`); no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The
-  analysis now costs about 40 s and 7.4 GB; if the store's code takes it past 12 GB, the program is
-  split into functions and the analysis extended to calls.
+- Of the program: its SipHash-2-4 and CRC-32C table are the statements `DN.News.SipHashCode` and
+  `DN.News.CrcCode` prove of their kernels, through `DN.Compiler.Wp`; the CRC-32C it takes of a
+  file as the file is written is tested, not proven. No run of it fails, by the analysis of
+  [0004](0004-safety-analysis.md) with calls (`DN.Server.SessionSafe`).
 - Tested against references written apart from the specifications ([baseline](../baseline.md)):
   the grammar of header fields; acceptance, with the article corpus of INN's tests
   (`tests/data/articles`, ISC licence) and our own expected outcomes for an injecting agent, and the

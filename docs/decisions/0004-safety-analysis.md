@@ -50,14 +50,14 @@ Verasco checks C programs with analyses proven against CompCert's semantics.
   set of words, and `covers_mono` of any memory that holds them.
 - Within one declaration the kernel keeps every step of its reduction, so its memory grows with
   the locals in scope times the statements analyzed: one run on recovery's step took 18 GB, above
-  the CI runner's 16. `DN.Compiler.AnalyzerCert` cuts the analysis into pieces along the program's
-  structure, a certificate giving the state each piece ends in and the invariant of each loop it
-  cuts through; `analyzeC` checks the cuts as `analyze` checks its own, and each piece's claim is
-  a declaration of its own (`dn-compiler analysis-cert` prints the module, a test keeps it current;
-  the result-checking of Besson, Jensen and Pichardie, ref. 3). `DN.Compiler.AnalyzerCertSound`
-  proves once that the claims holding make the program as safe as `analyze_safe` does. The session,
-  recovery at start in it, is checked in 17 claims (about 205 s and 6.1 GB), recovery's step alone
-  in 9 (about 50 s and 4.2 GB).
+  the CI runner's 16.
+- `DN.Compiler.AnalyzerCert` cuts the analysis along the program's structure, a certificate giving
+  the state each piece ends in and the invariant of every loop; `analyzeC` checks the cuts as
+  `analyze` checks its own (the result-checking of Besson, Jensen and Pichardie, ref. 3), and
+  `DN.Compiler.AnalyzerCertSound` proves once that the claims holding make the program as safe.
+- The claims are checked in runs, a declaration each, of a cost the kernel bears; `dn-compiler
+  analysis-cert` prints the module, a test keeps it current. The session's program, 216 functions,
+  takes 29 declarations (about 490 s and 9 GB), recovery's step alone 8 (about 30 s).
   The build and `leanchecker` print their time and largest process on every run
   (`scripts/measured.py`), so that the cost shows as the program grows.
 - What is not proven stays as 0003 lists it: the transcription of the semantics, the parser, the

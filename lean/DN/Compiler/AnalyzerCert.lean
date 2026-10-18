@@ -197,6 +197,13 @@ def fnsOk (size : Nat) : Env → List FnC → Bool
     (findFn f env).isNone && f != "main" && decide ps.Nodup && (bodyC size env ps body k).toBool &&
       fnsOk size ((f, ps) :: env) fns
 
+/-- The checks `fnsOk` makes of the `i`-th function of `fns`, with those before it to call. -/
+def fnOkAt (size : Nat) : Env → List FnC → Nat → Bool
+  | _, [], _ => true
+  | env, (f, ps, body, k) :: _, 0 =>
+    (findFn f env).isNone && f != "main" && decide ps.Nodup && (bodyC size env ps body k).toBool
+  | env, (f, ps, _, _) :: fns, i + 1 => fnOkAt size ((f, ps) :: env) fns i
+
 /-- The functions after `env` once those of `fns` are defined. -/
 def envAfter : Env → List FnC → Env
   | env, [] => env
@@ -210,6 +217,12 @@ def fnClaims (size : Nat) : Env → List FnC → Nat → List Ob
     | .error _ => []
   | env, (f, ps, _, _) :: fns, i + 1 => fnClaims size ((f, ps) :: env) fns i
 
+
+/-- What holds of each of the consecutive `n` from `a`: a declaration checks a run of claims, or
+of functions, at once. -/
+theorem all_range {f : Nat → Bool} {a n : Nat} (h : (List.range' a n).all f = true) :
+    ∀ i, a ≤ i → i < a + n → f i = true :=
+  fun i h1 h2 => List.all_eq_true.mp h i (List.mem_range'_1.mpr ⟨h1, h2⟩)
 
 /-- The claims of an accepted certificate, none otherwise. -/
 def claims (size : Nat) (p : PancakeProg) (k : Cert) (env : Env := []) : List Ob :=

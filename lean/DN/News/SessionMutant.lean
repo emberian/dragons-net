@@ -316,7 +316,7 @@ def actFromM (m : Mutant) (i : Identity) (now wall : Nat) (t : Table) :
 def turnM (m : Mutant) (i : Identity) (s : Server) (now wall : Nat) (events : List Event)
     (dones : List Done) : Except Breach (Server × List Action × List Job) := do
   if batch < events.length then throw .tooManyEvents
-  if now < s.clock || clockLimit ≤ now then throw .badClock
+  if now < s.clock || clockLimit ≤ now || wallLimit ≤ wall then throw .badClock
   let s ← events.foldlM (applyEventM m i now) s
   let st ← completions s dones
   let r := actFromM m i now wall s.table (List.range conns) st

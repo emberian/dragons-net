@@ -61,8 +61,8 @@ def skeleton : Except String Program :=
 
 /-- The NNTP session, a whole program that reaches its host through two external calls. -/
 def session : Except String Program :=
-  checkedBy (Checked.emitMain [Server.SessionLayout.nextName, Server.SessionLayout.emitName])
-    Server.Session.main
+  checkedBy (Checked.emitProgram [Server.SessionLayout.nextName, Server.SessionLayout.emitName]
+    Server.Session.functions) Server.Session.main Server.Session.functions
 
 /-- The grammar's functions, a whole program that reaches its host through one external call, or a
 version of it with a defect planted. -/

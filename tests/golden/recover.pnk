@@ -118,6 +118,11 @@ export fun dn_recover_step(1 rsc) {
               st rsc + 520, 50;
               st rsc + 16, 0;
               st rsc + 24, 1;
+              rc = jz + 0;
+              while rc < 64 {
+                st rsc + 5248 + (rc * 8), 0;
+                rc = rc + 1;
+              }
               st rsc + 8, 10;
             } else {
               st rsc + 576, 2;
@@ -1027,6 +1032,11 @@ export fun dn_recover_step(1 rsc) {
                       st rsc + 520, 50;
                       st rsc + 16, 0;
                       st rsc + 24, 0;
+                      rc = jz + 0;
+                      while rc < 64 {
+                        st rsc + 5248 + (rc * 8), 0;
+                        rc = rc + 1;
+                      }
                       st rsc + 8, 10;
                     } else {
                       st rsc + 576, 2;

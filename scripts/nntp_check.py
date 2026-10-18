@@ -61,7 +61,7 @@ LINGER_QUIET, LINGER_TOTAL, ACCEPT_PAUSE, LINGERING = 5_000, 30_000, 100, 64
 # How long a check waits for the server, and for a server with a planted defect.
 TIMEOUT, DEFECT_TIMEOUT = 10.0, 1.5
 # The program acts for the generation before its connection's, to see the host refuse it.
-STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 3)
+STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 5)
 Conn = tuple[int, int]
 
 
@@ -1098,8 +1098,9 @@ def crowd(b: Build) -> str:
 
 def store_start(b: Build) -> str:
     """Recovery at start on a spool: an empty one gets a journal of its format and a start record, a
-    start after it appends another, the server listening and greeting each time; and a spool holding
-    a name no store gives ends the start with status 4, the reason named."""
+    start after it appends another, the server listening each time and greeting a client of loopback,
+    which may post, with 200; and a spool holding a name no store gives ends the start with status 4,
+    the reason named."""
     with tempfile.TemporaryDirectory() as temp:
         spool, run = Path(temp, "spool"), Path(temp, "run")
         spool.mkdir()
@@ -1108,7 +1109,7 @@ def store_start(b: Build) -> str:
                    "--group", "local.test")
         for _ in range(2):
             with serving(b, False, *options, traced=False) as server:
-                read_expected(server.client(), GREETING, "the greeting after recovery")
+                read_expected(server.client(), TEXTS["greeting-post"], "the greeting after recovery")
         data = (spool / "journal").read_bytes()
         at = store_ref.HEADER + len(store_ref.MAGIC)
         key = data[at:at + store_ref.KEY]
@@ -1129,6 +1130,37 @@ def store_start(b: Build) -> str:
     if done.returncode != 4 or said not in done.stderr:
         raise LaneError(f"a spool with a name no store gives: status {done.returncode}, {done.stderr[-300:]!r}")
     return f"a journal of {len(want)} octets; refused: {said}"
+
+
+def post_over_sockets(b: Build) -> str:
+    """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
+    refused, 441, and another article taken, 240, each in a file of its own."""
+    first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
+    second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
+
+    def post(server: Server, article: bytes, reply: str) -> None:
+        c = server.client()
+        read_expected(c, TEXTS["greeting-post"], "the greeting")
+        c.sendall(b"POST\r\n")
+        read_expected(c, TEXTS["post"], "the reply to POST")
+        c.sendall(article)
+        read_expected(c, TEXTS[reply], "the reply to the article")
+
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            post(server, first, "posted")
+        with serving(b, False, *options, traced=False) as server:
+            post(server, first, "failed")
+            post(server, second, "posted")
+        left = sorted(f.name for f in spool.iterdir())
+    if left != ["a0000000000000001", "a0000000000000002", "journal"]:
+        raise LaneError(f"two articles posted left {left}")
+    return "posted, the Message-ID refused after a restart, another posted"
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1258,6 +1290,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "over IPv6": over_ipv6,
     "sixty-five clients": crowd,
     "a store recovered at start": store_start,
+    "a post over sockets": post_over_sockets,
     "the store lane's directories": store_directories,
 }
 
@@ -1387,7 +1420,8 @@ DEFECTS = [
            "a store recovered at start", "status 3"),
     Defect("the start record written as a commit", [(r"(st8 @base \+ \d+ \+ 12), 3;", r"\1, 2;", 1)],
            "a store recovered at start", "a journal of", program=True),
-    Defect("a final file set aside removed instead", [(r"st @base \+ 182384, 8;", "st @base + 182384, 9;", 1)],
+    Defect("a final file set aside removed instead",
+           [(r"(st @base \+ \d+, 1;\n\s*st @base \+ \d+, )8;", r"\g<1>9;", 1)],
            "the store lane's directories", "after a start the spool holds", program=True),
     Defect("the second pass not begun at the first name", [(r"if lds 1 \(rsc \+ 32\) \{", "if 0 {", 1)],
            "the store lane's directories", "the spool holds", program=True),
@@ -1395,7 +1429,8 @@ DEFECTS = [
            "first command", "asked to be woken at 10000", program=True),
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
-    Defect("the inactivity deadline a millisecond early", [(r"now \+ 1800000;", "now + 1799999;", 3)],
+    Defect("the inactivity deadline a millisecond early",
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 5)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),

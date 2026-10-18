@@ -192,10 +192,14 @@ def begin : List PStmt :=
    rset rTorn (n 0), rset rFresh (n 0), rset rTidied (n 0), rset rWait (n 0), rset rFirst (n 1),
    next 1] ++ stop asksName
 
-/-- A new journal, and the directory synced when it held no file at all. -/
+/-- A new journal, and the directory synced when it held no file at all; no group has a number
+yet. -/
 def fresh (synced : Bool) : List PStmt :=
   [rset rFresh (n 1), rset rNext (n 1), rset rJournalEnd (n firstFrame), rset rI (n 0),
-   rset rWait (n (if synced then 1 else 0)), next 10]
+   rset rWait (n (if synced then 1 else 0)), .assign "rc" (lit 0),
+   .while (eLt (v "rc") (n groupsMax))
+     [.store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (n 0), inc "rc"],
+   next 10]
 
 /-- Phase 1: a name of the first pass, or none left. -/
 def firstPass : List PStmt :=

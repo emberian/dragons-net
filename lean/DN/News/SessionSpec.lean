@@ -59,6 +59,9 @@ def lineTime : Nat := 180000
 def articleTime : Nat := 1800000
 /-- The host's clock stays below this, so deadlines never overflow a signed word. -/
 def clockLimit : Nat := 2 ^ 62
+/-- The host's wall clock, in milliseconds, stays below this: an article's dates are read for
+seconds below 2^40, past the year 36,000. -/
+def wallLimit : Nat := 1000 * 2 ^ 40
 
 inductive Phase
   /-- greeted, no command yet or commands being answered -/
@@ -134,7 +137,8 @@ inductive Breach
   | overTaken
   /-- a connection opened at an index still in use -/
   | reopened
-  /-- a clock earlier than the last batch's, or not below `clockLimit` -/
+  /-- a clock earlier than the last batch's, or not below `clockLimit`; a wall clock not below
+  `wallLimit` -/
   | badClock
   /-- a completion of a file job the host may not report -/
   | job (f : Fault)
@@ -392,7 +396,7 @@ by index, then the slots' jobs. -/
 def turn (i : Identity) (s : Server) (now wall : Nat) (events : List Event) (dones : List Done) :
     Except Breach (Server × List Action × List Job) := do
   if batch < events.length then throw .tooManyEvents
-  if now < s.clock || clockLimit ≤ now then throw .badClock
+  if now < s.clock || clockLimit ≤ now || wallLimit ≤ wall then throw .badClock
   let s ← events.foldlM (applyEvent i now) s
   let st ← completions s dones
   let r := actFrom i now wall s.table (List.range conns) st

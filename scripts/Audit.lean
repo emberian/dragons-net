@@ -129,7 +129,7 @@ def compilerModules : Array Name :=
     `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash, `DN.News.SipProg,
     `DN.News.Spool, `DN.News.SpoolOps, `DN.News.StoreCases, `DN.News.StoreOps, `DN.News.StoreRun,
     `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
-    `DN.Server.Skeleton]
+    `DN.Server.SessionStore, `DN.Server.Skeleton]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do
