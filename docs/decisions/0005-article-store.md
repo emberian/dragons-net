@@ -288,8 +288,9 @@ domain name. Each opened connection carries whether it may post. The host also h
 wall clock, in UTC and not checked to move forward, and random octets: the run's value, which
 Message-IDs carry, sixteen more that key a journal the program creates, written only to that journal
 and used for nothing else, the program refusing to start without sixteen, and sixteen that key the
-index of Message-IDs, never written; and it logs each connection's address with the run and its
-index.
+index of Message-IDs, never written; and it logs each connection's address and port with the run
+and its number, as `logging-data` names them (RFC 5536 §3.2.8), when its log has room at once,
+counting the lines it could not.
 
 ### Which articles are accepted, and what the server adds
 

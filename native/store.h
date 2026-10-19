@@ -31,4 +31,10 @@ __attribute__((noreturn)) void dn_store_recovery_stopped(uint64_t stop, const un
 /* Whether a client at `peer` may post: never without a spool. */
 int dn_store_may_post(const struct sockaddr_storage *peer);
 
+/* With a spool, log a connection opened, whose address the program never sees, numbered among the
+ * run's from one as Injection-Info's `logging-data` names it: `connection RUN.NUMBER from ADDRESS
+ * port PORT`. A line stderr cannot take at once is counted, `connections not logged: N`, before the
+ * next that goes. */
+void dn_store_log_opened(const struct sockaddr_storage *peer);
+
 #endif

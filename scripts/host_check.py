@@ -9,7 +9,10 @@ program (native/host_driver.c) that prints what the host hands it:
   post;
 - with one, the program gets the wall clock, 40 random octets drawn anew for each run, the path
   identity and the groups; a client may post from loopback by default, and else from the networks
-  `--post-from` names, to the bit, over IPv4 and IPv6;
+  `--post-from` names, to the bit, over IPv4 and IPv6; each connection is logged with the run's value
+  and its number, as Injection-Info's `logging-data` names it, and the client's address and port, a
+  value past 2^63 without a sign; a log its reader does not take stops nothing, and the next line
+  that goes counts those that did not;
 - a second host on a held spool, and a mark of a failed sync of this boot in the spool or the run
   directory, refuse the start with status 4; a mark of another boot is removed;
 - options that cannot be refuse the start with status 2;
@@ -25,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import errno
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -47,6 +51,7 @@ DRIVER = lanes.NATIVE / "host_driver.c"
 HOST = lanes.NATIVE / "nntp_host.c"
 STORE = lanes.NATIVE / "store.c"
 JOBS = lanes.NATIVE / "jobs.c"
+SHIM = lanes.NATIVE / "random_fixed.c"
 RUNTIME = [lanes.NATIVE / "cake_header.c", lanes.NATIVE / "cake_runtime.c"]
 WAIT = 10
 IDENTITY = "news.example.org"
@@ -86,16 +91,17 @@ def layout() -> dict[str, int]:
 
 
 def launch(binary: Path, options: list[str], address: str, env: dict[str, str] | None = None,
-           wrap: tuple[str, ...] = ()) -> tuple[subprocess.Popen[str], lanes.Lines]:
+           wrap: tuple[str, ...] = (), stderr: int = subprocess.PIPE) -> tuple[subprocess.Popen[str], lanes.Lines]:
     """The host run under `wrap` with `env`, and its standard output."""
     proc = subprocess.Popen([*wrap, str(binary), *NAMED, "--address", address, *options], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+                            stdout=subprocess.PIPE, stderr=stderr, text=True, env=env)
     return proc, lanes.Lines(proc.stdout)
 
 
-def start(binary: Path, options: list[str], address: str) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
+def start(binary: Path, options: list[str], address: str, env: dict[str, str] | None = None,
+          stderr: int = subprocess.PIPE) -> tuple[subprocess.Popen[str], lanes.Lines, int]:
     """The host, listening once the first batch is fetched and handed over; its standard output, and its port."""
-    proc, lines = launch(binary, options, address)
+    proc, lines = launch(binary, options, address, env, stderr=stderr)
     if proc.stdin is None:
         raise LaneError("the host has no input")
     try:
@@ -131,25 +137,41 @@ def stopped(proc: subprocess.Popen[str], lines: lanes.Lines, wait: float = WAIT)
     return out
 
 
-def serve(binary: Path, options: list[str], address: str = "127.0.0.1") -> tuple[list[str], list[str]]:
-    """Batches with a client connected, until it is opened: the start data and the connection opened, as
-    words."""
-    proc, lines, port = start(binary, options, address)
+def until_opened(proc: subprocess.Popen[str], lines: lanes.Lines, wait: float = WAIT) -> list[str]:
+    """What the driver printed of batches fetched until a client that connected is opened."""
+    if proc.stdin is None:
+        raise LaneError("the host has no input")
     out: list[str] = []
+    for _ in range(3):
+        proc.stdin.write("next\n")
+        proc.stdin.flush()
+        try:
+            while (line := lines.get(wait)) not in {".\n", None}:
+                out.append((line or "").strip())
+        except queue.Empty:
+            raise LaneError(f"the host gave no batch in {wait} s") from None
+        if any(line.startswith("opened ") for line in out):
+            break
+        proc.stdin.write("emit\n")
+    proc.stdin.write("emit\n")
+    proc.stdin.flush()
+    return out
+
+
+def run_value(begin: list[str]) -> int:
+    """The run's value of the driver's `start` words: its random octets' first, read as a number."""
+    return int(begin[2][:2 * layout()["RUN_VALUE_LEN"]], 16)
+
+
+def serve(binary: Path, options: list[str], address: str = "127.0.0.1",
+          env: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Batches with a client connected, until it is opened: the start data and the connection opened, as
+    words. With a spool the host logs the connection as the run's first, from the client's address."""
+    proc, lines, port = start(binary, options, address, env)
     try:
-        with socket.create_connection((address, port), timeout=WAIT):
-            if proc.stdin is None:
-                raise LaneError("the host has no input")
-            for _ in range(3):
-                proc.stdin.write("next\n")
-                proc.stdin.flush()
-                while (line := lines.get(WAIT)) not in {".\n", None}:
-                    out.append((line or "").strip())
-                if any(line.startswith("opened ") for line in out):
-                    break
-                proc.stdin.write("emit\n")
-            proc.stdin.write("emit\n")
-            proc.stdin.flush()
+        with socket.create_connection((address, port), timeout=WAIT) as client:
+            client_port = client.getsockname()[1]
+            out = until_opened(proc, lines)
             stopped(proc, lines)
     finally:
         if proc.poll() is None:
@@ -159,6 +181,11 @@ def serve(binary: Path, options: list[str], address: str = "127.0.0.1") -> tuple
     opened = [line.split() for line in out if line.startswith("opened ")]
     if not begin or len(opened) != 1 or any(b[2:] != begin[0][2:] for b in begin):
         raise LaneError(f"batches with one connection printed {out}")
+    said = proc.stderr.read() if proc.stderr else ""
+    logged = [line for line in said.splitlines() if line.startswith("connection")]
+    wanted = [f"connection {run_value(begin[0])}.1 from {address} port {client_port}"] if "--spool" in options else []
+    if logged != wanted:
+        raise LaneError(f"the host logged {logged}, not {wanted}")
     return begin[0], opened[0]
 
 
@@ -254,6 +281,48 @@ def handed(binary: Path) -> dict[str, object]:
     if opened[3] != "1":
         raise LaneError("a client on loopback may not post by default")
     return {"wall": wall, "random": [first[2], second[2]], "post": opened[3]}
+
+
+def high_run(binary: Path) -> str:
+    """A run's value with its top bit, getrandom giving all ones: logged without a sign."""
+    with tempfile.TemporaryDirectory() as temp:
+        begin, _ = serve(binary, Store(temp).options(), env={**os.environ, "LD_PRELOAD": str(OUT / "random_fixed.so")})
+    if set(begin[2]) != {"f"}:
+        raise LaneError(f"getrandom replaced, the program got {begin[2]}")
+    return f"logged as {run_value(begin)}"
+
+
+def full_log(binary: Path) -> list[str]:
+    """A log its reader does not take: the host goes on, and once it is read logs the next connection,
+    numbered on, after the count of those it could not."""
+    read_end, write_end = os.pipe()
+    fcntl.fcntl(write_end, fcntl.F_SETPIPE_SZ, 4096)
+    os.write(write_end, b"x" * 4096)
+    with tempfile.TemporaryDirectory() as temp, os.fdopen(read_end, "rb") as log:
+        try:
+            proc, lines, port = start(binary, Store(temp).options(), "127.0.0.1", stderr=write_end)
+        finally:
+            os.close(write_end)
+        out, ports = [], []
+        try:
+            for k in range(2):
+                with socket.create_connection(("127.0.0.1", port), timeout=WAIT) as client:
+                    ports.append(client.getsockname()[1])
+                    # a batch owed at once: a host stalled on its log is caught in seconds
+                    out += until_opened(proc, lines, 3)
+                if k == 0:
+                    log.read(4096)
+            stopped(proc, lines)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        logged = [line for line in log.read().decode().splitlines() if line.startswith("connection")]
+    begin = [line.split() for line in out if line.startswith("start ")]
+    wanted = ["connections not logged: 1", f"connection {run_value(begin[0])}.2 from 127.0.0.1 port {ports[1]}"]
+    if logged != wanted:
+        raise LaneError(f"with the log full, then read, the host logged {logged}, not {wanted}")
+    return logged
 
 
 def posting(binary: Path) -> dict[str, str]:
@@ -895,6 +964,7 @@ def on_plain(check: Callable[[Path], object]) -> Callable[[Builds], object]:
 # The checks, the quick ones first: a planted defect stops at the first that catches it.
 CHECKS: dict[str, Callable[[Builds], object]] = {
     "listening": on_plain(listening), "no store": on_plain(no_store), "handed": on_plain(handed),
+    "a run's value past 2^63": on_plain(high_run), "a full log": on_plain(full_log),
     "posting": on_plain(posting), "held": on_plain(held), "marks": on_plain(marks_at_start),
     "options": on_plain(options), "files": on_plain(files), "truncated": on_plain(truncated),
     "errors": on_plain(errors), "listing": on_plain(listing), "at once": on_plain(at_once),
@@ -917,6 +987,13 @@ DEFECTS = [
     (STORE, "no network by default", '        add_net("127.0.0.0/8");\n        add_net("::1/128");\n', ""),
     (STORE, "no random octets", "ssize_t n = getrandom(random_octets + got, sizeof random_octets - got, 0);",
      "ssize_t n = (ssize_t)(sizeof random_octets - got);"),
+    (STORE, "a connection logged as the run's second", "    static uint64_t opened, unlogged;\n",
+     "    static uint64_t opened = 1, unlogged;\n"),
+    (STORE, "the run's value read backwards", "value = value << 8 | random_octets[k];",
+     "value = value << 8 | random_octets[DN_SESSION_RUN_VALUE_LEN - 1 - k];"),
+    (STORE, "the run's value logged with a sign", '"connection %" PRIu64 ".%"', '"connection %" PRId64 ".%"'),
+    (STORE, "a log written when stderr has no room", "poll(&err, 1, 0) == 1 && err.revents == POLLOUT",
+     "poll(&err, 1, 0) >= 0"),
     (STORE, "no groups handed", "dn_put_word(next + DN_SESSION_NEXT_GROUP_COUNT, group_count);",
      "dn_put_word(next + DN_SESSION_NEXT_GROUP_COUNT, 0);"),
     (JOBS, "names in capitals", 'snprintf(name, NAME, "%c%016" PRIx64', 'snprintf(name, NAME, "%c%016" PRIX64'),
@@ -964,6 +1041,10 @@ def check() -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     builds = build("host")
+    # A shared object: position-independent code, not an executable.
+    shared = [flag for flag in lanes.HARDENING if flag not in ("-fPIE", "-pie")]
+    lanes.loud([lanes.cc(), *shared, "-shared", "-fPIC", str(SHIM), "-o", str(OUT / "random_fixed.so")],
+               timeout=60, what="building the getrandom of all ones")
     results = {name: run(builds) for name, run in CHECKS.items()}
     caught = {}
     for index, (source, name, text, becomes) in enumerate(DEFECTS):
@@ -979,7 +1060,7 @@ def check() -> Report:
                 break
         else:
             raise LaneError(f"the defect {name!r} was not caught")
-    return Report("checked", None, [HOST, STORE, lanes.NATIVE / "store.h", JOBS, lanes.NATIVE / "jobs.h", DRIVER],
+    return Report("checked", None, [HOST, STORE, lanes.NATIVE / "store.h", JOBS, lanes.NATIVE / "jobs.h", DRIVER, SHIM],
                   {"checks": results, "defects_caught": caught})
 
 

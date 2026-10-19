@@ -65,7 +65,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | LazyFS | Synced data survives a cache clear, unsynced does not, appends tear ([details](#lazyfs)) | Tears a write request, not a block; runs apart |
 | Session model | 399 scenarios and 3,285 turns judged by an independent reference, 49 with a store and 6,773 turns; 43 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
-| NNTP server | The server over loopback held three ways; 44 planted defects caught ([details](#nntp-server)) | Tested, not proven |
+| NNTP server | The server over loopback held three ways; 45 planted defects caught ([details](#nntp-server)) | Tested, not proven |
 | Host's store | Spool, file jobs and fault points of `native/store.c` and `native/jobs.c` ([details](#hosts-store)) | Tested, not proven |
 | Copy kernel | 26,039 cases of offsets, lengths, capacities and overlaps | No theorem covers overlap |
 | Stopping states | 110 cases, 108 of which stop, against an independent implementation (`scripts/state_check.py`) | Not a proof against HOL |
@@ -173,15 +173,15 @@ It catches 37 planted defects, six in the store's side. The analysis accepts the
 
 ### NNTP server
 
-`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. It posts on an empty spool and after a restart, and catches 44 planted defects.
+`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. It posts on an empty spool, after a restart and through `nntplib`, finds each poster in the host's log by `logging-data`, and catches 45 planted defects.
 
 ### Host's store
 
-`scripts/host_check.py` runs the host with `native/host_driver.c` for the program, through spools, file jobs, libfiu points and Helgrind, and catches each defect planted in it.
+`scripts/host_check.py` runs the host with `native/host_driver.c` for the program, through spools, the log of connections, file jobs, libfiu points and Helgrind, and catches each defect planted in it.
 
 ### Test sensitivity
 
-Each lane catches its planted defects, from copy and reply kernels to the session's program and forty-four NNTP servers (thirty-five planted in its host and nine in its program).
+Each lane catches its planted defects, from copy and reply kernels to the session's program and forty-five NNTP servers (thirty-six planted in its host and nine in its program).
 
 The Lean build carries no warnings (`--wfail`) and `autoImplicit` is off.
 

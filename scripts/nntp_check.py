@@ -32,6 +32,7 @@ import sys
 import tempfile
 import termios
 import time
+from types import ModuleType
 from typing import IO, NamedTuple
 import warnings
 
@@ -657,13 +658,18 @@ def cpu_seconds(pid: int) -> float:
     return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
 
-def with_nntplib(b: Build) -> str:
+def import_nntplib() -> ModuleType:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             import nntplib  # noqa: PLC0415 -- deprecated, and gone after Python 3.12
     except ImportError:
         raise LaneError("this check needs the nntplib of Python 3.12") from None
+    return nntplib
+
+
+def with_nntplib(b: Build) -> str:
+    nntplib = import_nntplib()
     with serving(b, traced=False) as server:
         news = nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout)
         welcome = news.getwelcome()
@@ -1134,9 +1140,15 @@ def store_start(b: Build) -> str:
 
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
-    refused, 441, and another article taken, 240, each in a file of its own."""
+    refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot, each in
+    a file of its own. The host's log names the address and port of each article's poster by its
+    `logging-data`."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
+    third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".", "body")).encode()
+    nntplib = import_nntplib()
+    posters: list[int] = []
+    logs: list[str] = []
 
     def post(server: Server, article: bytes, reply: str) -> None:
         c = server.client()
@@ -1145,6 +1157,8 @@ def post_over_sockets(b: Build) -> str:
         read_expected(c, TEXTS["post"], "the reply to POST")
         c.sendall(article)
         read_expected(c, TEXTS[reply], "the reply to the article")
+        if reply == "posted":
+            posters.append(c.port)
 
     with tempfile.TemporaryDirectory() as temp:
         spool, run = Path(temp, "spool"), Path(temp, "run")
@@ -1154,13 +1168,30 @@ def post_over_sockets(b: Build) -> str:
                    "--group", "local.test")
         with serving(b, False, *options, traced=False) as server:
             post(server, first, "posted")
+        logs.append(server.said())
         with serving(b, False, *options, traced=False) as server:
             post(server, first, "failed")
             post(server, second, "posted")
+            try:
+                with nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                    posters.append(news.sock.getsockname()[1])
+                    welcome, posted, bye = news.getwelcome(), news.post(third), news.quit()
+            except nntplib.NNTPError as error:
+                raise LaneError(f"nntplib could not post: {error}") from None
+        logs.append(server.said())
         left = sorted(f.name for f in spool.iterdir())
-    if left != ["a0000000000000001", "a0000000000000002", "journal"]:
-        raise LaneError(f"two articles posted left {left}")
-    return "posted, the Message-ID refused after a restart, another posted"
+        data = [f.read_bytes().split(b"logging-data=", 1)[-1].split(b"\r\n", 1)[0].decode()
+                for f in sorted(spool.glob("a*"))]
+    if left != ["a0000000000000001", "a0000000000000002", "a0000000000000003", "journal"]:
+        raise LaneError(f"three articles posted left {left}")
+    said = [welcome, posted, bye]
+    if [line + "\r\n" for line in said] != [TEXTS[t].decode() for t in ("greeting-post", "posted", "quit")]:
+        raise LaneError(f"nntplib was greeted, its article answered and its QUIT with {said}")
+    logged = [line for log in logs for line in log.splitlines() if line.startswith("connection ")]
+    for value, port in zip(data, posters, strict=True):
+        if f"connection {value} from 127.0.0.1 port {port}" not in logged:
+            raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
+    return "posted, the Message-ID refused after a restart, two others posted, their posters logged"
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1313,6 +1344,8 @@ class Defect:
 # acknowledged, which on loopback no check can time reliably, and no portable call reads another
 # process's socket option.
 DEFECTS = [
+    Defect("a connection not logged", [("        dn_store_log_opened(&peer);\n", "", 1)], "a post over sockets",
+           "is not in the log"),
     Defect("input no longer read after a read", [(
         "            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);",
         "            c->reading = 0;\n            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);", 1)],
