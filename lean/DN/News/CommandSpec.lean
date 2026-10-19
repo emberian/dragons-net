@@ -17,8 +17,9 @@ take gets 501. An overlong line is never ignored: only its first bytes are kept,
 there says nothing of the rest. Keywords are compared without regard to case (§3.1); the arguments
 follow the grammar of §9.8 and the range of article numbers in §6.
 
-With a store (docs/decisions/0005-article-store.md), POST is a command too (`replyIn`): the session
-decides what a well-formed one gets.
+With a store (docs/decisions/0005-article-store.md), POST, ARTICLE and BODY are commands too
+(`replyIn`), and the session decides what a well-formed POST gets and what an ARTICLE, HEAD, BODY or
+STAT by message-id finds (`lookup`).
 
 Each rule is shown to matter: a version with it broken (`Mutant`) answers some line otherwise.
 -/
@@ -48,7 +49,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 /-- The byte in upper case, for ASCII letters. -/
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
-inductive Cmd | capabilities | help | quit | head | stat | post
+inductive Cmd | capabilities | help | quit | head | stat | post | article | body
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -61,9 +62,13 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "STAT" then some .stat
   else none
 
-/-- The command a word names, POST among them when the server has a store. -/
+/-- The command a word names, POST, ARTICLE and BODY among them when the server has a store. -/
 def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
-  if offered && w.map upper = ascii "POST" then some .post else command? w
+  let u := w.map upper
+  if offered && u = ascii "POST" then some .post
+  else if offered && u = ascii "ARTICLE" then some .article
+  else if offered && u = ascii "BODY" then some .body
+  else command? w
 
 def isDigit (b : Byte) : Bool := 48 ≤ b.toNat && b.toNat ≤ 57
 def isAlpha (b : Byte) : Bool := (65 ≤ b.toNat && b.toNat ≤ 90) || (97 ≤ b.toNat && b.toNat ≤ 122)
@@ -119,6 +124,13 @@ inductive Reply
   /-- the capabilities and the help text of a server that offers POST -/
   | capabilitiesPost
   | helpPost
+  /-- an ARTICLE, HEAD, BODY or STAT by message-id, with a store; the session decides, and says what
+  a store without the article says -/
+  | lookup (c : Cmd) (id : List Byte)
+  /-- 223: the store holds the article, number 0 with no group selected (§6.2.1.2) -/
+  | stat (id : List Byte)
+  /-- 403: the article's file failed a read or its check before anything of it was sent -/
+  | unreadable
   deriving DecidableEq, Repr
 
 /-- The reply to a command with these arguments, on a well-formed line. -/
@@ -133,14 +145,24 @@ def answer : Cmd → List (List Byte) → Reply
   | .post, [] => .post
   | _, _ => .syntax
 
-/-- **The reply to a line**, POST a command when `offered`. -/
+/-- The reply with a store: ARTICLE and BODY take an argument as HEAD does, and a message-id is
+looked up. -/
+def answerIn (c : Cmd) (args : List (List Byte)) : Reply :=
+  match c, args with
+  | .article, [] | .body, [] => .noGroup
+  | .article, [a] | .body, [a] | .head, [a] | .stat, [a] =>
+    if isArticleNumber a then .noGroup else if isMessageId a then .lookup c a else .syntax
+  | _, _ => answer c args
+
+/-- **The reply to a line**, POST, ARTICLE and BODY commands when `offered`. -/
 def replyIn (offered : Bool) (l : Line) : Reply :=
   match words l.kept with
   | [] => if l.kind = .overlong then .unknown else .ignore
   | w :: args =>
     match commandIn offered w with
     | none => .unknown
-    | some c => if l.kind = .command then answer c args else .syntax
+    | some c => if l.kind = .command then (if offered then answerIn c args else answer c args)
+      else .syntax
 
 /-- The reply to a line of a server without a store. -/
 def reply : Line → Reply := replyIn false
@@ -206,6 +228,36 @@ def text (i : Identity) : Reply → List Byte
   | .unavailable => ascii "403 Not accepting articles\r\n"
   | .capabilitiesPost => capabilitiesHead ++ i.revision ++ capabilitiesPostTail ++ blockEnd
   | .helpPost => helpPostHead ++ i.revision ++ helpMid ++ i.source ++ blockEnd
+  | .lookup _ _ => ascii "430 No article with that message-id\r\n"
+  | .stat id => ascii "223 0 " ++ id ++ crlf
+  | .unreadable => ascii "403 Article not readable\r\n"
+
+/-- The first line of an article sent (§6.2): 220, 221 or 222, the number 0 and the message-id. -/
+def found (c : Cmd) (id : List Byte) : List Byte :=
+  ascii (match c with | .head => "221 0 " | .body => "222 0 " | _ => "220 0 ") ++ id ++ crlf
+
+/-- A reply's message-id is one a store holds: 250 octets at most (§3.6). -/
+def Reply.idOk : Reply → Bool
+  | .lookup _ id | .stat id => id.length ≤ 250
+  | _ => true
+
+theorem answer_idOk (c : Cmd) (args : List (List Byte)) : (answer c args).idOk = true := by
+  unfold answer
+  repeat (first | rfl | split)
+
+/-- A message-id looked up is one: 250 octets at most. -/
+theorem replyIn_idOk (offered : Bool) (l : Line) : (replyIn offered l).idOk = true := by
+  unfold replyIn
+  split
+  · split <;> rfl
+  · split
+    · rfl
+    · split
+      · split
+        · unfold answerIn
+          split <;> (repeat' split) <;> first | exact answer_idOk .. | simp_all [Reply.idOk, isMessageId]
+        · exact answer_idOk ..
+      · rfl
 
 /-- The most bytes one action carries. -/
 def actionData : Nat := 512
@@ -215,15 +267,15 @@ theorem parts_short :
       helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
       capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 138 ∧
-      ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → ∀ i,
-        (text i r).length ≤ 40 := by
+      ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost →
+        (∀ id, r ≠ .stat id) → ∀ i, (text i r).length ≤ 40 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, ?_⟩
-  intro r h1 h2 h3 h4 i
+  intro r h1 h2 h3 h4 h5 i
   cases r <;> first
     | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
-    | (simp only [text]; decide +kernel)
+    | exact absurd rfl (h5 _) | (simp only [text]; decide +kernel)
 
 /-- **Every reply, and the greeting, fits one action** when the identity fits. -/
 theorem greeting_fits (i : Identity) (h : i.ok = true) :
@@ -233,10 +285,17 @@ theorem greeting_fits (i : Identity) (h : i.ok = true) :
   simp only [greeting, greetingPost, List.length_append, actionData]
   omega
 
-theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) :
+theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.idOk = true) :
     (text i r).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
   obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h12⟩ := parts_short
+  by_cases hs : ∃ id, r = .stat id
+  · obtain ⟨id, rfl⟩ := hs
+    simp only [Reply.idOk, decide_eq_true_eq] at hr
+    simp only [text, List.length_append, actionData, crlf, List.length_cons, List.length_nil]
+    have : (ascii "223 0 ").length = 6 := by decide +kernel
+    omega
+  replace hs : ∀ id, r ≠ .stat id := fun id e => hs ⟨id, e⟩
   by_cases hc : r = .capabilities
   · subst hc; simp only [text, List.length_append, actionData]; omega
   by_cases hh : r = .help
@@ -245,7 +304,7 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) :
   · subst hcp; simp only [text, List.length_append, actionData]; omega
   by_cases hhp : r = .helpPost
   · subst hhp; simp only [text, List.length_append, actionData]; omega
-  have := h12 r hc hh hcp hhp i
+  have := h12 r hc hh hcp hhp hs i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -409,6 +468,21 @@ theorem examples :
     reply (line "POST") = .unknown ∧ replyIn true (line "post") = .post ∧
     replyIn true (line "POST x") = .syntax ∧ replyIn true ⟨.malformed, ascii "POST"⟩ = .syntax ∧
     replyIn true (line "HELP") = .help := by
+  decide +kernel
+
+/-- What a reply looks up: the command and the message-id. -/
+def Reply.lookupOf : Reply → Option (Cmd × List Byte)
+  | .lookup c id => some (c, id)
+  | _ => none
+
+/-- With a store: ARTICLE and BODY are commands, and a message-id is looked up. -/
+theorem store_examples :
+    reply (line "ARTICLE <a@b>") = .unknown ∧
+    (replyIn true (line "article <a@b>")).lookupOf = some (.article, ascii "<a@b>") ∧
+    replyIn true (line "BODY 3") = .noGroup ∧ replyIn true (line "ARTICLE") = .noGroup ∧
+    (replyIn true (line "HEAD <a@b>")).lookupOf = some (.head, ascii "<a@b>") ∧
+    (replyIn true (line "STAT <a@b>")).lookupOf = some (.stat, ascii "<a@b>") ∧
+    replyIn true (line "BODY <a@b> x") = .syntax ∧ replyIn true (line "BODY <>") = .syntax := by
   decide +kernel
 
 /-- An identity that fits. -/

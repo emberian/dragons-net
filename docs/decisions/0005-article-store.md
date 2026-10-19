@@ -89,10 +89,12 @@ knows nothing of articles.
   host only what is left at the end. A file is synced through the descriptor it was written through:
   Linux reports a failed write-back only to descriptors open at the time.
 - The host retries a call a signal interrupted; writes on after a short write, one without progress
-  failing as no space; reports a short read as it is. A failed close is a failed sync. Classes:
+  failing as no space; reports a short read as it is. A failed close of a file written is a failed
+  sync, of one only read nothing. Classes:
   `EIO` an I/O error; `ENOSPC`, `EDQUOT` no space; `EEXIST`, `ENOENT` the name's; any other,
   another.
-- Jobs are identified by a slot and a generation, like connections; at most eight are in flight.
+- Jobs are identified by a slot and a generation, like connections; at most twelve are in flight,
+  one for each POST and each read.
   Bytes to write are copied out of the heap inside `dn_emit` and bytes read are copied in inside
   `dn_next`, so the host still touches the heap only inside a call; a job moves at most 16,384
   octets.
@@ -134,8 +136,9 @@ knows nothing of articles.
   4. publish: it adds the article to the index of Message-IDs and answers 240.
 
   Numbers are allocated when the record is appended, one record at a time, so articles are numbered
-  in commit order, and a crosspost is one record. ARTICLE and HEAD insert the Xref field, built from
-  the record, after the stored header fields.
+  in commit order, and a crosspost is one record. ARTICLE and HEAD insert the Xref field
+  (RFC 5536 §3.2.14), built from the record, after the stored header fields, folded before a
+  location that would take its line past 998 octets (RFC 5322 §2.1.1).
 - A failure is known only until the commit record is written: the article is refused with 441 and
   its temporary or final file removed. After that, a failed write or sync of the journal leaves the
   outcome unknown: the connection is closed without an answer (RFC 3977 §6.3.1 asks the client to
@@ -237,9 +240,12 @@ knows nothing of articles.
   Message-ID in two records is to be corruption too, which recovery does not check yet: the program
   refuses one the store has or has reserved (Which articles are accepted), and the specification
   takes up both with the index that reserves it.
-- A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
-  its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
-  sending, it closes the connection without the final dot.
+- A file is checked as it is read: lines end in CRLF and hold no NUL, a line that starts with a dot
+  starts with two, the empty line lies where the record says, and at the end the size and the
+  CRC-32C are the record's; octets that fail are never sent. The 220, 221 or 222 line goes with the
+  first octets checked: a read or check failing before is answered `403 Article not readable`,
+  after, the connection is closed without the final dot, the client left with the start of an
+  article whose end failed. HEAD and BODY read the whole file too.
 - Recovery runs before the first connection: the first batch comes at once, and the host listens
   only from the `dn_emit` whose word says the store is ready. The program drives it in `main` by
   file jobs, one in flight; refused, or a job failed, it stops the run, and the host ends with
@@ -257,8 +263,12 @@ knows nothing of articles.
   buffer and written a buffer at a time, and the connection is not read again until that write
   completes. A line the block may not hold, or an article past its size, refuses the article; the
   rest of the block is read and discarded, and the file removed.
-- ARTICLE, HEAD and BODY read a file 16,384 octets at a time into a buffer of the connection's, at
-  most eight reads in flight, and send it a slot at a time before reading more.
+- ARTICLE, HEAD and BODY wait, unanswered and with no deadline, for one of eight reads, in the order
+  they came. A read holds a buffer and the file open, reads 16,384 octets at a time and, last, one
+  more than are left, even none, closing the file, and sends what it read a slot at a time before
+  reading more. Meanwhile the host is not told to read, and inactivity runs only while some of what
+  was sent is untaken. Readers that take slowly keep the eight reads, as idle clients keep the 64
+  connections; limits per address are operations' (#21).
 - An article must arrive within 1,800 seconds of its 340, a deadline bytes do not renew; waiting
   for a POST slot or for the store is not inactivity. A connection that ends before the terminator
   abandons its article once its job in flight completes: the file is removed and the reservation
@@ -326,10 +336,10 @@ counting the lines it could not.
 - POST, and the capability `POST`, while the store accepts, has at least one group and the client
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
-- HEAD and STAT by message-id answer from the store (221, 223). ARTICLE and BODY are implemented in
-  full: by message-id from the store, with the number 0, and 412 to a number or to no argument,
-  since GROUP is not implemented. READER is not advertised until the reader commands are (#18).
-  HELP lists ARTICLE, BODY and POST.
+- ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
+  number 0, or 430), and 412 to a number or, ARTICLE and BODY, to no argument, since GROUP is not
+  implemented. READER is not advertised until the reader commands are (#18). HELP lists ARTICLE,
+  BODY and POST.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested

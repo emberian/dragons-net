@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The store's side of POST (docs/decisions/0005-article-store.md) judged from outside, apart from
-`DN.News.PostSpec`, for scripts/session_ref.py.
+"""The store's side of POST and of reading (docs/decisions/0005-article-store.md) judged from
+outside, apart from `DN.News.PostSpec`, for scripts/session_ref.py.
 
 An article is the block after a 340, read a line at a time as scripts/framing_ref.py reads blocks:
 lines end at CRLF, a dot put before a line is taken off, a line holding a NUL, a CR or an LF spoils
@@ -22,6 +22,19 @@ stopping meanwhile, leaves the outcome unknown. After every 240, crash images of
 that keeps only what was synced, the one that keeps everything, and one drawn between them name by
 name — are recovered by scripts/recovery_ref.py and have to hold every article answered 240, with
 its file: a second check behind the order of operations, which a missing sync breaks first.
+
+A read for ARTICLE, HEAD or BODY holds one of eight places from when its connection gets it until
+its file is closed and its connection answered or gone. It opens the article's final file, then
+reads on from where it is, only once everything it may give has been given: 16,384 octets, or,
+when what is left fits, one octet more than is left, the file closed in the same job, so that the
+end of the file is always looked for; a read that failed, or whose connection is gone, closes its
+file. What it has read is checked whole as a reader
+would: lines end in CRLF and hold no NUL, a line that starts with a dot starts with two, the empty
+line lies where the commit says the header section ends, and at the end the octets are as many as
+the commit says and have its CRC-32C. A read that fails the check, or reads fewer octets than it
+asked for and than are left, or more than are left, fails. It may give the 220, 221 or 222 line
+and the octets checked — ARTICLE the file with Xref after the header fields, HEAD the header
+section with Xref, BODY what follows the empty line — then, all of the file checked, the dot.
 """
 from __future__ import annotations
 
@@ -35,15 +48,18 @@ import fs_ref
 import recovery_ref as R
 import store_ref as J
 
-JOBS, JOB_OPS, JOB_DATA, PLACES = 8, 8, 16384, 16
-POSTS, ARTICLE_MAX, HEADER_MAX = 4, 1_000_000, 65536
-CRLF, DOT = F.CRLF, F.DOT
+JOBS, JOB_OPS, JOB_DATA, PLACES = 12, 8, 16384, 16
+POSTS, READS, ARTICLE_MAX, HEADER_MAX = 4, 8, 1_000_000, 65536
+LINE_MOST = 998
+STATUS = {"article": b"220", "head": b"221", "body": b"222"}
+CR, LF, NUL, CRLF, DOT = F.CR, F.LF, F.NUL, F.CRLF, F.DOT
 
 
 
 class Op(NamedTuple):
-    """An operation of a file job: `create`, `remove` of a name; `write` at an offset of a place,
-    `datasync` and `close` of one; `rename` of a name to another; `syncdir`."""
+    """An operation of a file job: `create`, `remove`, `open` of a name; `write` at an offset of a
+    place, `datasync` and `close` of one, `read` of `length` octets at an offset of one; `rename` of a
+    name to another; `syncdir`."""
     kind: str
     place: int = 0
     gen: int = 0
@@ -51,6 +67,7 @@ class Op(NamedTuple):
     data: bytes = b""
     name: bytes = b""
     to: bytes = b""
+    length: int = 0
 
 
 # What scripts/article_ref.py makes of a header section: `None` when it is refused, else the
@@ -59,8 +76,9 @@ Verdict = tuple[bytes, bytes, list[bytes]] | None
 # The checker takes the wall clock in seconds, the sequence number, the run, the connection's
 # number, the path identity, the run's value in hexadecimal digits, the groups and the header section.
 Checker = Callable[[int, int, int, int, bytes, bytes, list[bytes], bytes], Verdict]
-# A completion as the simulated host reports it, with what a failed operation left (`fs_ref.fail`).
-Done = tuple[int, int, int, list[tuple[int, int]], int]
+# A completion as the simulated host reports it, with what a failed operation left (`fs_ref.fail`)
+# and the octets a read gave.
+Done = tuple[int, int, int, list[tuple[int, int]], int, bytes]
 
 
 class Violation(Exception):
@@ -72,14 +90,121 @@ class Violation(Exception):
 @dataclass
 class Start:
     """What a run of the store starts with: the groups, the path identity, the run's eight octets,
-    the spool as recovery left it, the journal's place and generation, the last job's
-    generation."""
+    the spool as recovery left it, the journal's place and generation, the last job's generation,
+    and files that change after recovery, as a disk may change them under the store."""
     groups: list[bytes]
     identity: bytes
     run: bytes
     image: list[tuple[bytes, bytes]]
     journal: tuple[int, int]
     job_gen: int
+    tamper: list[tuple[bytes, bytes]] = field(default_factory=list)
+
+
+def lines_ok(data: bytes, whole: bool) -> bool:
+    """Whether octets from the start of a file can begin it as a reader receives it: no NUL, a CR
+    only before an LF and an LF only after a CR, a line that starts with a dot starting with two;
+    once `whole`, ending a line."""
+    *done, last = data.split(CRLF)
+    if NUL in data or any(CR in line or LF in line or (line[:1] == DOT and line[1:2] != DOT) for line in done):
+        return False
+    if whole:
+        return last == b""
+    body = last[:-1] if last.endswith(CR) else last
+    return CR not in body and LF not in body and not (last[:1] == DOT and len(last) > 1 and last[1:2] != DOT)
+
+
+def file_ok(c: J.Commit, data: bytes, whole: bool) -> bool:
+    """Whether octets from the start of a file can be the article of commit `c`, and, once `whole`,
+    are: lines as a reader receives them, the empty line where the header section ends, and the
+    commit's size and CRC-32C."""
+    header = c[3]
+    if len(data) >= header + 2:
+        if header < 2 or data[header - 2:header + 2] != CRLF + CRLF:
+            return False
+    elif whole:
+        return False
+    return lines_ok(data, whole) and (not whole or (len(data) == c[4] and J.crc32c(data) == c[5]))
+
+
+def xref(identity: bytes, groups: list[tuple[bytes, int]]) -> bytes:
+    """RFC 5536 §3.2.14: the path identity, then each group and its number; a location that would
+    take the line past 998 octets (RFC 5322 §2.1.1) starts a folded line."""
+    lines = [b"Xref: " + identity]
+    for name, number in groups:
+        location = name + b":" + str(number).encode()
+        if len(lines[-1]) + 1 + len(location) > LINE_MOST:
+            lines.append(b"")
+        lines[-1] += b" " + location
+    return CRLF.join(lines) + CRLF
+
+
+@dataclass
+class Fetch:
+    """A read for ARTICLE, HEAD or BODY: its connection while it is to be answered; the command, the
+    commit of its article and its place among the reads; its file — `none`, `open` at a place, or
+    `gone` — the octets read and checked, how many octets it has given; whether it failed; its job in
+    flight; how its connection was answered."""
+    owner: tuple[int, int] | None
+    cmd: str
+    commit: J.Commit
+    index: int
+    file: str = "none"
+    place: tuple[int, int] | None = None
+    got: bytes = b""
+    given: int = 0
+    bad: bool = False
+    busy: tuple[int, int] | None = None
+    answered: str | None = None
+    # what `out` last made, for as many octets read and whether they were whole
+    made: tuple[tuple[int, bool], bytes] = field(default=((-1, False), b""), repr=False, compare=False)
+
+    def whole(self) -> bool:
+        """All of the file read and checked, and found to end there: the read past it closed it."""
+        return len(self.got) == self.commit[4] and self.file == "gone"
+
+    def out(self, identity: bytes) -> bytes:
+        """Everything it may give so far."""
+        key = (len(self.got), self.whole())
+        if self.made[0] != key:
+            self.made = (key, self.making(identity))
+        return self.made[1]
+
+    def making(self, identity: bytes) -> bytes:
+        if not self.got:
+            return b""
+        header = self.commit[3]
+        x = xref(identity, self.commit[2])
+        known = len(self.got) >= header + 2
+        if self.cmd == "head":
+            stream = self.got[:header] + (x if known else b"")
+        elif self.cmd == "body":
+            stream = self.got[header + 2:]
+        else:
+            stream = self.got[:header] + (x + self.got[header:] if known else b"")
+        return STATUS[self.cmd] + b" 0 " + self.commit[1] + CRLF + stream + (DOT + CRLF if self.whole() else b"")
+
+    def held(self) -> bool:
+        """Whether it still holds its place: its connection to answer, a job in flight or its file
+        open."""
+        return self.owner is not None or self.busy is not None or self.file == "open"
+
+    def next_job(self, identity: bytes) -> list[Op] | None:
+        if self.busy is not None:
+            return None
+        if self.file == "none":
+            return None if self.bad or self.owner is None else [Op("open", name=R.name_of("a", self.commit[0]))]
+        if self.file != "open" or self.place is None:
+            return None
+        place, gen = self.place
+        if self.bad or self.owner is None:
+            return [Op("close", place, gen)]
+        if self.given < len(self.out(identity)):
+            return None
+        left = self.commit[4] - len(self.got)
+        if left + 1 <= JOB_DATA:
+            return [Op("read", place, gen, len(self.got), length=left + 1), Op("close", place, gen)]
+        return [Op("read", place, gen, len(self.got), length=JOB_DATA)]
 
 
 def stuff(line: bytes) -> bytes:
@@ -182,14 +307,22 @@ class Store:
         for name, octets in start.image:
             self.disk.files.append(fs_ref.File(seen=octets, kept=octets, most=len(octets)))
             self.disk.names[name] = fs_ref.Name(synced=len(self.disk.files) - 1)
+        for name, octets in start.tamper:
+            held = self.disk.holding(name)
+            if held is None:
+                self.disk.files.append(fs_ref.File())
+                held = len(self.disk.files) - 1
+                self.disk.names[name] = fs_ref.Name(synced=held)
+            self.disk.files[held] = fs_ref.File(seen=octets, kept=octets, most=len(octets))
         journal = self.disk.holding(b"journal")
         if journal is None:
             raise Violation("spool", "the spool given has no journal")
         # places of open files: the file each holds and its generation
         self.places: dict[int, tuple[int, int]] = {start.journal[0]: (journal, start.journal[1])}
-        self.jobs: dict[int, tuple[int, list[Op], Article | None]] = {}
+        self.jobs: dict[int, tuple[int, list[Op], Article | Fetch]] = {}
         self.job_gen = start.job_gen
         self.articles: list[Article] = []
+        self.reads: list[Fetch | None] = [None] * READS
         self.answered: list[Article] = []
         # names a failed operation may have left: a create, a rename's target, a removal
         self.loose: set[bytes] = set()
@@ -278,12 +411,40 @@ class Store:
 
     def abandon(self, owner: tuple[int, int]) -> None:
         """The connection gone, or its input ended: its article, if its block has not ended,
-        abandoned."""
+        abandoned, and its read left to close its file."""
         for a in self.articles:
             if a.owner == owner:
                 a.owner = None
                 if not a.ended:
                     self.refuse(a, "abandoned")
+        for f in self.reads:
+            if f is not None and f.owner == owner:
+                f.owner = None
+
+    # ## Reads
+
+    def found(self, message_id: bytes) -> J.Commit | None:
+        return next((c for c in self.commits if c[1] == message_id), None)
+
+    def free_reads(self) -> list[int]:
+        return [k for k, f in enumerate(self.reads) if f is None or not f.held()]
+
+    def grant(self, owner: tuple[int, int], cmd: str, commit: J.Commit) -> Fetch:
+        """The lowest free read, given to a connection."""
+        k = self.free_reads()[0]
+        f = Fetch(owner, cmd, commit, k)
+        self.reads[k] = f
+        return f
+
+    def fetches(self) -> list[Fetch]:
+        return [f for f in self.reads if f is not None and f.held()]
+
+    def fetch_at(self, place: int, gen: int) -> Fetch | None:
+        return next((f for f in self.fetches() if f.file == "open" and f.place == (place, gen)), None)
+
+    def fetch_job(self, ops: list[Op]) -> bool:
+        return ops[0].kind in ("open", "read") or (ops[0].kind == "close" and
+                                                   self.fetch_at(ops[0].place, ops[0].gen) is not None)
 
     def stop(self) -> None:
         self.accepting = False
@@ -327,6 +488,7 @@ class Store:
         article's operations."""
         dir_syncs = sum(1 for _, ops, _ in self.jobs.values() if any(op.kind == "syncdir" for op in ops))
         appends = sum(1 for _, ops, _ in self.jobs.values() if self.journal_op(ops))
+        wanted = [(f, ops) for f in self.fetches() if (ops := f.next_job(self.start.identity)) is not None]
         for slot, gen, ops in jobs:
             if not 0 <= slot < JOBS or slot in self.jobs:
                 raise Violation("job", f"a job in slot {slot}, which is not free")
@@ -335,6 +497,14 @@ class Store:
             self.job_gen = gen
             if not 1 <= len(ops) <= JOB_OPS or sum(len(op.data) for op in ops) > JOB_DATA:
                 raise Violation("job", f"a job of {len(ops)} operations, or of more octets than one moves")
+            if self.fetch_job(ops):
+                if not wanted or wanted[0][1] != ops:
+                    raise Violation("read", f"a job {ops}, not the next of the reads, "
+                                    f"{wanted[0][1] if wanted else 'none'}")
+                f, _ = wanted.pop(0)
+                f.busy = (slot, gen)
+                self.jobs[slot] = (gen, ops, f)
+                continue
             dir_syncs += any(op.kind == "syncdir" for op in ops)
             appends += self.journal_op(ops)
             if dir_syncs > 1:
@@ -427,16 +597,54 @@ class Store:
     def complete(self, dones: list[Done]) -> None:
         """Completions, in the order the host reports them: each job's operations done on the spool
         up to the first that failed, which leaves what the host says it left."""
-        for slot, gen, ok, results, partial in dones:
+        for slot, gen, ok, results, partial, data in dones:
             if slot not in self.jobs or self.jobs[slot][0] != gen:
                 raise Violation("job", f"a completion of job {slot}/{gen}, not in flight")
             _, ops, a = self.jobs.pop(slot)
+            if isinstance(a, Fetch):
+                self.fetched(a, ops, ok, results, data)
+                continue
             accepting = self.accepting
             for k, op in enumerate(ops[:ok + 1]):
                 self.disk_op(op, k < ok, partial, results[k] if k < ok else (0, 0))
-            if a is not None:
-                a.busy = None
-                self.moved(a, ops, ok, accepting, results)
+            a.busy = None
+            self.moved(a, ops, ok, accepting, results)
+
+    def fetched(self, f: Fetch, ops: list[Op], ok: int, results: list[tuple[int, int]], data: bytes) -> None:
+        """A read's job completed: what it did on the spool, held to the spool's own copy, and what it
+        does to the read."""
+        f.busy = None
+        kind = ops[0].kind
+        if kind == "open":
+            said = fs_ref.do(self.disk, ("open", [ops[0].name.hex()]))
+            if ok == 1:
+                if not said.startswith("file:") or not 0 <= results[0][0] < PLACES or results[0][0] in self.places:
+                    raise Violation("job", f"an open that succeeded as {said} at place {results[0][0]}")
+                self.places[results[0][0]] = (int(said[5:]), results[0][1])
+                f.file, f.place = "open", results[0]
+            else:
+                f.file, f.bad = "gone", True
+            return
+        if kind == "close":
+            self.places.pop(ops[0].place, None)
+            f.file = "gone"
+            return
+        if ok == 0:
+            f.bad = True
+            return
+        op = ops[0]
+        held = self.places[op.place][0]
+        if data != self.disk.files[held].seen[op.offset:op.offset + op.length] or results[0][0] != len(data):
+            raise Violation("job", f"a read of {len(data)} octets at {op.offset}, not what the file holds")
+        if len(ops) == 2:
+            self.places.pop(op.place, None)
+            f.file = "gone"
+        left = f.commit[4] - len(f.got)
+        if len(data) < min(left, op.length) or len(data) > left or \
+                not file_ok(f.commit, f.got + data, len(f.got) + len(data) >= f.commit[4]):
+            f.bad = True
+        else:
+            f.got += data
 
     def disk_op(self, op: Op, done: bool, partial: int, result: tuple[int, int]) -> None:
         kind = op.kind
@@ -521,8 +729,12 @@ class Store:
     # ## What has to hold
 
     def stalled(self) -> str | None:
-        """An article that could move and was given no job: one has a next step whenever nothing of
-        its is in flight, but for the directory's sync or the journal's append in flight."""
+        """An article or a read that could move and was given no job: an article has a next step
+        whenever nothing of its is in flight, but for the directory's sync or the journal's append in
+        flight."""
+        for f in self.fetches():
+            if f.next_job(self.start.identity) is not None:
+                return f"read {f.index} of article {f.commit[0]} given no job"
         placing = any(op.kind == "syncdir" for _, ops, _ in self.jobs.values() for op in ops)
         appending = any(self.journal_op(ops) for _, ops, _ in self.jobs.values())
         for a in self.articles:

@@ -18,8 +18,9 @@ time and for the compiled server to be held against. Its input, blank lines asid
     turn NOW [WALL]                   a batch begins at this time, the wall clock WALL
     open IDX GEN [1] | recv IDX GEN HEX | writable IDX GEN | end IDX GEN | closed IDX GEN
                                       an event; `1` when the connection may post
-    complete SLOT GEN OK RESULTS      a job's completion: the operations that succeeded, each's
-                                      two result words (`A:B,…`, `-` for none)
+    complete SLOT GEN OK RESULTS [DATA]
+                                      a job's completion: the operations that succeeded, each's
+                                      two result words (`A:B,…`, `-` for none), the octets read
     go                                the batch is complete
     took N ...                        what the host took of each send, in order
 
@@ -28,7 +29,8 @@ To `go` it answers the actions, one a line, then the jobs, then `done`:
     send IDX GEN HEX READ | graceful IDX GEN | close IDX GEN
     job SLOT GEN OP …                 `create:NAME`, `write:PLACE:GEN:OFFSET:HEX`,
                                       `datasync:PLACE:GEN`, `close:PLACE:GEN`, `rename:NAME:NAME`,
-                                      `remove:NAME`, `syncdir`
+                                      `remove:NAME`, `syncdir`, `open:NAME`,
+                                      `read:PLACE:GEN:OFFSET:LENGTH`
 
 and to `took` the time it needs its next turn, `deadline D`. A report the host may not make is
 answered `stop CODE`, after which the model takes no more input. Run with one of the
@@ -73,6 +75,8 @@ def showOp : Op → String
   | .rename a b => s!"rename:{nameText a}:{nameText b}"
   | .remove n => s!"remove:{nameText n}"
   | .syncDir => "syncdir"
+  | .open_ n => s!"open:{nameText n}"
+  | .read p g o l => s!"read:{p}:{g}:{o}:{l}"
 
 def showJob (j : Job) : String := " ".intercalate (s!"job {j.slot} {j.gen}" :: j.ops.map showOp)
 
@@ -140,7 +144,10 @@ def step (m : Model) (line : String) : Except String (Model × String) := do
   | ["turn", n, w], some _, none, none =>
     return ({ m with now := ← nat n, wall := ← nat w, batch := some [] }, "")
   | ["complete", slot, gen, ok, rs], some _, some _, none =>
-    let d : Done := ⟨← nat slot, ← nat gen, ← nat ok, ← results rs⟩
+    let d : Done := ⟨← nat slot, ← nat gen, ← nat ok, ← results rs, []⟩
+    return ({ m with dones := d :: m.dones }, "")
+  | ["complete", slot, gen, ok, rs, data], some _, some _, none =>
+    let d : Done := ⟨← nat slot, ← nat gen, ← nat ok, ← results rs, ← bytes data⟩
     return ({ m with dones := d :: m.dones }, "")
   | ["go"], some i, some evs, none =>
     match turnM m.mutant i m.server m.now m.wall evs.reverse m.dones.reverse with
@@ -235,6 +242,29 @@ def regression_961 : Bool :=
       "job 0 8 create:t0000000000000001", "job 0 9 write:2:0:0:", "datasync:2:0 close:2:0",
       "job 0 10 rename:t0000000000000001:a0000000000000001 syncdir", "job 0 11 write:1:0:",
       "datasync:1:0", s!"send 0 1 {hex (text exampleIdentity .posted)} 1"]
+  | .error _ => false
+
+/-- An ARTICLE of an article on the spool, each job completing at the next turn: the file opened,
+read with one octet more than it holds and closed in one job; then 220, the header section, Xref,
+the body and the dot in one send, the read over, so the host told to read again. -/
+def regression_968 : Bool :=
+  let key := (List.range 16).map (BitVec.ofNat 8)
+  let file := ascii "From: a@b.example\r\nSubject: s\r\n\r\nbody\r\n"
+  let c : Journal.Commit :=
+    ⟨1, ascii "<1@x.example>", [⟨ascii "local.test", 1⟩], 31, file.length, (Journal.crc32c file).toNat⟩
+  let image := hex Journal.journalName ++ "=" ++ hex (Journal.journal key [.commit c, .start]) ++ ";" ++
+    hex (Journal.Name.final 1).bytes ++ "=" ++ hex file
+  let sent := ascii ("220 0 <1@x.example>\r\nFrom: a@b.example\r\nSubject: s\r\n" ++
+    "Xref: dn.example local.test:1\r\n\r\nbody\r\n.\r\n")
+  let lines := [identityLine,
+    s!"store {hex (ascii "local.test")} {hex (ascii "dn.example")} 0011223344556677 1 0 7 {image}",
+    "turn 1 1790000000001", "open 0 1", "go", s!"took {(greeting exampleIdentity).length}",
+    "turn 5 1790000000005", "recv 0 1 " ++ hex (ascii "ARTICLE <1@x.example>\r\n"), "go", "took 0",
+    "turn 6 1790000000006", "complete 0 8 1 2:0", "go", "took",
+    "turn 7 1790000000007", s!"complete 0 9 2 {file.length}:0,0:0 {hex file}", "go", s!"took {sent.length}"]
+  match runLines lines with
+  | .ok out => inOrder out ["job 0 8 open:a0000000000000001",
+      s!"job 0 9 read:2:0:0:{file.length + 1} close:2:0", s!"send 0 1 {hex sent} 1"]
   | .error _ => false
 
 end DN.News.SessionModel

@@ -12081,7 +12081,7 @@ fun artTables() {
 }
 
 fun crcTable() {
-  var t = @base + 901032;
+  var t = @base + 1035400;
   var i = 0;
   var c = 0;
   i = 0;
@@ -12103,24 +12103,24 @@ fun crcTable() {
 
 fun postTakes(1 k) {
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
-  st @base + 898296, ((lds 1 (zs + 64)) == 0) & (0 < (((lds 1 (zs + 104)) == 0) + ((lds 1 (zs + 144)) < 16384)));
+  var zs = @base + 2862528 + (k * 140040);
+  st @base + 1032664, ((lds 1 (zs + 64)) == 0) & (0 < (((lds 1 (zs + 104)) == 0) + ((lds 1 (zs + 144)) < 16384)));
   return 0;
 }
 
 fun postTidy(1 k) {
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
+  var zs = @base + 2862528 + (k * 140040);
   if lds 1 zs {
-    if (((lds 1 (@base + 898256)) == 0) & ((lds 1 (zs + 96)) == 0)) & (((lds 1 (zs + 184)) & ((lds 1 (zs + 216)) == 5)) == 0) {
+    if (((lds 1 (@base + 1032624)) == 0) & ((lds 1 (zs + 96)) == 0)) & (((lds 1 (zs + 184)) & ((lds 1 (zs + 216)) == 5)) == 0) {
       st zs + 88, 1;
     } else {
     }
@@ -12155,29 +12155,29 @@ fun postTidyAll() {
 }
 
 fun postWait(1 x, 1 g) {
-  var wn = lds 1 (@base + 898320);
+  var wn = lds 1 (@base + 1032688);
   if 0 < ((wn < 0) + (63 < wn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  st @base + 898328 + (wn * 16), x;
-  st @base + 898328 + (wn * 16) + 8, g;
-  st @base + 898320, wn + 1;
+  st @base + 1032696 + (wn * 16), x;
+  st @base + 1032696 + (wn * 16) + 8, g;
+  st @base + 1032688, wn + 1;
   return 0;
 }
 
 fun postUnwait(1 x, 1 g) {
-  var wn = lds 1 (@base + 898320);
+  var wn = lds 1 (@base + 1032688);
   if 0 < ((wn < 0) + (64 < wn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var w = 0;
   var at = wn;
   while w < wn {
-    if (at == wn) & (((lds 1 (@base + 898328 + (w * 16))) == x) & ((lds 1 (@base + 898328 + (w * 16) + 8)) == g)) {
+    if (at == wn) & (((lds 1 (@base + 1032696 + (w * 16))) == x) & ((lds 1 (@base + 1032696 + (w * 16) + 8)) == g)) {
       at = w;
     } else {
     }
@@ -12186,27 +12186,27 @@ fun postUnwait(1 x, 1 g) {
   if at < wn {
     var u = at;
     while (u + 1) < wn {
-      st @base + 898328 + (u * 16), lds 1 (@base + 898328 + ((u + 1) * 16));
-      st @base + 898328 + (u * 16) + 8, lds 1 (@base + 898328 + ((u + 1) * 16) + 8);
+      st @base + 1032696 + (u * 16), lds 1 (@base + 1032696 + ((u + 1) * 16));
+      st @base + 1032696 + (u * 16) + 8, lds 1 (@base + 1032696 + ((u + 1) * 16) + 8);
       u = u + 1;
     }
-    st @base + 898320, wn - 1;
+    st @base + 1032688, wn - 1;
   } else {
   }
   return 0;
 }
 
 fun postAdmits(1 x, 1 g) {
-  var wn = lds 1 (@base + 898320);
+  var wn = lds 1 (@base + 1032688);
   if 0 < ((wn < 0) + (64 < wn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var w = 0;
   var at = wn;
   while w < wn {
-    if (at == wn) & (((lds 1 (@base + 898328 + (w * 16))) == x) & ((lds 1 (@base + 898328 + (w * 16) + 8)) == g)) {
+    if (at == wn) & (((lds 1 (@base + 1032696 + (w * 16))) == x) & ((lds 1 (@base + 1032696 + (w * 16) + 8)) == g)) {
       at = w;
     } else {
     }
@@ -12215,21 +12215,21 @@ fun postAdmits(1 x, 1 g) {
   var fr = 0;
   var kk = 0;
   while kk < 4 {
-    var zs = @base + 2728160 + (kk * 140040);
+    var zs = @base + 2862528 + (kk * 140040);
     if (lds 1 zs) == 0 {
       fr = fr + 1;
     } else {
     }
     kk = kk + 1;
   }
-  st @base + 898296, (at < wn) & (at < fr);
+  st @base + 1032664, (at < wn) & (at < fr);
   return 0;
 }
 
 fun postAbandon(1 x, 1 g) {
   var kk = 0;
   while kk < 4 {
-    var zs = @base + 2728160 + (kk * 140040);
+    var zs = @base + 2862528 + (kk * 140040);
     if ((lds 1 zs) & (lds 1 (zs + 8))) & (((lds 1 (zs + 16)) == x) & ((lds 1 (zs + 24)) == g)) {
       st zs + 8, 0;
       if (lds 1 (zs + 64)) == 0 {
@@ -12255,11 +12255,11 @@ fun postAbandon(1 x, 1 g) {
 
 fun postClaim(1 k, 1 x, 1 g, 1 num) {
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
+  var zs = @base + 2862528 + (k * 140040);
   st zs, 1;
   st zs + 8, 1;
   st zs + 16, x;
@@ -12281,12 +12281,12 @@ fun postClaim(1 k, 1 x, 1 g, 1 num) {
 
 fun idHash(1 n) {
   if 0 < ((n < 0) + (250 < n)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var k = @base + 899368;
-  var p = @base + 899384;
+  var k = @base + 1033736;
+  var p = @base + 1033752;
   var r = 0;
   var m = 0;
   var v0 = 0;
@@ -12423,13 +12423,13 @@ fun idHash(1 n) {
   v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
   v2 = ((v2) << 32) | ((v2) >>> 32);
   r = v0 ^ v1 ^ v2 ^ v3;
-  st @base + 898296, r & 8191;
+  st @base + 1032664, r & 8191;
   return 0;
 }
 
 fun idFind(1 n) {
   if 0 < ((n < 0) + (250 < n)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12438,40 +12438,40 @@ fun idFind(1 n) {
     return h;
   } else {
   }
-  var x = lds 1 (@base + 898296);
+  var x = lds 1 (@base + 1032664);
   if 0 < ((x < 0) + (8191 < x)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var t = 0;
   while t < 8192 {
-    var ce = lds 1 (@base + 3288320 + (x * 8));
+    var ce = lds 1 (@base + 3422688 + (x * 8));
     if ce == 0 {
-      st @base + 898296, 0;
+      st @base + 1032664, 0;
       return 0;
     } else {
     }
     var ci = ce - 1;
     if 0 < ((ci < 0) + (4095 < ci)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
-    var sl = @base + 1040264 + (ci * 408);
+    var sl = @base + 1174632 + (ci * 408);
     var sn = ((lds 1 (sl + 16)) >>> 8) & 255;
     if sn == n {
       var same = 1;
       var j = 0;
       while j < n {
-        if ((ld8 (sl + 152 + j)) == (ld8 (@base + 899384 + j))) == 0 {
+        if ((ld8 (sl + 152 + j)) == (ld8 (@base + 1033752 + j))) == 0 {
           same = 0;
         } else {
         }
         j = j + 1;
       }
       if same {
-        st @base + 898296, 1;
+        st @base + 1032664, 1;
         return 0;
       } else {
       }
@@ -12480,26 +12480,26 @@ fun idFind(1 n) {
     x = (x + 1) & 8191;
     t = t + 1;
   }
-  st @base + 898296, 0;
+  st @base + 1032664, 0;
   return 0;
 }
 
 fun idAdd(1 ci) {
   if 0 < ((ci < 0) + (4095 < ci)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var sl = @base + 1040264 + (ci * 408);
+  var sl = @base + 1174632 + (ci * 408);
   var sn = ((lds 1 (sl + 16)) >>> 8) & 255;
   if 0 < ((sn < 0) + (250 < sn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var j = 0;
   while j < sn {
-    st8 @base + 899384 + j, ld8 (sl + 152 + j);
+    st8 @base + 1033752 + j, ld8 (sl + 152 + j);
     j = j + 1;
   }
   var h = idHash(sn);
@@ -12507,35 +12507,35 @@ fun idAdd(1 ci) {
     return h;
   } else {
   }
-  var x = lds 1 (@base + 898296);
+  var x = lds 1 (@base + 1032664);
   if 0 < ((x < 0) + (8191 < x)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var t = 0;
   while t < 8192 {
-    if (lds 1 (@base + 3288320 + (x * 8))) == 0 {
-      st @base + 3288320 + (x * 8), ci + 1;
+    if (lds 1 (@base + 3422688 + (x * 8))) == 0 {
+      st @base + 3422688 + (x * 8), ci + 1;
       return 0;
     } else {
     }
     x = (x + 1) & 8191;
     t = t + 1;
   }
-  st @base + 897960, 10;
+  st @base + 1032328, 10;
   return 10;
 }
 
 fun idBuild() {
   var x = 0;
   while x < 8192 {
-    st @base + 3288320 + (x * 8), 0;
+    st @base + 3422688 + (x * 8), 0;
     x = x + 1;
   }
-  var cm = lds 1 (@base + 1013792);
+  var cm = lds 1 (@base + 1148160);
   if 0 < ((cm < 0) + (4096 < cm)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12553,25 +12553,25 @@ fun idBuild() {
 
 fun postReserved(1 k, 1 n) {
   if 0 < ((n < 0) + (250 < n)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var kk = 0;
   while kk < 4 {
-    var zs = @base + 2728160 + (kk * 140040);
+    var zs = @base + 2862528 + (kk * 140040);
     if ((kk == k) == 0) & ((((lds 1 zs) & (lds 1 (zs + 104))) & ((lds 1 (zs + 88)) == 0)) & ((lds 1 (zs + 240)) == n)) {
       var same = 1;
       var j = 0;
       while j < n {
-        if ((ld8 (zs + 512 + j)) == (ld8 (@base + 899384 + j))) == 0 {
+        if ((ld8 (zs + 512 + j)) == (ld8 (@base + 1033752 + j))) == 0 {
           same = 0;
         } else {
         }
         j = j + 1;
       }
       if same {
-        st @base + 898296, 1;
+        st @base + 1032664, 1;
         return 0;
       } else {
       }
@@ -12579,7 +12579,7 @@ fun postReserved(1 k, 1 n) {
     }
     kk = kk + 1;
   }
-  st @base + 898296, 0;
+  st @base + 1032664, 0;
   return 0;
 }
 
@@ -12587,27 +12587,27 @@ fun postReserving(1 k) {
   var cnt = 0;
   var kk = 0;
   while kk < 4 {
-    var zs = @base + 2728160 + (kk * 140040);
+    var zs = @base + 2862528 + (kk * 140040);
     if ((kk == k) == 0) & (((lds 1 zs) & (lds 1 (zs + 104))) & ((lds 1 (zs + 88)) == 0)) {
       cnt = cnt + 1;
     } else {
     }
     kk = kk + 1;
   }
-  st @base + 898296, cnt;
+  st @base + 1032664, cnt;
   return 0;
 }
 
 fun postAccept(1 k) {
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
+  var zs = @base + 2862528 + (k * 140040);
   var hl = lds 1 (zs + 144);
   if 0 < ((hl < 0) + (65538 < hl)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12617,12 +12617,12 @@ fun postAccept(1 k) {
     j = j + 1;
   }
   st @base + 498008, hl;
-  st @base + 498024, lds 1 (@base + 898264);
-  st @base + 498016, lds 1 (@base + 898288);
+  st @base + 498024, lds 1 (@base + 1032632);
+  st @base + 498016, lds 1 (@base + 1032656);
   st @base + 498040, lds 1 (zs + 32);
   var vd = artCheck();
   if lds 1 (@base + 88) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12634,13 +12634,13 @@ fun postAccept(1 k) {
   }
   var ml = lds 1 (@base + 498104);
   if 0 < ((ml < 0) + (250 < ml)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   var mj = 0;
   while mj < ml {
-    st8 @base + 899384 + mj, ld8 (@base + 506480 + mj);
+    st8 @base + 1033752 + mj, ld8 (@base + 506480 + mj);
     mj = mj + 1;
   }
   var f1 = idFind(ml);
@@ -12648,37 +12648,37 @@ fun postAccept(1 k) {
     return f1;
   } else {
   }
-  var dup = lds 1 (@base + 898296);
+  var dup = lds 1 (@base + 1032664);
   var f2 = postReserved(k, ml);
   if f2 {
     return f2;
   } else {
   }
-  var rsv = lds 1 (@base + 898296);
+  var rsv = lds 1 (@base + 1032664);
   var f3 = postReserving(k);
   if f3 {
     return f3;
   } else {
   }
-  var nres = lds 1 (@base + 898296);
-  var nx = lds 1 (@base + 898264);
-  if 0 < ((0 < (dup + rsv)) + (0 < ((4096 <= ((lds 1 (@base + 1013792)) + (lds 1 (@base + 898280)) + nres)) + ((18446744073709551613 ^ 9223372036854775808) < (nx ^ 9223372036854775808))))) {
+  var nres = lds 1 (@base + 1032664);
+  var nx = lds 1 (@base + 1032632);
+  if 0 < ((0 < (dup + rsv)) + (0 < ((4096 <= ((lds 1 (@base + 1148160)) + (lds 1 (@base + 1032648)) + nres)) + ((18446744073709551613 ^ 9223372036854775808) < (nx ^ 9223372036854775808))))) {
     st zs + 88, 1;
     st zs + 72, 1;
     return 0;
   } else {
   }
   st zs + 112, nx;
-  st @base + 898264, nx + 1;
+  st @base + 1032632, nx + 1;
   st zs + 240, ml;
   var mk = 0;
   while mk < ml {
-    st8 zs + 512 + mk, ld8 (@base + 899384 + mk);
+    st8 zs + 512 + mk, ld8 (@base + 1033752 + mk);
     mk = mk + 1;
   }
   var gn = lds 1 (@base + 498112);
   if 0 < ((gn < 0) + (16 < gn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12687,7 +12687,7 @@ fun postAccept(1 k) {
   while gi < gn {
     var gx = lds 1 (@base + 498256 + (gi * 8));
     if 0 < ((gx < 0) + (63 < gx)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
@@ -12696,7 +12696,7 @@ fun postAccept(1 k) {
   }
   var ol = lds 1 (@base + 498096);
   if 0 < ((ol < 0) + (69632 < ol)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12705,7 +12705,7 @@ fun postAccept(1 k) {
   var oj = 0;
   while oj < ol {
     if 0 < ((pd < 0) + (139270 < pd)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
@@ -12721,7 +12721,7 @@ fun postAccept(1 k) {
     oj = oj + 1;
   }
   if 0 < ((pd < 0) + (139270 < pd)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12741,27 +12741,27 @@ fun postAccept(1 k) {
 
 fun postFeed(1 c, 1 k) {
   if 0 < ((c < 0) + (63 < c)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var cb = @base + 903840 + (c * 1712);
+  var cb = @base + 1038208 + (c * 1712);
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
+  var zs = @base + 2862528 + (k * 140040);
   var p = cb + 688;
   var nn = lds 1 (cb + 72);
   var i = lds 1 (cb + 80);
   if 0 < ((nn < 0) + (512 < nn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if 0 < ((i < 0) + (512 < i)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -12903,7 +12903,7 @@ fun postFeed(1 c, 1 k) {
                 if lds 1 (zs + 104) {
                   var pda = lds 1 (zs + 144);
                   if 0 < ((pda < 0) + (139270 < pda)) {
-                    st @base + 897960, 10;
+                    st @base + 1032328, 10;
                     return 10;
                   } else {
                   }
@@ -12923,7 +12923,7 @@ fun postFeed(1 c, 1 k) {
               } else {
                 var hla = lds 1 (zs + 144);
                 if 0 < ((hla < 0) + (65537 < hla)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
@@ -12937,7 +12937,7 @@ fun postFeed(1 c, 1 k) {
                 if lds 1 (zs + 104) {
                   var pdb = lds 1 (zs + 144);
                   if 0 < ((pdb < 0) + (139270 < pdb)) {
-                    st @base + 897960, 10;
+                    st @base + 1032328, 10;
                     return 10;
                   } else {
                   }
@@ -12957,7 +12957,7 @@ fun postFeed(1 c, 1 k) {
               } else {
                 var hlb = lds 1 (zs + 144);
                 if 0 < ((hlb < 0) + (65537 < hlb)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
@@ -12969,7 +12969,7 @@ fun postFeed(1 c, 1 k) {
             if (lds 1 (zs + 72)) == 0 {
               var hn = lds 1 (zs + 144);
               if 0 < ((hn < 0) + (65538 < hn)) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
@@ -13009,98 +13009,98 @@ fun postFeed(1 c, 1 k) {
 
 fun postFreeJob() {
   var j = 0;
-  var fj = 8;
-  while j < 8 {
+  var fj = 12;
+  while j < 12 {
     var hj = 0;
     var kk = 0;
     while kk < 4 {
-      var zs = @base + 2728160 + (kk * 140040);
+      var zs = @base + 2862528 + (kk * 140040);
       if (lds 1 zs) & ((lds 1 (zs + 184)) & ((lds 1 (zs + 192)) == j)) {
         hj = 1;
       } else {
       }
       kk = kk + 1;
     }
-    if (hj == 0) & (fj == 8) {
+    if (hj == 0) & (fj == 12) {
       fj = j;
     } else {
     }
     j = j + 1;
   }
-  if fj == 8 {
+  if fj == 12 {
     fj = 0;
   } else {
   }
-  st @base + 898296, fj;
+  st @base + 1032664, fj;
   return 0;
 }
 
 fun postFrame(1 sk, 1 sj) {
   if 0 < ((sk < 0) + (3 < sk)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (sk * 140040);
-  if 0 < ((sj < 0) + (7 < sj)) {
-    st @base + 897960, 10;
+  var zs = @base + 2862528 + (sk * 140040);
+  if 0 < ((sj < 0) + (11 < sj)) {
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var jb = @base + 761560 + (sj * 17048);
+  var jb = @base + 827736 + (sj * 17048);
   var fp = jb + 677;
   var q = 0;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 0) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 8) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 16) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 24) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 32) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 40) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 112)) >>> 48) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -13108,12 +13108,12 @@ fun postFrame(1 sk, 1 sj) {
   q = q + 1;
   var ml = lds 1 (zs + 240);
   if 0 < ((ml < 0) + (250 < ml)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -13122,7 +13122,7 @@ fun postFrame(1 sk, 1 sj) {
   var mi = 0;
   while mi < ml {
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
@@ -13132,12 +13132,12 @@ fun postFrame(1 sk, 1 sj) {
   }
   var gn = lds 1 (zs + 248);
   if 0 < ((gn < 0) + (16 < gn)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -13147,19 +13147,19 @@ fun postFrame(1 sk, 1 sj) {
   while gi < gn {
     var gx = lds 1 (zs + 256 + (gi * 8));
     if 0 < ((gx < 0) + (63 < gx)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
-    var gp = @base + 1014048 + (gx * 72);
+    var gp = @base + 1148416 + (gx * 72);
     var gl = lds 1 gp;
     if 0 < ((gl < 0) + (64 < gl)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
@@ -13168,7 +13168,7 @@ fun postFrame(1 sk, 1 sj) {
     var gj = 0;
     while gj < gl {
       if 0 < ((q < 0) + (1375 < q)) {
-        st @base + 897960, 10;
+        st @base + 1032328, 10;
         return 10;
       } else {
       }
@@ -13177,28 +13177,28 @@ fun postFrame(1 sk, 1 sj) {
       gj = gj + 1;
     }
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
     st8 fp + q, ((lds 1 (zs + 384 + (gi * 8))) >>> 0) & 255;
     q = q + 1;
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
     st8 fp + q, ((lds 1 (zs + 384 + (gi * 8))) >>> 8) & 255;
     q = q + 1;
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
     st8 fp + q, ((lds 1 (zs + 384 + (gi * 8))) >>> 16) & 255;
     q = q + 1;
     if 0 < ((q < 0) + (1375 < q)) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
@@ -13207,110 +13207,110 @@ fun postFrame(1 sk, 1 sj) {
     gi = gi + 1;
   }
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 120)) >>> 0) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 120)) >>> 8) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 120)) >>> 16) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 120)) >>> 24) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 128)) >>> 0) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 128)) >>> 8) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 128)) >>> 16) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, ((lds 1 (zs + 128)) >>> 24) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, (((lds 1 (zs + 152)) ^ 4294967295) >>> 0) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, (((lds 1 (zs + 152)) ^ 4294967295) >>> 8) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, (((lds 1 (zs + 152)) ^ 4294967295) >>> 16) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1375 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   st8 fp + q, (((lds 1 (zs + 152)) ^ 4294967295) >>> 24) & 255;
   q = q + 1;
   if 0 < ((q < 0) + (1376 < q)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var mp = @base + 899640;
+  var mp = @base + 1034008;
   st8 mp + 8, 2;
-  st8 mp, ((lds 1 (@base + 898272)) >>> 0) & 255;
-  st8 mp + 1, ((lds 1 (@base + 898272)) >>> 8) & 255;
-  st8 mp + 2, ((lds 1 (@base + 898272)) >>> 16) & 255;
-  st8 mp + 3, ((lds 1 (@base + 898272)) >>> 24) & 255;
-  st8 mp + 4, ((lds 1 (@base + 898272)) >>> 32) & 255;
-  st8 mp + 5, ((lds 1 (@base + 898272)) >>> 40) & 255;
-  st8 mp + 6, ((lds 1 (@base + 898272)) >>> 48) & 255;
-  st8 mp + 7, ((lds 1 (@base + 898272)) >>> 56) & 255;
+  st8 mp, ((lds 1 (@base + 1032640)) >>> 0) & 255;
+  st8 mp + 1, ((lds 1 (@base + 1032640)) >>> 8) & 255;
+  st8 mp + 2, ((lds 1 (@base + 1032640)) >>> 16) & 255;
+  st8 mp + 3, ((lds 1 (@base + 1032640)) >>> 24) & 255;
+  st8 mp + 4, ((lds 1 (@base + 1032640)) >>> 32) & 255;
+  st8 mp + 5, ((lds 1 (@base + 1032640)) >>> 40) & 255;
+  st8 mp + 6, ((lds 1 (@base + 1032640)) >>> 48) & 255;
+  st8 mp + 7, ((lds 1 (@base + 1032640)) >>> 56) & 255;
   var cj = 0;
   while cj < q {
     st8 mp + 9 + cj, ld8 (fp + cj);
     cj = cj + 1;
   }
-  var k = @base + 899352;
+  var k = @base + 1033720;
   var p = mp;
   var n = q + 9;
   var r = 0;
@@ -13463,17 +13463,17 @@ fun postFrame(1 sk, 1 sj) {
   st8 jb + 675, ((r) >>> 56) & 255;
   st8 jb + 676, 2;
   st8 fp + q, 165;
-  st @base + 898296, q + 14;
+  st @base + 1032664, q + 14;
   return 0;
 }
 
 fun postPlan(1 k) {
   if 0 < ((k < 0) + (3 < k)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (k * 140040);
+  var zs = @base + 2862528 + (k * 140040);
   if (lds 1 zs) == 0 {
     return 0;
   } else {
@@ -13491,9 +13491,9 @@ fun postPlan(1 k) {
     return fj;
   } else {
   }
-  var j = lds 1 (@base + 898296);
-  if 0 < ((j < 0) + (7 < j)) {
-    st @base + 897960, 10;
+  var j = lds 1 (@base + 1032664);
+  if 0 < ((j < 0) + (11 < j)) {
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -13503,9 +13503,9 @@ fun postPlan(1 k) {
   var pg = lds 1 (zs + 176);
   if lds 1 (zs + 88) {
     if fl == 1 {
-      var gen = (lds 1 (@base + 2711504)) + 1;
-      st @base + 2711504, gen;
-      var jb = @base + 761560 + (j * 17048);
+      var gen = (lds 1 (@base + 2845872)) + 1;
+      st @base + 2845872, gen;
+      var jb = @base + 827736 + (j * 17048);
       st jb, 1;
       st jb + 8, gen;
       st jb + 16, 2;
@@ -13538,9 +13538,9 @@ fun postPlan(1 k) {
       st zs + 232, 0;
     } else {
       if fl == 2 {
-        var gen = (lds 1 (@base + 2711504)) + 1;
-        st @base + 2711504, gen;
-        var jb = @base + 761560 + (j * 17048);
+        var gen = (lds 1 (@base + 2845872)) + 1;
+        st @base + 2845872, gen;
+        var jb = @base + 827736 + (j * 17048);
         st jb, 1;
         st jb + 8, gen;
         st jb + 16, 1;
@@ -13563,9 +13563,9 @@ fun postPlan(1 k) {
         st zs + 232, 0;
       } else {
         if 0 < ((fl == 3) + (fl == 4)) {
-          var gen = (lds 1 (@base + 2711504)) + 1;
-          st @base + 2711504, gen;
-          var jb = @base + 761560 + (j * 17048);
+          var gen = (lds 1 (@base + 2845872)) + 1;
+          st @base + 2845872, gen;
+          var jb = @base + 827736 + (j * 17048);
           st jb, 1;
           st jb + 8, gen;
           st jb + 16, 1;
@@ -13596,9 +13596,9 @@ fun postPlan(1 k) {
     } else {
     }
     if fl == 0 {
-      var gen = (lds 1 (@base + 2711504)) + 1;
-      st @base + 2711504, gen;
-      var jb = @base + 761560 + (j * 17048);
+      var gen = (lds 1 (@base + 2845872)) + 1;
+      st @base + 2845872, gen;
+      var jb = @base + 827736 + (j * 17048);
       st jb, 1;
       st jb + 8, gen;
       st jb + 16, 1;
@@ -13623,14 +13623,14 @@ fun postPlan(1 k) {
       if fl == 1 {
         var pd = lds 1 (zs + 144);
         if 0 < ((pd < 0) + (139272 < pd)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
         if 16384 <= pd {
-          var gen = (lds 1 (@base + 2711504)) + 1;
-          st @base + 2711504, gen;
-          var jb = @base + 761560 + (j * 17048);
+          var gen = (lds 1 (@base + 2845872)) + 1;
+          st @base + 2845872, gen;
+          var jb = @base + 827736 + (j * 17048);
           st jb, 1;
           st jb + 8, gen;
           st jb + 16, 1;
@@ -13656,16 +13656,16 @@ fun postPlan(1 k) {
           while cj < 16384 {
             var y = ld8 (zs + 768 + cj);
             st8 jb + 664 + cj, y;
-            acc = (lds 1 (@base + 901032 + (((acc ^ y) & 255) * 8))) ^ ((acc) >>> 8);
+            acc = (lds 1 (@base + 1035400 + (((acc ^ y) & 255) * 8))) ^ ((acc) >>> 8);
             cj = cj + 1;
           }
           st zs + 152, acc;
         } else {
           if lds 1 (zs + 64) {
             if pd {
-              var gen = (lds 1 (@base + 2711504)) + 1;
-              st @base + 2711504, gen;
-              var jb = @base + 761560 + (j * 17048);
+              var gen = (lds 1 (@base + 2845872)) + 1;
+              st @base + 2845872, gen;
+              var jb = @base + 827736 + (j * 17048);
               st jb, 1;
               st jb + 8, gen;
               st jb + 16, 3;
@@ -13711,14 +13711,14 @@ fun postPlan(1 k) {
               while cj < pd {
                 var y = ld8 (zs + 768 + cj);
                 st8 jb + 664 + cj, y;
-                acc = (lds 1 (@base + 901032 + (((acc ^ y) & 255) * 8))) ^ ((acc) >>> 8);
+                acc = (lds 1 (@base + 1035400 + (((acc ^ y) & 255) * 8))) ^ ((acc) >>> 8);
                 cj = cj + 1;
               }
               st zs + 152, acc;
             } else {
-              var gen = (lds 1 (@base + 2711504)) + 1;
-              st @base + 2711504, gen;
-              var jb = @base + 761560 + (j * 17048);
+              var gen = (lds 1 (@base + 2845872)) + 1;
+              st @base + 2845872, gen;
+              var jb = @base + 827736 + (j * 17048);
               st jb, 1;
               st jb + 8, gen;
               st jb + 16, 2;
@@ -13758,7 +13758,7 @@ fun postPlan(1 k) {
           var any = 0;
           var ka = 0;
           while ka < 4 {
-            var za = @base + 2728160 + (ka * 140040);
+            var za = @base + 2862528 + (ka * 140040);
             if (lds 1 za) & ((lds 1 (za + 184)) & ((lds 1 (za + 216)) == 4)) {
               any = 1;
             } else {
@@ -13767,9 +13767,9 @@ fun postPlan(1 k) {
           }
           if any {
           } else {
-            var gen = (lds 1 (@base + 2711504)) + 1;
-            st @base + 2711504, gen;
-            var jb = @base + 761560 + (j * 17048);
+            var gen = (lds 1 (@base + 2845872)) + 1;
+            st @base + 2845872, gen;
+            var jb = @base + 827736 + (j * 17048);
             st jb, 1;
             st jb + 8, gen;
             st jb + 16, 2;
@@ -13806,7 +13806,7 @@ fun postPlan(1 k) {
             var any = 0;
             var ka = 0;
             while ka < 4 {
-              var za = @base + 2728160 + (ka * 140040);
+              var za = @base + 2862528 + (ka * 140040);
               if (lds 1 za) & ((lds 1 (za + 184)) & ((lds 1 (za + 216)) == 5)) {
                 any = 1;
               } else {
@@ -13817,7 +13817,7 @@ fun postPlan(1 k) {
             } else {
               var gn = lds 1 (zs + 248);
               if 0 < ((gn < 0) + (16 < gn)) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
@@ -13826,11 +13826,11 @@ fun postPlan(1 k) {
               while gi < gn {
                 var gx = lds 1 (zs + 256 + (gi * 8));
                 if 0 < ((gx < 0) + (63 < gx)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
-                var num = (lds 1 (@base + 1018656 + (gx * 8))) + 1;
+                var num = (lds 1 (@base + 1153024 + (gx * 8))) + 1;
                 if (2147483647 ^ 9223372036854775808) < (num ^ 9223372036854775808) {
                   ovf = 1;
                 } else {
@@ -13841,9 +13841,9 @@ fun postPlan(1 k) {
               if ovf {
                 st zs + 88, 1;
                 if fl == 1 {
-                  var gen = (lds 1 (@base + 2711504)) + 1;
-                  st @base + 2711504, gen;
-                  var jb = @base + 761560 + (j * 17048);
+                  var gen = (lds 1 (@base + 2845872)) + 1;
+                  st @base + 2845872, gen;
+                  var jb = @base + 827736 + (j * 17048);
                   st jb, 1;
                   st jb + 8, gen;
                   st jb + 16, 2;
@@ -13876,9 +13876,9 @@ fun postPlan(1 k) {
                   st zs + 232, 0;
                 } else {
                   if fl == 2 {
-                    var gen = (lds 1 (@base + 2711504)) + 1;
-                    st @base + 2711504, gen;
-                    var jb = @base + 761560 + (j * 17048);
+                    var gen = (lds 1 (@base + 2845872)) + 1;
+                    st @base + 2845872, gen;
+                    var jb = @base + 827736 + (j * 17048);
                     st jb, 1;
                     st jb + 8, gen;
                     st jb + 16, 1;
@@ -13901,9 +13901,9 @@ fun postPlan(1 k) {
                     st zs + 232, 0;
                   } else {
                     if 0 < ((fl == 3) + (fl == 4)) {
-                      var gen = (lds 1 (@base + 2711504)) + 1;
-                      st @base + 2711504, gen;
-                      var jb = @base + 761560 + (j * 17048);
+                      var gen = (lds 1 (@base + 2845872)) + 1;
+                      st @base + 2845872, gen;
+                      var jb = @base + 827736 + (j * 17048);
                       st jb, 1;
                       st jb + 8, gen;
                       st jb + 16, 1;
@@ -13934,31 +13934,31 @@ fun postPlan(1 k) {
                   return fr;
                 } else {
                 }
-                var flen = lds 1 (@base + 898296);
+                var flen = lds 1 (@base + 1032664);
                 if 0 < ((flen < 0) + (1390 < flen)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
-                var gen = (lds 1 (@base + 2711504)) + 1;
-                st @base + 2711504, gen;
-                var jb = @base + 761560 + (j * 17048);
+                var gen = (lds 1 (@base + 2845872)) + 1;
+                st @base + 2845872, gen;
+                var jb = @base + 827736 + (j * 17048);
                 st jb, 1;
                 st jb + 8, gen;
                 st jb + 16, 2;
                 st jb + 24, 3;
-                st jb + 32, lds 1 (@base + 2711456);
-                st jb + 40, lds 1 (@base + 2711464);
+                st jb + 32, lds 1 (@base + 2845824);
+                st jb + 40, lds 1 (@base + 2845832);
                 st jb + 48, 0;
                 st jb + 56, 0;
                 st jb + 64, 0;
                 st jb + 72, 0;
-                st jb + 80, lds 1 (@base + 898272);
+                st jb + 80, lds 1 (@base + 1032640);
                 st jb + 88, flen;
                 st jb + 96, 0;
                 st jb + 104, 6;
-                st jb + 112, lds 1 (@base + 2711456);
-                st jb + 120, lds 1 (@base + 2711464);
+                st jb + 112, lds 1 (@base + 2845824);
+                st jb + 120, lds 1 (@base + 2845832);
                 st jb + 128, 0;
                 st jb + 136, 0;
                 st jb + 144, 0;
@@ -13985,8 +13985,8 @@ fun postPlan(1 k) {
 }
 
 fun postDone(1 j) {
-  if 0 < ((j < 0) + (7 < j)) {
-    st @base + 897960, 10;
+  if 0 < ((j < 0) + (11 < j)) {
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -14000,7 +14000,7 @@ fun postDone(1 j) {
   var fk = 4;
   var kk = 0;
   while kk < 4 {
-    var zs = @base + 2728160 + (kk * 140040);
+    var zs = @base + 2862528 + (kk * 140040);
     if (fk == 4) & (((lds 1 zs) & (lds 1 (zs + 184))) & (((lds 1 (zs + 192)) == j) & ((lds 1 (zs + 200)) == dg))) {
       fk = kk;
     } else {
@@ -14008,19 +14008,19 @@ fun postDone(1 j) {
     kk = kk + 1;
   }
   if fk == 4 {
-    st @base + 897960, 13;
+    st @base + 1032328, 13;
     return 13;
   } else {
   }
   if 0 < ((fk < 0) + (3 < fk)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var zs = @base + 2728160 + (fk * 140040);
+  var zs = @base + 2862528 + (fk * 140040);
   var nops = lds 1 (zs + 208);
   if 0 < ((ok < 0) + (nops < ok)) {
-    st @base + 897960, 14;
+    st @base + 1032328, 14;
     return 14;
   } else {
   }
@@ -14034,7 +14034,7 @@ fun postDone(1 j) {
       var rp = lds 1 (d + 32);
       var rg = lds 1 (d + 40);
       if 0 < ((rp < 0) + (16 <= rp)) {
-        st @base + 897960, 14;
+        st @base + 1032328, 14;
         return 14;
       } else {
       }
@@ -14049,12 +14049,12 @@ fun postDone(1 j) {
       if all {
         var pd = lds 1 (zs + 144);
         if 0 < ((pd < 0) + (139272 < pd)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
         if 0 < ((ta < 0) + (16384 < ta)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
@@ -14080,11 +14080,11 @@ fun postDone(1 j) {
           } else {
             if (ok + 1) < nops {
               st zs + 88, 1;
-              st @base + 898256, 0;
+              st @base + 1032624, 0;
             } else {
               st zs + 160, 2;
               st zs + 88, 1;
-              st @base + 898256, 0;
+              st @base + 1032624, 0;
             }
           }
         }
@@ -14096,32 +14096,32 @@ fun postDone(1 j) {
             if ok == 1 {
               st zs + 160, 3;
               st zs + 88, 1;
-              st @base + 898256, 0;
+              st @base + 1032624, 0;
             } else {
               st zs + 88, 1;
             }
           }
         } else {
           if tt == 5 {
-            if all & (lds 1 (@base + 898256)) {
+            if all & (lds 1 (@base + 1032624)) {
               st zs + 96, 1;
               st zs + 104, 0;
-              var ci = lds 1 (@base + 1013792);
+              var ci = lds 1 (@base + 1148160);
               if 0 < ((ci < 0) + (4095 < ci)) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
-              var sl = @base + 1040264 + (ci * 408);
+              var sl = @base + 1174632 + (ci * 408);
               var ml = lds 1 (zs + 240);
               if 0 < ((ml < 0) + (250 < ml)) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
               var gn = lds 1 (zs + 248);
               if 0 < ((gn < 0) + (16 < gn)) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
@@ -14132,13 +14132,13 @@ fun postDone(1 j) {
               while gi < gn {
                 var gx = lds 1 (zs + 256 + (gi * 8));
                 if 0 < ((gx < 0) + (63 < gx)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
                 var num = lds 1 (zs + 384 + (gi * 8));
                 st sl + 24 + (gi * 8), ((gx) << 32) | num;
-                st @base + 1018656 + (gx * 8), num;
+                st @base + 1153024 + (gx * 8), num;
                 gi = gi + 1;
               }
               var mj = 0;
@@ -14146,23 +14146,23 @@ fun postDone(1 j) {
                 st8 sl + 152 + mj, ld8 (zs + 512 + mj);
                 mj = mj + 1;
               }
-              st @base + 1013792, ci + 1;
+              st @base + 1148160, ci + 1;
               var ia = idAdd(ci);
               if ia {
                 return ia;
               } else {
               }
-              st @base + 898272, (lds 1 (@base + 898272)) + ta;
+              st @base + 1032640, (lds 1 (@base + 1032640)) + ta;
             } else {
               st zs + 96, 3;
               st zs + 104, 0;
-              st @base + 898256, 0;
+              st @base + 1032624, 0;
             }
           } else {
             if tt == 6 {
               if ta & (ok == 0) {
                 st zs + 160, 2;
-                st @base + 898256, 0;
+                st @base + 1032624, 0;
               } else {
                 st zs + 104, 0;
               }
@@ -14178,54 +14178,54 @@ fun postDone(1 j) {
 
 fun connText(1 c, 1 t) {
   if 0 < ((c < 0) + (63 < c)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var cb = @base + 903840 + (c * 1712);
+  var cb = @base + 1038208 + (c * 1712);
   var ob = cb + 1200;
   var o = 0;
   var j = 0;
-  var rl = lds 1 (@base + 897968);
-  var sl = lds 1 (@base + 898040);
+  var rl = lds 1 (@base + 1032336);
+  var sl = lds 1 (@base + 1032408);
   if 0 < ((rl < 0) + (64 < rl)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if 0 < ((sl < 0) + (200 < sl)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if t == 15 {
     j = 0;
     while j < 16 {
-      st8 ob + o + j, ld8 (@base + 903080 + j);
+      st8 ob + o + j, ld8 (@base + 1037448 + j);
       j = j + 1;
     }
     o = o + 16;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 35 {
-      st8 ob + o + j, ld8 (@base + 903096 + j);
+      st8 ob + o + j, ld8 (@base + 1037464 + j);
       j = j + 1;
     }
     o = o + 35;
     j = 0;
     while j < sl {
-      st8 ob + o + j, ld8 (@base + 898048 + j);
+      st8 ob + o + j, ld8 (@base + 1032416 + j);
       j = j + 1;
     }
     o = o + sl;
     j = 0;
     while j < 2 {
-      st8 ob + o + j, ld8 (@base + 903131 + j);
+      st8 ob + o + j, ld8 (@base + 1037499 + j);
       j = j + 1;
     }
     o = o + 2;
@@ -14234,31 +14234,31 @@ fun connText(1 c, 1 t) {
   if t == 16 {
     j = 0;
     while j < 16 {
-      st8 ob + o + j, ld8 (@base + 903518 + j);
+      st8 ob + o + j, ld8 (@base + 1037886 + j);
       j = j + 1;
     }
     o = o + 16;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 40 {
-      st8 ob + o + j, ld8 (@base + 903534 + j);
+      st8 ob + o + j, ld8 (@base + 1037902 + j);
       j = j + 1;
     }
     o = o + 40;
     j = 0;
     while j < sl {
-      st8 ob + o + j, ld8 (@base + 898048 + j);
+      st8 ob + o + j, ld8 (@base + 1032416 + j);
       j = j + 1;
     }
     o = o + sl;
     j = 0;
     while j < 2 {
-      st8 ob + o + j, ld8 (@base + 903131 + j);
+      st8 ob + o + j, ld8 (@base + 1037499 + j);
       j = j + 1;
     }
     o = o + 2;
@@ -14267,19 +14267,19 @@ fun connText(1 c, 1 t) {
   if t == 1 {
     j = 0;
     while j < 60 {
-      st8 ob + o + j, ld8 (@base + 903133 + j);
+      st8 ob + o + j, ld8 (@base + 1037501 + j);
       j = j + 1;
     }
     o = o + 60;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 5 {
-      st8 ob + o + j, ld8 (@base + 903193 + j);
+      st8 ob + o + j, ld8 (@base + 1037561 + j);
       j = j + 1;
     }
     o = o + 5;
@@ -14288,25 +14288,25 @@ fun connText(1 c, 1 t) {
   if t == 13 {
     j = 0;
     while j < 60 {
-      st8 ob + o + j, ld8 (@base + 903133 + j);
+      st8 ob + o + j, ld8 (@base + 1037501 + j);
       j = j + 1;
     }
     o = o + 60;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 6 {
-      st8 ob + o + j, ld8 (@base + 903574 + j);
+      st8 ob + o + j, ld8 (@base + 1037942 + j);
       j = j + 1;
     }
     o = o + 6;
     j = 0;
     while j < 5 {
-      st8 ob + o + j, ld8 (@base + 903193 + j);
+      st8 ob + o + j, ld8 (@base + 1037561 + j);
       j = j + 1;
     }
     o = o + 5;
@@ -14315,31 +14315,31 @@ fun connText(1 c, 1 t) {
   if t == 2 {
     j = 0;
     while j < 123 {
-      st8 ob + o + j, ld8 (@base + 903198 + j);
+      st8 ob + o + j, ld8 (@base + 1037566 + j);
       j = j + 1;
     }
     o = o + 123;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 53 {
-      st8 ob + o + j, ld8 (@base + 903321 + j);
+      st8 ob + o + j, ld8 (@base + 1037689 + j);
       j = j + 1;
     }
     o = o + 53;
     j = 0;
     while j < sl {
-      st8 ob + o + j, ld8 (@base + 898048 + j);
+      st8 ob + o + j, ld8 (@base + 1032416 + j);
       j = j + 1;
     }
     o = o + sl;
     j = 0;
     while j < 5 {
-      st8 ob + o + j, ld8 (@base + 903193 + j);
+      st8 ob + o + j, ld8 (@base + 1037561 + j);
       j = j + 1;
     }
     o = o + 5;
@@ -14348,31 +14348,31 @@ fun connText(1 c, 1 t) {
   if t == 14 {
     j = 0;
     while j < 129 {
-      st8 ob + o + j, ld8 (@base + 903580 + j);
+      st8 ob + o + j, ld8 (@base + 1037948 + j);
       j = j + 1;
     }
     o = o + 129;
     j = 0;
     while j < rl {
-      st8 ob + o + j, ld8 (@base + 897976 + j);
+      st8 ob + o + j, ld8 (@base + 1032344 + j);
       j = j + 1;
     }
     o = o + rl;
     j = 0;
     while j < 53 {
-      st8 ob + o + j, ld8 (@base + 903321 + j);
+      st8 ob + o + j, ld8 (@base + 1037689 + j);
       j = j + 1;
     }
     o = o + 53;
     j = 0;
     while j < sl {
-      st8 ob + o + j, ld8 (@base + 898048 + j);
+      st8 ob + o + j, ld8 (@base + 1032416 + j);
       j = j + 1;
     }
     o = o + sl;
     j = 0;
     while j < 5 {
-      st8 ob + o + j, ld8 (@base + 903193 + j);
+      st8 ob + o + j, ld8 (@base + 1037561 + j);
       j = j + 1;
     }
     o = o + 5;
@@ -14381,7 +14381,7 @@ fun connText(1 c, 1 t) {
   if t == 3 {
     j = 0;
     while j < 9 {
-      st8 ob + o + j, ld8 (@base + 903374 + j);
+      st8 ob + o + j, ld8 (@base + 1037742 + j);
       j = j + 1;
     }
     o = o + 9;
@@ -14390,7 +14390,7 @@ fun connText(1 c, 1 t) {
   if t == 4 {
     j = 0;
     while j < 27 {
-      st8 ob + o + j, ld8 (@base + 903383 + j);
+      st8 ob + o + j, ld8 (@base + 1037751 + j);
       j = j + 1;
     }
     o = o + 27;
@@ -14399,7 +14399,7 @@ fun connText(1 c, 1 t) {
   if t == 5 {
     j = 0;
     while j < 37 {
-      st8 ob + o + j, ld8 (@base + 903410 + j);
+      st8 ob + o + j, ld8 (@base + 1037778 + j);
       j = j + 1;
     }
     o = o + 37;
@@ -14408,7 +14408,7 @@ fun connText(1 c, 1 t) {
   if t == 6 {
     j = 0;
     while j < 21 {
-      st8 ob + o + j, ld8 (@base + 903447 + j);
+      st8 ob + o + j, ld8 (@base + 1037815 + j);
       j = j + 1;
     }
     o = o + 21;
@@ -14417,7 +14417,7 @@ fun connText(1 c, 1 t) {
   if t == 7 {
     j = 0;
     while j < 18 {
-      st8 ob + o + j, ld8 (@base + 903468 + j);
+      st8 ob + o + j, ld8 (@base + 1037836 + j);
       j = j + 1;
     }
     o = o + 18;
@@ -14426,7 +14426,7 @@ fun connText(1 c, 1 t) {
   if t == 8 {
     j = 0;
     while j < 31 {
-      st8 ob + o + j, ld8 (@base + 903709 + j);
+      st8 ob + o + j, ld8 (@base + 1038077 + j);
       j = j + 1;
     }
     o = o + 31;
@@ -14435,7 +14435,7 @@ fun connText(1 c, 1 t) {
   if t == 9 {
     j = 0;
     while j < 25 {
-      st8 ob + o + j, ld8 (@base + 903740 + j);
+      st8 ob + o + j, ld8 (@base + 1038108 + j);
       j = j + 1;
     }
     o = o + 25;
@@ -14444,7 +14444,7 @@ fun connText(1 c, 1 t) {
   if t == 10 {
     j = 0;
     while j < 20 {
-      st8 ob + o + j, ld8 (@base + 903765 + j);
+      st8 ob + o + j, ld8 (@base + 1038133 + j);
       j = j + 1;
     }
     o = o + 20;
@@ -14453,7 +14453,7 @@ fun connText(1 c, 1 t) {
   if t == 11 {
     j = 0;
     while j < 27 {
-      st8 ob + o + j, ld8 (@base + 903785 + j);
+      st8 ob + o + j, ld8 (@base + 1038153 + j);
       j = j + 1;
     }
     o = o + 27;
@@ -14462,7 +14462,7 @@ fun connText(1 c, 1 t) {
   if t == 12 {
     j = 0;
     while j < 28 {
-      st8 ob + o + j, ld8 (@base + 903812 + j);
+      st8 ob + o + j, ld8 (@base + 1038180 + j);
       j = j + 1;
     }
     o = o + 28;
@@ -14473,110 +14473,110 @@ fun connText(1 c, 1 t) {
 }
 
 fun textsSet() {
-  st @base + 903080, 7449361033009901618;
-  st @base + 903088, 2338605630395477615;
-  st @base + 903096, 2318361380226691616;
-  st @base + 903104, 7598825393740607342;
-  st @base + 903112, 8247620832851617646;
-  st @base + 903120, 2334382411428685155;
-  st @base + 903128, 3544386825980245089;
-  st @base + 903136, 7811883199287608096;
-  st @base + 903144, 8391166443843581033;
-  st @base + 903152, 5283657245585444154;
-  st @base + 903160, 5568993466012159567;
-  st @base + 903168, 4707473570065108048;
-  st @base + 903176, 7021784858939574612;
-  st @base + 903184, 8387231022536617831;
-  st @base + 903192, 3472567839402626336;
-  st @base + 903200, 8367811718512386096;
-  st @base + 903208, 7812741938002819173;
-  st @base + 903216, 5782977106974832495;
-  st @base + 903224, 4992614335706120769;
-  st @base + 903232, 8032021936938360915;
-  st @base + 903240, 4703244593869448306;
-  st @base + 903248, 7022083123464314948;
-  st @base + 903256, 8461837382603072871;
-  st @base + 903264, 5190976215500284525;
-  st @base + 903272, 5284218841404034117;
-  st @base + 903280, 2329558737683615060;
-  st @base + 903288, 7306916068917079387;
-  st @base + 903296, 7092454105570101549;
-  st @base + 903304, 7021784763360703077;
-  st @base + 903312, 8387231022536617831;
-  st @base + 903320, 7310017434736992288;
-  st @base + 903328, 7023210127212879973;
-  st @base + 903336, 8243105118545798514;
-  st @base + 903344, 6146928745873175584;
-  st @base + 903352, 8295695712566853920;
-  st @base + 903360, 8026294580736587119;
-  st @base + 903368, 3472873946873881956;
-  st @base + 903376, 3749824369216593973;
-  st @base + 903384, 7308814907693085233;
-  st @base + 903392, 2337497328126489463;
-  st @base + 903400, 7234316346692756851;
-  st @base + 903408, 8020383377782999565;
-  st @base + 903416, 7308325599891841312;
-  st @base + 903424, 7526676510244697888;
-  st @base + 903432, 7022083123460469857;
-  st @base + 903440, 3821881958689760615;
-  st @base + 903448, 8029473307266920496;
-  st @base + 903456, 7020387719312338551;
-  st @base + 903464, 2319688287432565870;
-  st @base + 903472, 7286956557046020435;
-  st @base + 903480, 4702613488775688818;
-  st @base + 903488, 5283928854807855440;
-  st @base + 903496, 6147783254847542085;
-  st @base + 903504, 6076275369378862153;
-  st @base + 903512, 3472930979445756993;
-  st @base + 903520, 7957692734815608880;
-  st @base + 903528, 8223608603868540275;
-  st @base + 903536, 8029953510988865893;
-  st @base + 903544, 7809558857443275891;
-  st @base + 903552, 8295695816001548140;
-  st @base + 903560, 8026294580736587119;
-  st @base + 903568, 724270799294326116;
-  st @base + 903576, 2319406796522082128;
-  st @base + 903584, 8675467939873056072;
-  st @base + 903592, 8606216625909538932;
-  st @base + 903600, 4774185321217265011;
-  st @base + 903608, 2329281613529697353;
-  st @base + 903616, 7237970110066289499;
-  st @base + 903624, 2325055073447185757;
-  st @base + 903632, 7306916068917079387;
-  st @base + 903640, 7092454105570101549;
-  st @base + 903648, 5495878128286659173;
-  st @base + 903656, 960484220647116112;
-  st @base + 903664, 5983609710573867274;
-  st @base + 903672, 8315172525161333076;
-  st @base + 903680, 8954362418443018611;
-  st @base + 903688, 963051675095758190;
-  st @base + 903696, 8317708051607086090;
-  st @base + 903704, 3473457427094269485;
-  st @base + 903712, 8241904408785670944;
-  st @base + 903720, 8031079655490677108;
-  st @base + 903728, 8391173058091901472;
-  st @base + 903736, 2319411197617464421;
-  st @base + 903744, 2334391156088271425;
-  st @base + 903752, 7234318571485226354;
-  st @base + 903760, 3545516024424779552;
-  st @base + 903768, 7453010382218547232;
-  st @base + 903776, 965007736462992928;
-  st @base + 903784, 8317955135954498570;
-  st @base + 903792, 8390045716267821428;
-  st @base + 903800, 8391447924489678880;
-  st @base + 903808, 2320251233091019877;
-  st @base + 903816, 7305792289332555598;
-  st @base + 903824, 8241904421670843504;
-  st @base + 903832, 724361994523863412;
+  st @base + 1037448, 7449361033009901618;
+  st @base + 1037456, 2338605630395477615;
+  st @base + 1037464, 2318361380226691616;
+  st @base + 1037472, 7598825393740607342;
+  st @base + 1037480, 8247620832851617646;
+  st @base + 1037488, 2334382411428685155;
+  st @base + 1037496, 3544386825980245089;
+  st @base + 1037504, 7811883199287608096;
+  st @base + 1037512, 8391166443843581033;
+  st @base + 1037520, 5283657245585444154;
+  st @base + 1037528, 5568993466012159567;
+  st @base + 1037536, 4707473570065108048;
+  st @base + 1037544, 7021784858939574612;
+  st @base + 1037552, 8387231022536617831;
+  st @base + 1037560, 3472567839402626336;
+  st @base + 1037568, 8367811718512386096;
+  st @base + 1037576, 7812741938002819173;
+  st @base + 1037584, 5782977106974832495;
+  st @base + 1037592, 4992614335706120769;
+  st @base + 1037600, 8032021936938360915;
+  st @base + 1037608, 4703244593869448306;
+  st @base + 1037616, 7022083123464314948;
+  st @base + 1037624, 8461837382603072871;
+  st @base + 1037632, 5190976215500284525;
+  st @base + 1037640, 5284218841404034117;
+  st @base + 1037648, 2329558737683615060;
+  st @base + 1037656, 7306916068917079387;
+  st @base + 1037664, 7092454105570101549;
+  st @base + 1037672, 7021784763360703077;
+  st @base + 1037680, 8387231022536617831;
+  st @base + 1037688, 7310017434736992288;
+  st @base + 1037696, 7023210127212879973;
+  st @base + 1037704, 8243105118545798514;
+  st @base + 1037712, 6146928745873175584;
+  st @base + 1037720, 8295695712566853920;
+  st @base + 1037728, 8026294580736587119;
+  st @base + 1037736, 3472873946873881956;
+  st @base + 1037744, 3749824369216593973;
+  st @base + 1037752, 7308814907693085233;
+  st @base + 1037760, 2337497328126489463;
+  st @base + 1037768, 7234316346692756851;
+  st @base + 1037776, 8020383377782999565;
+  st @base + 1037784, 7308325599891841312;
+  st @base + 1037792, 7526676510244697888;
+  st @base + 1037800, 7022083123460469857;
+  st @base + 1037808, 3821881958689760615;
+  st @base + 1037816, 8029473307266920496;
+  st @base + 1037824, 7020387719312338551;
+  st @base + 1037832, 2319688287432565870;
+  st @base + 1037840, 7286956557046020435;
+  st @base + 1037848, 4702613488775688818;
+  st @base + 1037856, 5283928854807855440;
+  st @base + 1037864, 6147783254847542085;
+  st @base + 1037872, 6076275369378862153;
+  st @base + 1037880, 3472930979445756993;
+  st @base + 1037888, 7957692734815608880;
+  st @base + 1037896, 8223608603868540275;
+  st @base + 1037904, 8029953510988865893;
+  st @base + 1037912, 7809558857443275891;
+  st @base + 1037920, 8295695816001548140;
+  st @base + 1037928, 8026294580736587119;
+  st @base + 1037936, 724270799294326116;
+  st @base + 1037944, 2319406796522082128;
+  st @base + 1037952, 8675467939873056072;
+  st @base + 1037960, 8606216625909538932;
+  st @base + 1037968, 4774185321217265011;
+  st @base + 1037976, 2329281613529697353;
+  st @base + 1037984, 7237970110066289499;
+  st @base + 1037992, 2325055073447185757;
+  st @base + 1038000, 7306916068917079387;
+  st @base + 1038008, 7092454105570101549;
+  st @base + 1038016, 5495878128286659173;
+  st @base + 1038024, 960484220647116112;
+  st @base + 1038032, 5983609710573867274;
+  st @base + 1038040, 8315172525161333076;
+  st @base + 1038048, 8954362418443018611;
+  st @base + 1038056, 963051675095758190;
+  st @base + 1038064, 8317708051607086090;
+  st @base + 1038072, 3473457427094269485;
+  st @base + 1038080, 8241904408785670944;
+  st @base + 1038088, 8031079655490677108;
+  st @base + 1038096, 8391173058091901472;
+  st @base + 1038104, 2319411197617464421;
+  st @base + 1038112, 2334391156088271425;
+  st @base + 1038120, 7234318571485226354;
+  st @base + 1038128, 3545516024424779552;
+  st @base + 1038136, 7453010382218547232;
+  st @base + 1038144, 965007736462992928;
+  st @base + 1038152, 8317955135954498570;
+  st @base + 1038160, 8390045716267821428;
+  st @base + 1038168, 8391447924489678880;
+  st @base + 1038176, 2320251233091019877;
+  st @base + 1038184, 7305792289332555598;
+  st @base + 1038192, 8241904421670843504;
+  st @base + 1038200, 724361994523863412;
   return 0;
 }
 
 fun identityTake() {
-  if (lds 1 (@base + 897952)) == 0 {
+  if (lds 1 (@base + 1032320)) == 0 {
     var rvl = lds 1 (@base + 579352);
     var scl = lds 1 (@base + 579424);
     if 0 < ((0 < ((rvl < 1) + (64 < rvl))) + (0 < ((scl < 1) + (200 < scl)))) {
-      st @base + 897960, 9;
+      st @base + 1032328, 9;
       return 9;
     } else {
     }
@@ -14584,7 +14584,7 @@ fun identityTake() {
     while ij < rvl {
       var cz = ld8 (@base + 579360 + ij);
       if 0 < ((cz < 33) + (126 < cz)) {
-        st @base + 897960, 9;
+        st @base + 1032328, 9;
         return 9;
       } else {
       }
@@ -14594,7 +14594,7 @@ fun identityTake() {
     while ij < scl {
       var cz = ld8 (@base + 579432 + ij);
       if 0 < ((cz < 33) + (126 < cz)) {
-        st @base + 897960, 9;
+        st @base + 1032328, 9;
         return 9;
       } else {
       }
@@ -14603,17 +14603,17 @@ fun identityTake() {
     var ik = 0;
     ik = 0;
     while ik < rvl {
-      st8 @base + 897976 + ik, ld8 (@base + 579360 + ik);
+      st8 @base + 1032344 + ik, ld8 (@base + 579360 + ik);
       ik = ik + 1;
     }
     ik = 0;
     while ik < scl {
-      st8 @base + 898048 + ik, ld8 (@base + 579432 + ik);
+      st8 @base + 1032416 + ik, ld8 (@base + 579432 + ik);
       ik = ik + 1;
     }
-    st @base + 897968, rvl;
-    st @base + 898040, scl;
-    st @base + 897952, 1;
+    st @base + 1032336, rvl;
+    st @base + 1032408, scl;
+    st @base + 1032320, 1;
   } else {
   }
   return 0;
@@ -14621,7 +14621,7 @@ fun identityTake() {
 
 fun connEvent(1 e, 1 now) {
   if 0 < ((e < 0) + (15 < e)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
@@ -14631,25 +14631,25 @@ fun connEvent(1 e, 1 now) {
   var eg = lds 1 (ev + 16);
   var el = lds 1 (ev + 24);
   if 0 < ((ex < 0) + (64 <= ex)) {
-    st @base + 897960, 3;
+    st @base + 1032328, 3;
     return 3;
   } else {
   }
   if 0 < ((ek < 1) + (5 < ek)) {
-    st @base + 897960, 8;
+    st @base + 1032328, 8;
     return 8;
   } else {
   }
-  var cb = @base + 903840 + (ex * 1712);
+  var cb = @base + 1038208 + (ex * 1712);
   var lv = (lds 1 cb) & ((lds 1 (cb + 8)) == eg);
   if ek == 1 {
     if lds 1 cb {
-      st @base + 897960, 6;
+      st @base + 1032328, 6;
       return 6;
     } else {
-      var op = (lds 1 (@base + 898312)) + 1;
-      st @base + 898312, op;
-      var gr = ((((lds 1 (ev + 32)) == 0) == 0) & (lds 1 (@base + 898248))) & ((lds 1 (@base + 898256)) & (((lds 1 (@base + 1014040)) == 0) == 0));
+      var op = (lds 1 (@base + 1032680)) + 1;
+      st @base + 1032680, op;
+      var gr = ((((lds 1 (ev + 32)) == 0) == 0) & (lds 1 (@base + 1032616))) & ((lds 1 (@base + 1032624)) & (((lds 1 (@base + 1148408)) == 0) == 0));
       st cb, 1;
       st cb + 8, eg;
       st cb + 16, 0;
@@ -14683,7 +14683,7 @@ fun connEvent(1 e, 1 now) {
   }
   if ek == 2 {
     if 0 < ((el < 0) + (512 < el)) {
-      st @base + 897960, 2;
+      st @base + 1032328, 2;
       return 2;
     } else {
     }
@@ -14697,7 +14697,7 @@ fun connEvent(1 e, 1 now) {
         st cb + 72, el;
         st cb + 80, 0;
       } else {
-        st @base + 897960, 4;
+        st @base + 1032328, 4;
         return 4;
       }
     } else {
@@ -14718,7 +14718,7 @@ fun connEvent(1 e, 1 now) {
         st cb + 56, 0;
         st cb + 120, 0;
         st cb + 128, 0;
-        if lds 1 (@base + 898248) {
+        if lds 1 (@base + 1032616) {
           var ab = postAbandon(ex, eg);
           if ab {
             return ab;
@@ -14727,7 +14727,7 @@ fun connEvent(1 e, 1 now) {
         } else {
         }
       } else {
-        st @base + 897960, 4;
+        st @base + 1032328, 4;
         return 4;
       }
     } else {
@@ -14737,7 +14737,7 @@ fun connEvent(1 e, 1 now) {
   if ek == 5 {
     if lv {
       st cb, 0;
-      if lds 1 (@base + 898248) {
+      if lds 1 (@base + 1032616) {
         var ab = postAbandon(ex, eg);
         if ab {
           return ab;
@@ -14754,26 +14754,26 @@ fun connEvent(1 e, 1 now) {
 
 fun connAct(1 c, 1 now) {
   if 0 < ((c < 0) + (63 < c)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  st @base + 725720 + (c * 560), 0;
-  var cb = @base + 903840 + (c * 1712);
+  st @base + 791896 + (c * 560), 0;
+  var cb = @base + 1038208 + (c * 1712);
   if lds 1 cb {
     var due = 0 < ((0 < (((((lds 1 (cb + 40)) == 0) == 0) & ((lds 1 (cb + 40)) <= now)) + ((((lds 1 (cb + 48)) == 0) == 0) & ((lds 1 (cb + 48)) <= now)))) + (0 < (((((lds 1 (cb + 56)) == 0) == 0) & ((lds 1 (cb + 56)) <= now)) + ((((lds 1 (cb + 128)) == 0) == 0) & ((lds 1 (cb + 128)) <= now)))));
     if due {
-      var slot = @base + 725720 + (c * 560);
+      var slot = @base + 791896 + (c * 560);
       st slot, 3;
       st slot + 8, c;
       st slot + 16, lds 1 (cb + 8);
       st slot + 24, 0;
       st slot + 32, 0;
       st slot + 40, 0;
-      st @base + 898304, (lds 1 (@base + 898304)) + 1;
+      st @base + 1032672, (lds 1 (@base + 1032672)) + 1;
       st cb + 88, 1;
       st cb, 0;
-      if lds 1 (@base + 898248) {
+      if lds 1 (@base + 1032616) {
         var ab = postAbandon(c, lds 1 (cb + 8));
         if ab {
           return ab;
@@ -14785,10 +14785,10 @@ fun connAct(1 c, 1 now) {
       var lost = 0;
       var said = 0;
       var was = lds 1 (cb + 112);
-      if ((((lds 1 (cb + 120)) == 0) == 0) & (lds 1 (@base + 898248))) & (((lds 1 (cb + 64)) == 0) & (((lds 1 (cb + 16)) == 1) == 0)) {
+      if ((((lds 1 (cb + 120)) == 0) == 0) & (lds 1 (@base + 1032616))) & (((lds 1 (cb + 64)) == 0) & (((lds 1 (cb + 16)) == 1) == 0)) {
         var pk = (lds 1 (cb + 120)) - 1;
         if 0 < ((pk < 0) + (3 < pk)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
@@ -14802,7 +14802,7 @@ fun connAct(1 c, 1 now) {
           return td;
         } else {
         }
-        var zs = @base + 2728160 + (pk * 140040);
+        var zs = @base + 2862528 + (pk * 140040);
         if lds 1 zs {
           if lds 1 (zs + 64) {
             st cb + 128, 0;
@@ -14841,14 +14841,14 @@ fun connAct(1 c, 1 now) {
       } else {
       }
       if lost {
-        var slot = @base + 725720 + (c * 560);
+        var slot = @base + 791896 + (c * 560);
         st slot, 3;
         st slot + 8, c;
         st slot + 16, lds 1 (cb + 8);
         st slot + 24, 0;
         st slot + 32, 0;
         st slot + 40, 0;
-        st @base + 898304, (lds 1 (@base + 898304)) + 1;
+        st @base + 1032672, (lds 1 (@base + 1032672)) + 1;
         st cb + 88, 1;
         st cb, 0;
       } else {
@@ -14859,12 +14859,12 @@ fun connAct(1 c, 1 now) {
           var i = lds 1 (cb + 80);
           var sv = 1;
           if 0 < ((n < 0) + (512 < n)) {
-            st @base + 897960, 10;
+            st @base + 1032328, 10;
             return 10;
           } else {
           }
           if 0 < ((i < 0) + (512 < i)) {
-            st @base + 897960, 10;
+            st @base + 1032328, 10;
             return 10;
           } else {
           }
@@ -14873,7 +14873,7 @@ fun connAct(1 c, 1 now) {
               sv = 0;
             } else {
               if 0 < (((lds 1 blk) < 0) + (512 < (lds 1 blk))) {
-                st @base + 897960, 10;
+                st @base + 1032328, 10;
                 return 10;
               } else {
               }
@@ -15002,7 +15002,7 @@ fun connAct(1 c, 1 now) {
                   eqk = l0 == 12;
                   jq = 0;
                   while eqk & (jq < l0) {
-                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903486 + jq))) == 0 {
+                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037854 + jq))) == 0 {
                       eqk = 0;
                     } else {
                     }
@@ -15015,7 +15015,7 @@ fun connAct(1 c, 1 now) {
                   eqk = l0 == 4;
                   jq = 0;
                   while eqk & (jq < l0) {
-                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903498 + jq))) == 0 {
+                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037866 + jq))) == 0 {
                       eqk = 0;
                     } else {
                     }
@@ -15028,7 +15028,7 @@ fun connAct(1 c, 1 now) {
                   eqk = l0 == 4;
                   jq = 0;
                   while eqk & (jq < l0) {
-                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903502 + jq))) == 0 {
+                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037870 + jq))) == 0 {
                       eqk = 0;
                     } else {
                     }
@@ -15041,7 +15041,7 @@ fun connAct(1 c, 1 now) {
                   eqk = l0 == 4;
                   jq = 0;
                   while eqk & (jq < l0) {
-                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903506 + jq))) == 0 {
+                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037874 + jq))) == 0 {
                       eqk = 0;
                     } else {
                     }
@@ -15054,7 +15054,7 @@ fun connAct(1 c, 1 now) {
                   eqk = l0 == 4;
                   jq = 0;
                   while eqk & (jq < l0) {
-                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903510 + jq))) == 0 {
+                    if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037878 + jq))) == 0 {
                       eqk = 0;
                     } else {
                     }
@@ -15064,11 +15064,11 @@ fun connAct(1 c, 1 now) {
                     cmd = 5;
                   } else {
                   }
-                  if lds 1 (@base + 898248) {
+                  if lds 1 (@base + 1032616) {
                     eqk = l0 == 4;
                     jq = 0;
                     while eqk & (jq < l0) {
-                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 903514 + jq))) == 0 {
+                      if (((ld8 (blk + 40 + s0 + jq)) - (32 * ((96 < (ld8 (blk + 40 + s0 + jq))) & ((ld8 (blk + 40 + s0 + jq)) < 123)))) == (ld8 (@base + 1037882 + jq))) == 0 {
                         eqk = 0;
                       } else {
                       }
@@ -15182,11 +15182,11 @@ fun connAct(1 c, 1 now) {
                     }
                   }
                 }
-                if (r == 1) & ((lds 1 (cb + 104)) & (lds 1 (@base + 898256))) {
+                if (r == 1) & ((lds 1 (cb + 104)) & (lds 1 (@base + 1032624))) {
                   r = 13;
                 } else {
                 }
-                if (r == 2) & (lds 1 (@base + 898248)) {
+                if (r == 2) & (lds 1 (@base + 1032616)) {
                   r = 14;
                 } else {
                 }
@@ -15194,7 +15194,7 @@ fun connAct(1 c, 1 now) {
                   if (lds 1 (cb + 104)) == 0 {
                     r = 11;
                   } else {
-                    if (lds 1 (@base + 898256)) == 0 {
+                    if (lds 1 (@base + 1032624)) == 0 {
                       r = 12;
                     } else {
                     }
@@ -15248,8 +15248,8 @@ fun connAct(1 c, 1 now) {
           }
         } else {
         }
-        if ((lds 1 (cb + 112)) & (lds 1 (@base + 898248))) & (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 16)) == 0)) {
-          if (lds 1 (@base + 898256)) == 0 {
+        if ((lds 1 (cb + 112)) & (lds 1 (@base + 1032616))) & (((lds 1 (cb + 64)) == 0) & ((lds 1 (cb + 16)) == 0)) {
+          if (lds 1 (@base + 1032624)) == 0 {
             var uw = postUnwait(c, lds 1 (cb + 8));
             if uw {
               return uw;
@@ -15268,11 +15268,11 @@ fun connAct(1 c, 1 now) {
               return ad;
             } else {
             }
-            if lds 1 (@base + 898296) {
+            if lds 1 (@base + 1032664) {
               var fk = 4;
               var q = 0;
               while q < 4 {
-                if (fk == 4) & ((lds 1 (@base + 2728160 + (q * 140040))) == 0) {
+                if (fk == 4) & ((lds 1 (@base + 2862528 + (q * 140040))) == 0) {
                   fk = q;
                 } else {
                 }
@@ -15312,15 +15312,15 @@ fun connAct(1 c, 1 now) {
             return tq;
           } else {
           }
-          wants = lds 1 (@base + 898296);
+          wants = lds 1 (@base + 1032664);
         } else {
         }
         if ((lds 1 (cb + 64)) == 0) == 0 {
           if (lds 1 (cb + 32)) == 0 {
-            var slot = @base + 725720 + (c * 560);
+            var slot = @base + 791896 + (c * 560);
             var ol = lds 1 (cb + 64);
             if 0 < ((ol < 0) + (512 < ol)) {
-              st @base + 897960, 10;
+              st @base + 1032328, 10;
               return 10;
             } else {
             }
@@ -15335,33 +15335,33 @@ fun connAct(1 c, 1 now) {
               st8 slot + 48 + aj, ld8 (cb + 1200 + aj);
               aj = aj + 1;
             }
-            st @base + 898304, (lds 1 (@base + 898304)) + 1;
+            st @base + 1032672, (lds 1 (@base + 1032672)) + 1;
             st cb + 88, 1;
             st cb + 24, wants;
           } else {
           }
         } else {
           if 0 < (((lds 1 (cb + 16)) == 1) + (((lds 1 (cb + 16)) == 2) & ((lds 1 (cb + 80)) == (lds 1 (cb + 72))))) {
-            var slot = @base + 725720 + (c * 560);
+            var slot = @base + 791896 + (c * 560);
             st slot, 2;
             st slot + 8, c;
             st slot + 16, lds 1 (cb + 8);
             st slot + 24, 0;
             st slot + 32, 0;
             st slot + 40, 0;
-            st @base + 898304, (lds 1 (@base + 898304)) + 1;
+            st @base + 1032672, (lds 1 (@base + 1032672)) + 1;
             st cb + 88, 1;
             st cb, 0;
           } else {
             if ((lds 1 (cb + 16)) == 0) & (((lds 1 (cb + 24)) == wants) == 0) {
-              var slot = @base + 725720 + (c * 560);
+              var slot = @base + 791896 + (c * 560);
               st slot, 1;
               st slot + 8, c;
               st slot + 16, lds 1 (cb + 8);
               st slot + 24, 0;
               st slot + 32, wants;
               st slot + 40, 0;
-              st @base + 898304, (lds 1 (@base + 898304)) + 1;
+              st @base + 1032672, (lds 1 (@base + 1032672)) + 1;
               st cb + 88, 1;
               st cb + 24, wants;
             } else {
@@ -15388,23 +15388,23 @@ fun connAct(1 c, 1 now) {
 
 fun connSettle(1 sc, 1 now) {
   if 0 < ((sc < 0) + (63 < sc)) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
-  var cb = @base + 903840 + (sc * 1712);
+  var cb = @base + 1038208 + (sc * 1712);
   if lds 1 (cb + 88) {
     st cb + 88, 0;
     if lds 1 cb {
-      var tk = lds 1 (@base + 725720 + (sc * 560) + 40);
+      var tk = lds 1 (@base + 791896 + (sc * 560) + 40);
       var al = lds 1 (cb + 64);
       if 0 < ((al < 0) + (512 < al)) {
-        st @base + 897960, 10;
+        st @base + 1032328, 10;
         return 10;
       } else {
       }
       if 0 < ((tk < 0) + (al < tk)) {
-        st @base + 897960, 5;
+        st @base + 1032328, 5;
         return 5;
       } else {
       }
@@ -15440,7 +15440,7 @@ fun wakeAt(1 now) {
   var rd = 0;
   var dt = 0;
   while dt < 64 {
-    var cb = @base + 903840 + (dt * 1712);
+    var cb = @base + 1038208 + (dt * 1712);
     if lds 1 cb {
       var ry = 0;
       if (lds 1 (cb + 64)) == 0 {
@@ -15448,8 +15448,8 @@ fun wakeAt(1 now) {
           ry = 1;
         } else {
           if lds 1 (cb + 112) {
-            if lds 1 (@base + 898248) {
-              if (lds 1 (@base + 898256)) == 0 {
+            if lds 1 (@base + 1032616) {
+              if (lds 1 (@base + 1032624)) == 0 {
                 ry = 1;
               } else {
                 var wa = postAdmits(dt, lds 1 (cb + 8));
@@ -15457,7 +15457,7 @@ fun wakeAt(1 now) {
                   return wa;
                 } else {
                 }
-                ry = lds 1 (@base + 898296);
+                ry = lds 1 (@base + 1032664);
               }
             } else {
             }
@@ -15472,7 +15472,7 @@ fun wakeAt(1 now) {
                   return wt;
                 } else {
                 }
-                ry = lds 1 (@base + 898296);
+                ry = lds 1 (@base + 1032664);
               }
             } else {
             }
@@ -15524,7 +15524,7 @@ fun wakeAt(1 now) {
 fun storeContext() {
   var xil = lds 1 (@base + 579688);
   if 0 < ((xil < 0) + (200 < xil)) {
-    st @base + 897960, 9;
+    st @base + 1032328, 9;
     return 9;
   } else {
   }
@@ -15547,7 +15547,7 @@ fun storeContext() {
   st @base + 498032, xrn;
   var xgc = lds 1 (@base + 579896);
   if 0 < ((xgc < 0) + (64 < xgc)) {
-    st @base + 897960, 9;
+    st @base + 1032328, 9;
     return 9;
   } else {
   }
@@ -15558,7 +15558,7 @@ fun storeContext() {
     var xgt = @base + 498768 + (xgk * 80);
     var xgl = lds 1 xgs;
     if 0 < ((xgl < 0) + (64 < xgl)) {
-      st @base + 897960, 9;
+      st @base + 1032328, 9;
       return 9;
     } else {
     }
@@ -15572,42 +15572,42 @@ fun storeContext() {
   }
   var xcx = artContext();
   if lds 1 (@base + 88) {
-    st @base + 897960, 10;
+    st @base + 1032328, 10;
     return 10;
   } else {
   }
   if xcx == 0 {
-    st @base + 897960, 9;
+    st @base + 1032328, 9;
     return 9;
   } else {
   }
   var xik = 0;
   while xik < 16 {
-    st8 @base + 899368 + xik, ld8 (@base + 579672 + xik);
+    st8 @base + 1033736 + xik, ld8 (@base + 579672 + xik);
     xik = xik + 1;
   }
   return 0;
 }
 
 fun storeStart() {
-  st @base + 898248, 1;
-  st @base + 898256, 1;
-  st @base + 898264, lds 1 (@base + 1013920);
-  st @base + 898272, (lds 1 (@base + 1013928)) + 14;
-  var xkq = @base + 1019688;
-  if lds 1 (@base + 1013904) {
-    xkq = @base + 1014024;
+  st @base + 1032616, 1;
+  st @base + 1032624, 1;
+  st @base + 1032632, lds 1 (@base + 1148288);
+  st @base + 1032640, (lds 1 (@base + 1148296)) + 14;
+  var xkq = @base + 1154056;
+  if lds 1 (@base + 1148272) {
+    xkq = @base + 1148392;
   } else {
   }
   var xkj = 0;
   while xkj < 16 {
-    st8 @base + 899352 + xkj, ld8 (xkq + xkj);
+    st8 @base + 1033720 + xkj, ld8 (xkq + xkj);
     xkj = xkj + 1;
   }
-  st @base + 2728160, 0;
-  st @base + 2868200, 0;
-  st @base + 3008240, 0;
-  st @base + 3148280, 0;
+  st @base + 2862528, 0;
+  st @base + 3002568, 0;
+  st @base + 3142608, 0;
+  st @base + 3282648, 0;
   var xib = idBuild();
   if xib {
     return xib;
@@ -15618,7 +15618,7 @@ fun storeStart() {
 
 fun recoverStep() {
   var jz = 0;
-  var rsc = @base + 1013408;
+  var rsc = @base + 1147776;
   var rgo = 0;
   var rph = 0;
   var rk = 0;
@@ -15844,7 +15844,7 @@ fun recoverStep() {
             jb = lds 1 (jsc + 8);
             jwl = lds 1 (jsc + 16);
             if 0 < ((jwl < 0) + (17776 < jwl)) {
-              st @base + 897960, 10;
+              st @base + 1032328, 10;
               return 10;
             } else {
             }
@@ -15863,7 +15863,7 @@ fun recoverStep() {
               if (jb + jwl) < (jp + jneed) {
                 jx = jp - jb;
                 if 0 < ((jx < 0) + (17776 < jx)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
@@ -15890,7 +15890,7 @@ fun recoverStep() {
                 jq = jp;
                 jo = jq - jb;
                 if 0 < ((jo < 0) + (17776 < jo)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
@@ -16151,7 +16151,7 @@ fun recoverStep() {
                       jgi = jz + 0;
                       while jok & (jgi < jgc) {
                         if 0 < ((ji < 0) + (1376 < ji)) {
-                          st @base + 897960, 10;
+                          st @base + 1032328, 10;
                           return 10;
                         } else {
                         }
@@ -16187,7 +16187,7 @@ fun recoverStep() {
                         jgi = jgi + 1;
                       }
                       if 0 < ((ji < 0) + (1376 < ji)) {
-                        st @base + 897960, 10;
+                        st @base + 1032328, 10;
                         return 10;
                       } else {
                       }
@@ -16231,20 +16231,20 @@ fun recoverStep() {
                           jeq = jz + 0;
                           jla = lds 1 (jga + 8);
                           if 0 < ((jla < 0) + (64 < jla)) {
-                            st @base + 897960, 10;
+                            st @base + 1032328, 10;
                             return 10;
                           } else {
                           }
                           if jla == (lds 1 (jgb + 8)) {
                             jna = lds 1 jga;
                             if 0 < ((jna < 0) + (19168 < jna)) {
-                              st @base + 897960, 10;
+                              st @base + 1032328, 10;
                               return 10;
                             } else {
                             }
                             jnb = lds 1 jgb;
                             if 0 < ((jnb < 0) + (19168 < jnb)) {
-                              st @base + 897960, 10;
+                              st @base + 1032328, 10;
                               return 10;
                             } else {
                             }
@@ -16305,7 +16305,7 @@ fun recoverStep() {
                         while jtorn & (jq < jsz) {
                           jo = jq - jb;
                           if 0 < ((jo < 0) + (17776 < jo)) {
-                            st @base + 897960, 10;
+                            st @base + 1032328, 10;
                             return 10;
                           } else {
                           }
@@ -16565,19 +16565,19 @@ fun recoverStep() {
                     st rsl + 8, ((lds 1 (jsc + 112)) << 32) | (lds 1 (jsc + 120));
                     rgc = lds 1 (jsc + 104);
                     if 0 < ((rgc < 0) + (16 < rgc)) {
-                      st @base + 897960, 10;
+                      st @base + 1032328, 10;
                       return 10;
                     } else {
                     }
                     ril = lds 1 (jsc + 96);
                     if 0 < ((ril < 0) + (250 < ril)) {
-                      st @base + 897960, 10;
+                      st @base + 1032328, 10;
                       return 10;
                     } else {
                     }
                     rio = lds 1 (jsc + 88);
                     if 0 < ((rio < 0) + (19168 < rio)) {
-                      st @base + 897960, 10;
+                      st @base + 1032328, 10;
                       return 10;
                     } else {
                     }
@@ -16593,13 +16593,13 @@ fun recoverStep() {
                       rgs = jsc + 136 + (rg * 24);
                       rga = lds 1 rgs;
                       if 0 < ((rga < 0) + (19168 < rga)) {
-                        st @base + 897960, 10;
+                        st @base + 1032328, 10;
                         return 10;
                       } else {
                       }
                       rgl = lds 1 (rgs + 8);
                       if 0 < ((rgl < 0) + (64 < rgl)) {
-                        st @base + 897960, 10;
+                        st @base + 1032328, 10;
                         return 10;
                       } else {
                       }
@@ -16746,7 +16746,7 @@ fun recoverStep() {
                       rsl = rsc + 26856 + (ri * 408);
                       rgc = (lds 1 (rsl + 16)) & 255;
                       if 0 < ((rgc < 0) + (16 < rgc)) {
-                        st @base + 897960, 10;
+                        st @base + 1032328, 10;
                         return 10;
                       } else {
                       }
@@ -16755,7 +16755,7 @@ fun recoverStep() {
                         rx = lds 1 (rsl + 24 + (rg * 8));
                         rc = jz + ((rx) >>> 32);
                         if 0 < ((rc < 0) + (63 < rc)) {
-                          st @base + 897960, 10;
+                          st @base + 1032328, 10;
                           return 10;
                         } else {
                         }
@@ -16773,7 +16773,7 @@ fun recoverStep() {
                           rx = lds 1 (rsl + 24 + (rg * 8));
                           rc = jz + ((rx) >>> 32);
                           if 0 < ((rc < 0) + (63 < rc)) {
-                            st @base + 897960, 10;
+                            st @base + 1032328, 10;
                             return 10;
                           } else {
                           }
@@ -16802,7 +16802,7 @@ fun recoverStep() {
               if rph == 5 {
                 ri = lds 1 (rsc + 16);
                 if 0 < ((ri < 0) + (4096 < ri)) {
-                  st @base + 897960, 10;
+                  st @base + 1032328, 10;
                   return 10;
                 } else {
                 }
@@ -16813,7 +16813,7 @@ fun recoverStep() {
                 }
                 if lds 1 (rsc + 24) {
                   if 0 < ((ri < 0) + (4095 < ri)) {
-                    st @base + 897960, 10;
+                    st @base + 1032328, 10;
                     return 10;
                   } else {
                   }
@@ -17097,15 +17097,15 @@ fun recoverStep() {
 }
 
 fun main() {
-  st @base + 579264, 7;
-  st @base + 897944, 0;
-  st @base + 897952, 0;
-  st @base + 897960, 0;
-  st @base + 898248, 0;
-  st @base + 898256, 0;
-  st @base + 898312, 0;
-  st @base + 898320, 0;
-  st @base + 898280, 0;
+  st @base + 579264, 8;
+  st @base + 1032312, 0;
+  st @base + 1032320, 0;
+  st @base + 1032328, 0;
+  st @base + 1032616, 0;
+  st @base + 1032624, 0;
+  st @base + 1032680, 0;
+  st @base + 1032688, 0;
+  st @base + 1032648, 0;
   st @base + 88, 0;
   var t1 = tables();
   var t2 = artTables();
@@ -17113,21 +17113,25 @@ fun main() {
   var t4 = textsSet();
   var zt = 0;
   while zt < 64 {
-    st @base + 903840 + (zt * 1712), 0;
-    st @base + 903840 + (zt * 1712) + 88, 0;
-    st @base + 725720 + (zt * 560), 0;
+    st @base + 1038208 + (zt * 1712), 0;
+    st @base + 1038208 + (zt * 1712) + 88, 0;
+    st @base + 791896 + (zt * 560), 0;
     zt = zt + 1;
   }
-  st @base + 761560, 0;
-  st @base + 778608, 0;
-  st @base + 795656, 0;
-  st @base + 812704, 0;
-  st @base + 829752, 0;
-  st @base + 846800, 0;
-  st @base + 863848, 0;
-  st @base + 880896, 0;
+  st @base + 827736, 0;
+  st @base + 844784, 0;
+  st @base + 861832, 0;
+  st @base + 878880, 0;
+  st @base + 895928, 0;
+  st @base + 912976, 0;
+  st @base + 930024, 0;
+  st @base + 947072, 0;
+  st @base + 964120, 0;
+  st @base + 981168, 0;
+  st @base + 998216, 0;
+  st @base + 1015264, 0;
   st @base + 579328, 0;
-  @dn_next(@base + 579264, 8, @base + 579328, 146376);
+  @dn_next(@base + 579264, 8, @base + 579328, 212552);
   if lds 1 (@base + 579632) {
     var sx = storeContext();
     if sx {
@@ -17135,7 +17139,7 @@ fun main() {
     } else {
     }
     var jz = 0;
-    var rsc = @base + 1013408;
+    var rsc = @base + 1147776;
     var rgo = 0;
     var rph = 0;
     var rk = 0;
@@ -17231,16 +17235,16 @@ fun main() {
     var dpos = 0;
     var dj = 0;
     var dgo = 0;
-    jsc = @base + 1019168;
-    st @base + 2711448, 0;
-    st @base + 2711472, 0;
-    st @base + 2711504, 0;
-    st @base + 2711480, 0;
-    st @base + 2711488, 0;
-    st @base + 2711496, 0;
-    st @base + 2711512, 0;
-    st @base + 725704, 0;
-    st @base + 725712, 0;
+    jsc = @base + 1153536;
+    st @base + 2845816, 0;
+    st @base + 2845840, 0;
+    st @base + 2845872, 0;
+    st @base + 2845848, 0;
+    st @base + 2845856, 0;
+    st @base + 2845864, 0;
+    st @base + 2845880, 0;
+    st @base + 791880, 0;
+    st @base + 791888, 0;
     st rsc + 8, 0;
     dj = 0;
     while dj < 16 {
@@ -17249,7 +17253,7 @@ fun main() {
     }
     dx = lds 1 (@base + 579896);
     if 0 < ((dx < 0) + (64 < dx)) {
-      st @base + 897960, 9;
+      st @base + 1032328, 9;
       return 9;
     } else {
     }
@@ -17258,7 +17262,7 @@ fun main() {
     while da < dx {
       dl = lds 1 (@base + 579904 + (da * 72));
       if 0 < ((dl < 0) + (64 < dl)) {
-        st @base + 897960, 9;
+        st @base + 1032328, 9;
         return 9;
       } else {
       }
@@ -17270,37 +17274,37 @@ fun main() {
       }
       da = da + 1;
     }
-    st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-    st @base + 761560, 1;
-    st @base + 761568, lds 1 (@base + 2711504);
-    st @base + 761576, 1;
-    st @base + 761584, 11;
-    st @base + 761592, 0;
-    st @base + 761600, 0;
-    st @base + 761608, 0;
-    st @base + 761616, 0;
-    st @base + 761624, 0;
-    st @base + 761632, 0;
-    st @base + 761640, 0;
-    st @base + 761648, 0;
-    st @base + 761656, 0;
-    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-    st @base + 761560, 0;
+    st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+    st @base + 827736, 1;
+    st @base + 827744, lds 1 (@base + 2845872);
+    st @base + 827752, 1;
+    st @base + 827760, 11;
+    st @base + 827768, 0;
+    st @base + 827776, 0;
+    st @base + 827784, 0;
+    st @base + 827792, 0;
+    st @base + 827800, 0;
+    st @base + 827808, 0;
+    st @base + 827816, 0;
+    st @base + 827824, 0;
+    st @base + 827832, 0;
+    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+    st @base + 827736, 0;
     dw = 1;
     while dw {
-      @dn_next(@base + 579264, 8, @base + 579328, 146376);
-      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+      @dn_next(@base + 579264, 8, @base + 579328, 212552);
+      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
         dw = 0;
       } else {
-        @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+        @dn_emit(@base + 579264, 8, @base + 791880, 240432);
       }
     }
     dok = (lds 1 (@base + 593368)) == 1;
     dcl = lds 1 (@base + 593376);
     if dok {
     } else {
-      st @base + 2711512, dcl;
-      st @base + 897960, 12;
+      st @base + 2845880, dcl;
+      st @base + 1032328, 12;
       return 12;
     }
     dgo = 1;
@@ -17312,213 +17316,213 @@ fun main() {
       }
       dst = lds 1 rsc;
       if dst == 1 {
-        if lds 1 (@base + 2711448) {
+        if lds 1 (@base + 2845816) {
         } else {
-          st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-          st @base + 761560, 1;
-          st @base + 761568, lds 1 (@base + 2711504);
-          st @base + 761576, 1;
-          st @base + 761584, 12;
-          st @base + 761592, 0;
-          st @base + 761600, 0;
-          st @base + 761608, 0;
-          st @base + 761616, 0;
-          st @base + 761624, 0;
-          st @base + 761632, 0;
-          st @base + 761640, 0;
-          st @base + 761648, 0;
-          st @base + 761656, 0;
-          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-          st @base + 761560, 0;
+          st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+          st @base + 827736, 1;
+          st @base + 827744, lds 1 (@base + 2845872);
+          st @base + 827752, 1;
+          st @base + 827760, 12;
+          st @base + 827768, 0;
+          st @base + 827776, 0;
+          st @base + 827784, 0;
+          st @base + 827792, 0;
+          st @base + 827800, 0;
+          st @base + 827808, 0;
+          st @base + 827816, 0;
+          st @base + 827824, 0;
+          st @base + 827832, 0;
+          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+          st @base + 827736, 0;
           dw = 1;
           while dw {
-            @dn_next(@base + 579264, 8, @base + 579328, 146376);
-            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+            @dn_next(@base + 579264, 8, @base + 579328, 212552);
+            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
               dw = 0;
             } else {
-              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
             }
           }
           dok = (lds 1 (@base + 593368)) == 1;
           dcl = lds 1 (@base + 593376);
           if dok {
           } else {
-            st @base + 2711512, dcl;
-            st @base + 897960, 12;
+            st @base + 2845880, dcl;
+            st @base + 1032328, 12;
             return 12;
           }
-          st @base + 2711432, lds 1 (@base + 593384);
-          st @base + 2711440, lds 1 (@base + 593392);
-          st @base + 2711448, 1;
+          st @base + 2845800, lds 1 (@base + 593384);
+          st @base + 2845808, lds 1 (@base + 593392);
+          st @base + 2845816, 1;
         }
         if lds 1 (rsc + 32) {
-          st @base + 2711480, 0;
-          st @base + 2711488, 0;
-          st @base + 2711496, 0;
+          st @base + 2845848, 0;
+          st @base + 2845856, 0;
+          st @base + 2845864, 0;
         } else {
         }
-        dpos = lds 1 (@base + 2711496);
-        dlen = lds 1 (@base + 2711488);
+        dpos = lds 1 (@base + 2845864);
+        dlen = lds 1 (@base + 2845856);
         if 0 < ((dlen < 0) + (16384 < dlen)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
         if 0 < ((dpos < 0) + (16384 < dpos)) {
-          st @base + 897960, 10;
+          st @base + 1032328, 10;
           return 10;
         } else {
         }
         if dlen <= dpos {
-          st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-          st @base + 761560, 1;
-          st @base + 761568, lds 1 (@base + 2711504);
-          st @base + 761576, 1;
-          st @base + 761584, 13;
-          st @base + 761592, lds 1 (@base + 2711432);
-          st @base + 761600, lds 1 (@base + 2711440);
-          st @base + 761608, 0;
-          st @base + 761616, 0;
-          st @base + 761624, 0;
-          st @base + 761632, 0;
-          st @base + 761640, lds 1 (@base + 2711480);
-          st @base + 761648, 16384;
-          st @base + 761656, 0;
-          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-          st @base + 761560, 0;
+          st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+          st @base + 827736, 1;
+          st @base + 827744, lds 1 (@base + 2845872);
+          st @base + 827752, 1;
+          st @base + 827760, 13;
+          st @base + 827768, lds 1 (@base + 2845800);
+          st @base + 827776, lds 1 (@base + 2845808);
+          st @base + 827784, 0;
+          st @base + 827792, 0;
+          st @base + 827800, 0;
+          st @base + 827808, 0;
+          st @base + 827816, lds 1 (@base + 2845848);
+          st @base + 827824, 16384;
+          st @base + 827832, 0;
+          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+          st @base + 827736, 0;
           dw = 1;
           while dw {
-            @dn_next(@base + 579264, 8, @base + 579328, 146376);
-            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+            @dn_next(@base + 579264, 8, @base + 579328, 212552);
+            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
               dw = 0;
             } else {
-              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
             }
           }
           dok = (lds 1 (@base + 593368)) == 1;
           dcl = lds 1 (@base + 593376);
           if dok {
           } else {
-            st @base + 2711512, dcl;
-            st @base + 897960, 12;
+            st @base + 2845880, dcl;
+            st @base + 1032328, 12;
             return 12;
           }
           dlen = lds 1 (@base + 593392);
           if 0 < ((dlen < 0) + (16384 < dlen)) {
-            st @base + 897960, 10;
+            st @base + 1032328, 10;
             return 10;
           } else {
           }
           dj = 0;
           while dj < dlen {
-            st8 @base + 2711520 + dj, ld8 (@base + 593512 + dj);
+            st8 @base + 2845888 + dj, ld8 (@base + 593512 + dj);
             dj = dj + 1;
           }
-          st @base + 2711488, dlen;
+          st @base + 2845856, dlen;
           dpos = 0;
         } else {
         }
         if dpos < dlen {
-          dl = ld8 (@base + 2711520 + dpos);
+          dl = ld8 (@base + 2845888 + dpos);
           if dlen < (dpos + dl + 1) {
-            st @base + 897960, 10;
+            st @base + 1032328, 10;
             return 10;
           } else {
           }
           dj = 0;
           while dj < dl {
-            st8 rsc + 56 + dj, ld8 (@base + 2711520 + dpos + 1 + dj);
+            st8 rsc + 56 + dj, ld8 (@base + 2845888 + dpos + 1 + dj);
             dj = dj + 1;
           }
           st rsc + 48, dl;
           st rsc + 40, 0;
-          st @base + 2711496, dpos + dl + 1;
-          st @base + 2711480, (lds 1 (@base + 2711480)) + 1;
+          st @base + 2845864, dpos + dl + 1;
+          st @base + 2845848, (lds 1 (@base + 2845848)) + 1;
         } else {
           st rsc + 40, 1;
         }
       } else {
         if dst == 2 {
-          if lds 1 (@base + 2711472) {
+          if lds 1 (@base + 2845840) {
           } else {
-            st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-            st @base + 761560, 1;
-            st @base + 761568, lds 1 (@base + 2711504);
-            st @base + 761576, 1;
-            st @base + 761584, 2;
-            st @base + 761592, 0;
-            st @base + 761600, 0;
-            st @base + 761608, 1;
-            st @base + 761616, 0;
-            st @base + 761624, 0;
-            st @base + 761632, 0;
-            st @base + 761640, 0;
-            st @base + 761648, 0;
-            st @base + 761656, 0;
-            @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-            st @base + 761560, 0;
+            st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+            st @base + 827736, 1;
+            st @base + 827744, lds 1 (@base + 2845872);
+            st @base + 827752, 1;
+            st @base + 827760, 2;
+            st @base + 827768, 0;
+            st @base + 827776, 0;
+            st @base + 827784, 1;
+            st @base + 827792, 0;
+            st @base + 827800, 0;
+            st @base + 827808, 0;
+            st @base + 827816, 0;
+            st @base + 827824, 0;
+            st @base + 827832, 0;
+            @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+            st @base + 827736, 0;
             dw = 1;
             while dw {
-              @dn_next(@base + 579264, 8, @base + 579328, 146376);
-              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+              @dn_next(@base + 579264, 8, @base + 579328, 212552);
+              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                 dw = 0;
               } else {
-                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
               }
             }
             dok = (lds 1 (@base + 593368)) == 1;
             dcl = lds 1 (@base + 593376);
             if dok {
             } else {
-              st @base + 2711512, dcl;
-              st @base + 897960, 12;
+              st @base + 2845880, dcl;
+              st @base + 1032328, 12;
               return 12;
             }
-            st @base + 2711456, lds 1 (@base + 593384);
-            st @base + 2711464, lds 1 (@base + 593392);
-            st @base + 2711472, 1;
+            st @base + 2845824, lds 1 (@base + 593384);
+            st @base + 2845832, lds 1 (@base + 593392);
+            st @base + 2845840, 1;
           }
-          st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-          st @base + 761560, 1;
-          st @base + 761568, lds 1 (@base + 2711504);
-          st @base + 761576, 2;
-          st @base + 761584, 7;
-          st @base + 761592, lds 1 (@base + 2711456);
-          st @base + 761600, lds 1 (@base + 2711464);
-          st @base + 761608, 0;
-          st @base + 761616, 0;
-          st @base + 761624, 0;
-          st @base + 761632, 0;
-          st @base + 761640, 0;
-          st @base + 761648, 0;
-          st @base + 761656, 0;
-          st @base + 761664, 5;
-          st @base + 761672, lds 1 (@base + 2711456);
-          st @base + 761680, lds 1 (@base + 2711464);
-          st @base + 761688, 0;
-          st @base + 761696, 0;
-          st @base + 761704, 0;
-          st @base + 761712, 0;
-          st @base + 761720, 0;
-          st @base + 761728, 0;
-          st @base + 761736, 0;
-          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-          st @base + 761560, 0;
+          st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+          st @base + 827736, 1;
+          st @base + 827744, lds 1 (@base + 2845872);
+          st @base + 827752, 2;
+          st @base + 827760, 7;
+          st @base + 827768, lds 1 (@base + 2845824);
+          st @base + 827776, lds 1 (@base + 2845832);
+          st @base + 827784, 0;
+          st @base + 827792, 0;
+          st @base + 827800, 0;
+          st @base + 827808, 0;
+          st @base + 827816, 0;
+          st @base + 827824, 0;
+          st @base + 827832, 0;
+          st @base + 827840, 5;
+          st @base + 827848, lds 1 (@base + 2845824);
+          st @base + 827856, lds 1 (@base + 2845832);
+          st @base + 827864, 0;
+          st @base + 827872, 0;
+          st @base + 827880, 0;
+          st @base + 827888, 0;
+          st @base + 827896, 0;
+          st @base + 827904, 0;
+          st @base + 827912, 0;
+          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+          st @base + 827736, 0;
           dw = 1;
           while dw {
-            @dn_next(@base + 579264, 8, @base + 579328, 146376);
-            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+            @dn_next(@base + 579264, 8, @base + 579328, 212552);
+            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
               dw = 0;
             } else {
-              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
             }
           }
           dok = (lds 1 (@base + 593368)) == 2;
           dcl = lds 1 (@base + 593376);
           if dok {
           } else {
-            st @base + 2711512, dcl;
-            st @base + 897960, 12;
+            st @base + 2845880, dcl;
+            st @base + 1032328, 12;
             return 12;
           }
           st rsc + 336, lds 1 (@base + 593400);
@@ -17528,56 +17532,56 @@ fun main() {
             dx = lds 1 (jsc + 16);
             dy = lds 1 (jsc + 64);
             if 0 < ((dx < 0) + (17776 < dx)) {
-              st @base + 897960, 10;
+              st @base + 1032328, 10;
               return 10;
             } else {
             }
             if 0 < ((dy < 0) + (16384 < dy)) {
-              st @base + 897960, 10;
+              st @base + 1032328, 10;
               return 10;
             } else {
             }
             if 17776 < (dx + dy) {
-              st @base + 897960, 10;
+              st @base + 1032328, 10;
               return 10;
             } else {
             }
-            st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-            st @base + 761560, 1;
-            st @base + 761568, lds 1 (@base + 2711504);
-            st @base + 761576, 1;
-            st @base + 761584, 4;
-            st @base + 761592, lds 1 (@base + 2711456);
-            st @base + 761600, lds 1 (@base + 2711464);
-            st @base + 761608, 0;
-            st @base + 761616, 0;
-            st @base + 761624, 0;
-            st @base + 761632, 0;
-            st @base + 761640, da + dx;
-            st @base + 761648, dy;
-            st @base + 761656, 0;
-            @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-            st @base + 761560, 0;
+            st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+            st @base + 827736, 1;
+            st @base + 827744, lds 1 (@base + 2845872);
+            st @base + 827752, 1;
+            st @base + 827760, 4;
+            st @base + 827768, lds 1 (@base + 2845824);
+            st @base + 827776, lds 1 (@base + 2845832);
+            st @base + 827784, 0;
+            st @base + 827792, 0;
+            st @base + 827800, 0;
+            st @base + 827808, 0;
+            st @base + 827816, da + dx;
+            st @base + 827824, dy;
+            st @base + 827832, 0;
+            @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+            st @base + 827736, 0;
             dw = 1;
             while dw {
-              @dn_next(@base + 579264, 8, @base + 579328, 146376);
-              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+              @dn_next(@base + 579264, 8, @base + 579328, 212552);
+              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                 dw = 0;
               } else {
-                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
               }
             }
             dok = (lds 1 (@base + 593368)) == 1;
             dcl = lds 1 (@base + 593376);
             if dok {
             } else {
-              st @base + 2711512, dcl;
-              st @base + 897960, 12;
+              st @base + 2845880, dcl;
+              st @base + 1032328, 12;
               return 12;
             }
             if ((lds 1 (@base + 593384)) == dy) == 0 {
-              st @base + 2711512, 0;
-              st @base + 897960, 12;
+              st @base + 2845880, 0;
+              st @base + 1032328, 12;
               return 12;
             } else {
             }
@@ -17589,29 +17593,29 @@ fun main() {
             st jsc + 16, dx + dy;
           } else {
             if dst == 4 {
-              st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-              st @base + 761560, 1;
-              st @base + 761568, lds 1 (@base + 2711504);
-              st @base + 761576, 1;
-              st @base + 761584, 2;
-              st @base + 761592, 0;
-              st @base + 761600, 0;
-              st @base + 761608, 2;
-              st @base + 761616, lds 1 (rsc + 312);
-              st @base + 761624, 0;
-              st @base + 761632, 0;
-              st @base + 761640, 0;
-              st @base + 761648, 0;
-              st @base + 761656, 0;
-              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-              st @base + 761560, 0;
+              st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+              st @base + 827736, 1;
+              st @base + 827744, lds 1 (@base + 2845872);
+              st @base + 827752, 1;
+              st @base + 827760, 2;
+              st @base + 827768, 0;
+              st @base + 827776, 0;
+              st @base + 827784, 2;
+              st @base + 827792, lds 1 (rsc + 312);
+              st @base + 827800, 0;
+              st @base + 827808, 0;
+              st @base + 827816, 0;
+              st @base + 827824, 0;
+              st @base + 827832, 0;
+              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+              st @base + 827736, 0;
               dw = 1;
               while dw {
-                @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                   dw = 0;
                 } else {
-                  @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                  @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                 }
               }
               dok = (lds 1 (@base + 593368)) == 1;
@@ -17619,47 +17623,47 @@ fun main() {
               if dok {
                 dx = lds 1 (@base + 593384);
                 dy = lds 1 (@base + 593392);
-                st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                st @base + 761560, 1;
-                st @base + 761568, lds 1 (@base + 2711504);
-                st @base + 761576, 2;
-                st @base + 761584, 5;
-                st @base + 761592, dx;
-                st @base + 761600, dy;
-                st @base + 761608, 0;
-                st @base + 761616, 0;
-                st @base + 761624, 0;
-                st @base + 761632, 0;
-                st @base + 761640, 0;
-                st @base + 761648, 0;
-                st @base + 761656, 0;
-                st @base + 761664, 14;
-                st @base + 761672, dx;
-                st @base + 761680, dy;
-                st @base + 761688, 0;
-                st @base + 761696, 0;
-                st @base + 761704, 0;
-                st @base + 761712, 0;
-                st @base + 761720, 0;
-                st @base + 761728, 0;
-                st @base + 761736, 0;
-                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                st @base + 761560, 0;
+                st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                st @base + 827736, 1;
+                st @base + 827744, lds 1 (@base + 2845872);
+                st @base + 827752, 2;
+                st @base + 827760, 5;
+                st @base + 827768, dx;
+                st @base + 827776, dy;
+                st @base + 827784, 0;
+                st @base + 827792, 0;
+                st @base + 827800, 0;
+                st @base + 827808, 0;
+                st @base + 827816, 0;
+                st @base + 827824, 0;
+                st @base + 827832, 0;
+                st @base + 827840, 14;
+                st @base + 827848, dx;
+                st @base + 827856, dy;
+                st @base + 827864, 0;
+                st @base + 827872, 0;
+                st @base + 827880, 0;
+                st @base + 827888, 0;
+                st @base + 827896, 0;
+                st @base + 827904, 0;
+                st @base + 827912, 0;
+                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                st @base + 827736, 0;
                 dw = 1;
                 while dw {
-                  @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                  @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                     dw = 0;
                   } else {
-                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                   }
                 }
                 dok = (lds 1 (@base + 593368)) == 2;
                 dcl = lds 1 (@base + 593376);
                 if dok {
                 } else {
-                  st @base + 2711512, dcl;
-                  st @base + 897960, 12;
+                  st @base + 2845880, dcl;
+                  st @base + 1032328, 12;
                   return 12;
                 }
                 st rsc + 320, 1;
@@ -17668,36 +17672,36 @@ fun main() {
                 if dcl == 4 {
                   st rsc + 320, 0;
                 } else {
-                  st @base + 2711512, dcl;
-                  st @base + 897960, 12;
+                  st @base + 2845880, dcl;
+                  st @base + 1032328, 12;
                   return 12;
                 }
               }
             } else {
               if dst == 5 {
-                st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                st @base + 761560, 1;
-                st @base + 761568, lds 1 (@base + 2711504);
-                st @base + 761576, 1;
-                st @base + 761584, 2;
-                st @base + 761592, 0;
-                st @base + 761600, 0;
-                st @base + 761608, 4;
-                st @base + 761616, lds 1 (rsc + 312);
-                st @base + 761624, 0;
-                st @base + 761632, 0;
-                st @base + 761640, 0;
-                st @base + 761648, 0;
-                st @base + 761656, 0;
-                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                st @base + 761560, 0;
+                st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                st @base + 827736, 1;
+                st @base + 827744, lds 1 (@base + 2845872);
+                st @base + 827752, 1;
+                st @base + 827760, 2;
+                st @base + 827768, 0;
+                st @base + 827776, 0;
+                st @base + 827784, 4;
+                st @base + 827792, lds 1 (rsc + 312);
+                st @base + 827800, 0;
+                st @base + 827808, 0;
+                st @base + 827816, 0;
+                st @base + 827824, 0;
+                st @base + 827832, 0;
+                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                st @base + 827736, 0;
                 dw = 1;
                 while dw {
-                  @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                  @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                     dw = 0;
                   } else {
-                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                   }
                 }
                 dok = (lds 1 (@base + 593368)) == 1;
@@ -17705,37 +17709,37 @@ fun main() {
                 if dok {
                   dx = lds 1 (@base + 593384);
                   dy = lds 1 (@base + 593392);
-                  st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                  st @base + 761560, 1;
-                  st @base + 761568, lds 1 (@base + 2711504);
-                  st @base + 761576, 1;
-                  st @base + 761584, 14;
-                  st @base + 761592, dx;
-                  st @base + 761600, dy;
-                  st @base + 761608, 0;
-                  st @base + 761616, 0;
-                  st @base + 761624, 0;
-                  st @base + 761632, 0;
-                  st @base + 761640, 0;
-                  st @base + 761648, 0;
-                  st @base + 761656, 0;
-                  @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                  st @base + 761560, 0;
+                  st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                  st @base + 827736, 1;
+                  st @base + 827744, lds 1 (@base + 2845872);
+                  st @base + 827752, 1;
+                  st @base + 827760, 14;
+                  st @base + 827768, dx;
+                  st @base + 827776, dy;
+                  st @base + 827784, 0;
+                  st @base + 827792, 0;
+                  st @base + 827800, 0;
+                  st @base + 827808, 0;
+                  st @base + 827816, 0;
+                  st @base + 827824, 0;
+                  st @base + 827832, 0;
+                  @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                  st @base + 827736, 0;
                   dw = 1;
                   while dw {
-                    @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                    if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                    @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                    if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                       dw = 0;
                     } else {
-                      @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                      @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                     }
                   }
                   dok = (lds 1 (@base + 593368)) == 1;
                   dcl = lds 1 (@base + 593376);
                   if dok {
                   } else {
-                    st @base + 2711512, dcl;
-                    st @base + 897960, 12;
+                    st @base + 2845880, dcl;
+                    st @base + 1032328, 12;
                     return 12;
                   }
                   st rsc + 320, 1;
@@ -17743,8 +17747,8 @@ fun main() {
                   if dcl == 4 {
                     st rsc + 320, 0;
                   } else {
-                    st @base + 2711512, dcl;
-                    st @base + 897960, 12;
+                    st @base + 2845880, dcl;
+                    st @base + 1032328, 12;
                     return 12;
                   }
                 }
@@ -17755,363 +17759,363 @@ fun main() {
                     dx = lds 1 (rsc + 560);
                     dl = lds 1 (rsc + 568);
                     if 0 < ((dl < 0) + (1390 < dl)) {
-                      st @base + 897960, 10;
+                      st @base + 1032328, 10;
                       return 10;
                     } else {
                     }
                     if 0 < ((dx < 0) + (1696634 < dx)) {
-                      st @base + 897960, 10;
+                      st @base + 1032328, 10;
                       return 10;
                     } else {
                     }
-                    st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                    st @base + 761560, 1;
-                    st @base + 761568, lds 1 (@base + 2711504);
-                    st @base + 761576, 1;
-                    st @base + 761584, 1;
-                    st @base + 761592, 0;
-                    st @base + 761600, 0;
-                    st @base + 761608, 5;
-                    st @base + 761616, lds 1 (rsc + 544);
-                    st @base + 761624, 0;
-                    st @base + 761632, 0;
-                    st @base + 761640, 0;
-                    st @base + 761648, 0;
-                    st @base + 761656, 0;
-                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                    st @base + 761560, 0;
+                    st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                    st @base + 827736, 1;
+                    st @base + 827744, lds 1 (@base + 2845872);
+                    st @base + 827752, 1;
+                    st @base + 827760, 1;
+                    st @base + 827768, 0;
+                    st @base + 827776, 0;
+                    st @base + 827784, 5;
+                    st @base + 827792, lds 1 (rsc + 544);
+                    st @base + 827800, 0;
+                    st @base + 827808, 0;
+                    st @base + 827816, 0;
+                    st @base + 827824, 0;
+                    st @base + 827832, 0;
+                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                    st @base + 827736, 0;
                     dw = 1;
                     while dw {
-                      @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                      @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                         dw = 0;
                       } else {
-                        @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                        @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                       }
                     }
                     dok = (lds 1 (@base + 593368)) == 1;
                     dcl = lds 1 (@base + 593376);
                     if dok {
                     } else {
-                      st @base + 2711512, dcl;
-                      st @base + 897960, 12;
+                      st @base + 2845880, dcl;
+                      st @base + 1032328, 12;
                       return 12;
                     }
                     da = lds 1 (@base + 593384);
                     dy = lds 1 (@base + 593392);
-                    st8 @base + 762224, ((lds 1 (rsc + 552)) >>> 0) & 255;
-                    st8 @base + 762224 + 1, ((lds 1 (rsc + 552)) >>> 8) & 255;
-                    st8 @base + 762224 + 2, ((lds 1 (rsc + 552)) >>> 16) & 255;
-                    st8 @base + 762224 + 3, ((lds 1 (rsc + 552)) >>> 24) & 255;
-                    st8 @base + 762224 + 4, ((lds 1 (rsc + 552)) >>> 32) & 255;
-                    st8 @base + 762224 + 5, ((lds 1 (rsc + 552)) >>> 40) & 255;
-                    st8 @base + 762224 + 6, ((lds 1 (rsc + 552)) >>> 48) & 255;
-                    st8 @base + 762224 + 7, ((lds 1 (rsc + 552)) >>> 56) & 255;
+                    st8 @base + 828400, ((lds 1 (rsc + 552)) >>> 0) & 255;
+                    st8 @base + 828400 + 1, ((lds 1 (rsc + 552)) >>> 8) & 255;
+                    st8 @base + 828400 + 2, ((lds 1 (rsc + 552)) >>> 16) & 255;
+                    st8 @base + 828400 + 3, ((lds 1 (rsc + 552)) >>> 24) & 255;
+                    st8 @base + 828400 + 4, ((lds 1 (rsc + 552)) >>> 32) & 255;
+                    st8 @base + 828400 + 5, ((lds 1 (rsc + 552)) >>> 40) & 255;
+                    st8 @base + 828400 + 6, ((lds 1 (rsc + 552)) >>> 48) & 255;
+                    st8 @base + 828400 + 7, ((lds 1 (rsc + 552)) >>> 56) & 255;
                     dj = 0;
                     while dj < dl {
-                      st8 @base + 762224 + 8 + dj, ld8 (rsc + dx + dj);
+                      st8 @base + 828400 + 8 + dj, ld8 (rsc + dx + dj);
                       dj = dj + 1;
                     }
-                    st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                    st @base + 761560, 1;
-                    st @base + 761568, lds 1 (@base + 2711504);
-                    st @base + 761576, 3;
-                    st @base + 761584, 3;
-                    st @base + 761592, da;
-                    st @base + 761600, dy;
-                    st @base + 761608, 0;
-                    st @base + 761616, 0;
-                    st @base + 761624, 0;
-                    st @base + 761632, 0;
-                    st @base + 761640, 0;
-                    st @base + 761648, dl + 8;
-                    st @base + 761656, 0;
-                    st @base + 761664, 7;
-                    st @base + 761672, da;
-                    st @base + 761680, dy;
-                    st @base + 761688, 0;
-                    st @base + 761696, 0;
-                    st @base + 761704, 0;
-                    st @base + 761712, 0;
-                    st @base + 761720, 0;
-                    st @base + 761728, 0;
-                    st @base + 761736, 0;
-                    st @base + 761744, 14;
-                    st @base + 761752, da;
-                    st @base + 761760, dy;
-                    st @base + 761768, 0;
-                    st @base + 761776, 0;
-                    st @base + 761784, 0;
-                    st @base + 761792, 0;
-                    st @base + 761800, 0;
-                    st @base + 761808, 0;
-                    st @base + 761816, 0;
-                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                    st @base + 761560, 0;
+                    st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                    st @base + 827736, 1;
+                    st @base + 827744, lds 1 (@base + 2845872);
+                    st @base + 827752, 3;
+                    st @base + 827760, 3;
+                    st @base + 827768, da;
+                    st @base + 827776, dy;
+                    st @base + 827784, 0;
+                    st @base + 827792, 0;
+                    st @base + 827800, 0;
+                    st @base + 827808, 0;
+                    st @base + 827816, 0;
+                    st @base + 827824, dl + 8;
+                    st @base + 827832, 0;
+                    st @base + 827840, 7;
+                    st @base + 827848, da;
+                    st @base + 827856, dy;
+                    st @base + 827864, 0;
+                    st @base + 827872, 0;
+                    st @base + 827880, 0;
+                    st @base + 827888, 0;
+                    st @base + 827896, 0;
+                    st @base + 827904, 0;
+                    st @base + 827912, 0;
+                    st @base + 827920, 14;
+                    st @base + 827928, da;
+                    st @base + 827936, dy;
+                    st @base + 827944, 0;
+                    st @base + 827952, 0;
+                    st @base + 827960, 0;
+                    st @base + 827968, 0;
+                    st @base + 827976, 0;
+                    st @base + 827984, 0;
+                    st @base + 827992, 0;
+                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                    st @base + 827736, 0;
                     dw = 1;
                     while dw {
-                      @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                      @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                      if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                         dw = 0;
                       } else {
-                        @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                        @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                       }
                     }
                     dok = (lds 1 (@base + 593368)) == 3;
                     dcl = lds 1 (@base + 593376);
                     if dok {
                     } else {
-                      st @base + 2711512, dcl;
-                      st @base + 897960, 12;
+                      st @base + 2845880, dcl;
+                      st @base + 1032328, 12;
                       return 12;
                     }
                   } else {
                     if da == 2 {
-                      st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                      st @base + 761560, 1;
-                      st @base + 761568, lds 1 (@base + 2711504);
-                      st @base + 761576, 1;
-                      st @base + 761584, 8;
-                      st @base + 761592, 0;
-                      st @base + 761600, 0;
-                      st @base + 761608, 2;
-                      st @base + 761616, lds 1 (rsc + 544);
-                      st @base + 761624, 4;
-                      st @base + 761632, lds 1 (rsc + 544);
-                      st @base + 761640, 0;
-                      st @base + 761648, 0;
-                      st @base + 761656, 0;
-                      @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                      st @base + 761560, 0;
+                      st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                      st @base + 827736, 1;
+                      st @base + 827744, lds 1 (@base + 2845872);
+                      st @base + 827752, 1;
+                      st @base + 827760, 8;
+                      st @base + 827768, 0;
+                      st @base + 827776, 0;
+                      st @base + 827784, 2;
+                      st @base + 827792, lds 1 (rsc + 544);
+                      st @base + 827800, 4;
+                      st @base + 827808, lds 1 (rsc + 544);
+                      st @base + 827816, 0;
+                      st @base + 827824, 0;
+                      st @base + 827832, 0;
+                      @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                      st @base + 827736, 0;
                       dw = 1;
                       while dw {
-                        @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                        if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                        @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                        if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                           dw = 0;
                         } else {
-                          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                         }
                       }
                       dok = (lds 1 (@base + 593368)) == 1;
                       dcl = lds 1 (@base + 593376);
                       if dok {
                       } else {
-                        st @base + 2711512, dcl;
-                        st @base + 897960, 12;
+                        st @base + 2845880, dcl;
+                        st @base + 1032328, 12;
                         return 12;
                       }
                     } else {
                       if da == 3 {
-                        st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                        st @base + 761560, 1;
-                        st @base + 761568, lds 1 (@base + 2711504);
-                        st @base + 761576, 1;
-                        st @base + 761584, 9;
-                        st @base + 761592, 0;
-                        st @base + 761600, 0;
-                        st @base + 761608, lds 1 (rsc + 552);
-                        st @base + 761616, lds 1 (rsc + 544);
-                        st @base + 761624, 0;
-                        st @base + 761632, 0;
-                        st @base + 761640, 0;
-                        st @base + 761648, 0;
-                        st @base + 761656, 0;
-                        @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                        st @base + 761560, 0;
+                        st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                        st @base + 827736, 1;
+                        st @base + 827744, lds 1 (@base + 2845872);
+                        st @base + 827752, 1;
+                        st @base + 827760, 9;
+                        st @base + 827768, 0;
+                        st @base + 827776, 0;
+                        st @base + 827784, lds 1 (rsc + 552);
+                        st @base + 827792, lds 1 (rsc + 544);
+                        st @base + 827800, 0;
+                        st @base + 827808, 0;
+                        st @base + 827816, 0;
+                        st @base + 827824, 0;
+                        st @base + 827832, 0;
+                        @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                        st @base + 827736, 0;
                         dw = 1;
                         while dw {
-                          @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                          if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                          @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                          if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                             dw = 0;
                           } else {
-                            @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                            @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                           }
                         }
                         dok = (lds 1 (@base + 593368)) == 1;
                         dcl = lds 1 (@base + 593376);
                         if dok {
                         } else {
-                          st @base + 2711512, dcl;
-                          st @base + 897960, 12;
+                          st @base + 2845880, dcl;
+                          st @base + 1032328, 12;
                           return 12;
                         }
                       } else {
                         if da == 4 {
-                          st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                          st @base + 761560, 1;
-                          st @base + 761568, lds 1 (@base + 2711504);
-                          st @base + 761576, 1;
-                          st @base + 761584, 11;
-                          st @base + 761592, 0;
-                          st @base + 761600, 0;
-                          st @base + 761608, 0;
-                          st @base + 761616, 0;
-                          st @base + 761624, 0;
-                          st @base + 761632, 0;
-                          st @base + 761640, 0;
-                          st @base + 761648, 0;
-                          st @base + 761656, 0;
-                          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                          st @base + 761560, 0;
+                          st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                          st @base + 827736, 1;
+                          st @base + 827744, lds 1 (@base + 2845872);
+                          st @base + 827752, 1;
+                          st @base + 827760, 11;
+                          st @base + 827768, 0;
+                          st @base + 827776, 0;
+                          st @base + 827784, 0;
+                          st @base + 827792, 0;
+                          st @base + 827800, 0;
+                          st @base + 827808, 0;
+                          st @base + 827816, 0;
+                          st @base + 827824, 0;
+                          st @base + 827832, 0;
+                          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                          st @base + 827736, 0;
                           dw = 1;
                           while dw {
-                            @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                            @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                            if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                               dw = 0;
                             } else {
-                              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                             }
                           }
                           dok = (lds 1 (@base + 593368)) == 1;
                           dcl = lds 1 (@base + 593376);
                           if dok {
                           } else {
-                            st @base + 2711512, dcl;
-                            st @base + 897960, 12;
+                            st @base + 2845880, dcl;
+                            st @base + 1032328, 12;
                             return 12;
                           }
                         } else {
                           if da == 5 {
-                            st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                            st @base + 761560, 1;
-                            st @base + 761568, lds 1 (@base + 2711504);
-                            st @base + 761576, 2;
-                            st @base + 761584, 10;
-                            st @base + 761592, lds 1 (@base + 2711456);
-                            st @base + 761600, lds 1 (@base + 2711464);
-                            st @base + 761608, 0;
-                            st @base + 761616, 0;
-                            st @base + 761624, 0;
-                            st @base + 761632, 0;
-                            st @base + 761640, 0;
-                            st @base + 761648, lds 1 (rsc + 544);
-                            st @base + 761656, 0;
-                            st @base + 761664, 7;
-                            st @base + 761672, lds 1 (@base + 2711456);
-                            st @base + 761680, lds 1 (@base + 2711464);
-                            st @base + 761688, 0;
-                            st @base + 761696, 0;
-                            st @base + 761704, 0;
-                            st @base + 761712, 0;
-                            st @base + 761720, 0;
-                            st @base + 761728, 0;
-                            st @base + 761736, 0;
-                            @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                            st @base + 761560, 0;
+                            st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                            st @base + 827736, 1;
+                            st @base + 827744, lds 1 (@base + 2845872);
+                            st @base + 827752, 2;
+                            st @base + 827760, 10;
+                            st @base + 827768, lds 1 (@base + 2845824);
+                            st @base + 827776, lds 1 (@base + 2845832);
+                            st @base + 827784, 0;
+                            st @base + 827792, 0;
+                            st @base + 827800, 0;
+                            st @base + 827808, 0;
+                            st @base + 827816, 0;
+                            st @base + 827824, lds 1 (rsc + 544);
+                            st @base + 827832, 0;
+                            st @base + 827840, 7;
+                            st @base + 827848, lds 1 (@base + 2845824);
+                            st @base + 827856, lds 1 (@base + 2845832);
+                            st @base + 827864, 0;
+                            st @base + 827872, 0;
+                            st @base + 827880, 0;
+                            st @base + 827888, 0;
+                            st @base + 827896, 0;
+                            st @base + 827904, 0;
+                            st @base + 827912, 0;
+                            @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                            st @base + 827736, 0;
                             dw = 1;
                             while dw {
-                              @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                              @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                              if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                                 dw = 0;
                               } else {
-                                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                               }
                             }
                             dok = (lds 1 (@base + 593368)) == 2;
                             dcl = lds 1 (@base + 593376);
                             if dok {
                             } else {
-                              st @base + 2711512, dcl;
-                              st @base + 897960, 12;
+                              st @base + 2845880, dcl;
+                              st @base + 1032328, 12;
                               return 12;
                             }
                           } else {
                             if da == 6 {
-                              if lds 1 (@base + 2711472) {
-                                st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                                st @base + 761560, 1;
-                                st @base + 761568, lds 1 (@base + 2711504);
-                                st @base + 761576, 1;
-                                st @base + 761584, 10;
-                                st @base + 761592, lds 1 (@base + 2711456);
-                                st @base + 761600, lds 1 (@base + 2711464);
-                                st @base + 761608, 0;
-                                st @base + 761616, 0;
-                                st @base + 761624, 0;
-                                st @base + 761632, 0;
-                                st @base + 761640, 0;
-                                st @base + 761648, 0;
-                                st @base + 761656, 0;
-                                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                                st @base + 761560, 0;
+                              if lds 1 (@base + 2845840) {
+                                st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                                st @base + 827736, 1;
+                                st @base + 827744, lds 1 (@base + 2845872);
+                                st @base + 827752, 1;
+                                st @base + 827760, 10;
+                                st @base + 827768, lds 1 (@base + 2845824);
+                                st @base + 827776, lds 1 (@base + 2845832);
+                                st @base + 827784, 0;
+                                st @base + 827792, 0;
+                                st @base + 827800, 0;
+                                st @base + 827808, 0;
+                                st @base + 827816, 0;
+                                st @base + 827824, 0;
+                                st @base + 827832, 0;
+                                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                                st @base + 827736, 0;
                                 dw = 1;
                                 while dw {
-                                  @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                                  @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                                     dw = 0;
                                   } else {
-                                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                                   }
                                 }
                                 dok = (lds 1 (@base + 593368)) == 1;
                                 dcl = lds 1 (@base + 593376);
                                 if dok {
                                 } else {
-                                  st @base + 2711512, dcl;
-                                  st @base + 897960, 12;
+                                  st @base + 2845880, dcl;
+                                  st @base + 1032328, 12;
                                   return 12;
                                 }
                               } else {
-                                st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                                st @base + 761560, 1;
-                                st @base + 761568, lds 1 (@base + 2711504);
-                                st @base + 761576, 1;
-                                st @base + 761584, 1;
-                                st @base + 761592, 0;
-                                st @base + 761600, 0;
-                                st @base + 761608, 1;
-                                st @base + 761616, 0;
-                                st @base + 761624, 0;
-                                st @base + 761632, 0;
-                                st @base + 761640, 0;
-                                st @base + 761648, 0;
-                                st @base + 761656, 0;
-                                @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                                st @base + 761560, 0;
+                                st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                                st @base + 827736, 1;
+                                st @base + 827744, lds 1 (@base + 2845872);
+                                st @base + 827752, 1;
+                                st @base + 827760, 1;
+                                st @base + 827768, 0;
+                                st @base + 827776, 0;
+                                st @base + 827784, 1;
+                                st @base + 827792, 0;
+                                st @base + 827800, 0;
+                                st @base + 827808, 0;
+                                st @base + 827816, 0;
+                                st @base + 827824, 0;
+                                st @base + 827832, 0;
+                                @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                                st @base + 827736, 0;
                                 dw = 1;
                                 while dw {
-                                  @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                                  @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                                  if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                                     dw = 0;
                                   } else {
-                                    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                                    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                                   }
                                 }
                                 dok = (lds 1 (@base + 593368)) == 1;
                                 dcl = lds 1 (@base + 593376);
                                 if dok {
                                 } else {
-                                  st @base + 2711512, dcl;
-                                  st @base + 897960, 12;
+                                  st @base + 2845880, dcl;
+                                  st @base + 1032328, 12;
                                   return 12;
                                 }
-                                st @base + 2711456, lds 1 (@base + 593384);
-                                st @base + 2711464, lds 1 (@base + 593392);
-                                st @base + 2711472, 1;
+                                st @base + 2845824, lds 1 (@base + 593384);
+                                st @base + 2845832, lds 1 (@base + 593392);
+                                st @base + 2845840, 1;
                               }
-                              st8 @base + 762224 + 13, 100;
-                              st8 @base + 762224 + 13 + 1, 114;
-                              st8 @base + 762224 + 13 + 2, 97;
-                              st8 @base + 762224 + 13 + 3, 103;
-                              st8 @base + 762224 + 13 + 4, 111;
-                              st8 @base + 762224 + 13 + 5, 110;
-                              st8 @base + 762224 + 13 + 6, 115;
-                              st8 @base + 762224 + 13 + 7, 45;
-                              st8 @base + 762224 + 13 + 8, 110;
-                              st8 @base + 762224 + 13 + 9, 101;
-                              st8 @base + 762224 + 13 + 10, 116;
-                              st8 @base + 762224 + 13 + 11, 32;
-                              st8 @base + 762224 + 13 + 12, 106;
-                              st8 @base + 762224 + 13 + 13, 111;
-                              st8 @base + 762224 + 13 + 14, 117;
-                              st8 @base + 762224 + 13 + 15, 114;
-                              st8 @base + 762224 + 13 + 16, 110;
-                              st8 @base + 762224 + 13 + 17, 97;
-                              st8 @base + 762224 + 13 + 18, 108;
-                              st8 @base + 762224 + 13 + 19, 1;
+                              st8 @base + 828400 + 13, 100;
+                              st8 @base + 828400 + 13 + 1, 114;
+                              st8 @base + 828400 + 13 + 2, 97;
+                              st8 @base + 828400 + 13 + 3, 103;
+                              st8 @base + 828400 + 13 + 4, 111;
+                              st8 @base + 828400 + 13 + 5, 110;
+                              st8 @base + 828400 + 13 + 6, 115;
+                              st8 @base + 828400 + 13 + 7, 45;
+                              st8 @base + 828400 + 13 + 8, 110;
+                              st8 @base + 828400 + 13 + 9, 101;
+                              st8 @base + 828400 + 13 + 10, 116;
+                              st8 @base + 828400 + 13 + 11, 32;
+                              st8 @base + 828400 + 13 + 12, 106;
+                              st8 @base + 828400 + 13 + 13, 111;
+                              st8 @base + 828400 + 13 + 14, 117;
+                              st8 @base + 828400 + 13 + 15, 114;
+                              st8 @base + 828400 + 13 + 16, 110;
+                              st8 @base + 828400 + 13 + 17, 97;
+                              st8 @base + 828400 + 13 + 18, 108;
+                              st8 @base + 828400 + 13 + 19, 1;
                               dj = 0;
                               while dj < 16 {
-                                st8 @base + 762224 + 33 + dj, ld8 (rsc + 616 + dj);
+                                st8 @base + 828400 + 33 + dj, ld8 (rsc + 616 + dj);
                                 dj = dj + 1;
                               }
                               st8 jsc + 536, ((0) >>> 0) & 255;
@@ -18125,7 +18129,7 @@ fun main() {
                               st8 jsc + 536 + 8, 1;
                               dj = 0;
                               while dj < 36 {
-                                st8 jsc + 536 + 9 + dj, ld8 (@base + 762224 + 13 + dj);
+                                st8 jsc + 536 + 9 + dj, ld8 (@base + 828400 + 13 + dj);
                                 dj = dj + 1;
                               }
                               k = rsc + 616;
@@ -18259,65 +18263,65 @@ fun main() {
                               v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
                               v2 = ((v2) << 32) | ((v2) >>> 32);
                               r = v0 ^ v1 ^ v2 ^ v3;
-                              st8 @base + 762224, ((36) >>> 0) & 255;
-                              st8 @base + 762224 + 1, ((36) >>> 8) & 255;
-                              st8 @base + 762224 + 2, ((36) >>> 16) & 255;
-                              st8 @base + 762224 + 3, ((36) >>> 24) & 255;
-                              st8 @base + 762224 + 4, ((r) >>> 0) & 255;
-                              st8 @base + 762224 + 4 + 1, ((r) >>> 8) & 255;
-                              st8 @base + 762224 + 4 + 2, ((r) >>> 16) & 255;
-                              st8 @base + 762224 + 4 + 3, ((r) >>> 24) & 255;
-                              st8 @base + 762224 + 4 + 4, ((r) >>> 32) & 255;
-                              st8 @base + 762224 + 4 + 5, ((r) >>> 40) & 255;
-                              st8 @base + 762224 + 4 + 6, ((r) >>> 48) & 255;
-                              st8 @base + 762224 + 4 + 7, ((r) >>> 56) & 255;
-                              st8 @base + 762224 + 12, 1;
-                              st8 @base + 762224 + 49, 165;
-                              st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                              st @base + 761560, 1;
-                              st @base + 761568, lds 1 (@base + 2711504);
-                              st @base + 761576, 2;
-                              st @base + 761584, 3;
-                              st @base + 761592, lds 1 (@base + 2711456);
-                              st @base + 761600, lds 1 (@base + 2711464);
-                              st @base + 761608, 0;
-                              st @base + 761616, 0;
-                              st @base + 761624, 0;
-                              st @base + 761632, 0;
-                              st @base + 761640, 0;
-                              st @base + 761648, 50;
-                              st @base + 761656, 0;
-                              st @base + 761664, 7;
-                              st @base + 761672, lds 1 (@base + 2711456);
-                              st @base + 761680, lds 1 (@base + 2711464);
-                              st @base + 761688, 0;
-                              st @base + 761696, 0;
-                              st @base + 761704, 0;
-                              st @base + 761712, 0;
-                              st @base + 761720, 0;
-                              st @base + 761728, 0;
-                              st @base + 761736, 0;
-                              @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                              st @base + 761560, 0;
+                              st8 @base + 828400, ((36) >>> 0) & 255;
+                              st8 @base + 828400 + 1, ((36) >>> 8) & 255;
+                              st8 @base + 828400 + 2, ((36) >>> 16) & 255;
+                              st8 @base + 828400 + 3, ((36) >>> 24) & 255;
+                              st8 @base + 828400 + 4, ((r) >>> 0) & 255;
+                              st8 @base + 828400 + 4 + 1, ((r) >>> 8) & 255;
+                              st8 @base + 828400 + 4 + 2, ((r) >>> 16) & 255;
+                              st8 @base + 828400 + 4 + 3, ((r) >>> 24) & 255;
+                              st8 @base + 828400 + 4 + 4, ((r) >>> 32) & 255;
+                              st8 @base + 828400 + 4 + 5, ((r) >>> 40) & 255;
+                              st8 @base + 828400 + 4 + 6, ((r) >>> 48) & 255;
+                              st8 @base + 828400 + 4 + 7, ((r) >>> 56) & 255;
+                              st8 @base + 828400 + 12, 1;
+                              st8 @base + 828400 + 49, 165;
+                              st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                              st @base + 827736, 1;
+                              st @base + 827744, lds 1 (@base + 2845872);
+                              st @base + 827752, 2;
+                              st @base + 827760, 3;
+                              st @base + 827768, lds 1 (@base + 2845824);
+                              st @base + 827776, lds 1 (@base + 2845832);
+                              st @base + 827784, 0;
+                              st @base + 827792, 0;
+                              st @base + 827800, 0;
+                              st @base + 827808, 0;
+                              st @base + 827816, 0;
+                              st @base + 827824, 50;
+                              st @base + 827832, 0;
+                              st @base + 827840, 7;
+                              st @base + 827848, lds 1 (@base + 2845824);
+                              st @base + 827856, lds 1 (@base + 2845832);
+                              st @base + 827864, 0;
+                              st @base + 827872, 0;
+                              st @base + 827880, 0;
+                              st @base + 827888, 0;
+                              st @base + 827896, 0;
+                              st @base + 827904, 0;
+                              st @base + 827912, 0;
+                              @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                              st @base + 827736, 0;
                               dw = 1;
                               while dw {
-                                @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                                if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                                @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                                if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                                   dw = 0;
                                 } else {
-                                  @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                                  @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                                 }
                               }
                               dok = (lds 1 (@base + 593368)) == 2;
                               dcl = lds 1 (@base + 593376);
                               if dok {
                               } else {
-                                st @base + 2711512, dcl;
-                                st @base + 897960, 12;
+                                st @base + 2845880, dcl;
+                                st @base + 1032328, 12;
                                 return 12;
                               }
                             } else {
-                              st @base + 897960, 10;
+                              st @base + 1032328, 10;
                               return 10;
                             }
                           }
@@ -18327,7 +18331,7 @@ fun main() {
                   }
                 } else {
                   if dst == 7 {
-                    st @base + 898280, (lds 1 (@base + 898280)) + 1;
+                    st @base + 1032648, (lds 1 (@base + 1032648)) + 1;
                   } else {
                     if dst == 8 {
                       if lds 1 (rsc + 496) {
@@ -18346,7 +18350,7 @@ fun main() {
                       st8 jsc + 536 + 8, 3;
                       dj = 0;
                       while dj < 0 {
-                        st8 jsc + 536 + 9 + dj, ld8 (@base + 762224 + 13 + dj);
+                        st8 jsc + 536 + 9 + dj, ld8 (@base + 828400 + 13 + dj);
                         dj = dj + 1;
                       }
                       k = dx;
@@ -18480,110 +18484,110 @@ fun main() {
                       v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
                       v2 = ((v2) << 32) | ((v2) >>> 32);
                       r = v0 ^ v1 ^ v2 ^ v3;
-                      st8 @base + 762224, ((0) >>> 0) & 255;
-                      st8 @base + 762224 + 1, ((0) >>> 8) & 255;
-                      st8 @base + 762224 + 2, ((0) >>> 16) & 255;
-                      st8 @base + 762224 + 3, ((0) >>> 24) & 255;
-                      st8 @base + 762224 + 4, ((r) >>> 0) & 255;
-                      st8 @base + 762224 + 4 + 1, ((r) >>> 8) & 255;
-                      st8 @base + 762224 + 4 + 2, ((r) >>> 16) & 255;
-                      st8 @base + 762224 + 4 + 3, ((r) >>> 24) & 255;
-                      st8 @base + 762224 + 4 + 4, ((r) >>> 32) & 255;
-                      st8 @base + 762224 + 4 + 5, ((r) >>> 40) & 255;
-                      st8 @base + 762224 + 4 + 6, ((r) >>> 48) & 255;
-                      st8 @base + 762224 + 4 + 7, ((r) >>> 56) & 255;
-                      st8 @base + 762224 + 12, 3;
-                      st8 @base + 762224 + 13, 165;
-                      st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                      st @base + 761560, 1;
-                      st @base + 761568, lds 1 (@base + 2711504);
-                      st @base + 761576, 2;
-                      st @base + 761584, 3;
-                      st @base + 761592, lds 1 (@base + 2711456);
-                      st @base + 761600, lds 1 (@base + 2711464);
-                      st @base + 761608, 0;
-                      st @base + 761616, 0;
-                      st @base + 761624, 0;
-                      st @base + 761632, 0;
-                      st @base + 761640, lds 1 (rsc + 520);
-                      st @base + 761648, 14;
-                      st @base + 761656, 0;
-                      st @base + 761664, 6;
-                      st @base + 761672, lds 1 (@base + 2711456);
-                      st @base + 761680, lds 1 (@base + 2711464);
-                      st @base + 761688, 0;
-                      st @base + 761696, 0;
-                      st @base + 761704, 0;
-                      st @base + 761712, 0;
-                      st @base + 761720, 0;
-                      st @base + 761728, 0;
-                      st @base + 761736, 0;
-                      @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                      st @base + 761560, 0;
+                      st8 @base + 828400, ((0) >>> 0) & 255;
+                      st8 @base + 828400 + 1, ((0) >>> 8) & 255;
+                      st8 @base + 828400 + 2, ((0) >>> 16) & 255;
+                      st8 @base + 828400 + 3, ((0) >>> 24) & 255;
+                      st8 @base + 828400 + 4, ((r) >>> 0) & 255;
+                      st8 @base + 828400 + 4 + 1, ((r) >>> 8) & 255;
+                      st8 @base + 828400 + 4 + 2, ((r) >>> 16) & 255;
+                      st8 @base + 828400 + 4 + 3, ((r) >>> 24) & 255;
+                      st8 @base + 828400 + 4 + 4, ((r) >>> 32) & 255;
+                      st8 @base + 828400 + 4 + 5, ((r) >>> 40) & 255;
+                      st8 @base + 828400 + 4 + 6, ((r) >>> 48) & 255;
+                      st8 @base + 828400 + 4 + 7, ((r) >>> 56) & 255;
+                      st8 @base + 828400 + 12, 3;
+                      st8 @base + 828400 + 13, 165;
+                      st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                      st @base + 827736, 1;
+                      st @base + 827744, lds 1 (@base + 2845872);
+                      st @base + 827752, 2;
+                      st @base + 827760, 3;
+                      st @base + 827768, lds 1 (@base + 2845824);
+                      st @base + 827776, lds 1 (@base + 2845832);
+                      st @base + 827784, 0;
+                      st @base + 827792, 0;
+                      st @base + 827800, 0;
+                      st @base + 827808, 0;
+                      st @base + 827816, lds 1 (rsc + 520);
+                      st @base + 827824, 14;
+                      st @base + 827832, 0;
+                      st @base + 827840, 6;
+                      st @base + 827848, lds 1 (@base + 2845824);
+                      st @base + 827856, lds 1 (@base + 2845832);
+                      st @base + 827864, 0;
+                      st @base + 827872, 0;
+                      st @base + 827880, 0;
+                      st @base + 827888, 0;
+                      st @base + 827896, 0;
+                      st @base + 827904, 0;
+                      st @base + 827912, 0;
+                      @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                      st @base + 827736, 0;
                       dw = 1;
                       while dw {
-                        @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                        if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                        @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                        if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                           dw = 0;
                         } else {
-                          @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                          @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                         }
                       }
                       dok = (lds 1 (@base + 593368)) == 2;
                       dcl = lds 1 (@base + 593376);
                       if dok {
                       } else {
-                        st @base + 2711512, dcl;
-                        st @base + 897960, 12;
+                        st @base + 2845880, dcl;
+                        st @base + 1032328, 12;
                         return 12;
                       }
-                      if lds 1 (@base + 2711448) {
-                        st @base + 2711504, (lds 1 (@base + 2711504)) + 1;
-                        st @base + 761560, 1;
-                        st @base + 761568, lds 1 (@base + 2711504);
-                        st @base + 761576, 1;
-                        st @base + 761584, 14;
-                        st @base + 761592, lds 1 (@base + 2711432);
-                        st @base + 761600, lds 1 (@base + 2711440);
-                        st @base + 761608, 0;
-                        st @base + 761616, 0;
-                        st @base + 761624, 0;
-                        st @base + 761632, 0;
-                        st @base + 761640, 0;
-                        st @base + 761648, 0;
-                        st @base + 761656, 0;
-                        @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                        st @base + 761560, 0;
+                      if lds 1 (@base + 2845816) {
+                        st @base + 2845872, (lds 1 (@base + 2845872)) + 1;
+                        st @base + 827736, 1;
+                        st @base + 827744, lds 1 (@base + 2845872);
+                        st @base + 827752, 1;
+                        st @base + 827760, 14;
+                        st @base + 827768, lds 1 (@base + 2845800);
+                        st @base + 827776, lds 1 (@base + 2845808);
+                        st @base + 827784, 0;
+                        st @base + 827792, 0;
+                        st @base + 827800, 0;
+                        st @base + 827808, 0;
+                        st @base + 827816, 0;
+                        st @base + 827824, 0;
+                        st @base + 827832, 0;
+                        @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                        st @base + 827736, 0;
                         dw = 1;
                         while dw {
-                          @dn_next(@base + 579264, 8, @base + 579328, 146376);
-                          if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2711504))) {
+                          @dn_next(@base + 579264, 8, @base + 579328, 212552);
+                          if ((lds 1 (@base + 593352)) == 1) & ((lds 1 (@base + 593360)) == (lds 1 (@base + 2845872))) {
                             dw = 0;
                           } else {
-                            @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+                            @dn_emit(@base + 579264, 8, @base + 791880, 240432);
                           }
                         }
                         dok = (lds 1 (@base + 593368)) == 1;
                         dcl = lds 1 (@base + 593376);
                         if dok {
                         } else {
-                          st @base + 2711512, dcl;
-                          st @base + 897960, 12;
+                          st @base + 2845880, dcl;
+                          st @base + 1032328, 12;
                           return 12;
                         }
-                        st @base + 2711448, 0;
+                        st @base + 2845816, 0;
                       } else {
                       }
-                      st @base + 725712, 1;
-                      @dn_emit(@base + 579264, 8, @base + 725704, 172240);
-                      @dn_next(@base + 579264, 8, @base + 579328, 146376);
+                      st @base + 791888, 1;
+                      @dn_emit(@base + 579264, 8, @base + 791880, 240432);
+                      @dn_next(@base + 579264, 8, @base + 579328, 212552);
                       dgo = 0;
                     } else {
                       if dst == 9 {
-                        st @base + 897960, 11;
+                        st @base + 1032328, 11;
                         return 11;
                       } else {
-                        st @base + 897960, 10;
+                        st @base + 1032328, 10;
                         return 10;
                       }
                     }
@@ -18601,31 +18605,31 @@ fun main() {
     } else {
     }
   } else {
-    st @base + 725712, 1;
+    st @base + 791888, 1;
   }
   var going = 1;
   while going {
     var k = lds 1 (@base + 579336);
     if 0 < ((k < 0) + (16 < k)) {
-      st @base + 897960, 1;
+      st @base + 1032328, 1;
       return 1;
     } else {
     }
     var now = lds 1 (@base + 579344);
     var wl = lds 1 (@base + 579640);
-    if 0 < ((0 < ((now < (lds 1 (@base + 897944))) + (4611686018427387904 <= now))) + (0 < ((wl < 0) + (1099511627776000 <= wl)))) {
-      st @base + 897960, 7;
+    if 0 < ((0 < ((now < (lds 1 (@base + 1032312))) + (4611686018427387904 <= now))) + (0 < ((wl < 0) + (1099511627776000 <= wl)))) {
+      st @base + 1032328, 7;
       return 7;
     } else {
     }
-    st @base + 897944, now;
+    st @base + 1032312, now;
     var wsec = artDiv(wl, 1000);
     if lds 1 (@base + 88) {
-      st @base + 897960, 10;
+      st @base + 1032328, 10;
       return 10;
     } else {
     }
-    st @base + 898288, wsec;
+    st @base + 1032656, wsec;
     var it = identityTake();
     if it {
       return it;
@@ -18641,23 +18645,23 @@ fun main() {
       e = e + 1;
     }
     var dj = 0;
-    while dj < 8 {
+    while dj < 12 {
       if ((lds 1 (@base + 593352 + (dj * 16544))) == 0) == 0 {
-        if lds 1 (@base + 898248) {
+        if lds 1 (@base + 1032616) {
           var dn = postDone(dj);
           if dn {
             return dn;
           } else {
           }
         } else {
-          st @base + 897960, 13;
+          st @base + 1032328, 13;
           return 13;
         }
       } else {
       }
       dj = dj + 1;
     }
-    if lds 1 (@base + 898248) {
+    if lds 1 (@base + 1032616) {
       var ta = postTidyAll();
       if ta {
         return ta;
@@ -18665,7 +18669,7 @@ fun main() {
       }
     } else {
     }
-    st @base + 898304, 0;
+    st @base + 1032672, 0;
     var c = 0;
     while c < 64 {
       var ca = connAct(c, now);
@@ -18676,11 +18680,11 @@ fun main() {
       c = c + 1;
     }
     var jc = 0;
-    while jc < 8 {
-      st @base + 761560 + (jc * 17048), 0;
+    while jc < 12 {
+      st @base + 827736 + (jc * 17048), 0;
       jc = jc + 1;
     }
-    if lds 1 (@base + 898248) {
+    if lds 1 (@base + 1032616) {
       var pj = 0;
       while pj < 4 {
         var pp = postPlan(pj);
@@ -18692,8 +18696,8 @@ fun main() {
       }
     } else {
     }
-    st @base + 725704, lds 1 (@base + 898304);
-    @dn_emit(@base + 579264, 8, @base + 725704, 172240);
+    st @base + 791880, lds 1 (@base + 1032672);
+    @dn_emit(@base + 579264, 8, @base + 791880, 240432);
     var sc = 0;
     while sc < 64 {
       var cs = connSettle(sc, now);
@@ -18708,7 +18712,7 @@ fun main() {
       return cw;
     } else {
     }
-    @dn_next(@base + 579264, 8, @base + 579328, 146376);
+    @dn_next(@base + 579264, 8, @base + 579328, 212552);
   }
   return 0;
 }

@@ -25,6 +25,7 @@ from typing import NamedTuple
 
 import framing_ref
 import post_ref as P
+import store_ref as J
 
 FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000, 1_800_000
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
@@ -51,13 +52,14 @@ def is_keyword(w: bytes) -> bool:
 
 
 def reply(kind: str, kept: bytes, offered: bool = False) -> str:
-    """The reply 0003 gives a line of this kind keeping these bytes; with a store, POST is a command
-    too, a well-formed one answered as the session decides (`post`)."""
+    """The reply 0003 gives a line of this kind keeping these bytes; with a store, POST, ARTICLE and
+    BODY are commands too, a well-formed POST answered as the session decides (`post`), and a
+    message-id looked up in the store (`lookup`)."""
     ws = words(kept)
     if not ws:
         return "unknown" if kind == "overlong" else "ignore"
     name, args = ws[0].upper(), ws[1:]
-    if name not in COMMANDS and not (offered and name == b"POST"):
+    if name not in COMMANDS and not (offered and name in (b"POST", b"ARTICLE", b"BODY")):
         return "unknown"
     if kind != "command":
         return "syntax"
@@ -65,11 +67,11 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
         return "capabilities"
     if name in (b"HELP", b"QUIT") and not args:
         return name.decode().lower()
-    if name in (b"HEAD", b"STAT") and len(args) <= 1:
+    if name in (b"HEAD", b"STAT", b"ARTICLE", b"BODY") and len(args) <= 1:
         if not args or is_article_number(args[0]):
             return "no-group"
         if is_message_id(args[0]):
-            return "no-such-id"
+            return "lookup" if offered else "no-such-id"
     if name == b"POST" and not args:
         return "post"
     return "syntax"
@@ -87,6 +89,7 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
         + b"\r\nPOST\r\n.\r\n",
         "help-post": help_lines[0] + b"POST\r\n" + help_lines[1],
+        "unreadable": b"403 Article not readable\r\n",
         "post": b"340 Send article to be posted\r\n",
         "posted": b"240 Article received OK\r\n",
         "failed": b"441 Posting failed\r\n",
@@ -188,6 +191,10 @@ class Conn:
     posts: list[tuple[int, P.Article]] = field(default_factory=list)
     waiting: bool = False
     sent340: int = 0
+    # the reads that answered its ARTICLE, HEAD and BODY; the one it waits for, with the command and
+    # the commit, until it gets it
+    fetches: list[P.Fetch] = field(default_factory=list)
+    wanted: tuple[str, J.Commit] | None = None
 
     def pending(self) -> bytes:
         return bytes(self.emitted[self.taken:])
@@ -379,20 +386,29 @@ class PostJudge(Judge):
     slots that free in the order they came. The article after a 340 is `post_ref`'s; it has 1,800
     seconds from the 340 to end, and once it has, no deadline runs until it is answered 240 or 441,
     or the connection closed when its outcome is unknown, at once; with the answer, what follows the
-    article is read as lines. Each turn, after the events and the completions, the connections in
-    order: the octets an article takes, then the connection's action; then the jobs."""
+    article is read as lines. An ARTICLE, HEAD or BODY of an article the store holds waits, unread
+    and with no deadline, for one of eight reads (`post_ref.Fetch`), in the order they came; what
+    the read may give goes out a send at a time, of 512 octets or what there is, as soon as what went
+    before was taken, inactivity running only while some of it is untaken; a read that fails is
+    answered 403 when it gave nothing, else its connection is closed once what it gave was taken.
+    STAT of an article the store holds is answered 223, any of the four of one it does not hold 430.
+    Each turn, after the events and the completions, the connections in order: the octets an article
+    takes, a read's next octets, then the connection's action; then the jobs."""
 
     def __init__(self, revision: bytes, source: bytes, start: P.Start, checker: P.Checker) -> None:
         super().__init__(revision, source)
         self.store = P.Store(start, checker)
         self.opened = 0
-        # the connections whose POST waits, by index and generation, in the order they came
+        # the connections whose POST waits, by index and generation, in the order they came, and
+        # those that wait for a read
         self.waiters: list[tuple[int, int]] = []
+        self.readers: list[tuple[int, int]] = []
 
-    def items(self, c: Conn) -> tuple[list[str], int, P.Article | None]:
+    def items(self, c: Conn) -> tuple[list[str], int, P.Article | P.Fetch | None]:
         """The replies the connection has had or is due, in order; where what it sent is read to;
-        and its article not ended or not answered, if any. A reply decided when given and not yet
-        given, a waiting POST or an article not answered ends the list."""
+        and its article not ended or not answered, or its read not ended, if any. A reply decided
+        when given and not yet given, a waiting POST, an article not answered or a read not ended
+        ends the list."""
         out: list[str] = []
         data, at, d, k = c.delivered, 0, 0, 0
         while (nl := data.find(b"\n", at)) >= 0:
@@ -401,13 +417,18 @@ class PostJudge(Judge):
             if r == "ignore":
                 at = nl + 1
                 continue
-            if r in ("capabilities", "post"):
+            if r in ("capabilities", "post", "lookup"):
                 if d == len(c.decisions):
                     return out, at, None
                 r = c.decisions[d]
                 d += 1
             elif r == "help":
                 r = "help-post"
+            if r.startswith("read "):
+                f = c.fetches[int(r[5:])]
+                if f.answered is None:
+                    return out, nl + 1, f
+                r = f.answered
             out.append(r)
             at = nl + 1
             if r == "quit":
@@ -427,14 +448,21 @@ class PostJudge(Judge):
     def greeting(self, c: Conn) -> bytes:
         return self.text["greeting-post" if c.greeted else "greeting"]
 
+    def text_of(self, c: Conn, r: str) -> bytes:
+        if r.startswith("stat "):
+            return b"223 0 " + bytes.fromhex(r[5:]) + P.CRLF
+        if r.startswith("read "):
+            return c.fetches[int(r[5:])].out(self.store.start.identity)
+        return self.text[r]
+
     def expected(self, c: Conn) -> bytes:
-        return self.greeting(c) + b"".join(self.text[r] for r in self.replies(c))
+        return self.greeting(c) + b"".join(self.text_of(c, r) for r in self.replies(c))
 
     def boundaries(self, c: Conn) -> list[int]:
         at = len(self.greeting(c))
         ends = [at]
         for r in self.replies(c):
-            at += len(self.text[r])
+            at += len(self.text_of(c, r))
             ends.append(at)
         return ends
 
@@ -444,8 +472,19 @@ class PostJudge(Judge):
             return c.posts[-1][1]
         return None
 
-    def next_line(self, c: Conn) -> str | None:
-        """The reply its next whole line is due, if one is due and not decided."""
+    def fetch(self, c: Conn) -> P.Fetch | None:
+        """The read that answers it, from when it gets it until it has given everything or failed."""
+        if c.fetches and c.fetches[-1].answered is None:
+            return c.fetches[-1]
+        return None
+
+    def busy(self, c: Conn) -> bool:
+        """Whether a read waits for a place or answers it."""
+        return c.wanted is not None or self.fetch(c) is not None
+
+    def due_line(self, c: Conn) -> tuple[str, bytes] | None:
+        """The reply its next whole line is due, if one is due and not decided, with what the line
+        keeps."""
         _, at, a = self.items(c)
         if a is not None:
             return None
@@ -454,21 +493,32 @@ class PostJudge(Judge):
             kind, kept = framing_ref.classify(LINE_LIMIT, bytes(c.delivered[at:nl]))
             r = reply(kind, kept, offered=True)
             if r != "ignore":
-                return r
+                return r, kept
             at = nl + 1
             nl = c.delivered.find(b"\n", at)
         return None
 
+    def next_line(self, c: Conn) -> str | None:
+        """The reply its next whole line is due, if one is due and not decided."""
+        due = self.due_line(c)
+        return None if due is None else due[0]
+
     def owed(self, c: Conn) -> bool:
-        return c.replies < len(self.replies(c)) or (self.next_line(c) is not None and not c.waiting)
+        return c.replies < len(self.replies(c)) or \
+            (self.next_line(c) is not None and not c.waiting and not self.busy(c))
 
     def admitted(self, idx: int, gen: int) -> bool:
         """Whether a POST that waits gets a slot now: fewer came before it than slots are free."""
         return (idx, gen) in self.waiters and \
             self.waiters.index((idx, gen)) < P.POSTS - len(self.store.in_slot())
 
+    def admitted_read(self, idx: int, gen: int) -> bool:
+        """Whether a connection that waits for a read gets one now: fewer came before it than reads
+        are free."""
+        return (idx, gen) in self.readers and self.readers.index((idx, gen)) < len(self.store.free_reads())
+
     def read_wanted(self, c: Conn) -> bool:
-        if not self.takes_commands(c) or c.waiting:
+        if not self.takes_commands(c) or c.waiting or self.busy(c):
             return False
         a = self.article(c)
         if a is not None:
@@ -478,8 +528,10 @@ class PostJudge(Judge):
 
     def deadlines(self, c: Conn) -> dict[str, int]:
         a = self.article(c)
-        if c.waiting or (a is not None and a.ended):
+        if c.waiting or (a is not None and a.ended) or c.wanted is not None:
             return {}
+        if self.fetch(c) is not None:
+            return {"inactivity": c.activity + INACTIVITY} if c.pending() else {}
         if a is not None:
             return {"article": c.sent340 + ARTICLE_TIME}
         found = super().deadlines(c)
@@ -490,7 +542,7 @@ class PostJudge(Judge):
     def waiting_line(self, c: Conn) -> bool:
         """Whether the program waits for the rest of a command line."""
         _, at, a = self.items(c)
-        if a is not None or c.waiting or c.pending() or self.owed(c) or not self.takes_commands(c):
+        if a is not None or c.waiting or self.busy(c) or c.pending() or self.owed(c) or not self.takes_commands(c):
             return False
         return bool(bytes(c.delivered[at:]).rsplit(b"\n", 1)[-1])
 
@@ -499,6 +551,11 @@ class PostJudge(Judge):
             return False
         if c.waiting:
             return not self.store.accepting or self.admitted(idx, gen)
+        if c.wanted is not None:
+            return self.admitted_read(idx, gen)
+        f = self.fetch(c)
+        if f is not None:
+            return f.bad or f.given < len(f.out(self.store.start.identity))
         a = self.article(c)
         if a is not None:
             start = c.posts[-1][0]
@@ -507,8 +564,9 @@ class PostJudge(Judge):
 
     def gone(self, idx: int, gen: int) -> None:
         self.store.abandon((idx, gen))
-        if (idx, gen) in self.waiters:
-            self.waiters.remove((idx, gen))
+        for waiting in (self.waiters, self.readers):
+            if (idx, gen) in waiting:
+                waiting.remove((idx, gen))
 
     def turn(self, t: Turn) -> None:
         for event in t.events:
@@ -590,8 +648,21 @@ class PostJudge(Judge):
         if a is not None and answer in ("posted", "failed") and not c.pending() and \
                 (action is None or action.kind != "send" or not action.data):
             raise Violation("stalled", f"{idx}/{gen} not answered its article's {answer} at {t.now}")
+        f = self.fetch(c)
+        if f is not None and not c.pending() and self.read_turn(t, idx, gen, c, f, action, sends):
+            return
         if a is None and not c.pending() and self.next_line(c) == "post" and c.replies == len(self.replies(c)):
             self.post_due(t, idx, gen, c, action)
+        if a is None and f is None and c.wanted is None and not c.pending() and c.replies == len(self.replies(c)):
+            line = self.due_line(c)
+            if line is not None and line[0] == "lookup":
+                self.lookup_due(t, idx, gen, c, line[1])
+        if c.wanted is not None and self.admitted_read(idx, gen):
+            cmd, commit = c.wanted
+            c.fetches.append(self.store.grant((idx, gen), cmd, commit))
+            c.decisions.append(f"read {len(c.fetches) - 1}")
+            c.wanted = None
+            self.readers.remove((idx, gen))
         if action is None:
             self.unacted(t, idx, gen, c)
             return
@@ -610,6 +681,55 @@ class PostJudge(Judge):
             self.decide(t, idx, gen, c, a, answer, action.data)
         self.send(c, idx, gen, action.data, action.read, t.now)
         sends.append((idx, len(action.data)))
+
+    def read_turn(self, t: Turn, idx: int, gen: int, c: Conn, f: P.Fetch, action: Action | None,
+                  sends: list[tuple[int, int]]) -> bool:
+        """The turn of a connection a read answers, with nothing untaken: its read's next octets
+        sent, or the 403 or the close of a read that failed. Whether it took the action whole; the
+        403, a whole reply, is left to `send`."""
+        identity = self.store.start.identity
+        if f.bad:
+            if f.given == 0:
+                if action is None or action.kind != "send" or action.data != self.text["unreadable"]:
+                    raise Violation("unreadable", f"{idx}/{gen} not answered 403 at {t.now}, its read failed")
+                f.answered, f.owner = "unreadable", None
+                return False
+            if action is None or action.kind != "close":
+                raise Violation("unread", f"{idx}/{gen} not closed at {t.now}, its read failed after giving")
+            self.gone(idx, gen)
+            del self.conns[idx]
+            return True
+        piece = f.out(identity)[f.given:f.given + CHUNK]
+        if not piece:
+            return False
+        if action is None or action.kind != "send" or action.data != piece or action.gen != gen:
+            sent = action.data[:40] if action is not None else None
+            raise Violation("read-out", f"{idx}/{gen} sent {sent!r} at {t.now}, not the next of its read, "
+                            f"{piece[:40]!r}")
+        f.given += len(piece)
+        c.emitted += piece
+        c.activity = t.now
+        if f.whole() and f.given == len(f.out(identity)):
+            f.answered, f.owner = f"read {c.fetches.index(f)}", None
+            c.replies += 1
+        if action.read != self.read_wanted(c):
+            raise Violation("read", f"{idx}/{gen} asked {'' if action.read else 'not '}to read at {t.now}")
+        c.reading = action.read
+        sends.append((idx, len(piece)))
+        return True
+
+    def lookup_due(self, t: Turn, idx: int, gen: int, c: Conn, kept: bytes) -> None:
+        """An ARTICLE, HEAD or BODY of an article the store holds: the connection waits for a read."""
+        ws = words(kept)
+        cmd = ws[0].decode().lower()
+        commit = self.store.found(ws[1])
+        if commit is None or cmd == "stat":
+            return
+        c.wanted = (cmd, commit)
+        if c.answered is None:
+            c.answered = t.now
+        if (idx, gen) not in self.readers:
+            self.readers.append((idx, gen))
 
     def post_due(self, t: Turn, idx: int, gen: int, c: Conn, action: Action | None) -> None:
         """A POST its connection is due an answer to: one at once, but for a slot it waits for."""
@@ -636,6 +756,17 @@ class PostJudge(Judge):
             c.activity = t.now
             return
         due = self.next_line(c)
+        if due == "lookup":
+            line = self.due_line(c)
+            ws = words(line[1] if line else b"")
+            commit = self.store.found(ws[1])
+            if commit is None:
+                c.decisions.append("no-such-id")
+            elif ws[0].upper() == b"STAT":
+                c.decisions.append("stat " + ws[1].hex())
+            else:
+                raise Violation("read", f"{idx} answered {ws[0]!r} at once, before a read")
+            return
         if due == "capabilities":
             c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities")
         elif due == "post":

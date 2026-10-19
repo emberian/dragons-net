@@ -47,7 +47,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 7
+def version : Nat := 8
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -490,8 +490,8 @@ theorem context_fits (ctx : News.ArticleSpec.Context) (h : ctx.ok = true) :
     at h
   exact ⟨h.1.1.1.1.1.1.1.1.1.2, h.1.1.2, fun g hg => (h.2 g hg).1.1⟩
 
-/-- The sizes are those the specification is stated with: an action carries any reply
-(`CommandSpec.text_fits`), and a connection holds a line of the limit. -/
+/-- The sizes are those the specification is stated with: an action carries any reply a connection
+gets (`SessionSpec.reply_fits`), and a connection holds a line of the limit. -/
 theorem sizes_agree :
     data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit := by
   decide +kernel

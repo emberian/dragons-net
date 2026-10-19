@@ -74,7 +74,12 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "unstuffed", "reserved-taken", "no-file-sync", "no-dir-sync",
            "no-journal-sync", "dir-syncs-overlap", "appends-overlap", "numbers-not-above",
            "sync-failure-ignored", "unknown-answered", "names-left", "unseparated", "capacity-over",
-           "refused-reserves", "stop-spares-flight", "commit-after-stop", "wait-through-stop", "lowest-first")
+           "refused-reserves", "stop-spares-flight", "commit-after-stop", "wait-through-stop", "lowest-first",
+           "ninth-read", "lines-unchecked", "crc-unchecked", "longer-served", "no-xref", "status-early",
+           "read-lowest-first", "idle-while-fetching", "read-while-fetching", "end-unsought", "header-unchecked",
+           "jobs-shared", "left-open")
+# Those of reading, tried on the scenarios that read first.
+READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -245,7 +250,7 @@ class Speaker:
             self.say(" ".join([e.kind, str(e.idx), str(e.gen), *extra]))
         for done in dones:
             said = ",".join(f"{a}:{b}" for a, b in done[3]) or "-"
-            self.say(f"complete {done[0]} {done[1]} {done[2]} {said}")
+            self.say(f"complete {done[0]} {done[1]} {done[2]} {said}" + (f" {done[5].hex()}" if done[5] else ""))
         self.say("go")
         actions: list[Action] = []
         jobs: list[tuple[int, int, list[P.Op]]] = []
@@ -278,8 +283,10 @@ class Speaker:
 def operation(token: str) -> P.Op:
     """An operation of a job, as `dn-compiler session-model` writes it."""
     match token.split(":"):
-        case ["create" | "remove" as kind, name]:
+        case ["create" | "remove" | "open" as kind, name]:
             return P.Op(kind, name=name.encode())
+        case ["read", place, gen, offset, length]:
+            return P.Op("read", int(place), int(gen), int(offset), length=int(length))
         case ["write", place, gen, offset, data]:
             return P.Op("write", int(place), int(gen), int(offset), bytes.fromhex(data))
         case ["datasync" | "close" as kind, place, gen]:
@@ -402,6 +409,32 @@ def spool_with(groups: list[list[tuple[bytes, int]]]) -> list[tuple[bytes, bytes
     return [(b"journal", journal + J.frame(KEY, len(journal), J.START, b"")), *files]
 
 
+def spool_holding(articles: list[tuple[bytes, list[tuple[bytes, int]]]], wrong_crc: tuple[int, ...] = (),
+                  header_off: int = 0) -> list[tuple[bytes, bytes]]:
+    """A spool holding each file as stored, committed to its groups as `<SEQ@old.example>`, then a
+    start record; the commits numbered in `wrong_crc` with a CRC-32C not their file's, each header
+    section's size recorded `header_off` octets off."""
+    journal = J.frame(KEY, 0, J.FORMAT, J.MAGIC + KEY)
+    files = []
+    for seq, (octets, gs) in enumerate(articles, 1):
+        crc = J.crc32c(octets) ^ (1 if seq in wrong_crc else 0)
+        c = (seq, b"<%d@old.example>" % seq, gs, octets.index(b"\r\n\r\n") + 2 + header_off, len(octets), crc)
+        journal += J.frame(KEY, len(journal), J.COMMIT, J.payload(c))
+        files.append((recovery_ref.name_of("a", seq), octets))
+    return [(b"journal", journal + J.frame(KEY, len(journal), J.START, b"")), *files]
+
+
+def stored(*body: bytes) -> bytes:
+    """A file as the store holds an article: its header section, the empty line, its body."""
+    return b"From: a@b.example\r\nSubject: s\r\n\r\n" + b"".join(line + b"\r\n" for line in body)
+
+
+def stored_of(size: int) -> bytes:
+    """A file as stored of exactly `size` octets."""
+    head = stored()
+    return head + b"".join(b"y" * (k - 2) + b"\r\n" for k in chunks(size - len(head), 900, 2))
+
+
 @dataclass
 class Failure:
     """The `nth` operation of `kind` failing, leaving what `fs_ref.fail` makes of `partial`; the
@@ -414,7 +447,8 @@ class Failure:
 @dataclass
 class Spool:
     """A store for a scenario: its groups, the spool as recovered, how long a job of each kind takes
-    (a write, a sync, a rename, ...; one by default) and the operations that fail."""
+    (a write, a sync, a rename, ...; one by default), the operations that fail, and files changed
+    after recovery, as a disk may change them under the store."""
     groups: list[bytes]
     image: list[tuple[bytes, bytes]] = field(default_factory=fresh_spool)
     delays: dict[str, int] = field(default_factory=dict)
@@ -423,9 +457,10 @@ class Spool:
     run: bytes = bytes.fromhex("0011223344556677")
     journal: tuple[int, int] = (1, 0)
     job_gen: int = 7
+    tamper: list[tuple[bytes, bytes]] = field(default_factory=list)
 
     def start(self) -> P.Start:
-        return P.Start(self.groups, self.identity, self.run, self.image, self.journal, self.job_gen)
+        return P.Start(self.groups, self.identity, self.run, self.image, self.journal, self.job_gen, self.tamper)
 
     def line(self) -> str:
         groups = ",".join(g.hex() for g in self.groups) or "-"
@@ -444,6 +479,11 @@ class Host:
         for name, octets in spool.image:
             self.disk.files.append(fs_ref.File(seen=octets, kept=octets, most=len(octets)))
             self.disk.names[name] = fs_ref.Name(synced=len(self.disk.files) - 1)
+        for name, octets in spool.tamper:
+            held = self.disk.holding(name)
+            if held is None:
+                raise LaneError(f"a change to {name!r}, which the spool does not hold")
+            self.disk.files[held] = fs_ref.File(seen=octets, kept=octets, most=len(octets))
         self.gens = [0] * P.PLACES
         place, gen = spool.journal
         self.gens[place] = gen
@@ -477,22 +517,28 @@ class Host:
 
     def run(self, slot: int, gen: int, ops: list[P.Op]) -> P.Done:
         results: list[tuple[int, int]] = []
+        data = b""
         for k, op in enumerate(ops):
             label = self.label(op)
             self.counts[label] = self.counts.get(label, 0) + 1
             failure = next((f for f in self.spool.failures if f.kind == label and f.nth == self.counts[label]), None)
             fop = self.disk_op(op)
             if failure is not None:
-                if fop is not None:
+                if fop is not None and op.kind not in ("open", "read"):
                     fs_ref.fail(self.disk, fop, failure.partial)
                 if op.kind == "close":
                     self.closed(op)
-                return slot, gen, k, results, failure.partial
+                return slot, gen, k, results, failure.partial, data
+            if op.kind == "read" and fop is not None:
+                said = fs_ref.do(self.disk, fop)
+                data = bytes.fromhex(said[6:]) if said[6:] != "-" else b""
+                results.append((len(data), 0))
+                continue
             result = self.done(op, fop)
             if result is None:
-                return slot, gen, k, results, 0
+                return slot, gen, k, results, 0, data
             results.append(result)
-        return slot, gen, len(ops), results, 0
+        return slot, gen, len(ops), results, 0, data
 
     def file(self, op: P.Op) -> int:
         if self.places.get(op.place) is None or self.gens[op.place] != op.gen:
@@ -503,6 +549,10 @@ class Host:
         match op.kind:
             case "create":
                 return "create", [op.name.hex()]
+            case "open":
+                return "open", [op.name.hex()]
+            case "read":
+                return "read", [str(self.file(op)), str(op.offset), str(op.length)]
             case "write":
                 f = self.file(op)
                 if op.offset != len(self.disk.files[f].seen):
@@ -531,7 +581,7 @@ class Host:
         said = fs_ref.do(self.disk, fop)
         if said in ("exists", "missing"):
             return None
-        if op.kind == "create":
+        if op.kind in ("create", "open"):
             place = next(p for p in range(P.PLACES) if p not in self.places)
             self.places[place] = int(said[5:])
             return place, self.gens[place]
@@ -598,7 +648,12 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
                 target.reading = action.read
             else:
                 del links[action.idx]
-        host.take(now, jobs)
+        try:
+            host.take(now, jobs)
+        except LaneError:
+            # The turn is the judge's to see, the jobs that break the host's contract with it.
+            trace.append(Turn(now, events, actions, took, 0, wall, dones, jobs))
+            raise
         deadline = session.settle(took)
         if isinstance(deadline, str):
             raise LaneError(f"the session answered {deadline} to what the host took")
@@ -814,8 +869,9 @@ class Articles:
                 raise LaneError(f"the article reference answered {words}")
 
 
-def article(*fields: str, body: tuple[str, ...] = ("body",)) -> bytes:
-    """An article as a client sends it: its lines dot-stuffed, then the terminator."""
+def article(*fields: str, body: tuple[str, ...] = ("text",)) -> bytes:
+    """An article as a client sends it: its lines dot-stuffed, then the terminator. Its body names no
+    command, so that an article refused before its 340, read as lines, asks for nothing."""
     return b"".join(((b"." if line.startswith(".") else b"") + line.encode() + b"\r\n")
                     for line in (*fields, "", *body)) + b".\r\n"
 
@@ -954,6 +1010,103 @@ def post_scenarios() -> Iterator[PostScenario]:
         Client(1, [(6, ascii_lines("POST")), (8, article(*BASIC)), (9, QUIT)], post=True)], Spool(GROUPS)
 
 
+SMALL = stored(b"body", b"..dot")
+BIG = stored(*(b"line %d " % k + b"y" * 60 for k in range(600)))
+ID1, ID2 = "<1@old.example>", "<2@old.example>"
+TWO = spool_holding([(SMALL, [(b"local.test", 1)]), (BIG, [(b"local.test", 2), (b"local.other", 7)])])
+
+
+def reader(*lines: str, at: int = 5, **more: Any) -> Client:
+    """A client that sends the lines and QUIT at `at`."""
+    return Client(1, [(at, ascii_lines(*lines, "QUIT"))], **more)
+
+
+def read_scenarios() -> Iterator[PostScenario]:
+    yield "reads of the spool's articles", [
+        reader(f"ARTICLE {ID1}", f"HEAD {ID2}", f"BODY {ID1}", f"STAT {ID2}", "ARTICLE <none@x.example>",
+               "STAT <none@x.example>", "BODY 3", "ARTICLE", "HELP")], Spool(GROUPS, image=TWO)
+    yield "a big article sent to a slow reader", [reader(f"ARTICLE {ID2}", f"BODY {ID2}", take=300, slow=5)], \
+        Spool(GROUPS, image=TWO)
+    yield "a command after a read", [
+        Client(1, [(5, ascii_lines(f"ARTICLE {ID2}")), (2_000, QUIT)], take=300, slow=5)], Spool(GROUPS, image=TWO)
+    posted = article(*BASIC, "Message-ID: <read@x.example>")
+    yield "an article read after it is posted", [
+        Client(1, [(5, ascii_lines("POST")), (6, posted),
+                   (50, ascii_lines("ARTICLE <read@x.example>", "HEAD <read@x.example>", "STAT <read@x.example>",
+                                    "QUIT"))], post=True)], Spool(GROUPS)
+    yield "an article asked for while it is posted", [
+        poster(sent=posted), Client(1, [(7, ascii_lines("STAT <read@x.example>", "ARTICLE <read@x.example>")),
+                                        (20_000, ascii_lines("ARTICLE <read@x.example>", "QUIT"))])], \
+        Spool(GROUPS, delays={"journal-sync": 10_000})
+    yield "nine readers at once", [reader(f"ARTICLE {ID2}", take=200, slow=5) for _ in range(9)], \
+        Spool(GROUPS, image=TWO)
+    yield "readers waiting in the order they came", [
+        reader(f"ARTICLE {ID1}", take=5, slow=5), *(reader(f"ARTICLE {ID2}", take=100, slow=5) for _ in range(7)),
+        reader(f"ARTICLE {ID1}", at=7), reader(f"HEAD {ID2}", at=6)], Spool(GROUPS, image=TWO)
+    yield "a file whose CRC-32C is not its commit's", [reader(f"ARTICLE {ID1}", f"HEAD {ID2}")], \
+        Spool(GROUPS, image=spool_holding([(SMALL, [(b"local.test", 1)]), (BIG, [(b"local.test", 2)])],
+                                          wrong_crc=(1,)))
+    yield "a file with a bare LF", [reader(f"BODY {ID1}")], \
+        Spool(GROUPS, image=spool_holding([(stored(b"one\nline", b"two"), [(b"local.test", 1)])]))
+    yield "a big file whose CRC-32C is not its commit's", [reader(f"ARTICLE {ID1}")], \
+        Spool(GROUPS, image=spool_holding([(BIG, [(b"local.test", 1)])], wrong_crc=(1,)))
+    first = recovery_ref.name_of("a", 1)
+    yield "a file grown after the start", [reader(f"ARTICLE {ID1}")], \
+        Spool(GROUPS, image=TWO, tamper=[(first, SMALL + b"x\r\n")])
+    yield "a file cut after the start", [reader(f"ARTICLE {ID1}")], \
+        Spool(GROUPS, image=TWO, tamper=[(first, SMALL[:-3])])
+    yield "an open that fails", [reader(f"ARTICLE {ID1}", f"HEAD {ID1}")], \
+        Spool(GROUPS, image=TWO, failures=[Failure("open")])
+    yield "a read that fails after a first", [reader(f"ARTICLE {ID2}")], \
+        Spool(GROUPS, image=TWO, failures=[Failure("read", nth=2)])
+    yield "a reset during a read", [reader(f"ARTICLE {ID2}", take=100, slow=5, reset=40)], Spool(GROUPS, image=TWO)
+    yield "a reader that stops during a read", [reader(f"ARTICLE {ID2}", take=100, slow=5, pause=(30, 10 ** 9))], \
+        Spool(GROUPS, image=TWO)
+    yield "reads slower than the inactivity deadline", [reader(f"ARTICLE {ID2}")], \
+        Spool(GROUPS, image=TWO, delays={"read": 2_000_000})
+    long_groups = [b"local." + bytes([97 + k]) * 58 for k in range(16)]
+    yield "an Xref folded", [reader(f"HEAD {ID1}", f"ARTICLE {ID1}")], \
+        Spool(long_groups, image=spool_holding([(SMALL, [(g, 1) for g in long_groups])]))
+    yield "reads once the store has stopped", [poster(), Client(1, [(500, ascii_lines(f"ARTICLE {ID1}", "QUIT"))])], \
+        Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
+    yield "commands sent with an ARTICLE", [
+        Client(1, [(5, ascii_lines(f"ARTICLE {ID1}", "HELP", f"STAT {ID1}", "QUIT"))])], Spool(GROUPS, image=TWO)
+    yield "a line begun behind an ARTICLE", [
+        Client(1, [(5, ascii_lines(f"ARTICLE {ID1}") + b"HEL"), (900_000, b"P\r\nQUIT\r\n")])], Spool(GROUPS, image=TWO)
+    for size in (16_384, 32_768):
+        exact = spool_holding([(stored_of(size), [(b"local.test", 1)])])
+        yield f"a file of {size:,} octets", [reader(f"ARTICLE {ID1}", f"HEAD {ID1}")], Spool(GROUPS, image=exact)
+        yield f"a file of {size:,} octets grown after the start", [reader(f"ARTICLE {ID1}")], \
+            Spool(GROUPS, image=exact, tamper=[(first, stored_of(size) + b"z")])
+    yield "a header section not where its commit says", [reader(f"HEAD {ID1}")], \
+        Spool(GROUPS, image=spool_holding([(SMALL, [(b"local.test", 1)])], header_off=2))
+    yield "posts while reads are in flight", [
+        *(poster(at=100) for _ in range(4)), *(reader(f"ARTICLE {ID2}", take=500, slow=5) for _ in range(8))], \
+        Spool(GROUPS, image=TWO, delays={"read": 1_000, "create": 500}, failures=[Failure("datasync")])
+    yield "a reader reset while it waits", [
+        *(reader(f"ARTICLE {ID2}", take=200, slow=5) for _ in range(8)), reader(f"ARTICLE {ID1}", at=6, reset=30)], \
+        Spool(GROUPS, image=TWO)
+
+
+def read_breaches() -> Iterator[tuple[str, list[str], int]]:
+    """Scripts with a store in which a host reports a read, or a file opened at a place still in use,
+    as it may not: code 14."""
+    old = Spool(GROUPS, image=TWO)
+    asked = [old.line(), f"turn 1 {WALL + 1}", "open 0 1", "go", f"took {GREETING}", f"turn 5 {WALL + 5}",
+             "recv 0 1 " + ascii_lines(f"ARTICLE {ID1}").hex(), "go", "took 0", f"turn 6 {WALL + 6}"]
+    opened = [*asked, "complete 0 8 1 2:0", "go", "took", f"turn 7 {WALL + 7}"]
+    more = SMALL + b"xx"
+    yield "a read of more octets than it asked", [*opened, f"complete 0 9 2 {len(more)}:0,0:0 {more.hex()}", "go"], 14
+    yield "octets a read does not count", [*opened, f"complete 0 9 2 3:0,0:0 {SMALL[:4].hex()}", "go"], 14
+    yield "a file opened at the journal's place", [*asked, "complete 0 8 1 1:0", "go"], 14
+    spool = Spool(GROUPS)
+    greeting = len(ref.texts(*IDENTITY)["greeting-post"])
+    yield "a file created at the journal's place", [
+        spool.line(), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeting}", f"turn 5 {WALL + 5}",
+        "recv 0 1 " + ascii_lines("POST").hex(), "go", "took 31", f"turn 6 {WALL + 6}",
+        "recv 0 1 " + article(*BASIC).hex(), "go", "took 0", f"turn 7 {WALL + 7}", "complete 0 8 1 1:0", "go"], 14
+
+
 def breaches() -> Iterator[tuple[str, list[str], int]]:
     """Scripts a host breaks the contract in, and the code the session has to stop with."""
     begin = ["turn 1", "open 0 1", "go", f"took {GREETING}"]
@@ -984,7 +1137,7 @@ def post_breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "a completion of no job", [spool.line(), f"turn 1 {WALL}", "complete 0 1 0 -", "go"], 13
     yield "a completion of another generation", [*posted, "complete 0 9 1 2:0", "go"], 13
     yield "more completions than jobs", [spool.line(), f"turn 1 {WALL}",
-                                         *(f"complete {k} 1 0 -" for k in range(9)), "go"], 14
+                                         *(f"complete {k} 1 0 -" for k in range(P.JOBS + 1)), "go"], 14
     yield "more operations done than the job has", [*posted, "complete 0 8 2 2:0,0:0", "go"], 14
     yield "results for operations not done", [*posted, "complete 0 8 0 2:0", "go"], 14
     yield "a file at a place past the table", [*posted, "complete 0 8 1 16:0", "go"], 14
@@ -1164,10 +1317,38 @@ def posted_refused(trace: list[Turn]) -> None:
     t.actions[k] = t.actions[k]._replace(data=b"240 Article received OK\r\n")
 
 
+def changed_read(trace: list[Turn]) -> None:
+    """An octet of an article changed as it is sent."""
+    t, k, _ = next(s for s in sends(trace) if s[0].actions[s[1]].data.startswith(b"220"))
+    data = t.actions[k].data
+    t.actions[k] = t.actions[k]._replace(data=data[:-6] + b"X" + data[-5:])
+
+
+def unreadable_sent(trace: list[Turn]) -> None:
+    """A file that fails its check sent all the same."""
+    t, k, n = next(s for s in sends(trace) if s[0].actions[s[1]].data.startswith(b"403"))
+    sent = b"220 0 <1@old.example>\r\n" + SMALL + b".\r\n"
+    t.actions[k] = t.actions[k]._replace(data=sent)
+    t.took[n] = len(sent)
+
+
+def read_moved(trace: list[Turn]) -> None:
+    """A read of the second octets of a file asked one octet further on."""
+    for t in trace:
+        for k, (slot, gen, ops) in enumerate(t.jobs):
+            if ops[0].kind == "read" and ops[0].offset:
+                t.jobs[k] = (slot, gen, [ops[0]._replace(offset=ops[0].offset + 1), *ops[1:]])
+                return
+    raise LaneError("no read on to plant a defect on")
+
+
 POST_PLANTS: list[tuple[str, str, str, Plant]] = [
     ("an article's octets changed in a write", "a post", "write", changed_write),
     ("an article number changed in a commit", "posts to groups with articles", "journal", changed_commit),
     ("a refused article answered 240", "a post refused", "outcome", posted_refused),
+    ("an article's octets changed as they are sent", "reads of the spool's articles", "read-out", changed_read),
+    ("a file that fails its check sent", "a file whose CRC-32C is not its commit's", "unreadable", unreadable_sent),
+    ("a read asked past where the last ended", "a big article sent to a slow reader", "read", read_moved),
 ]
 
 
@@ -1195,8 +1376,11 @@ def played_post(mutant: str, posts: list[PostScenario]) -> Played:
 
 def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario], checker: Articles) -> str:
     """The first scenario on which the judge refuses the session with `mutant` broken, those with a
-    store first for a rule of POST; a scenario the broken session cannot finish is judged on the
-    turns it had."""
+    store first for a rule of POST, those that read first for a rule of reading; a scenario the
+    broken session cannot finish is judged on the turns it had."""
+    if mutant in READ_MUTANTS:
+        reads = {name for name, _, _ in read_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in reads)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1225,12 +1409,12 @@ def check() -> Report:
             raise LaneError(f"scenario {name!r}: {error}") from None
         traces[name] = trace
         turns += len(trace)
-    for name, script, code in (*breaches(), *post_breaches()):
+    for name, script, code in (*breaches(), *post_breaches(), *read_breaches()):
         try:
             check_breach(script, code, model_command())
         except LaneError as error:
             raise LaneError(f"breach {name!r}: {error}") from None
-    posts = list(post_scenarios())
+    posts = [*post_scenarios(), *read_scenarios()]
     post_traces = {}
     with Articles() as checker:
         for name, clients, spool in posts:
@@ -1262,7 +1446,7 @@ def check() -> Report:
                                                f"{len(post_traces)} with a store and {post_turns:,} turns"]})
     return Report("checked", None, [ARTICLES, REQUIREMENTS], {
         "scenarios": len(traces), "turns": turns, "store_scenarios": len(post_traces), "store_turns": post_turns,
-        "breaches": sum(1 for _ in breaches()) + sum(1 for _ in post_breaches()), "mutants_caught": mutants,
+        "breaches": sum(1 for _ in (*breaches(), *post_breaches(), *read_breaches())), "mutants_caught": mutants,
         "planted_defects_caught": planted})
 
 

@@ -52,6 +52,7 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .ignore => 0 | .capabilities => 1 | .help => 2 | .quit => 3 | .noGroup => 4
   | .noSuchId => 5 | .unknown => 6 | .syntax => 7 | .post => 8 | .posted => 9 | .failed => 10
   | .notPermitted => 11 | .unavailable => 12 | .capabilitiesPost => 13 | .helpPost => 14
+  | .lookup .. => 17 | .stat _ => 18 | .unreadable => 19
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15
