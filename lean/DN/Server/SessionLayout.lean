@@ -47,7 +47,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 8
+def version : Nat := 9
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -175,8 +175,9 @@ def ownSrc : Nat := ownSrcLen + 8
 /-- The store: whether there is one, whether it accepts, the next sequence number, where the journal
 ends, how many numbers are set aside, the batch's wall clock in seconds; what a function called
 last found; the actions of the turn so far; how many connections have opened, the POSTs waiting
-for a slot (a count, then an index and a generation each), the journal's key and the index's; a
-Message-ID being looked up, a message a tag is made of, and the CRC-32C's table. -/
+for a slot and the connections waiting for a read (each a count, then an index and a generation
+each), the journal's key and the index's; a Message-ID being looked up and its length, a message a
+tag is made of, and the CRC-32C's table. -/
 def ownStore : Nat := ownSrc + srcMax
 def ownAccepting : Nat := ownStore + 8
 def ownNext : Nat := ownAccepting + 8
@@ -188,9 +189,12 @@ def ownActs : Nat := ownRet + 8
 def ownOpened : Nat := ownActs + 8
 def ownWaitN : Nat := ownOpened + 8
 def ownWaits : Nat := ownWaitN + 8
-def ownKey : Nat := ownWaits + conns * 16
+def ownReadN : Nat := ownWaits + conns * 16
+def ownReaders : Nat := ownReadN + 8
+def ownKey : Nat := ownReaders + conns * 16
 def ownIndexKey : Nat := ownKey + News.Journal.keyLength
-def ownId : Nat := ownIndexKey + indexKeyLen
+def ownIdLen : Nat := ownIndexKey + indexKeyLen
+def ownId : Nat := ownIdLen + 8
 def ownMsg : Nat := ownId + 256
 def ownCrc : Nat := ownMsg + (News.Journal.maxFrame + 7) / 8 * 8
 def ownTexts : Nat := ownCrc + 256 * 8
@@ -204,7 +208,8 @@ def texts : List (List (BitVec 8)) :=
    ascii "CAPABILITIES", ascii "HELP", ascii "QUIT", ascii "HEAD", ascii "STAT", ascii "POST",
    greetingPostHead, greetingPostMid, capabilitiesPostTail, helpPostHead, text ⟨[], []⟩ .post,
    text ⟨[], []⟩ .posted, text ⟨[], []⟩ .failed, text ⟨[], []⟩ .notPermitted,
-   text ⟨[], []⟩ .unavailable]
+   text ⟨[], []⟩ .unavailable, ascii "ARTICLE", ascii "BODY", ascii "220 0 ", ascii "221 0 ",
+   ascii "222 0 ", ascii "223 0 ", text ⟨[], []⟩ .unreadable, ascii "Xref: ", ascii ".\r\n"]
 
 /-- Where the `k`-th text starts, from `ownTexts`. -/
 def textAt (k : Nat) : Nat := ((texts.take k).map List.length).sum
@@ -223,7 +228,9 @@ ending), whether the last action asked to read, whether a send waits for the hos
 connection ready, the three deadlines, how many bytes are to send, the held input's end and the
 position it is framed to, whether it has an action in the turn, its number among the connections,
 whether it was greeted with 200, whether a POST waits, the slot of its POST and one, or zero, the
-article's deadline, the framer's block, the held input, and the output. -/
+article's deadline, the ARTICLE, HEAD or BODY it waits for a read for or is answered by (zero, or
+one, two or three) and its commit's place in recovery's area, the read that answers it and one,
+or zero, the framer's block, the held input, and the output. -/
 def cLive : Nat := 0
 def cGen : Nat := 8
 def cPhase : Nat := 16
@@ -241,7 +248,10 @@ def cGreeted : Nat := 104
 def cWaiting : Nat := 112
 def cPost : Nat := 120
 def cArticleDue : Nat := 128
-def cFramer : Nat := 136
+def cWant : Nat := 136
+def cWantCi : Nat := 144
+def cRead : Nat := 152
+def cFramer : Nat := 160
 def cHeld : Nat := cFramer + framerHead + News.SessionSpec.lineLimit
 def cOut : Nat := cHeld + data
 def connSlot : Nat := cOut + data
@@ -324,8 +334,57 @@ def slotLen : Nat := zBuf + bufMax
 def indexOff : Nat := slotsOff + posts * slotLen
 def indexCells : Nat := 8192
 
+/-- The reads, each the state of `DN.News.PostSpec.Read` as the program keeps it: whether it is in
+use, its owner (whether it has one, its index and generation), the command (one, two or three) and
+its commit's place in recovery's area; the file (none, open, gone) and its place and generation; the
+octets read and checked, how many it has given, whether it failed; its job in flight — whether it
+has one, its job slot, generation, operations, task (open, read, close) and the octets asked; the
+header section's size, the file's size and CRC-32C; the check carried over from one read to the
+next — the CRC-32C so far, whether at a line's start, after a CR, after a dot that starts a line;
+where in the file its buffer starts and how many octets it holds; the 220, 221 or 222 line and the
+Xref field with their lengths, and the buffer: the octets of the last read. -/
+def readsOff : Nat := indexOff + indexCells * 8
+def reads : Nat := ({} : News.PostSpec.Rules).reads
+def rLive : Nat := 0
+def rOwner : Nat := 8
+def rOwnIdx : Nat := 16
+def rOwnGen : Nat := 24
+def rCmd : Nat := 32
+def rCi : Nat := 40
+def rFile : Nat := 48
+def rPlace : Nat := 56
+def rPGen : Nat := 64
+def rGot : Nat := 72
+def rGiven : Nat := 80
+def rBad : Nat := 88
+def rBusy : Nat := 96
+def rJob : Nat := 104
+def rJGen : Nat := 112
+def rJOps : Nat := 120
+def rTask : Nat := 128
+def rAsked : Nat := 136
+def rHead : Nat := 144
+def rSize : Nat := 152
+def rCrcWant : Nat := 160
+def rAcc : Nat := 168
+def rBol : Nat := 176
+def rCr : Nat := 184
+def rDot : Nat := 192
+def rBufAt : Nat := 200
+def rBufLen : Nat := 208
+def rLineLen : Nat := 216
+def rXrefLen : Nat := 224
+def rLine : Nat := 232
+/-- The longest 220, 221 or 222 line and the longest Xref field: the path identity and sixteen
+groups, each a name and a number of ten digits, folded at most twice. -/
+def statusMax : Nat := 264
+def xrefMax : Nat := align8 (6 + identityMax + 16 * (1 + groupMax + 1 + 10) + 2 * 2 + 2)
+def rXref : Nat := rLine + statusMax
+def rBuf : Nat := rXref + xrefMax
+def readLen : Nat := rBuf + jobData
+
 /-- The bytes of heap the program needs from `@base`. -/
-def size : Nat := indexOff + indexCells * 8
+def size : Nat := readsOff + reads * readLen
 
 /-- Event kinds. -/
 def opened : Nat := 1
@@ -471,7 +530,8 @@ theorem offsets_aligned :
       emitJobs % 8 = 0 ∧ opSlot % 8 = 0 ∧ jobHead % 8 = 0 ∧ jobSlot % 8 = 0 ∧ nextStore % 8 = 0 ∧
       recOff % 8 = 0 ∧ drvOff % 8 = 0 ∧ ownStore % 8 = 0 ∧ ownWaits % 8 = 0 ∧ ownKey % 8 = 0 ∧
       ownId % 8 = 0 ∧ ownMsg % 8 = 0 ∧ ownCrc % 8 = 0 ∧ slotsOff % 8 = 0 ∧ slotLen % 8 = 0 ∧
-      zBuf % 8 = 0 ∧ indexOff % 8 = 0 := by
+      zBuf % 8 = 0 ∧ indexOff % 8 = 0 ∧ ownReaders % 8 = 0 ∧ ownIdLen % 8 = 0 ∧ readsOff % 8 = 0 ∧
+      rXref % 8 = 0 ∧ rBuf % 8 = 0 ∧ readLen % 8 = 0 := by
   decide +kernel
 
 /-- The configuration lies past the article's area, which starts where that program's lane has

@@ -429,6 +429,14 @@ def stored(*body: bytes) -> bytes:
     return b"From: a@b.example\r\nSubject: s\r\n\r\n" + b"".join(line + b"\r\n" for line in body)
 
 
+def stored_header(size: int) -> bytes:
+    """A file as stored whose header section is of `size` octets, CRLFs counted: X-Pad fields after
+    the others; then the empty line and a body of one line."""
+    head = b"From: a@b.example\r\nSubject: s\r\n"
+    pads = b"".join(b"X-Pad: " + b"p" * (k - 9) + b"\r\n" for k in chunks(size - len(head), 900, 10))
+    return head + pads + b"\r\nbody\r\n"
+
+
 def stored_of(size: int) -> bytes:
     """A file as stored of exactly `size` octets."""
     head = stored()
@@ -1048,6 +1056,8 @@ def read_scenarios() -> Iterator[PostScenario]:
                                           wrong_crc=(1,)))
     yield "a file with a bare LF", [reader(f"BODY {ID1}")], \
         Spool(GROUPS, image=spool_holding([(stored(b"one\nline", b"two"), [(b"local.test", 1)])]))
+    yield "a file with a line that starts with one dot", [reader(f"BODY {ID1}")], \
+        Spool(GROUPS, image=spool_holding([(stored(b"one", b".two"), [(b"local.test", 1)])]))
     yield "a big file whose CRC-32C is not its commit's", [reader(f"ARTICLE {ID1}")], \
         Spool(GROUPS, image=spool_holding([(BIG, [(b"local.test", 1)])], wrong_crc=(1,)))
     first = recovery_ref.name_of("a", 1)
@@ -1067,6 +1077,13 @@ def read_scenarios() -> Iterator[PostScenario]:
     long_groups = [b"local." + bytes([97 + k]) * 58 for k in range(16)]
     yield "an Xref folded", [reader(f"HEAD {ID1}", f"ARTICLE {ID1}")], \
         Spool(long_groups, image=spool_holding([(SMALL, [(g, 1) for g in long_groups])]))
+    for width, last in ((998, 41), (999, 42)):
+        groups = [*long_groups[:14], b"x" * last]
+        yield f"an Xref line of {width} octets", [reader(f"HEAD {ID1}")], \
+            Spool(groups, image=spool_holding([(SMALL, [(g, 1) for g in groups])]))
+    for size in (16_383, 32_767):
+        yield f"a header section ending a read past {size + 1:,} octets", [reader(f"ARTICLE {ID1}", f"HEAD {ID1}")], \
+            Spool(GROUPS, image=spool_holding([(stored_header(size), [(b"local.test", 1)])]))
     yield "reads once the store has stopped", [poster(), Client(1, [(500, ascii_lines(f"ARTICLE {ID1}", "QUIT"))])], \
         Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
     yield "commands sent with an ARTICLE", [
@@ -1099,6 +1116,12 @@ def read_breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "a read of more octets than it asked", [*opened, f"complete 0 9 2 {len(more)}:0,0:0 {more.hex()}", "go"], 14
     yield "octets a read does not count", [*opened, f"complete 0 9 2 3:0,0:0 {SMALL[:4].hex()}", "go"], 14
     yield "a file opened at the journal's place", [*asked, "complete 0 8 1 1:0", "go"], 14
+    yield "a file opened at a place past the table", [*asked, f"complete 0 8 1 {P.PLACES}:0", "go"], 14
+    both = ascii_lines(f"ARTICLE {ID1}").hex()
+    yield "a file opened at another read's place", [
+        old.line(), f"turn 1 {WALL + 1}", "open 0 1", "open 1 1", "go", f"took {GREETING} {GREETING}",
+        f"turn 5 {WALL + 5}", f"recv 0 1 {both}", f"recv 1 1 {both}", "go", "took 0 0", f"turn 6 {WALL + 6}",
+        "complete 0 8 1 2:0", "complete 1 9 1 2:0", "go"], 14
     spool = Spool(GROUPS)
     greeting = len(ref.texts(*IDENTITY)["greeting-post"])
     yield "a file created at the journal's place", [

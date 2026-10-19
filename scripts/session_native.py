@@ -63,12 +63,26 @@ POST_DEFECTS = [
     ("a commit's number the group's highest", r"(var num = \(lds 1 \(@base \+ \d+ \+ \(gx \* 8\)\)\)) \+ 1;", r"\1;", 1,
      TRACE),
     ("a file's CRC-32C begun at zero", r"st zs \+ 152, 4294967295;", "st zs + 152, 0;", 1, TRACE),
-    ("POSTs that wait given slots out of their order", r"\(at < fr\)", "(at <= fr)", 1, TRACE),
+    ("POSTs that wait given slots out of their order", r"(?s)(fun postAdmits\(.*?)\(at < fr\)", r"\1(at <= fr)", 1,
+     TRACE),
+    ("connections that wait given reads out of their order", r"(?s)(fun readAdmits\(.*?)\(at < fr\)",
+     r"\1(at <= fr)", 1, TRACE),
+    ("a file's CRC-32C not compared", r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1,
+     TRACE),
+    ("the empty line after the header section not looked for",
+     r"if 0 < \(\(\(f \+ 1\) == h\) \+ \(f == \(h \+ 1\)\)\) \{", "if 0 {", 1, TRACE),
+    ("a line that starts with one dot read as stuffed", r"if bol & \(x == 46\) \{", "if 0 {", 1, TRACE),
+    ("no Xref given", r"st rs \+ 224, xo;", "st rs + 224, 0;", 1, TRACE),
+    ("an Xref line folded an octet late", r"if 998 < \(wd \+ 1 \+ ll\) \{", "if 999 < (wd + 1 + ll) {", 1, TRACE),
+    ("the header section taken as read an octet early", r"var known = \(h \+ 2\) <= gt;",
+     "var known = (h + 1) <= gt;", 1, TRACE),
+    ("the empty line's CR not given once the buffer starts past it", r"if fp == h \{", "if 0 {", 1,
+     "code 10 on a host that kept the contract"),
 ]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 6, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 8, TRACE),
     ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 1, TRACE),
     ("a bare LF ending a command", r"if cr & \(bad == 0\) \{", "if bad == 0 {", 1, TRACE),
     ("an overlong line with no word left unanswered", r"if kind == 3 \{(\s*)r = 6;", r"if kind == 3 {\1r = 0;", 1,
@@ -425,17 +439,19 @@ def posts_hold(binary: Path, posts: list[sessions.PostScenario], expected: dict[
             raise LaneError(f"scenario {name!r}: {problem}")
 
 
-# Breaches with a store the layout cannot hold: more completions than its slots, and results for
-# operations not done; the model's lane has them.
-UNWRITTEN = ("more completions than jobs", "results for operations not done")
+# Breaches with a store the layout cannot hold: more completions than its slots, results for
+# operations not done, and octets of a read other than its result counts, a job's data always being
+# there; the model's lane has them.
+UNWRITTEN = ("more completions than jobs", "results for operations not done", "octets a read does not count")
 
 
 def post_breaches() -> Iterator[tuple[str, list[str], int]]:
     """The breaches with a store the layout can hold, told the compiled session's store line."""
-    fresh = sessions.Spool(sessions.GROUPS)
-    for name, script, code in sessions.post_breaches():
+    spools = (sessions.Spool(sessions.GROUPS), sessions.Spool(sessions.GROUPS, image=sessions.TWO))
+    for name, script, code in (*sessions.post_breaches(), *sessions.read_breaches()):
         if name not in UNWRITTEN:
-            yield name, [native_line(fresh) if line == fresh.line() else line for line in script], code
+            lines = {spool.line(): native_line(spool) for spool in spools}
+            yield name, [lines.get(line, line) for line in script], code
 
 
 def scripts_hold(binary: Path, answers: dict[str, list[str]]) -> None:
@@ -491,13 +507,14 @@ def check(cake: str) -> Report:
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
-        posts = list(sessions.post_scenarios())
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios()]
         model = sessions.model_command()
         expected = {name: sessions.run(clients, model, ghosts, identity)
                     for name, clients, ghosts, identity in scenarios}
         stored = {name: sessions.run_post(clients, spool, model) for name, clients, spool in posts}
         answers = {name: sessions.check_breach(script, code, model)
-                   for name, script, code in (*sessions.breaches(), *sessions.post_breaches())
+                   for name, script, code in (*sessions.breaches(), *sessions.post_breaches(),
+                                              *sessions.read_breaches())
                    if name not in UNWRITTEN}
         answers |= edge_answers(model)
         seconds["model"] = round(time.monotonic() - clock, 1)

@@ -74,6 +74,8 @@ struct place {
 static struct place places[DN_SESSION_HANDLES];
 
 static int pending;
+/* Whether the job handed in each slot reads, so that its completion carries the octets read. */
+static int reads_in[DN_SESSION_JOBS];
 static uint64_t pending_gen, pending_ops, pending_class, pending_results[DN_SESSION_JOB_OPS][2];
 static unsigned char pending_data[DN_SESSION_JOB_DATA];
 
@@ -382,10 +384,12 @@ static void configuration(unsigned char *a, uint64_t now) {
     }
 }
 
-/* `complete SLOT GEN OK RESULTS` into its slot, which has to come after the last one's. */
+/* `complete SLOT GEN OK RESULTS [DATA]` into its slot, which has to come after the last one's; the
+octets a read gave into its data. */
 static void completion(unsigned char *a, int *last) {
-    char *slot = strtok(NULL, " "), *gen = strtok(NULL, " "), *ok = strtok(NULL, " "), *rs = strtok(NULL, " ");
-    if (!rs || strtok(NULL, " ")) dn_harness("bad input: not a completion");
+    char *slot = strtok(NULL, " "), *gen = strtok(NULL, " "), *ok = strtok(NULL, " "), *rs = strtok(NULL, " "),
+         *data = strtok(NULL, " ");
+    if (!rs || (data && strtok(NULL, " "))) dn_harness("bad input: not a completion");
     uint64_t k = number(slot), done = number(ok);
     if (k >= DN_SESSION_JOBS || (int)k <= *last) dn_harness("bad input: a completion the layout cannot hold");
     *last = (int)k;
@@ -404,6 +408,10 @@ static void completion(unsigned char *a, int *last) {
         ++given;
     }
     if (given != done) dn_harness("bad input: results for operations not done");
+    /* A read's completion carries its octets, those of no other job any. */
+    uint64_t count = done && reads_in[k] ? dn_word(d + DN_SESSION_DONE_RESULTS) : 0;
+    if ((data ? unhex(data, d + DN_SESSION_DONE_HEAD, DN_SESSION_JOB_DATA) : 0) != count || (data && !count))
+        dn_harness("bad input: octets a read does not count");
 }
 
 /* One batch from stdin into the `dn_next` array; the end of stdin ends the run. */
@@ -485,9 +493,18 @@ static void print_op(const unsigned char *slot, uint64_t i) {
     switch (code) {
     case DN_SESSION_OP_CREATE:
     case DN_SESSION_OP_REMOVE:
+    case DN_SESSION_OP_OPEN:
         name_of(dn_word(o + DN_SESSION_OP_NAME), dn_word(o + DN_SESSION_OP_NUMBER), name);
-        printf(" %s:%s", code == DN_SESSION_OP_CREATE ? "create" : "remove", name);
+        printf(" %s:%s", code == DN_SESSION_OP_CREATE ? "create" : code == DN_SESSION_OP_OPEN ? "open" : "remove", name);
         break;
+    case DN_SESSION_OP_READ: {
+        uint64_t len = dn_word(o + DN_SESSION_OP_LENGTH);
+        if (dn_word(o + DN_SESSION_OP_DATA) || len > DN_SESSION_JOB_DATA)
+            dn_violation("dn_emit: a read of %" PRIu64 " bytes at %" PRIu64 " of a job's data", len,
+                         dn_word(o + DN_SESSION_OP_DATA));
+        printf(" read:%" PRIu64 ":%" PRIu64 ":%" PRIu64 ":%" PRIu64, p, g, dn_word(o + DN_SESSION_OP_OFFSET), len);
+        break;
+    }
     case DN_SESSION_OP_WRITE: {
         uint64_t at = dn_word(o + DN_SESSION_OP_DATA), len = dn_word(o + DN_SESSION_OP_LENGTH);
         if (at > DN_SESSION_JOB_DATA || len > DN_SESSION_JOB_DATA - at)
@@ -565,6 +582,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
         if (kind == 0) continue;
         if (kind != DN_SESSION_JOB || !stored) dn_violation("dn_emit: a job of kind %" PRIu64, kind);
         if (ops < 1 || ops > DN_SESSION_JOB_OPS) dn_violation("dn_emit: a job of %" PRIu64 " operations", ops);
+        reads_in[k] = dn_word(slot + DN_SESSION_JOB_OPS_AT + DN_SESSION_OP_CODE) == DN_SESSION_OP_READ;
         printf("job %" PRIu64 " %" PRIu64, k, dn_word(slot + DN_SESSION_JOB_GEN) - shift);
         for (uint64_t i = 0; i < ops; ++i) print_op(slot, i);
         printf("\n");

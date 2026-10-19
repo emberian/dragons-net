@@ -33,7 +33,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.Compiler.Wp` | In the model, from `wp c Q` a run of `c` ends as a run may or finishes in `Q`, once `Q` and the invariants ignore the clock and loops keep them (`wp_sound`) | Item 1; termination |
 | `DN.News.SipHashCode`, `DN.News.CrcCode` | The printed programs compute `SipHash.tag` under a sixteen-octet key (`sip_safe`), the CRC table (`fill_safe`) and a buffer's CRC-32C (`crc_safe`); `sipPre_witness`, `fillGiven_witness`, `crcPre_witness` hold the premises | Item 1; termination |
 | Session program (`scripts/session_native.py`) | The compiled session answers as the model on its scenarios and 200 drawn hosts, and stops on hosts the model cannot describe | That it is the specification on every run |
-| NNTP server (`scripts/nntp_check.py`) | Over loopback the server answers as `session_ref` computes, on 1,831 cuts of recorded transcripts among other runs, keeps its deadlines, recovers its store at start, and 45 planted defects are caught | The host is tested, not proven; performance |
+| NNTP server (`scripts/nntp_check.py`) | Over loopback the server answers as `session_ref` computes, on 1,831 cuts of recorded transcripts among other runs, keeps its deadlines, recovers its store at start, reads its articles back, and 46 planted defects are caught | The host is tested, not proven; performance |
 | Header field grammar (`scripts/abnf_check.py`) | The grammar is the RFCs' ABNF with verified errata; `DN.News.Abnf` and the `abnf` library agree on 49,838 cases; 21 defects planted in the reference's grammar and 5 mutants of the interpreter are caught, each mutant proven to differ | RFC 5234's semantics; RFC 5536's rules outside its ABNF |
 | Header field grammar in Pancake (`DN.News.AbnfProg`, `scripts/grammar_check.py`) | The compiled functions answer the grammar lane's cases, 17 hostile fields and cases from several starts as `DN.News.Abnf` does, and the hostile fields at 64 KiB as at 4 KiB; 7 mutants are caught; decision 0004's analysis accepts the program | That it matches on every input; no theorem yet |
 | Article acceptance in Pancake (`DN.News.ArticleProg`, `scripts/accept_check.py`) | The compiled check answers the article lane's cases, its dates and long years as `DN.News.ArticleSpec` does, and 9 hard forms at 64 KiB as the model; 6 mutants are caught; decision 0004's analysis accepts the program | That it agrees on every input, for wall clocks below 2^40; no theorem yet |
@@ -59,7 +59,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 18,875 declarations, including 8,455 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 18,965 declarations, including 8,455 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -87,7 +87,7 @@ A job's pass recorded by a run of this repository's branches lets a run on the s
 
 8. **Addresses the theorem admits.** The theorem's memory is CakeML's heap, so every buffer lives there, the hosts write and check the heap header it fixes, and the analysis keeps off the heap's first 64 bytes. The stack bound (`max_depth`) is not yet obtained; for every other run here, whose buffers the C host owns, the premise is false.
 
-9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`. The session with POST is specified, in the program, and tested, not proven; reading articles is specified and tested, not yet in the program.
+9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`. The session with POST and reading by message-id is specified, in the program, and tested, not proven.
 
 ## Reproducibility boundaries
 

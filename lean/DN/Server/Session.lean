@@ -14,8 +14,8 @@ connections in the heap, hands the host the actions and the jobs, reads back how
 the kernel took, and names the time it needs its next turn (docs/decisions/0003-nntp-slice.md). The
 layout is `DN.Server.SessionLayout`. What makes no external call is a function: an event, a
 connection's turn and what the host took of it, the next turn's time, a step of recovery; the
-store's side of POST is `DN.Server.SessionStore`'s, and an article's header section is checked by
-`DN.News.ArticleProg`'s.
+store's side of POST and of reading is `DN.Server.SessionStore`'s, and an article's header section
+is checked by `DN.News.ArticleProg`'s.
 
 Lines are framed by the statements of `DN.News.FramerProg.lineFrag`, run on a connection's held
 input; the reply to a line follows `DN.News.CommandSpec.replyIn`, as `SessionSpec.resolve` makes it
@@ -35,7 +35,7 @@ namespace DN.Server.Session
 
 open DN.Compiler DN.Compiler.Syntax DN.Server.SessionLayout
 open DN.Server.SessionStore (at_ ld fld setf ne or2 inc ifs stop keptIn copy copyNew callS found
-  Op outPosted outLost)
+  Op outPosted outLost waiters readers textOf tStat tUnreadable)
 open DN.News.SessionSpec (inactivity firstCommand lineTime articleTime lineLimit clockLimit
   wallLimit)
 
@@ -119,6 +119,12 @@ def appendRevision : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownRev)) (v "rl") ++
     [.assign "o" (eAdd (v "o") (v "rl"))]
 
+/-- The Message-ID looked up last. -/
+def appendId : List PStmt :=
+  [.dec "il" (ld (at_ (ownOff + ownIdLen))), keptIn (v "il") 250] ++
+  copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownId)) (v "il") ++
+  [.assign "o" (eAdd (v "o") (v "il"))]
+
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownSrc)) (v "sl") ++
@@ -147,10 +153,11 @@ def connText : PFun :=
      text (replyCode .help) [appendText tHelpHead, appendRevision, appendText tHelpMid,
        appendSource, appendText tBlockEnd],
      text (replyCode .helpPost) [appendText tHelpPostHead, appendRevision, appendText tHelpMid,
-       appendSource, appendText tBlockEnd]] ++
+       appendSource, appendText tBlockEnd],
+     text (replyCode (.stat [])) [appendText tStat, appendId, appendText tCrlf]] ++
     ([(.quit, tQuit), (.noGroup, tNoGroup), (.noSuchId, tNoSuchId), (.unknown, tUnknown),
       (.syntax, tSyntax), (.post, tPost), (.posted, tPosted), (.failed, tFailed),
-      (.notPermitted, tNotPermitted), (.unavailable, tUnavailable)].map
+      (.notPermitted, tNotPermitted), (.unavailable, tUnavailable), (.unreadable, tUnreadable)].map
       fun ((r : News.CommandSpec.Reply), k) => text (replyCode r) [appendText k]) ++
     [setf "cb" cOutLen (v "o"), .ret (n 0)] }
 
@@ -188,15 +195,21 @@ def scanWords : List PStmt :=
       inc "q"],
    .ite (v "inw") (endWord (v "kept")) []]
 
-/-- `eqk` is one when the first word is the `k`-th command name, in any case. -/
-def nameIs (k : Nat) : List PStmt :=
-  [.assign "eqk" (eEq (v "l0") (n (textLen (tNames + k)))),
+/-- `eqk` is one when the first word is the name the text `t` holds, in any case. -/
+def nameIsAt (t : Nat) : List PStmt :=
+  [.assign "eqk" (eEq (v "l0") (n (textLen t))),
    .assign "jq" (n 0),
    .while (eAnd (v "eqk") (eLt (v "jq") (v "l0")))
-     [.ite (ne (fold (kept (eAdd (v "s0") (v "jq"))))
-          (.loadb (eAdd (textAddr (tNames + k)) (v "jq"))))
+     [.ite (ne (fold (kept (eAdd (v "s0") (v "jq")))) (.loadb (eAdd (textAddr t) (v "jq"))))
         [.assign "eqk" (n 0)] [],
       inc "jq"]]
+
+/-- `eqk` is one when the first word is the `k`-th command name, in any case. -/
+def nameIs (k : Nat) : List PStmt := nameIsAt (tNames + k)
+
+/-- The names of ARTICLE and BODY, by their place in `SessionLayout.texts`. -/
+def tArticle : Nat := 27
+def tBody : Nat := 28
 
 /-- `ok` is one when the second word is a keyword (RFC 3977 §9.8). -/
 def keywordCheck : List PStmt :=
@@ -235,7 +248,8 @@ def messageIdCheck : List PStmt :=
       inc "jq"]]
 
 /-- The reply `r` to the line the framer reported (`kind`, `kept`, the bytes from `blk + 40`),
-as `DN.News.CommandSpec.replyIn` gives it, POST a command when there is a store. -/
+as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE and BODY commands when there is a store,
+which looks up a message-id (`lookup`). -/
 def classify : List PStmt :=
   scanWords ++
   [.dec "cmd" (n 0), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "ok" (n 0), .dec "val" (n 0),
@@ -243,7 +257,9 @@ def classify : List PStmt :=
      [.ite (isKind .overlong) [reply .unknown] [reply .ignore]]
      ((List.range 5).flatMap (fun k => nameIs k ++
         [.ite (v "eqk") [.assign "cmd" (n (k + 1))] []]) ++
-      [ifs hasStore (nameIs 5 ++ [ifs (v "eqk") [.assign "cmd" (n 6)]]),
+      [ifs hasStore (nameIs 5 ++ [ifs (v "eqk") [.assign "cmd" (n 6)]] ++
+         nameIsAt tArticle ++ [ifs (v "eqk") [.assign "cmd" (n 7)]] ++
+         nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]]),
        .ite (eEq (v "cmd") (n 0)) [reply .unknown]
         [.ite (ne (v "kind") (n (News.FramerProg.kindCode .command))) [reply .syntax]
           [.dec "args" (eSub (v "w") (n 1)),
@@ -263,18 +279,32 @@ def classify : List PStmt :=
                        (numberCheck ++
                         [.ite (v "ok") [reply .noGroup]
                           (messageIdCheck ++
-                           [.ite (v "ok") [reply .noSuchId] [reply .syntax]])])
+                           [.ite (v "ok")
+                             [.ite hasStore [reply (.lookup .head [])] [reply .noSuchId]]
+                             [reply .syntax]])])
                        [reply .syntax]]]]]]]]])]
 
 /-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with POST while the
-connection may post, the help with POST, and for a POST 440 or 403 unless it may have a slot. -/
+connection may post, the help with POST, for a POST 440 or 403 unless it may have a slot, and for a
+message-id 430 when the store does not hold it, 223 for STAT when it does; else the ARTICLE (one),
+HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`. -/
 def resolve : List PStmt :=
-  [ifs (eAnd (isReply .capabilities) (eAnd (fld "cb" cGreeted) (ownW ownAccepting)))
+  [.dec "wc" (n 0), .dec "wci" (n 0),
+   ifs (eAnd (isReply .capabilities) (eAnd (fld "cb" cGreeted) (ownW ownAccepting)))
      [reply .capabilitiesPost],
    ifs (eAnd (isReply .help) hasStore) [reply .helpPost],
    ifs (isReply .post)
      [.ite (eEq (fld "cb" cGreeted) (n 0)) [reply .notPermitted]
-       [ifs (eEq (ownW ownAccepting) (n 0)) [reply .unavailable]]]]
+       [ifs (eEq (ownW ownAccepting) (n 0)) [reply .unavailable]]],
+   ifs (isReply (.lookup .head []))
+     ([keptIn (v "l1") 250, .store (at_ (ownOff + ownIdLen)) (v "l1"), .dec "ij" (n 0),
+       .while (eLt (v "ij") (v "l1"))
+         [.storeb (eAdd (at_ (ownOff + ownId)) (v "ij")) (kept (eAdd (v "s1") (v "ij"))), inc "ij"]] ++
+      callS "fi" "idFind" [v "l1"] ++
+      [.ite (eEq found (n 0)) [reply .noSuchId]
+        [.ite (eEq (v "cmd") (n 5)) [reply (.stat [])]
+          [.assign "wci" (eSub found (n 1)), .assign "wc" (n 2),
+           ifs (eEq (v "cmd") (n 7)) [.assign "wc" (n 1)], ifs (eEq (v "cmd") (n 8)) [.assign "wc" (n 3)]]]])]
 
 /-! ## A connection's turn -/
 
@@ -286,7 +316,8 @@ def toPhase (ph : News.SessionSpec.Phase) : PStmt := setf "cb" cPhase (n (phaseC
 def heldEmpty : PExpr := eEq (fld "cb" cHeldPos) (fld "cb" cHeldLen)
 
 /-- Answer the first held line that gets a reply and frame on past the lines that get none, as
-`DN.News.SessionSpec.serve` does; a POST that may have a slot waits for one. -/
+`DN.News.SessionSpec.serve` does; a POST that may have a slot waits for one, and an ARTICLE, HEAD or
+BODY of an article the store holds for a read, framing on. -/
 def serve : List PStmt :=
   [.dec "blk" (atOff (v "cb") cFramer), .dec "p" (atOff (v "cb") cHeld),
    .dec "n" (fld "cb" cHeldLen), .dec "i" (fld "cb" cHeldPos), .dec "sv" (n 1),
@@ -299,15 +330,19 @@ def serve : List PStmt :=
         [.ite (eEq (v "kind") (n 0)) [.assign "sv" (n 0)]
           ([.dec "r" (n (replyCode .ignore))] ++ classify ++ resolve ++
            [.ite (isReply .ignore) []
-             [.ite (ne outLen (n 0)) [.assign "i" (v "i0"), .assign "sv" (n 0)]
+             [.ite (or2 (ne outLen (n 0)) (ne (fld "cb" cWant) (n 0)))
+               [.assign "i" (v "i0"), .assign "sv" (n 0)]
                [.ite (isReply .post)
                  [setf "cb" cWaiting (n 1), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0),
                   .assign "sv" (n 0)]
+                 [.ite (v "wc")
+                   [setf "cb" cWant (v "wc"), setf "cb" cWantCi (v "wci"), setf "cb" cFirst (n 0),
+                    setf "cb" cIdle (n 0)]
                  (callS "wt" "connText" [v "c", v "r"] ++
                   [setf "cb" cFirst (n 0),
                    setf "cb" cIdle (eAdd (v "now") (n inactivity)),
                    .ite (isReply .quit)
-                     [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]])])],
+                     [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]]])])],
    .ite (eEq (v "i") (v "n")) [setf "cb" cHeldPos (n 0), setf "cb" cHeldLen (n 0)]
      [setf "cb" cHeldPos (v "i")]]
 
@@ -344,7 +379,7 @@ def emptySend : List PStmt :=
 /-- The line's deadline runs while the program waits for the rest of a line, as
 `DN.News.SessionSpec.Conn.waitLine` says. -/
 def waitLine : List PStmt :=
-  [.ite (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_))
+  [.ite (eAnd (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_)) (eEq (fld "cb" cWant) (n 0)))
       (eLt (n 0)
         (eAdd (eAdd (fld "cb" cFramer) (fld "cb" (cFramer + 8))) (fld "cb" (cFramer + 16)))))
      [.ite (eEq (fld "cb" cLineDue) (n 0))
@@ -376,12 +411,52 @@ def progress : List PStmt :=
                 .assign "said" (n 1)])])]
         [setf "cb" cPost (n 0)]])]
 
+/-- The read of the connection, as `rs`. -/
+def readRec : List PStmt :=
+  [.dec "rk" (eSub (fld "cb" cRead) (n 1)), keptIn (v "rk") (reads - 1),
+   .dec "rs" (eAdd (at_ readsOff) (eMul (v "rk") (n readLen)))]
+
+/-- `SessionSpec.progressRead`: with nothing untaken, the read's next octets put to send, the
+inactivity deadline started, or stopped while there are none; a read that failed answered 403 when
+it gave nothing, the read over, or the connection to close (`rlost`). -/
+def progressRead : List PStmt :=
+  [ifs (eAnd (eAnd (ne (fld "cb" cRead) (n 0)) hasStore)
+        (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting)))))
+    (readRec ++
+     [.ite (fld "rs" rBad)
+       [.ite (eEq (fld "rs" rGiven) (n 0))
+         (callS "wu" "connText" [v "c", n (replyCode .unreadable)] ++
+          [setf "rs" rOwner (n 0), setf "cb" cRead (n 0), setf "cb" cWant (n 0),
+           setf "cb" cIdle (eAdd (v "now") (n inactivity))] ++ callS "tr" "postTidyAll" [])
+         [.assign "rlost" (n 1)]]
+       (callS "rp" "readPiece" [v "c", v "rk"] ++
+        [.ite found ([setf "cb" cIdle (eAdd (v "now") (n inactivity))] ++ callS "tp" "postTidyAll" [])
+          [setf "cb" cIdle (n 0)]])])]
+
+/-- `SessionSpec.claimRead`: an ARTICLE, HEAD or BODY that waits gets the first free read when fewer
+came before it than reads are free. -/
+def claimRead : List PStmt :=
+  [ifs (eAnd (eAnd (ne (fld "cb" cWant) (n 0)) (eEq (fld "cb" cRead) (n 0)))
+        (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_)) hasStore))
+    (callS "ra" "readAdmits" [v "c", fld "cb" cGen] ++
+     [ifs found
+       [.dec "fq" (n reads), .dec "q" (n 0),
+        .while (eLt (v "q") (n reads))
+          [ifs (eAnd (eEq (v "fq") (n reads))
+              (eEq (ld (eAdd (at_ (readsOff + rLive)) (eMul (v "q") (n readLen)))) (n 0)))
+             [.assign "fq" (v "q")],
+           inc "q"],
+        ifs (eLt (v "fq") (n reads))
+          (callS "u3" "queueDrop" [readers, v "c", fld "cb" cGen] ++
+           [setf "cb" cRead (eAdd (v "fq") (n 1))] ++
+           callS "rc" "readClaim" [v "fq", v "c", fld "cb" cGen, fld "cb" cWant, fld "cb" cWantCi])]])]
+
 /-- `SessionSpec.claim`: a POST that waits gets the first free slot and 340 when fewer came before
 it than slots are free, or 403 once the store has stopped accepting. -/
 def claim : List PStmt :=
   [ifs (eAnd (eAnd (fld "cb" cWaiting) hasStore) (eAnd (eEq outLen (n 0)) (inPhase .open_)))
     [.ite (eEq (ownW ownAccepting) (n 0))
-      (callS "uw" "postUnwait" [v "c", fld "cb" cGen] ++ [setf "cb" cWaiting (n 0)] ++
+      (callS "uw" "queueDrop" [waiters, v "c", fld "cb" cGen] ++ [setf "cb" cWaiting (n 0)] ++
        callS "w3" "connText" [v "c", n (replyCode .unavailable)] ++
        [setf "cb" cIdle (eAdd (v "now") (n inactivity))])
       (callS "ad" "postAdmits" [v "c", fld "cb" cGen] ++
@@ -393,7 +468,7 @@ def claim : List PStmt :=
                [.assign "fk" (v "q")],
              inc "q"],
           ifs (eLt (v "fk") (n posts))
-            (callS "u2" "postUnwait" [v "c", fld "cb" cGen] ++
+            (callS "u2" "queueDrop" [waiters, v "c", fld "cb" cGen] ++
              [setf "cb" cWaiting (n 0), setf "cb" cPost (eAdd (v "fk") (n 1))] ++
              callS "w4" "connText" [v "c", n (replyCode .post)] ++
              [setf "cb" cArticleDue (eAdd (v "now") (n articleTime))] ++
@@ -401,9 +476,11 @@ def claim : List PStmt :=
 
 /-- `SessionSpec.emit`: the output as a send, unless the host has not yet reported the connection
 ready; a graceful close once everything is answered and taken after a QUIT or the end of input;
-or a send of nothing when whether to read has changed. -/
+or a send of nothing when whether to read has changed. No POST or read waits or answers the
+connection when it is asked to read. -/
 def emit : List PStmt :=
-  [.dec "wants" (eAnd (eAnd (inPhase .open_) heldEmpty) (eEq (fld "cb" cWaiting) (n 0))),
+  [.dec "wants" (eAnd (eAnd (inPhase .open_) heldEmpty)
+      (eAnd (eEq (fld "cb" cWaiting) (n 0)) (eEq (fld "cb" cWant) (n 0)))),
    ifs (eAnd (v "wants") (ne (fld "cb" cPost) (n 0)))
      ([.dec "tk" (eSub (fld "cb" cPost) (n 1))] ++ callS "tq" "postTakes" [v "tk"] ++
       [.assign "wants" found]),
@@ -421,13 +498,20 @@ def act : List PStmt :=
       (or2 (eAnd (ne (fld "cb" cLineDue) (n 0)) (eLe (fld "cb" cLineDue) (v "now")))
         (eAnd (ne (fld "cb" cArticleDue) (n 0)) (eLe (fld "cb" cArticleDue) (v "now"))))),
    .ite (v "due") (closing closeNow ++ abandon (v "c") (fld "cb" cGen))
-     ([.dec "lost" (n 0), .dec "said" (n 0), .dec "was" (fld "cb" cWaiting)] ++ progress ++
+     ([.dec "lost" (n 0), .dec "rlost" (n 0), .dec "said" (n 0), .dec "was" (fld "cb" cWaiting)] ++
+      progress ++
       [.ite (v "lost") (closing closeNow)
-        ([.ite (or2 (v "said") (eAnd (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting))))
-              (eAnd (eEq (fld "cb" cPost) (n 0)) (eEq (fld "cb" cWaiting) (n 0))))) serve [],
-          ifs (eAnd (fld "cb" cWaiting) (eEq (v "was") (n 0)))
-            (callS "pw" "postWait" [v "c", fld "cb" cGen])] ++
-         claim ++ emit)])]
+        (progressRead ++
+         [.ite (v "rlost") (closing closeNow ++ abandon (v "c") (fld "cb" cGen))
+           ([.dec "wasw" (fld "cb" cWant),
+             .ite (or2 (v "said") (eAnd (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting))))
+                (eAnd (eAnd (eEq (fld "cb" cPost) (n 0)) (eEq (fld "cb" cWaiting) (n 0)))
+                  (eEq (fld "cb" cWant) (n 0))))) serve [],
+             ifs (eAnd (fld "cb" cWaiting) (eEq (v "was") (n 0)))
+               (callS "pw" "queueAdd" [waiters, v "c", fld "cb" cGen]),
+             ifs (eAnd (ne (fld "cb" cWant) (n 0)) (eEq (v "wasw") (n 0)))
+               (callS "rw" "queueAdd" [readers, v "c", fld "cb" cGen])] ++
+            claim ++ claimRead ++ emit)])])]
 
 /-! ## A turn -/
 
@@ -446,7 +530,8 @@ def openConn : List PStmt :=
       setf "cb" cLineDue (n 0), setf "cb" cHeldLen (n 0), setf "cb" cHeldPos (n 0),
       setf "cb" cFramer (n 0), setf "cb" (cFramer + 8) (n 0), setf "cb" (cFramer + 16) (n 0),
       setf "cb" cNumber (v "op"), setf "cb" cGreeted (v "gr"), setf "cb" cWaiting (n 0),
-      setf "cb" cPost (n 0), setf "cb" cArticleDue (n 0),
+      setf "cb" cPost (n 0), setf "cb" cArticleDue (n 0), setf "cb" cWant (n 0),
+      setf "cb" cWantCi (n 0), setf "cb" cRead (n 0),
       .dec "gt" (n greetCode), ifs (v "gr") [.assign "gt" (n greetPostCode)]] ++
      callS "wg" "connText" [v "ex", v "gt"])]
 
@@ -477,7 +562,8 @@ def event : List PStmt :=
      [.ite (v "lv")
        [.ite asked
          ([toPhase .ending, setf "cb" cLineDue (n 0), setf "cb" cPost (n 0),
-           setf "cb" cArticleDue (n 0)] ++ abandon (v "ex") (v "eg"))
+           setf "cb" cArticleDue (n 0), setf "cb" cWant (n 0), setf "cb" cRead (n 0)] ++
+          abandon (v "ex") (v "eg"))
          (breach .unasked)] []] [],
    .ite (eEq (v "ek") (n closed))
      [.ite (v "lv") (setf "cb" cLive (n 0) :: abandon (v "ex") (v "eg")) []] []]
@@ -498,9 +584,10 @@ def settle : List PStmt :=
             [.storeb (eAdd (v "ob") (eSub (v "sj") (v "tk"))) (.loadb (eAdd (v "ob") (v "sj"))),
              inc "sj"],
           setf "cb" cOutLen (eSub (v "al") (v "tk")), setf "cb" cBlocked (eLt (v "tk") (v "al")),
-          ifs (eAnd (eLt (n 0) (v "tk"))
-              (eAnd (eEq (fld "cb" cPost) (n 0)) (eEq (fld "cb" cWaiting) (n 0))))
-            [setf "cb" cIdle (eAdd (v "now") (n inactivity))]] ++
+          .ite (eAnd (ne (fld "cb" cRead) (n 0)) (eLe (v "al") (v "tk"))) [setf "cb" cIdle (n 0)]
+            [ifs (eAnd (eLt (n 0) (v "tk"))
+                (eAnd (eEq (fld "cb" cPost) (n 0)) (eEq (fld "cb" cWaiting) (n 0))))
+              [setf "cb" cIdle (eAdd (v "now") (n inactivity))]]] ++
          waitLine) []] []]
 
 /-- The time of the next turn, as `DN.News.SessionSpec.deadline` gives it, where the host reads it
@@ -518,10 +605,18 @@ def wake : List PStmt :=
                 [ifs hasStore
                   [.ite (eEq (ownW ownAccepting) (n 0)) [.assign "ry" (n 1)]
                     (callS "wa" "postAdmits" [v "dt", fld "cb" cGen] ++ [.assign "ry" found])]]
+                [.ite (ne (fld "cb" cWant) (n 0))
+                  [ifs hasStore
+                    [.ite (eEq (fld "cb" cRead) (n 0))
+                      (callS "wr" "readAdmits" [v "dt", fld "cb" cGen] ++ [.assign "ry" found])
+                      ([.dec "wq" (eSub (fld "cb" cRead) (n 1)), keptIn (v "wq") (reads - 1),
+                        .dec "ws" (eAdd (at_ readsOff) (eMul (v "wq") (n readLen)))] ++
+                       callS "wo" "readOutSize" [v "wq"] ++
+                       [.assign "ry" (or2 (fld "ws" rBad) (eLt (fld "ws" rGiven) found))])]]
                 [ifs (eEq heldEmpty (n 0))
                   [.ite (eEq (fld "cb" cPost) (n 0)) [.assign "ry" (n 1)]
                     ([.dec "wk" (eSub (fld "cb" cPost) (n 1))] ++
-                     callS "wt" "postTakes" [v "wk"] ++ [.assign "ry" found])]]]],
+                     callS "wt" "postTakes" [v "wk"] ++ [.assign "ry" found])]]]]],
           ifs (v "ry") [.assign "rd" (n 1)],
           .dec "ea" (n 0)] ++
          [cFirst, cIdle, cLineDue, cArticleDue].map (fun f =>
@@ -836,6 +931,7 @@ def storeStart : List PStmt :=
    ifs (rw News.RecoverProg.rFresh) [.assign "xkq" (at_ (recOff + News.RecoverProg.rKey))]] ++
   copyNew "xkj" (at_ (ownOff + ownKey)) (v "xkq") (n News.Journal.keyLength) ++
   ((List.range posts).map fun k => .store (at_ (slotsOff + k * slotLen + zLive)) (n 0)) ++
+  ((List.range reads).map fun k => .store (at_ (readsOff + k * readLen + rLive)) (n 0)) ++
   callS "xib" "idBuild" []
 
 end Store
@@ -904,7 +1000,9 @@ def turn : List PStmt :=
       inc "jc"],
    ifs hasStore
      [.dec "pj" (n 0),
-      .while (eLt (v "pj") (n posts)) (callS "pp" "postPlan" [v "pj"] ++ [inc "pj"])],
+      .while (eLt (v "pj") (n posts)) (callS "pp" "postPlan" [v "pj"] ++ [inc "pj"]),
+      .dec "rj" (n 0),
+      .while (eLt (v "rj") (n reads)) (callS "rl" "readPlan" [v "rj"] ++ [inc "rj"])],
    .store (at_ (emitOff + emitCount)) (ownW ownActs),
    hand,
    .dec "sc" (n 0),
@@ -924,8 +1022,8 @@ loop. -/
 def main : PFun :=
   { name := "main", body :=
     [.store (at_ confOff) (n version)] ++
-    ([ownClock, ownReady, ownStop, ownStore, ownAccepting, ownOpened, ownWaitN, ownAside].map
-      fun o => .store (at_ (ownOff + o)) (n 0)) ++
+    ([ownClock, ownReady, ownStop, ownStore, ownAccepting, ownOpened, ownWaitN, ownReadN,
+      ownAside].map fun o => .store (at_ (ownOff + o)) (n 0)) ++
     [.store (at_ (artOff + News.AbnfProg.aBroken)) (n 0),
      .call "t1" "tables" [], .call "t2" "artTables" [], .call "t3" "crcTable" [],
      .call "t4" "textsSet" []] ++
@@ -958,6 +1056,12 @@ def regression_967 : Bool :=
    (tPosted, News.CommandSpec.text i .posted), (tFailed, News.CommandSpec.text i .failed),
    (tNotPermitted, News.CommandSpec.text i .notPermitted),
    (tUnavailable, News.CommandSpec.text i .unavailable),
-   (tNames + 5, News.CommandSpec.ascii "POST")].all fun (k, t) => texts[k]? == some t
+   (tNames + 5, News.CommandSpec.ascii "POST"), (tArticle, News.CommandSpec.ascii "ARTICLE"),
+   (tBody, News.CommandSpec.ascii "BODY"), (SessionStore.tStat, News.CommandSpec.ascii "223 0 "),
+   (SessionStore.tUnreadable, News.CommandSpec.text i .unreadable),
+   (SessionStore.tXref, News.CommandSpec.ascii "Xref: "),
+   (SessionStore.tDot, News.CommandSpec.ascii ".\r\n")].all (fun (k, t) => texts[k]? == some t) &&
+  [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
+    (texts[SessionStore.tStatus + j]?).map (· ++ News.CommandSpec.crlf) == some (News.CommandSpec.found c [])
 
 end DN.Server.Session

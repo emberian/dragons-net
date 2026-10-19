@@ -4,7 +4,7 @@ The first slice answers over sockets on loopback: [decision 0003](decisions/0003
 
 Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)) is under way. [Decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. Its specifications are written, the store's proven, and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)).
 
-Reading by message-id — ARTICLE, HEAD, BODY and STAT — is in the session's specification ([session](baseline.md#session-model)); the program follows.
+Reading by message-id — ARTICLE, HEAD, BODY and STAT — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
 
 POST is in the program ([session program](baseline.md#session-program)), and the server takes it from the networks `--post-from` names, loopback by default ([NNTP server](baseline.md#nntp-server)). With a spool the host logs each connection on stderr as `connection RUN.N from ADDRESS port PORT`, `RUN.N` being the `logging-data` its articles carry; a line stderr cannot take at once is counted, not waited for.
 

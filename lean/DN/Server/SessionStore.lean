@@ -16,6 +16,10 @@ completion moves the slot on. The Message-IDs the store holds are found in an in
 cells by SipHash-2-4 under the index's key, probed one after another; the commits are recovery's,
 in its area, and each one the store makes after them.
 
+A read keeps only the octets of its last job: each is checked as it comes, the check carried from
+one job to the next, and what it gives is made from them, its 220, 221 or 222 line and its Xref,
+made when it starts, an octet at a time from where it has given to.
+
 A function returns zero, or the code it stopped the run with, written where the host reads it at
 exit, which its caller returns in turn; what it finds it leaves in `ownRet`. Each checks a word it
 reads back from the heap before it makes an address of it, and stops on one out of range with
@@ -158,49 +162,90 @@ def postTidy : PFun :=
          [zset zLive (n 0)]],
      done0] }
 
-/-- `Store.tidy`. -/
+/-- The codes of a read's file and task (`DN.News.PostSpec.ReadFile`, `ReadTask`). -/
+def readNone : Nat := 0
+def readOpen : Nat := 1
+def readGone : Nat := 2
+def taskOpen : Nat := 1
+def taskRead : Nat := 2
+def taskReadLast : Nat := 3
+def taskClose : Nat := 4
+
+/-- The read the local `x` numbers, checked, as the local `rs`. -/
+def readOf (x : String) : List PStmt :=
+  [keptIn (v x) (reads - 1), .dec "rs" (eAdd (at_ readsOff) (eMul (v x) (n readLen)))]
+def rdw (f : Nat) : PExpr := fld "rs" f
+def rdset (f : Nat) (e : PExpr) : PStmt := setf "rs" f e
+
+/-- For each read, as `rs`, `body`, counted by `kr`. -/
+def eachRead (body : List PStmt) : List PStmt :=
+  [.dec "kr" (n 0),
+   .while (eLt (v "kr") (n reads))
+     ([.dec "rs" (eAdd (at_ readsOff) (eMul (v "kr") (n readLen)))] ++ body ++ [inc "kr"])]
+
+/-- `Store.tidy`: each slot's `Slot.tidy`, and each read forgotten once it has no owner, no job in
+flight and no file open (`Read.tidy`). -/
 def postTidyAll : PFun :=
   { name := "postTidyAll", body :=
     [.dec "kk" (n 0),
-     .while (eLt (v "kk") (n posts)) (callS "t" "postTidy" [v "kk"] ++ [inc "kk"]),
-     done0] }
+     .while (eLt (v "kk") (n posts)) (callS "t" "postTidy" [v "kk"] ++ [inc "kk"])] ++
+    eachRead [ifs (eAnd (eAnd (rdw rLive) (eEq (rdw rOwner) (n 0)))
+        (eAnd (eEq (rdw rBusy) (n 0)) (ne (rdw rFile) (n readOpen)))) [rdset rLive (n 0)]] ++
+    [done0] }
 
-/-! ## The POSTs that wait -/
+/-! ## The connections that wait -/
 
-def waitAt (w : PExpr) : PExpr := eAdd (at_ (ownOff + ownWaits)) (eMul w (n 16))
+/-- The queues: the POSTs that wait for a slot (`Store.waiters`), zero, and the connections that
+wait for a read (`Store.readers`), one; each a count, then an index and a generation each. -/
+def waiters : PExpr := n 0
+def readers : PExpr := n 1
 
-/-- The connection `x` of generation `g` waits after those that came before it. -/
-def postWait : PFun :=
-  { name := "postWait", params := [(1, "x"), (1, "g")], body :=
-    [.dec "wn" (sw ownWaitN), keptIn (v "wn") (conns - 1),
+/-- The queue the local `qs` names, as `q`. -/
+def queueOf : List PStmt :=
+  [keptIn (v "qs") 1, .dec "q" (eAdd (at_ (ownOff + ownWaitN)) (eMul (v "qs") (n (ownReadN - ownWaitN))))]
+
+def waitAt (w : PExpr) : PExpr := eAdd (atOff (v "q") 8) (eMul w (n 16))
+
+/-- The connection `x` of generation `g` waits in queue `qs` after those that came before it. -/
+def queueAdd : PFun :=
+  { name := "queueAdd", params := [(1, "qs"), (1, "x"), (1, "g")], body := queueOf ++
+    [.dec "wn" (ld (v "q")), keptIn (v "wn") (conns - 1),
      .store (waitAt (v "wn")) (v "x"), .store (atOff (waitAt (v "wn")) 8) (v "g"),
-     sset ownWaitN (eAdd (v "wn") (n 1)), done0] }
+     .store (v "q") (eAdd (v "wn") (n 1)), done0] }
 
-/-- Where among those that wait the connection `x` of generation `g` is, as `at`; the count, as
-`wn`, when it is not. -/
+/-- Where in queue `q` the connection `x` of generation `g` is, as `at`; the count, as `wn`, when
+it is not there. -/
 def placeOf : List PStmt :=
-  [.dec "wn" (sw ownWaitN), keptIn (v "wn") conns, .dec "w" (n 0), .dec "at" (v "wn"),
+  [.dec "wn" (ld (v "q")), keptIn (v "wn") conns, .dec "w" (n 0), .dec "at" (v "wn"),
    .while (eLt (v "w") (v "wn"))
      [ifs (eAnd (eEq (v "at") (v "wn"))
          (eAnd (eEq (ld (waitAt (v "w"))) (v "x")) (eEq (ld (atOff (waitAt (v "w")) 8)) (v "g"))))
         [.assign "at" (v "w")],
       inc "w"]]
 
-/-- It no longer waits. -/
-def postUnwait : PFun :=
-  { name := "postUnwait", params := [(1, "x"), (1, "g")], body := placeOf ++
+/-- It no longer waits in queue `qs`. -/
+def queueDrop : PFun :=
+  { name := "queueDrop", params := [(1, "qs"), (1, "x"), (1, "g")], body := queueOf ++ placeOf ++
     [ifs (eLt (v "at") (v "wn"))
       [.dec "u" (v "at"),
        .while (eLt (eAdd (v "u") (n 1)) (v "wn"))
          [.store (waitAt (v "u")) (ld (waitAt (eAdd (v "u") (n 1)))),
           .store (atOff (waitAt (v "u")) 8) (ld (atOff (waitAt (eAdd (v "u") (n 1))) 8)), inc "u"],
-       sset ownWaitN (eSub (v "wn") (n 1))],
+       .store (v "q") (eSub (v "wn") (n 1))],
      done0] }
 
 /-- `Store.admits`: fewer came before it than slots are free. -/
 def postAdmits : PFun :=
-  { name := "postAdmits", params := [(1, "x"), (1, "g")], body := placeOf ++
+  { name := "postAdmits", params := [(1, "x"), (1, "g")], body :=
+    [.dec "qs" waiters] ++ queueOf ++ placeOf ++
     [.dec "fr" (n 0)] ++ eachSlot [ifs (eEq (zw zLive) (n 0)) [inc "fr"]] ++
+    give (eAnd (eLt (v "at") (v "wn")) (eLt (v "at") (v "fr"))) }
+
+/-- `Store.admitsRead`: fewer came before it than reads are free. -/
+def readAdmits : PFun :=
+  { name := "readAdmits", params := [(1, "x"), (1, "g")], body :=
+    [.dec "qs" readers] ++ queueOf ++ placeOf ++
+    [.dec "fr" (n 0)] ++ eachRead [ifs (eEq (rdw rLive) (n 0)) [inc "fr"]] ++
     give (eAnd (eLt (v "at") (v "wn")) (eLt (v "at") (v "fr"))) }
 
 /-- `Store.abandon`: the connection `x` of generation `g` gone, or no longer reading. -/
@@ -209,7 +254,10 @@ def postAbandon : PFun :=
     eachSlot [ifs (eAnd (eAnd (zw zLive) (zw zOwner))
         (eAnd (eEq (zw zOwnIdx) (v "x")) (eEq (zw zOwnGen) (v "g"))))
       [zset zOwner (n 0), ifs (eEq (zw zEnded) (n 0)) [zset zRefused (n 1)]]] ++
-    callS "u" "postUnwait" [v "x", v "g"] ++ callS "t" "postTidyAll" [] ++ [done0] }
+    eachRead [ifs (eAnd (eAnd (rdw rLive) (rdw rOwner))
+        (eAnd (eEq (rdw rOwnIdx) (v "x")) (eEq (rdw rOwnGen) (v "g")))) [rdset rOwner (n 0)]] ++
+    callS "u" "queueDrop" [waiters, v "x", v "g"] ++ callS "u2" "queueDrop" [readers, v "x", v "g"] ++
+    callS "t" "postTidyAll" [] ++ [done0] }
 
 /-- Slot `k` given to the POST of the connection `x` of generation `g`, of number `num`. -/
 def postClaim : PFun :=
@@ -238,7 +286,8 @@ def commitAt (ci : String) : List PStmt :=
      (eMul (v ci) (n News.RecoverProg.slotSize))),
    .dec "sn" (eAnd (.shr (fld "sl" News.RecoverProg.slotMisc) (n 8)) (n 255))]
 
-/-- Whether the store holds the `n` octets at `ownId` as a Message-ID. -/
+/-- Whether the store holds the `n` octets at `ownId` as a Message-ID: zero, or one more than its
+commit's place in recovery's area. -/
 def idFind : PFun :=
   { name := "idFind", params := [(1, "n")], body :=
     [keptIn (v "n") 250] ++ callS "h" "idHash" [v "n"] ++
@@ -253,7 +302,7 @@ def idFind : PFun :=
              [ifs (ne (.loadb (eAdd (atOff (v "sl") News.RecoverProg.slotId) (v "j")))
                  (.loadb (eAdd (at_ (ownOff + ownId)) (v "j")))) [.assign "same" (n 0)],
               inc "j"],
-           ifs (v "same") (give (n 1))],
+           ifs (v "same") (give (v "ce"))],
          .assign "x" (eAnd (eAdd (v "x") (n 1)) (n (indexCells - 1))), inc "t"])] ++
     give (n 0) }
 
@@ -421,6 +470,8 @@ def postFreeJob : PFun :=
        ([.dec "hj" (n 0)] ++
         eachSlot [ifs (eAnd (zw zLive) (eAnd (zw zBusy) (eEq (zw zJob) (v "j"))))
           [.assign "hj" (n 1)]] ++
+        eachRead [ifs (eAnd (rdw rLive) (eAnd (rdw rBusy) (eEq (rdw rJob) (v "j"))))
+          [.assign "hj" (n 1)]] ++
         [ifs (eAnd (eEq (v "hj") (n 0)) (eEq (v "fj") (n jobs))) [.assign "fj" (v "j")], inc "j"]),
      ifs (eEq (v "fj") (n jobs)) [.assign "fj" (n 0)]] ++
     give (v "fj") }
@@ -578,6 +629,153 @@ def postPlan : PFun :=
                (anyBusy taskCommit ++ [.ite (v "any") [] commitJob])]]]],
      done0] }
 
+/-! ## Reads -/
+
+/-- The fixed texts of reads, by their place in `SessionLayout.texts`: the 220, 221 and 222 lines'
+starts, six octets each, the 223 line's, the 403, Xref's name and the terminating dot. -/
+def textOf (k : Nat) : PExpr := at_ (ownOff + ownTexts + textAt k)
+def tStatus : Nat := 29
+def tStat : Nat := 32
+def tUnreadable : Nat := 33
+def tXref : Nat := 34
+def tDot : Nat := 35
+
+/-- Whether a file is open at place `p`: the journal's, an article's or a read's
+(`Store.placeTaken`). -/
+def placeTaken : PFun :=
+  { name := "placeTaken", params := [(1, "p")], body :=
+    [.dec "tk" (eEq (ld (at_ (drvOff + dJnl))) (v "p"))] ++
+    eachSlot [ifs (eAnd (eAnd (zw zLive) (zw zHas))
+        (eAnd (eEq (zw zFile) (n fileOpen)) (eEq (zw zPlace) (v "p")))) [.assign "tk" (n 1)]] ++
+    eachRead [ifs (eAnd (rdw rLive) (eAnd (eEq (rdw rFile) (n readOpen)) (eEq (rdw rPlace) (v "p"))))
+      [.assign "tk" (n 1)]] ++
+    give (v "tk") }
+
+/-- `x`, below 2^32, divided by ten. -/
+def div10 (x : PExpr) : PExpr := .shr (eMul x (n 3435973837)) (n 35)
+
+/-- An octet into the read's Xref at `xo`, checked to lie in it. -/
+def putX (e : PExpr) : List PStmt :=
+  [keptIn (v "xo") (xrefMax - 1), .storeb (eAdd (atOff (v "rs") rXref) (v "xo")) e, inc "xo"]
+
+/-- Read `k` given to the connection `x` of generation `g`, for command `cmd`, of the commit at
+`ci`: its numbers from the commit; its 220, 221 or 222 line, the number 0 and the Message-ID; its
+Xref field (`PostSpec.xref`): the path identity, then each group and its number, a line folded before
+one that would take it past 998 octets. -/
+def readClaim : PFun :=
+  { name := "readClaim", params := [(1, "k"), (1, "x"), (1, "g"), (1, "cmd"), (1, "ci")], body :=
+    readOf "k" ++ [keptIn (v "cmd") 3, ifs (eEq (v "cmd") (n 0)) (stop brokenState)] ++
+    commitAt "ci" ++
+    [keptIn (v "sn") 250,
+     .dec "sz" (fld "sl" News.RecoverProg.slotSizes),
+     .dec "ms" (fld "sl" News.RecoverProg.slotMisc)] ++
+    ([(rLive, n 1), (rOwner, n 1), (rOwnIdx, v "x"), (rOwnGen, v "g"), (rCmd, v "cmd"),
+      (rCi, v "ci"), (rFile, n readNone), (rPlace, n 0), (rPGen, n 0), (rGot, n 0), (rGiven, n 0),
+      (rBad, n 0), (rBusy, n 0), (rHead, .shr (v "sz") (n 32)), (rSize, eAnd (v "sz") (n 0xFFFFFFFF)),
+      (rCrcWant, eAnd (.shr (v "ms") (n 16)) (n 0xFFFFFFFF)), (rAcc, n 0xFFFFFFFF), (rBol, n 1),
+      (rCr, n 0), (rDot, n 0), (rBufAt, n 0), (rBufLen, n 0)].map fun (f, e) => rdset f e) ++
+    copyNew "sj" (atOff (v "rs") rLine)
+      (eAdd (textOf tStatus) (eMul (eSub (v "cmd") (n 1)) (n 6))) (n 6) ++
+    copyNew "si" (atOff (v "rs") (rLine + 6)) (atOff (v "sl") News.RecoverProg.slotId) (v "sn") ++
+    [.storeb (eAdd (atOff (v "rs") (rLine + 6)) (v "sn")) (n 13),
+     .storeb (eAdd (atOff (v "rs") (rLine + 7)) (v "sn")) (n 10),
+     rdset rLineLen (eAdd (v "sn") (n 8)),
+     .dec "xo" (n 0), .dec "xj" (n 0),
+     .while (eLt (v "xj") (n 6)) (putX (.loadb (eAdd (textOf tXref) (v "xj"))) ++ [inc "xj"]),
+     .dec "il" (aw News.ArticleProg.xIdLen), keptIn (v "il") identityMax, .assign "xj" (n 0),
+     .while (eLt (v "xj") (v "il"))
+       (putX (.loadb (eAdd (at_ (artOff + News.ArticleProg.xId)) (v "xj"))) ++ [inc "xj"]),
+     .dec "wd" (v "xo"), .dec "gn" (eAnd (v "ms") (n 255)), keptIn (v "gn") 16, .dec "gi" (n 0),
+     .while (eLt (v "gi") (v "gn"))
+       ([.dec "gw" (ld (eAdd (atOff (v "sl") News.RecoverProg.slotGroups) (eMul (v "gi") (n 8)))),
+         .dec "gx" (.shr (v "gw") (n 32)), keptIn (v "gx") (groupsMax - 1),
+         .dec "num" (eAnd (v "gw") (n 0xFFFFFFFF)),
+         .dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+           (eMul (v "gx") (n News.RecoverProg.rGroupSlot))),
+         .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax,
+         .dec "nd" (n 1), .dec "t" (v "num"),
+         .while (eLt (n 9) (v "t")) [.assign "t" (div10 (v "t")), inc "nd"],
+         .dec "ll" (eAdd (eAdd (v "gl") (n 1)) (v "nd")),
+         ifs (eLt (n 998) (eAdd (eAdd (v "wd") (n 1)) (v "ll")))
+           (putX (n 13) ++ putX (n 10) ++ [.assign "wd" (n 0)])] ++
+        putX (n 32) ++
+        [.assign "xj" (n 0),
+         .while (eLt (v "xj") (v "gl")) (putX (.loadb (eAdd (atOff (v "gp") 8) (v "xj"))) ++ [inc "xj"])] ++
+        putX (n 58) ++
+        [keptIn (v "xo") (xrefMax - 10), .assign "t" (v "num"), .dec "dq" (v "nd"),
+         .while (eLt (n 0) (v "dq"))
+           [.assign "dq" (eSub (v "dq") (n 1)), keptIn (v "dq") 9,
+            .storeb (eAdd (eAdd (atOff (v "rs") rXref) (v "xo")) (v "dq"))
+              (eAdd (n 48) (eSub (v "t") (eMul (div10 (v "t")) (n 10)))),
+            .assign "t" (div10 (v "t"))],
+         .assign "xo" (eAdd (v "xo") (v "nd")),
+         .assign "wd" (eAdd (eAdd (v "wd") (n 1)) (v "ll")), inc "gi"])] ++
+    putX (n 13) ++ putX (n 10) ++ [rdset rXrefLen (v "xo"), done0] }
+
+/-- Whether read `rs` is whole: its commit's size read and checked, and its file closed by the read
+past it (`Read.whole`). -/
+def readWhole : PExpr := eAnd (eEq (rdw rGot) (rdw rSize)) (eEq (rdw rFile) (n readGone))
+
+/-- How many octets read `k` gives (`Read.output`): nothing before octets are checked, then its
+220, 221 or 222 line, for ARTICLE the file with Xref after the header fields once the empty line is
+read, for HEAD the header fields and Xref, for BODY what follows the empty line; and once whole the
+dot. -/
+def readOutSize : PFun :=
+  { name := "readOutSize", params := [(1, "k")], body := readOf "k" ++
+    [.dec "gt" (rdw rGot), .dec "h" (rdw rHead), .dec "cm" (rdw rCmd),
+     ifs (eEq (v "gt") (n 0)) (give (n 0)),
+     .dec "known" (eLe (eAdd (v "h") (n 2)) (v "gt")),
+     .dec "hm" (v "h"), ifs (eLt (v "gt") (v "h")) [.assign "hm" (v "gt")],
+     .dec "os" (rdw rLineLen),
+     .ite (eEq (v "cm") (n 3))
+       [ifs (eLt (eAdd (v "h") (n 2)) (v "gt"))
+         [.assign "os" (eAdd (v "os") (eSub (v "gt") (eAdd (v "h") (n 2))))]]
+       [.assign "os" (eAdd (v "os") (v "hm")),
+        ifs (v "known") [.assign "os" (eAdd (v "os") (rdw rXrefLen)),
+          ifs (eEq (v "cm") (n 1)) [.assign "os" (eAdd (v "os") (eSub (v "gt") (v "h")))]]],
+     ifs readWhole [.assign "os" (eAdd (v "os") (n 3))]] ++
+    give (v "os") }
+
+/-- A job of `ops` for task `t` asking `asked` octets, started in the job slot of the local `j`
+for read `rs`. -/
+def startRead (ops : List Op) (t : Nat) (asked : PExpr) : List PStmt :=
+  [.dec "gen" (eAdd (ld (at_ (drvOff + dGen))) (n 1)), .store (at_ (drvOff + dGen)) (v "gen"),
+   .dec "jb" jobAt, setf "jb" jobKind (n job), setf "jb" jobGen (v "gen"),
+   setf "jb" jobCount (n ops.length)] ++
+  (ops.zipIdx.flatMap fun (o, i) => putOpAt (v "jb") i o) ++
+  [rdset rBusy (n 1), rdset rJob (v "j"), rdset rJGen (v "gen"), rdset rJOps (n ops.length),
+   rdset rTask (n t), rdset rAsked asked]
+
+/-- `Store.nextRead` of read `k`, started if it has one: its file opened; once everything checked
+has been given, the next octets read, a job's or, when the rest fits, one more than are left with
+the file closed after them; a file a failure or the connection gone leaves open closed. -/
+def readPlan : PFun :=
+  let free : List PStmt := callS "fj" "postFreeJob" [] ++ [.dec "j" found, keptIn (v "j") (jobs - 1)]
+  { name := "readPlan", params := [(1, "k")], body := readOf "k" ++
+    [ifs (eEq (rdw rLive) (n 0)) [done0], ifs (rdw rBusy) [done0],
+     .dec "fl" (rdw rFile), .dec "pl" (rdw rPlace), .dec "pg" (rdw rPGen),
+     .dec "quit" (or2 (rdw rBad) (eEq (rdw rOwner) (n 0))),
+     ifs (eEq (v "fl") (n readGone)) [done0],
+     ifs (eAnd (eEq (v "fl") (n readNone)) (v "quit")) [done0],
+     .dec "ci" (rdw rCi), keptIn (v "ci") (capacity - 1),
+     .dec "sl" (eAdd (at_ (recOff + News.RecoverProg.rSlots))
+       (eMul (v "ci") (n News.RecoverProg.slotSize))),
+     .ite (eEq (v "fl") (n readNone))
+       (free ++ startRead [{ code := opOpen, name := final, number := fld "sl" News.RecoverProg.slotSeq }]
+         taskOpen (n 0))
+       [.ite (v "quit") (free ++ startRead [{ code := opClose, place := v "pl", gen := v "pg" }] taskClose (n 0))
+         (callS "os" "readOutSize" [v "k"] ++
+          [ifs (eLt (rdw rGiven) found) [done0],
+           .dec "left" (eSub (rdw rSize) (rdw rGot))] ++ free ++
+          [.ite (eLe (eAdd (v "left") (n 1)) (n jobData))
+             (startRead [{ code := opRead, place := v "pl", gen := v "pg", offset := rdw rGot,
+                           length := eAdd (v "left") (n 1) },
+                         { code := opClose, place := v "pl", gen := v "pg" }]
+               taskReadLast (eAdd (v "left") (n 1)))
+             (startRead [{ code := opRead, place := v "pl", gen := v "pg", offset := rdw rGot,
+                           length := n jobData }] taskRead (n jobData))])],
+     done0] }
+
 /-! ## Completions -/
 
 /-- The store stopped accepting, by a failed sync or close. -/
@@ -609,9 +807,132 @@ def commitApply : List PStmt :=
 /-- Result word `w` of operation `i` of the completion at `d`. -/
 def result (i w : Nat) : PExpr := fld "d" (doneResults + 16 * i + 8 * w)
 
-/-- `Store.complete` of the completion in slot `j`, if it holds one: the slot whose job it ends
-moved on; one of no job in flight, or with more operations done than its job had, or a file at a
-place past the table, stops the run. -/
+/-- A completion's octets of a read checked on from where the read's check stopped
+(`PostSpec.fileOk` a job at a time): CRLF only, no NUL, a line that starts with a dot starting with
+two, the empty line where the header section's size says — an LF before and after it, each line
+ending in CRLF — and once all are read, the last line ended, the size and the CRC-32C; checked, they
+are the read's buffer. -/
+def readCheck : List PStmt :=
+  let crcStep (x : PExpr) : PStmt := .assign "acc" (eXor
+    (ld (eAdd (at_ (ownOff + ownCrc)) (eMul (eAnd (eXor (v "acc") x) (n 255)) (n 8))))
+    (.shr (v "acc") (n 8)))
+  let bad : PStmt := .assign "bad" (n 1)
+  [.dec "gn" (result 0 0), .dec "asked" (rdw rAsked), keptIn (v "asked") jobData,
+   ifs (or2 (eLt (v "gn") (n 0)) (eLt (v "asked") (v "gn")))
+     (stop (News.SessionSpec.Breach.job .badDone).code),
+   keptIn (v "gn") jobData,
+   .dec "gt" (rdw rGot), .dec "sz" (rdw rSize), .dec "h" (rdw rHead),
+   keptIn (v "gt") 4294967295, keptIn (v "sz") 4294967295,
+   ifs (eLt (v "sz") (v "gt")) (stop brokenState),
+   .dec "left" (eSub (v "sz") (v "gt")), .dec "mn" (v "left"),
+   ifs (eLt (v "asked") (v "left")) [.assign "mn" (v "asked")],
+   .dec "bad" (or2 (eLt (v "gn") (v "mn")) (eLt (v "left") (v "gn"))),
+   .dec "acc" (rdw rAcc), .dec "bol" (rdw rBol), .dec "cr" (rdw rCr), .dec "dt" (rdw rDot),
+   .dec "q" (n 0),
+   .while (eAnd (eEq (v "bad") (n 0)) (eLt (v "q") (v "gn")))
+     [.dec "x" (.loadb (eAdd (atOff (v "d") doneHead) (v "q"))), .dec "f" (eAdd (v "gt") (v "q")),
+      crcStep (v "x"),
+      .ite (v "cr")
+        [ifs (ne (v "x") (n 10)) [bad], .assign "cr" (n 0), .assign "bol" (n 1)]
+        [.ite (or2 (eEq (v "x") (n 0)) (eEq (v "x") (n 10))) [bad]
+          [.ite (v "dt")
+            [ifs (ne (v "x") (n 46)) [bad], .assign "dt" (n 0), .assign "bol" (n 0)]
+            [.ite (eEq (v "x") (n 13)) [.assign "cr" (n 1)]
+              [.ite (eAnd (v "bol") (eEq (v "x") (n 46))) [.assign "dt" (n 1), .assign "bol" (n 0)]
+                [.assign "bol" (n 0)]]]]],
+      ifs (or2 (eEq (eAdd (v "f") (n 1)) (v "h")) (eEq (v "f") (eAdd (v "h") (n 1))))
+        [ifs (ne (v "x") (n 10)) [bad]],
+      inc "q"],
+   .dec "ng" (eAdd (v "gt") (v "gn")),
+   ifs (eAnd (eLe (eAdd (v "h") (n 2)) (v "ng")) (eLt (v "h") (n 2))) [bad],
+   ifs (eLe (v "sz") (v "ng"))
+     [ifs (or2 (eEq (v "bol") (n 0)) (or2 (v "cr") (v "dt"))) [bad],
+      ifs (eLt (v "ng") (eAdd (v "h") (n 2))) [bad],
+      ifs (ne (eXor (v "acc") (n 0xFFFFFFFF)) (rdw rCrcWant)) [bad]],
+   .ite (v "bad") [rdset rBad (n 1)]
+     (copyNew "cj" (atOff (v "rs") rBuf) (atOff (v "d") doneHead) (v "gn") ++
+      [rdset rBufAt (v "gt"), rdset rBufLen (v "gn"), rdset rGot (v "ng"), rdset rAcc (v "acc"),
+       rdset rBol (v "bol"), rdset rCr (v "cr"), rdset rDot (v "dt")])]
+
+/-- The completion in slot `j` of read `k`'s job (`Store.completeRead`): its file opened at a place
+in the table and in use by no other file, or the read failed; the octets read
+checked (`readCheck`), fewer than asked or than are left, or more than are left, failing the read;
+the file gone once the last read's close was tried, or once closed. -/
+def readDone : PFun :=
+  { name := "readDone", params := [(1, "k"), (1, "j")], body := readOf "k" ++
+    [keptIn (v "j") (jobs - 1),
+     .dec "d" (eAdd (at_ (nextOff + nextDone)) (eMul (v "j") (n doneSlot))),
+     .dec "ok" (fld "d" doneOps), .dec "nops" (rdw rJOps),
+     ifs (or2 (eLt (v "ok") (n 0)) (eLt (v "nops") (v "ok")))
+       (stop (News.SessionSpec.Breach.job .badDone).code),
+     rdset rBusy (n 0), .dec "tt" (rdw rTask),
+     .ite (eEq (v "tt") (n taskOpen))
+       [.ite (eEq (v "ok") (n 1))
+         ([.dec "rp" (result 0 0), .dec "rg" (result 0 1),
+           ifs (or2 (eLt (v "rp") (n 0)) (eLe (n handles) (v "rp")))
+             (stop (News.SessionSpec.Breach.job .badDone).code)] ++
+          callS "pt" "placeTaken" [v "rp"] ++
+          [ifs found (stop (News.SessionSpec.Breach.job .badDone).code),
+           rdset rFile (n readOpen), rdset rPlace (v "rp"), rdset rPGen (v "rg")])
+         [rdset rFile (n readGone), rdset rBad (n 1)]]
+       [.ite (eEq (v "tt") (n taskClose)) [rdset rFile (n readGone)]
+         [.ite (eEq (v "ok") (n 0)) [rdset rBad (n 1)] readCheck,
+          ifs (eAnd (eEq (v "tt") (n taskReadLast)) (eLe (n 1) (v "ok"))) [rdset rFile (n readGone)]]],
+     done0] }
+
+/-- The next octets read `k` gives, at most an action's, into the output of connection `c`, made an
+octet at a time from where the read has given to: its 220, 221 or 222 line, the file's octets from
+the buffer — or, for ARTICLE, the empty line's CRLF when the buffer starts past it — Xref, and the
+dot. Once it has given everything and is whole, the read ends: it has no owner, and the connection no
+read. How many it gave. -/
+def readPiece : PFun :=
+  { name := "readPiece", params := [(1, "c"), (1, "k")], body := readOf "k" ++
+    [keptIn (v "c") (conns - 1), .dec "cb" (eAdd (at_ tableOff) (eMul (v "c") (n connSlot)))] ++
+    callS "o" "readOutSize" [v "k"] ++
+    [.dec "os" found, .dec "gv" (rdw rGiven),
+     ifs (or2 (eLt (v "gv") (n 0)) (eLt (v "os") (v "gv"))) (stop brokenState),
+     .dec "m" (eSub (v "os") (v "gv")), ifs (eLt (n data) (v "m")) [.assign "m" (n data)],
+     keptIn (v "m") data,
+     .dec "sl" (rdw rLineLen), .dec "h" (rdw rHead), .dec "xl" (rdw rXrefLen),
+     .dec "sz" (rdw rSize), .dec "cm" (rdw rCmd), .dec "ba" (rdw rBufAt), .dec "bn" (rdw rBufLen),
+     keptIn (v "sl") statusMax, keptIn (v "xl") xrefMax, keptIn (v "bn") jobData,
+     .dec "i" (n 0),
+     .while (eLt (v "i") (v "m"))
+       [.dec "pos" (eAdd (v "gv") (v "i")), .dec "b" (n 0), .dec "isf" (n 0), .dec "fp" (n 0),
+        .dec "di" (n 0), .dec "isd" (n 0), .dec "xi" (n 0), .dec "isx" (n 0),
+        .ite (eLt (v "pos") (v "sl"))
+          [keptIn (v "pos") (statusMax - 1), .assign "b" (.loadb (eAdd (atOff (v "rs") rLine) (v "pos")))]
+          [.dec "q" (eSub (v "pos") (v "sl")),
+           .ite (eEq (v "cm") (n 3))
+             [.dec "bl" (eSub (eSub (v "sz") (v "h")) (n 2)),
+              .ite (eLt (v "q") (v "bl")) [.assign "isf" (n 1), .assign "fp" (eAdd (eAdd (v "h") (n 2)) (v "q"))]
+                [.assign "isd" (n 1), .assign "di" (eSub (v "q") (v "bl"))]]
+             [.ite (eLt (v "q") (v "h")) [.assign "isf" (n 1), .assign "fp" (v "q")]
+               [.ite (eLt (v "q") (eAdd (v "h") (v "xl"))) [.assign "isx" (n 1), .assign "xi" (eSub (v "q") (v "h"))]
+                 [.ite (eEq (v "cm") (n 1))
+                   [.ite (eLt (v "q") (eAdd (v "xl") (v "sz")))
+                     [.assign "isf" (n 1), .assign "fp" (eSub (v "q") (v "xl"))]
+                     [.assign "isd" (n 1), .assign "di" (eSub (v "q") (eAdd (v "xl") (v "sz")))]]
+                   [.assign "isd" (n 1), .assign "di" (eSub (v "q") (eAdd (v "h") (v "xl")))]]]]],
+        ifs (v "isx") [keptIn (v "xi") (xrefMax - 1),
+          .assign "b" (.loadb (eAdd (atOff (v "rs") rXref) (v "xi")))],
+        ifs (v "isd") [keptIn (v "di") 2, .assign "b" (.loadb (eAdd (textOf tDot) (v "di")))],
+        ifs (v "isf")
+          [.ite (eLe (v "ba") (v "fp"))
+            [.dec "bi" (eSub (v "fp") (v "ba")), keptIn (v "bi") (jobData - 1),
+             ifs (eLe (v "bn") (v "bi")) (stop brokenState),
+             .assign "b" (.loadb (eAdd (atOff (v "rs") rBuf) (v "bi")))]
+            [.ite (eEq (v "fp") (v "h")) [.assign "b" (n 13)]
+              [.ite (eEq (v "fp") (eAdd (v "h") (n 1))) [.assign "b" (n 10)] (stop brokenState)]]],
+        .storeb (eAdd (atOff (v "cb") cOut) (v "i")) (v "b"), inc "i"],
+     setf "cb" cOutLen (v "m"), rdset rGiven (eAdd (v "gv") (v "m")),
+     ifs (eAnd readWhole (eEq (eAdd (v "gv") (v "m")) (v "os")))
+       [rdset rOwner (n 0), setf "cb" cRead (n 0), setf "cb" cWant (n 0)]] ++
+    give (v "m") }
+
+/-- `Store.completeAny` of the completion in slot `j`, if it holds one: the read or the slot whose
+job it ends moved on; one of no job in flight, or with more operations done than its job had, or a
+file at a place past the table or in use, stops the run. -/
 def postDone : PFun :=
   { name := "postDone", params := [(1, "j")], body :=
     [keptIn (v "j") (jobs - 1),
@@ -620,7 +941,11 @@ def postDone : PFun :=
      .dec "dg" (fld "d" doneGen), .dec "ok" (fld "d" doneOps), .dec "fk" (n posts)] ++
     eachSlot [ifs (eAnd (eEq (v "fk") (n posts)) (eAnd (eAnd (zw zLive) (zw zBusy))
         (eAnd (eEq (zw zJob) (v "j")) (eEq (zw zJGen) (v "dg"))))) [.assign "fk" (v "kk")]] ++
-    [ifs (eEq (v "fk") (n posts)) (stop (News.SessionSpec.Breach.job .unknownJob).code)] ++
+    [.dec "fr" (n reads)] ++
+    eachRead [ifs (eAnd (eEq (v "fr") (n reads)) (eAnd (eAnd (rdw rLive) (rdw rBusy))
+        (eAnd (eEq (rdw rJob) (v "j")) (eEq (rdw rJGen) (v "dg"))))) [.assign "fr" (v "kr")]] ++
+    [ifs (eLt (v "fr") (n reads)) (callS "rd" "readDone" [v "fr", v "j"] ++ [done0]),
+     ifs (eEq (v "fk") (n posts)) (stop (News.SessionSpec.Breach.job .unknownJob).code)] ++
     slotOf "fk" ++
     [.dec "nops" (zw zJOps),
      ifs (or2 (eLt (v "ok") (n 0)) (eLt (v "nops") (v "ok")))
@@ -630,10 +955,12 @@ def postDone : PFun :=
      .dec "tt" (zw zTask),
      .ite (eEq (v "tt") (n taskCreate))
        [.ite (eEq (v "ok") (n 1))
-         [.dec "rp" (result 0 0), .dec "rg" (result 0 1),
-          ifs (or2 (eLt (v "rp") (n 0)) (eLe (n handles) (v "rp")))
-            (stop (News.SessionSpec.Breach.job .badDone).code),
-          zset zFile (n fileOpen), zset zPlace (v "rp"), zset zPGen (v "rg")]
+         ([.dec "rp" (result 0 0), .dec "rg" (result 0 1),
+           ifs (or2 (eLt (v "rp") (n 0)) (eLe (n handles) (v "rp")))
+             (stop (News.SessionSpec.Breach.job .badDone).code)] ++
+          callS "pt" "placeTaken" [v "rp"] ++
+          [ifs found (stop (News.SessionSpec.Breach.job .badDone).code),
+           zset zFile (n fileOpen), zset zPlace (v "rp"), zset zPGen (v "rg")])
          [zset zRefused (n 1)]]
      [.ite (eEq (v "tt") (n taskWrite))
        [.ite (v "all")
@@ -666,8 +993,9 @@ def postDone : PFun :=
 
 /-- The store's functions, each after those it calls. -/
 def functions : List PFun :=
-  [crcTable, postTakes, postTidy, postTidyAll, postWait, postUnwait, postAdmits, postAbandon,
-   postClaim, idHash, idFind, idAdd, idBuild, postReserved, postReserving, postAccept, postFeed,
-   postFreeJob, postFrame, postPlan, postDone]
+  [crcTable, postTakes, postTidy, postTidyAll, queueAdd, queueDrop, postAdmits, readAdmits,
+   postAbandon, postClaim, idHash, idFind, idAdd, idBuild, postReserved, postReserving, postAccept,
+   postFeed, postFreeJob, postFrame, postPlan, placeTaken, readClaim, readOutSize, readPlan,
+   readDone, readPiece, postDone]
 
 end DN.Server.SessionStore

@@ -88,7 +88,8 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         + b"\r\n",
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
         + b"\r\nPOST\r\n.\r\n",
-        "help-post": help_lines[0] + b"POST\r\n" + help_lines[1],
+        "help-post": b"100 Help text follows\r\nARTICLE [message-ID|number]\r\nBODY [message-ID|number]\r\n"
+        + help_lines[0][len(b"100 Help text follows\r\n"):] + b"POST\r\n" + help_lines[1],
         "unreadable": b"403 Article not readable\r\n",
         "post": b"340 Send article to be posted\r\n",
         "posted": b"240 Article received OK\r\n",

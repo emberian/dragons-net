@@ -842,8 +842,15 @@ def faults(b: Builds) -> dict[str, object]:
                            {"done": [1, io], "marks": ["spool", "run"]}),
         "the directory's sync failing": ([enabled("dn/sync-dir", errno.EIO)], lambda _pg: [Op("sync-dir")],
                                          {"done": [0, io], "marks": ["spool", "run"]}),
-        "a close failing": ([enabled("dn/close", errno.EIO)], lambda pg: [Op("close", *pg)],
-                            {"done": [0, io], "marks": ["spool", "run"]}),
+        "a close failing": ([enabled("dn/close", errno.EIO)], lambda pg: [write(pg), Op("close", *pg)],
+                            {"done": [1, io], "marks": ["spool", "run"]}),
+        "a close failing after a truncation": ([enabled("dn/close", errno.EIO)],
+                                               lambda pg: [Op("truncate", *pg, length=3), Op("close", *pg)],
+                                               {"done": [1, io], "marks": ["spool", "run"]}),
+        # the file only read, opened, not created
+        "a close failing on a file only read": ([enabled("dn/close", errno.EIO)],
+                                                lambda pg: [Op("read", *pg, length=11), Op("close", *pg)],
+                                                {"done": [1, io], "marks": []}),
         "no space": ([enabled("dn/write", errno.ENOSPC)], lambda pg: [write(pg)], {"done": [0, full], "marks": []}),
         "an interrupted write": ([enabled("dn/write", errno.EINTR, once=True)], lambda pg: [write(pg)],
                                  {"done": [1, 0], "holds": b"hello world"}),
@@ -870,7 +877,8 @@ def faults(b: Builds) -> dict[str, object]:
     }
     seen: dict[str, object] = {}
     for what, (points, ops, wanted) in cases.items():
-        got = failing(b, points, ops, "open" if what == "a creation failing" else "create")
+        got = failing(b, points, ops, "open" if what in ("a creation failing", "a close failing on a file only read")
+                      else "create")
         if any(got[k] != v for k, v in wanted.items()):
             raise LaneError(f"{what}: {got}, not {wanted}")
         seen[what] = {k: v.hex() if isinstance(v, bytes) else v for k, v in got.items() if k in wanted}
@@ -1014,9 +1022,14 @@ DEFECTS = [
       "        ((struct file *)f)->size = 0;\n        ((struct file *)f)->count = 0;\n"
       "        read_names(openat(spool, \".\", O_RDONLY | O_DIRECTORY), (struct file *)f);\n    }\n"
       "    for (uint64_t k = 0; k < from; ++k)")),
-    (JOBS, "a job going on after a failure",
-     "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n                break;\n",
-     "                if (syncs(j->ops[i].code)) dn_store_mark_failed();\n"),
+    (JOBS, "a job going on after a failure", "                    dn_store_mark_failed();\n                break;\n",
+     "                    dn_store_mark_failed();\n"),
+    (JOBS, "a failed close of a file only read taken for a failed sync",
+     "(j->ops[i].code != DN_SESSION_OP_CLOSE || j->wrote[i])", "1"),
+    (JOBS, "a file written not known to be", "        f->written = 1;\n        return write_all",
+     "        return write_all"),
+    (JOBS, "a file truncated not known to be written", "        f->written = 1;\n        return RETRIED",
+     "        return RETRIED"),
     (JOBS, "a name not found taken for another error", "    case ENOENT: return DN_SESSION_CLASS_NOT_FOUND;\n", ""),
     (JOBS, "a short read reported whole", "        result[0] = (uint64_t)n;\n", "        result[0] = op->length;\n"),
     (JOBS, "a closed file's place kept", "        *f = (struct file){.fd = -1, .gen = f->gen + 1};",
@@ -1024,8 +1037,8 @@ DEFECTS = [
     (JOBS, "a signal's interruption reported", "while (result_ < 0 && errno == EINTR);", "while (result_ < 0 && 0);"),
     (JOBS, "a short write left short", "        n -= (uint64_t)w;\n", "        n = 0;\n"),
     (JOBS, "a write of no progress taken as done", "        if (w == 0) {", "        if (0 && w == 0) {"),
-    (JOBS, "no mark on a failed sync", "                if (syncs(j->ops[i].code)) dn_store_mark_failed();",
-     "                if (0 && syncs(j->ops[i].code)) dn_store_mark_failed();"),
+    (JOBS, "no mark on a failed sync", "                if (syncs(j->ops[i].code) && ",
+     "                if (0 && syncs(j->ops[i].code) && "),
     (JOBS, "a failed close not a failed sync", "           code == DN_SESSION_OP_CLOSE;", "           0;"),
     (JOBS, "no space taken for another error", "    case ENOSPC:\n", ""),
     (STORE, "one mark failing ending the host", "    if (!left)\n", "    if (left < 2)\n"),

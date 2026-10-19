@@ -33,7 +33,7 @@ import tempfile
 import termios
 import time
 from types import ModuleType
-from typing import IO, NamedTuple
+from typing import IO, Any, NamedTuple
 import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,7 +62,7 @@ LINGER_QUIET, LINGER_TOTAL, ACCEPT_PAUSE, LINGERING = 5_000, 30_000, 100, 64
 # How long a check waits for the server, and for a server with a planted defect.
 TIMEOUT, DEFECT_TIMEOUT = 10.0, 1.5
 # The program acts for the generation before its connection's, to see the host refuse it.
-STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 5)
+STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 6)
 Conn = tuple[int, int]
 
 
@@ -1138,14 +1138,43 @@ def store_start(b: Build) -> str:
     return f"a journal of {len(want)} octets; refused: {said}"
 
 
+def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> None:
+    """Each article read back by `nntplib` as its file holds it: ARTICLE the header fields, Xref with
+    its number in `local.test`, the empty line and the body; HEAD up to Xref, BODY after the empty line,
+    STAT the number 0 and the Message-ID; an article the store lacks 430."""
+    for k, mid in enumerate(ids, 1):
+        octets = (spool / f"a{k:016x}").read_bytes()
+        header, body = octets.split(b"\r\n\r\n", 1)
+        unstuffed = [line[1:] if line.startswith(b".") else line for line in (header + b"\r\n").split(b"\r\n")]
+        head = [*unstuffed[:-1], f"Xref: dn.example local.test:{k}".encode()]
+        lines = [line[1:] if line.startswith(b".") else line for line in body.split(b"\r\n")[:-1]]
+        got = {"article": news.article(mid), "head": news.head(mid), "body": news.body(mid)}
+        wanted = {"article": (220, [*head, b"", *lines]), "head": (221, head), "body": (222, lines)}
+        for what, (resp, info) in got.items():
+            code, lines_wanted = wanted[what]
+            if resp != f"{code} 0 {mid}" or info.lines != lines_wanted:
+                raise LaneError(f"{what.upper()} {mid} answered {resp!r}, {info.lines[:6]}, not {lines_wanted[:6]}")
+        if news.stat(mid)[0] != f"223 0 {mid}":
+            raise LaneError(f"STAT {mid} answered otherwise than 223 0 {mid}")
+    try:
+        news.article("<none@x.example>")
+    except nntplib.NNTPTemporaryError as error:
+        if not str(error).startswith("430"):
+            raise LaneError(f"an article the store lacks answered {error}") from None
+    else:
+        raise LaneError("an article the store lacks found")
+
+
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
-    refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot, each in
-    a file of its own. The host's log names the address and port of each article's poster by its
-    `logging-data`."""
+    refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
+    16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
+    `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
+    of a file is changed on the disk, its ARTICLE is answered 403."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
-    third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".", "body")).encode()
+    third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
+                         *(f"line {k} " + "y" * 70 for k in range(500)))).encode()
     nntplib = import_nntplib()
     posters: list[int] = []
     logs: list[str] = []
@@ -1182,6 +1211,27 @@ def post_over_sockets(b: Build) -> str:
         left = sorted(f.name for f in spool.iterdir())
         data = [f.read_bytes().split(b"logging-data=", 1)[-1].split(b"\r\n", 1)[0].decode()
                 for f in sorted(spool.glob("a*"))]
+        ids = ["<one@x.example>", "<two@x.example>", "<three@x.example>"]
+        try:
+            with serving(b, False, *options, traced=False) as server, \
+                    nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                read_back(news, nntplib, spool, ids)
+            first_file = spool / "a0000000000000001"
+            changed = bytearray(first_file.read_bytes())
+            changed[-3] ^= 1
+            first_file.write_bytes(changed)
+            with serving(b, False, *options, traced=False) as server, \
+                    nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                try:
+                    news.article(ids[0])
+                except nntplib.NNTPTemporaryError as error:
+                    refused = str(error)
+                else:
+                    refused = "found"
+        except nntplib.NNTPError as error:
+            raise LaneError(f"nntplib could not read: {error}") from None
+    if refused != TEXTS["unreadable"].decode().rstrip("\r\n"):
+        raise LaneError(f"an article whose file changed on the disk answered {refused!r}")
     if left != ["a0000000000000001", "a0000000000000002", "a0000000000000003", "journal"]:
         raise LaneError(f"three articles posted left {left}")
     said = [welcome, posted, bye]
@@ -1191,7 +1241,8 @@ def post_over_sockets(b: Build) -> str:
     for value, port in zip(data, posters, strict=True):
         if f"connection {value} from 127.0.0.1 port {port}" not in logged:
             raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
-    return "posted, the Message-ID refused after a restart, two others posted, their posters logged"
+    return ("posted, the Message-ID refused after a restart, two others posted, their posters logged, each read "
+            "back, a changed file refused")
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1463,7 +1514,7 @@ DEFECTS = [
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
     Defect("the inactivity deadline a millisecond early",
-           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 5)],
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 7)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),
@@ -1471,6 +1522,9 @@ DEFECTS = [
            "pipeline", "broke the session's contract", program=True),
     Defect("the session kept after QUIT", [(r"if r == 3 \{\s+st cb \+ 16, 1;", "if r == 3 {", 1)],
            "pipeline", "the stream did not end", program=True),
+    Defect("a file's CRC-32C not compared",
+           [(r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1)],
+           "a post over sockets", "changed on the disk answered", program=True),
 ]
 
 

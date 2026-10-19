@@ -6,10 +6,10 @@
  * directory's names are read when it is opened and listed from that reading, whatever jobs do to the
  * directory after: POSIX leaves a name added or removed during a reading unspecified. A signal's
  * interruption is retried and never reported; a short write is written on, and one that makes no
- * progress fails as no space; a short read is reported as it is. A failed sync, or close,
- * leaves the mark of store.c before the program learns of it. The test build fails each operation
- * at a point of its name (faults.h); `dn/write-short` shortens a write to the number given, and
- * `dn/sync-slow` delays a sync by that many milliseconds. */
+ * progress fails as no space; a short read is reported as it is. A failed sync, or close of a file
+ * written through its place, leaves the mark of store.c before the program learns of it. The test
+ * build fails each operation at a point of its name (faults.h); `dn/write-short` shortens a write to
+ * the number given, and `dn/sync-slow` delays a sync by that many milliseconds. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -37,11 +37,12 @@ struct job {
     uint64_t gen, count, done, class, results[OPS][2];
     struct op ops[OPS];
     int place[OPS];   /* the place an operation that opens a file takes, reserved when the job is */
+    int wrote[OPS];   /* whether the file a close closes was written through its place */
     unsigned char data[DATA];
 };
 
 struct file {
-    int fd, open, busy, reserved, listing;
+    int fd, open, busy, reserved, listing, written;
     unsigned char *names;   /* a listing's names, each a length octet and its bytes */
     uint64_t size, count, gen;
 };
@@ -291,7 +292,9 @@ static int run(struct job *j, uint64_t i) {
         j->place[i] = -1;
         return 0;
     }
-    case DN_SESSION_OP_WRITE: return write_all(f->fd, j->data + op->at, op->length, op->offset);
+    case DN_SESSION_OP_WRITE:
+        f->written = 1;
+        return write_all(f->fd, j->data + op->at, op->length, op->offset);
     case DN_SESSION_OP_READ: {
         ssize_t n = RETRIED(DN_FAULT("dn/read") ? -1 : pread(f->fd, j->data + op->at, op->length, (off_t)op->offset));
         if (n < 0) return -1;
@@ -306,7 +309,9 @@ static int run(struct job *j, uint64_t i) {
     }
     case DN_SESSION_OP_DATA_SYNC: return synced("dn/data-sync", f->fd, fdatasync);
     case DN_SESSION_OP_SYNC: return synced("dn/sync", f->fd, fsync);
-    case DN_SESSION_OP_TRUNCATE: return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
+    case DN_SESSION_OP_TRUNCATE:
+        f->written = 1;
+        return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
     case DN_SESSION_OP_SYNC_DIR: return synced("dn/sync-dir", spool, fsync);
     case DN_SESSION_OP_LIST: return list(f, op->offset, j->data + op->at, op->length, result);
     case DN_SESSION_OP_RENAME:
@@ -318,6 +323,7 @@ static int run(struct job *j, uint64_t i) {
         return RETRIED(DN_FAULT("dn/remove") ? -1 : unlinkat(spool, name, 0));
     case DN_SESSION_OP_CLOSE: {
         /* Never retried: the descriptor is gone whatever close says. A listing holds none. */
+        j->wrote[i] = f->written;
         int r = f->listing ? 0 : close(f->fd);
         free(f->names);
         if (!f->listing && DN_FAULT("dn/close")) r = -1;
@@ -346,7 +352,9 @@ static void *worker(void *unused) {
             if (run(j, i)) {
                 j->done = i;
                 j->class = class_of(errno);
-                if (syncs(j->ops[i].code)) dn_store_mark_failed();
+                /* A file only read has nothing a failed close may lose. */
+                if (syncs(j->ops[i].code) && (j->ops[i].code != DN_SESSION_OP_CLOSE || j->wrote[i]))
+                    dn_store_mark_failed();
                 break;
             }
         pthread_mutex_lock(&lock);
