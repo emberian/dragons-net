@@ -197,6 +197,10 @@ void dn_store_recovery_stopped(uint64_t stop, const unsigned char *rec, uint64_t
     case 8: fprintf(stderr, "wrong-size %" PRIu64, x); break;
     case 9: fprintf(stderr, "exhausted"); break;
     case 11: fprintf(stderr, "too-many %" PRIu64, x); break;
+    case 12:
+        fprintf(stderr, "id-twice ");
+        print_hex(rec, at, len);
+        break;
     default: dn_violation("recovery refused the store for reason %" PRIu64, dn_word(rec + DN_SESSION_REC_FAULT));
     }
     fprintf(stderr, "\n");

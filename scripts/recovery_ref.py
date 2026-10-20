@@ -87,13 +87,17 @@ def fresh(key: bytes, actions: list[str]) -> Found:
 
 def check_records(commits: list[J.Commit], groups: list[bytes], files: dict[bytes, bytes]) -> None:
     """The rules across records, after more articles than the store holds, each over the records in
-    the journal's order before the next: a number a later record repeats, a group the configuration
-    lacks, an article number not above, a file missing or of another size."""
+    the journal's order before the next: a number a later record repeats, a Message-ID a later record
+    repeats, a group the configuration lacks, an article number not above, a file missing or of another
+    size."""
     if len(commits) > CAPACITY:
         raise Corrupt(f"too-many {len(commits)}")
     for at, c in enumerate(commits):
         if any(later[0] == c[0] for later in commits[at + 1:]):
             raise Corrupt(f"seq-twice {c[0]}")
+    for at, c in enumerate(commits):
+        if any(later[1] == c[1] for later in commits[at + 1:]):
+            raise Corrupt(f"id-twice {hexed(c[1])}")
     for c in commits:
         for name, _ in c[2]:
             if name not in groups:

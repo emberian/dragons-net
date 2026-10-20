@@ -20,7 +20,7 @@ Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](
 | [Dataplane models](lean/DN/Dataplane) | Rings, slabs, completions, wakeups, deadlines and flow control, proven of the models; no refinement to a running host. |
 | [Host primitives](crates/dn-runtime) | A tested Rust slab, connection permits and a partial-write cursor. |
 | [Concurrency exploration](models) | Eight Rust models and 30 Loom tests, with recorded defects the tests must catch. |
-| [Native execution](docs/baseline.md) | 35,520 differential cases, 300 generated programs, 26,039 copy-kernel checks, 311 CRC-32C buffers, 370 SipHash-2-4 messages, 28,704 journal readings, 2,066 recovered directories and 5,790 reply-table calls through the real compiler. |
+| [Native execution](docs/baseline.md) | 35,520 differential cases, 300 generated programs, 26,039 copy-kernel checks, 311 CRC-32C buffers, 370 SipHash-2-4 messages, 28,704 journal readings, 2,036 recovered directories and 5,790 reply-table calls through the real compiler. |
 | [TCP echo](docs/echo.md) | A bounded `poll` host calling the generated copy kernel. |
 | [Backend work](backend/README.md) | Pinned CakeML/HOL source, a curated datacake patch, the proof rebuild and the compiler bootstrap, scripted. |
 | [Migration sources](migration/dataplane/README.md) | The original native host, preserved byte for byte as reference ([porting risks](docs/porting-risks.md)). |

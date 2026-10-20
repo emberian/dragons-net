@@ -120,6 +120,10 @@ static void fault(const unsigned char *a) {
     case 8: sayf("wrong-size %" PRIu64, x); break;
     case 9: say("exhausted", 9); break;
     case 11: sayf("too-many %" PRIu64, x); break;
+    case 12:
+        say("id-twice ", 9);
+        say_hex(in_area(a, at, len), len);
+        break;
     default: dn_violation("recovery refused for reason %" PRIu64, dn_word(a + DN_RECOVER_FAULT));
     }
 }

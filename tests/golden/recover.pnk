@@ -932,7 +932,7 @@ export fun dn_recover_step(1 rsc) {
                   rcm = (lds 1 (rsc + 384)) + 1;
                   st rsc + 384, rcm;
                   if (0 < rcm) & (rcm <= 4096) {
-                    rsl = rsc + 26856 + ((rcm - 1) * 408);
+                    rsl = rsc + 26856 + ((rcm - 1) * 416);
                     st rsl, lds 1 (jsc + 80);
                     st rsl + 8, ((lds 1 (jsc + 112)) << 32) | (lds 1 (jsc + 120));
                     rgc = lds 1 (jsc + 104);
@@ -954,9 +954,141 @@ export fun dn_recover_step(1 rsc) {
                     st rsl + 16, ((lds 1 (jsc + 128)) << 16) | ((ril) << 8) | rgc;
                     rj = jz + 0;
                     while rj < ril {
-                      st8 rsl + 152 + rj, ld8 (rwp + rio + rj);
+                      st8 rsl + 160 + rj, ld8 (rwp + rio + rj);
                       rj = rj + 1;
                     }
+                    k = rsc + 616;
+                    p = rwp + rio;
+                    n = ril;
+                    m = 0;
+                    m = ((m) << 8) | (ld8 (k + 7));
+                    m = ((m) << 8) | (ld8 (k + 6));
+                    m = ((m) << 8) | (ld8 (k + 5));
+                    m = ((m) << 8) | (ld8 (k + 4));
+                    m = ((m) << 8) | (ld8 (k + 3));
+                    m = ((m) << 8) | (ld8 (k + 2));
+                    m = ((m) << 8) | (ld8 (k + 1));
+                    m = ((m) << 8) | (ld8 (k + 0));
+                    v0 = m ^ 8317987319222330741;
+                    v2 = m ^ 7816392313619706465;
+                    m = 0;
+                    m = ((m) << 8) | (ld8 (k + 8 + 7));
+                    m = ((m) << 8) | (ld8 (k + 8 + 6));
+                    m = ((m) << 8) | (ld8 (k + 8 + 5));
+                    m = ((m) << 8) | (ld8 (k + 8 + 4));
+                    m = ((m) << 8) | (ld8 (k + 8 + 3));
+                    m = ((m) << 8) | (ld8 (k + 8 + 2));
+                    m = ((m) << 8) | (ld8 (k + 8 + 1));
+                    m = ((m) << 8) | (ld8 (k + 8 + 0));
+                    v1 = m ^ 7237128888997146477;
+                    v3 = m ^ 8387220255154660723;
+                    off = 0;
+                    while (off + 8) <= n {
+                      m = 0;
+                      m = ((m) << 8) | (ld8 (p + off + 7));
+                      m = ((m) << 8) | (ld8 (p + off + 6));
+                      m = ((m) << 8) | (ld8 (p + off + 5));
+                      m = ((m) << 8) | (ld8 (p + off + 4));
+                      m = ((m) << 8) | (ld8 (p + off + 3));
+                      m = ((m) << 8) | (ld8 (p + off + 2));
+                      m = ((m) << 8) | (ld8 (p + off + 1));
+                      m = ((m) << 8) | (ld8 (p + off + 0));
+                      v3 = v3 ^ m;
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 + v1;
+                      v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                      v0 = ((v0) << 32) | ((v0) >>> 32);
+                      v2 = v2 + v3;
+                      v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                      v0 = v0 + v3;
+                      v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                      v2 = v2 + v1;
+                      v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                      v2 = ((v2) << 32) | ((v2) >>> 32);
+                      v0 = v0 ^ m;
+                      off = off + 8;
+                    }
+                    j = n - off;
+                    m = 0;
+                    while 0 < j {
+                      j = j - 1;
+                      m = ((m) << 8) | (ld8 (p + off + j));
+                    }
+                    m = ((n) << 56) | m;
+                    v3 = v3 ^ m;
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    v0 = v0 ^ m;
+                    v2 = v2 ^ 255;
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    v0 = v0 + v1;
+                    v1 = (((v1) << 13) | ((v1) >>> 51)) ^ v0;
+                    v0 = ((v0) << 32) | ((v0) >>> 32);
+                    v2 = v2 + v3;
+                    v3 = (((v3) << 16) | ((v3) >>> 48)) ^ v2;
+                    v0 = v0 + v3;
+                    v3 = (((v3) << 21) | ((v3) >>> 43)) ^ v0;
+                    v2 = v2 + v1;
+                    v1 = (((v1) << 17) | ((v1) >>> 47)) ^ v2;
+                    v2 = ((v2) << 32) | ((v2) >>> 32);
+                    r = v0 ^ v1 ^ v2 ^ v3;
+                    st rsl + 152, r;
                     rg = jz + 0;
                     while rg < rgc {
                       rgs = jsc + 136 + (rg * 24);
@@ -1073,11 +1205,11 @@ export fun dn_recover_step(1 rsc) {
                 rdup = jz + 0;
                 ri = jz + 0;
                 while (rdup == 0) & (ri < rcm) {
-                  rsl = rsc + 26856 + (ri * 408);
+                  rsl = rsc + 26856 + (ri * 416);
                   rv = lds 1 rsl;
                   rj = ri + 1;
                   while rj < rcm {
-                    rsl = rsc + 26856 + (rj * 408);
+                    rsl = rsc + 26856 + (rj * 416);
                     if (lds 1 rsl) == rv {
                       rdup = jz + 1;
                     } else {
@@ -1090,10 +1222,56 @@ export fun dn_recover_step(1 rsc) {
                   }
                 }
                 if rdup {
-                  st rsc + 584, rv;
-                  st rsc + 576, 4;
-                  st rsc, 9;
-                  rgo = jz + 0;
+                } else {
+                  ri = jz + 0;
+                  while (rdup == 0) & (ri < rcm) {
+                    rsl = rsc + 26856 + (ri * 416);
+                    rl = ((lds 1 (rsl + 16)) >>> 8) & 255;
+                    if 0 < ((rl < 0) + (250 < rl)) {
+                      return 99;
+                    } else {
+                    }
+                    rv = lds 1 (rsl + 152);
+                    rj = ri + 1;
+                    while (rdup == 0) & (rj < rcm) {
+                      rcp = rsc + 26856 + (rj * 416);
+                      if ((lds 1 (rcp + 152)) == rv) & ((((lds 1 (rcp + 16)) >>> 8) & 255) == rl) {
+                        rok = jz + 1;
+                        rm = jz + 0;
+                        while rok & (rm < rl) {
+                          if ((ld8 (rsl + 160 + rm)) == (ld8 (rcp + 160 + rm))) == 0 {
+                            rok = jz + 0;
+                          } else {
+                            rm = rm + 1;
+                          }
+                        }
+                        if rok {
+                          rdup = jz + 2;
+                        } else {
+                        }
+                      } else {
+                      }
+                      rj = rj + 1;
+                    }
+                    if rdup {
+                    } else {
+                      ri = ri + 1;
+                    }
+                  }
+                }
+                if rdup {
+                  if rdup == 1 {
+                    st rsc + 584, rv;
+                    st rsc + 576, 4;
+                    st rsc, 9;
+                    rgo = jz + 0;
+                  } else {
+                    st rsc + 600, 27016 + (ri * 416);
+                    st rsc + 608, rl;
+                    st rsc + 576, 12;
+                    st rsc, 9;
+                    rgo = jz + 0;
+                  }
                 } else {
                   if (lds 1 (rsc + 400)) == 1 {
                     st rsc + 600, 416;
@@ -1110,7 +1288,7 @@ export fun dn_recover_step(1 rsc) {
                     rbad = jz + 0;
                     ri = jz + 0;
                     while (rbad == 0) & (ri < rcm) {
-                      rsl = rsc + 26856 + (ri * 408);
+                      rsl = rsc + 26856 + (ri * 416);
                       rgc = (lds 1 (rsl + 16)) & 255;
                       if 0 < ((rgc < 0) + (16 < rgc)) {
                         return 99;
@@ -1179,7 +1357,7 @@ export fun dn_recover_step(1 rsc) {
                     return 99;
                   } else {
                   }
-                  rsl = rsc + 26856 + (ri * 408);
+                  rsl = rsc + 26856 + (ri * 416);
                   st rsc + 24, 0;
                   if (lds 1 (rsc + 320)) == 0 {
                     st rsc + 584, lds 1 rsl;
@@ -1198,7 +1376,7 @@ export fun dn_recover_step(1 rsc) {
                   }
                 } else {
                   if ri < rcm {
-                    rsl = rsc + 26856 + (ri * 408);
+                    rsl = rsc + 26856 + (ri * 416);
                     st rsc + 312, lds 1 rsl;
                     st rsc + 24, 1;
                     st rsc, 4;
@@ -1217,7 +1395,7 @@ export fun dn_recover_step(1 rsc) {
                   rm = lds 1 (rsc + 360);
                   ri = jz + 0;
                   while ri < rcm {
-                    rsl = rsc + 26856 + (ri * 408);
+                    rsl = rsc + 26856 + (ri * 416);
                     if (rm ^ 9223372036854775808) < ((lds 1 rsl) ^ 9223372036854775808) {
                       rm = lds 1 rsl;
                     } else {
@@ -1339,7 +1517,7 @@ export fun dn_recover_step(1 rsc) {
                             rok = jz + 0;
                             ri = jz + 0;
                             while (rok == 0) & (ri < rcm) {
-                              rsl = rsc + 26856 + (ri * 408);
+                              rsl = rsc + 26856 + (ri * 416);
                               if (lds 1 rsl) == rv {
                                 rok = jz + 1;
                               } else {

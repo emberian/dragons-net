@@ -5537,7 +5537,7 @@ def cert_222 : Cert :=
        ("ril", AVal.mk false 0 250 none),
        ("rbad", AVal.mk false 0 1 none),
        ("ri", AVal.mk false wordMin wordMax none),
-       ("rdup", AVal.mk false 0 1 none),
+       ("rdup", AVal.mk false 0 2 none),
        ("rst", AVal.mk false wordMin wordMax none),
        ("rcp", AVal.mk false wordMin wordMax none),
        ("rx", AVal.mk false wordMin wordMax none),
@@ -5775,13 +5775,26 @@ def cert_222 : Cert :=
   (.cond
   (.chain 12 (some { locals :=
       [("rwp", AVal.mk true 1158168 1158168 (some 0)),
-       ("rsl", AVal.mk true 1177336 2848096 (some 0)),
+       ("rsl", AVal.mk true 1177336 2880856 (some 0)),
        ("rj", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("rj", AVal.mk false 0 250 none)], cells := none }
   (.leaf (some { locals := [("rj", AVal.mk false 1 250 none)], cells := none })))
+  (.chain 26 (some { locals :=
+      [("off", AVal.mk false 0 0 (some 0)),
+       ("n", AVal.mk false 0 250 none),
+       ("p", AVal.mk true 1158168 1177336 none),
+       ("k", AVal.mk true 1151096 1151096 (some 0))], cells := none })
   (.seq
-  (.leaf (some { locals := [("rg", AVal.mk false 0 0 (some 0))], cells := none }))
+  (.loop { locals := [("off", AVal.mk false 0 250 (some 0))], cells := none }
+  (.leaf (some { locals := [("off", AVal.mk false 8 250 (some 0))], cells := none })))
+  (.chain 2 (some { locals :=
+      [("j", AVal.mk false (-250) 250 none),
+       ("m", AVal.mk false 0 0 (some 0))], cells := none })
+  (.seq
+  (.loop { locals := [("m", AVal.mk false wordMin wordMax none)], cells := none }
+  (.leaf (some { locals := [("j", AVal.mk false 0 249 none)], cells := none })))
+  (.chain 67 (some { locals := [("rg", AVal.mk false 0 0 (some 0))], cells := none })
   (.loop { locals := [("rg", AVal.mk false 0 16 none)], cells := none }
   (.chain 9 (some { locals :=
       [("rx", AVal.mk false 64 64 (some 0)),
@@ -5815,7 +5828,7 @@ def cert_222 : Cert :=
   (.loop { locals := [("rj", AVal.mk false 0 64 none)], cells := none }
   (.leaf (some { locals := [("rj", AVal.mk false 1 64 none)], cells := none })))))
   (.leaf (some { locals := [], cells := none })))
-  (.leaf (some { locals := [("rg", AVal.mk false 1 16 none)], cells := none })))))))))
+  (.leaf (some { locals := [("rg", AVal.mk false 1 16 none)], cells := none })))))))))))))
   (.leaf (some { locals := [], cells := none }))))
   (.leaf (some { locals := [], cells := none }))))
   (.cond
@@ -5844,14 +5857,46 @@ def cert_222 : Cert :=
       [("ri", AVal.mk false 0 4096 none),
        ("rdup", AVal.mk false 0 1 none)], cells := none }
   (.chain 3 (some { locals :=
-      [("rsl", AVal.mk true 1177336 2848096 (some 0)),
+      [("rsl", AVal.mk true 1177336 2880856 (some 0)),
        ("rj", AVal.mk false 1 4096 none)], cells := none })
   (.seq
   (.loop { locals := [("rdup", AVal.mk false 0 1 none)], cells := none }
   (.leaf (some { locals :=
-      [("rsl", AVal.mk true 1177744 2848096 (some 0)),
+      [("rsl", AVal.mk true 1177752 2880856 (some 0)),
        ("rj", AVal.mk false 2 4096 none)], cells := none })))
   (.leaf (some { locals := [("ri", AVal.mk false 0 4096 none)], cells := none })))))
+  (.seq
+  (.cond
+  (.leaf (some { locals := [], cells := none }))
+  (.seq
+  (.leaf (some { locals := [("ri", AVal.mk false 0 0 (some 0))], cells := none }))
+  (.loop { locals :=
+      [("ri", AVal.mk false 0 4096 none),
+       ("rdup", AVal.mk false 0 2 none)], cells := none }
+  (.chain 5 (some { locals :=
+      [("rsl", AVal.mk true 1177336 2880856 (some 0)),
+       ("rj", AVal.mk false 1 4096 none),
+       ("rl", AVal.mk false 0 250 none)], cells := none })
+  (.seq
+  (.loop { locals := [("rdup", AVal.mk false 0 2 none)], cells := none }
+  (.seq
+  (.leaf (some { locals := [("rcp", AVal.mk true 1177752 2880856 (some 0))], cells := none }))
+  (.seq
+  (.cond
+  (.chain 2 (some { locals :=
+      [("rm", AVal.mk false 0 0 (some 0)),
+       ("rok", AVal.mk false 1 1 (some 1))], cells := none })
+  (.seq
+  (.loop { locals :=
+      [("rm", AVal.mk false 0 250 none),
+       ("rok", AVal.mk false 0 1 none)], cells := none }
+  (.leaf (some { locals :=
+      [("rm", AVal.mk false 0 250 none),
+       ("rok", AVal.mk false 0 1 none)], cells := none })))
+  (.leaf (some { locals := [("rdup", AVal.mk false 0 2 none)], cells := none }))))
+  (.leaf (some { locals := [], cells := none })))
+  (.leaf (some { locals := [("rj", AVal.mk false 2 4096 none)], cells := none })))))
+  (.leaf (some { locals := [("ri", AVal.mk false 0 4096 none)], cells := none })))))))
   (.cond
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))
   (.cond
@@ -5872,7 +5917,7 @@ def cert_222 : Cert :=
        ("rc", AVal.mk false 0 64 none)], cells := none }
   (.chain 4 (some { locals :=
       [("rg", AVal.mk false 0 0 (some 0)),
-       ("rsl", AVal.mk true 1177336 2848096 (some 0))], cells := none })
+       ("rsl", AVal.mk true 1177336 2880856 (some 0))], cells := none })
   (.seq
   (.loop { locals :=
       [("rbad", AVal.mk false 0 1 none),
@@ -5892,7 +5937,7 @@ def cert_222 : Cert :=
       [("rg", AVal.mk false 1 16 none),
        ("rc", AVal.mk false 0 63 none)], cells := none })))
   (.leaf (some { locals := [("ri", AVal.mk false 1 4096 none)], cells := none }))))))))
-  (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none }))))))))))))
+  (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none })))))))))))))
   (.cond
   (.leaf (some { locals :=
       [("ri", AVal.mk false 0 4096 none),
@@ -5906,7 +5951,7 @@ def cert_222 : Cert :=
   (.loop { locals := [("ri", AVal.mk false 0 4096 none)], cells := none }
   (.leaf (some { locals :=
       [("ri", AVal.mk false 1 4096 none),
-       ("rsl", AVal.mk true 1177336 2848096 (some 0))], cells := none })))
+       ("rsl", AVal.mk true 1177336 2880856 (some 0))], cells := none })))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none }))))
   (.cond
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))
@@ -5947,7 +5992,7 @@ def cert_222 : Cert :=
        ("rok", AVal.mk false 0 1 none)], cells := none }
   (.leaf (some { locals :=
       [("ri", AVal.mk false 1 4096 none),
-       ("rsl", AVal.mk true 1177336 2848096 (some 0)),
+       ("rsl", AVal.mk true 1177336 2880856 (some 0)),
        ("rok", AVal.mk false 0 1 none)], cells := none })))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))))))))
@@ -6448,7 +6493,7 @@ def cert : Cert :=
   (.leaf (some { locals := [], cells := none }))
   (.cond
   (.chain 21 (some { locals :=
-      [("dx", AVal.mk false 0 1696634 none),
+      [("dx", AVal.mk false 0 1729402 none),
        ("dw", AVal.mk false 1 1 (some 1))], cells := none })
   (.seq
   (.loop { locals := [("dw", AVal.mk false 0 1 none)], cells := none }
@@ -6679,10 +6724,10 @@ theorem group_213 :
   decide +kernel
 
 theorem fn_222_checked :
-    (fnOkAt size [] fnsC 222 && (fnClaims size [] fnsC 222).length == 143) = true := by
+    (fnOkAt size [] fnsC 222 && (fnClaims size [] fnsC 222).length == 157) = true := by
   decide +kernel
 
-theorem fn_222_count : (fnClaims size [] fnsC 222).length = 143 := by
+theorem fn_222_count : (fnClaims size [] fnsC 222).length = 157 := by
   have h := fn_222_checked
   simp only [Bool.and_eq_true, beq_iff_eq] at h
   exact h.2
@@ -6692,7 +6737,7 @@ theorem fn_222_0 :
   decide +kernel
 
 theorem fn_222_82 :
-    (List.range' 82 61).all (fun j => ((fnClaims size [] fnsC 222).getD j default).ok size) = true := by
+    (List.range' 82 75).all (fun j => ((fnClaims size [] fnsC 222).getD j default).ok size) = true := by
   decide +kernel
 
 theorem fn_222 : ∀ j, j < (fnClaims size [] fnsC 222).length → ((fnClaims size [] fnsC 222).getD j default).ok size = true := by
@@ -6700,7 +6745,7 @@ theorem fn_222 : ∀ j, j < (fnClaims size [] fnsC 222).length → ((fnClaims si
   rw [fn_222_count] at hj
   by_cases h0 : j < 82
   · exact all_range fn_222_0 j (by omega) (by omega)
-  by_cases h82 : j < 143
+  by_cases h82 : j < 157
   · exact all_range fn_222_82 j (by omega) (by omega)
   exact absurd hj (by omega)
 

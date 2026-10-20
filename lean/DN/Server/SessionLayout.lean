@@ -47,7 +47,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 9
+def version : Nat := 10
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/

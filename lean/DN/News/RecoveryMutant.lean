@@ -21,6 +21,8 @@ inductive Mutant
   | none
   /-- a sequence number in two records let be -/
   | seqUnchecked
+  /-- a Message-ID in two records let be -/
+  | idUnchecked
   /-- article numbers that do not rise let be -/
   | numbersUnchecked
   /-- an article number equal to the group's last let be -/
@@ -71,7 +73,8 @@ inductive Mutant
   deriving DecidableEq
 
 def names : List (String × Mutant) :=
-  [("seq-unchecked", .seqUnchecked), ("numbers-unchecked", .numbersUnchecked),
+  [("seq-unchecked", .seqUnchecked), ("id-unchecked", .idUnchecked),
+   ("numbers-unchecked", .numbersUnchecked),
    ("numbers-equal", .numbersEqual), ("groups-unchecked", .groupsUnchecked),
    ("size-unchecked", .sizeUnchecked), ("missing-unchecked", .missingUnchecked),
    ("names-ignored", .namesIgnored), ("journal-among-files", .journalAmongFiles),
@@ -139,13 +142,15 @@ def recoverRecordsM (m : Mutant) (cfg : Config) (img : Image) (names : List Name
   if (if m = .capacityLate then decide (capacity + 1 < cs.length)
       else decide (capacity < cs.length)) then .error (.tooMany cs.length) else
   match (if m = .seqUnchecked then none else seqTwice? cs),
+      (if m = .idUnchecked then none else idTwice? cs),
       (if m = .groupsUnchecked then none else unknownGroup? cfg cs),
       (if m = .numbersUnchecked then none else notAboveM m [] cs), fileFaultM m img cs with
-  | some s, _, _, _ => .error (.seqTwice s)
-  | none, some g, _, _ => .error (.unknownGroup g)
-  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
-  | none, none, none, some f => .error f
-  | none, none, none, none =>
+  | some s, _, _, _, _ => .error (.seqTwice s)
+  | none, some i, _, _, _ => .error (.idTwice i)
+  | none, none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, none, some (g, n), _ => .error (.numberNotAbove g n)
+  | none, none, none, none, some f => .error f
+  | none, none, none, none, none =>
     let next0 := nextSeqM m cs names
     let next := if cut.isSome && m ≠ .tornNoBump then next0 + 1 else next0
     if (if m = .exhaustedLate then decide (2 ^ 64 < next) else decide (2 ^ 64 ≤ next)) then
@@ -259,9 +264,10 @@ def sampleConfig : Config := ⟨[ascii "local.test"], sampleKey⟩
 /-- The sample group and a key other than the sample key. -/
 def otherConfig : Config := ⟨[ascii "local.test"], List.replicate keyLength 1⟩
 
-/-- A commit of the witnesses: sequence number `seq`, the sample group's number `n`, a file of one
-octet. -/
-def commitOf (seq n : Nat) : Commit := ⟨seq, ascii "<a@b>", [⟨ascii "local.test", n⟩], 1, 1, 0⟩
+/-- A commit of the witnesses: sequence number `seq`, a Message-ID of its own, the sample group's
+number `n`, a file of one octet. -/
+def commitOf (seq n : Nat) : Commit :=
+  ⟨seq, ascii "<a@b>" ++ [BitVec.ofNat 8 seq], [⟨ascii "local.test", n⟩], 1, 1, 0⟩
 
 /-- A journal of the sample key holding these commits. -/
 def journalOf (cs : List Commit) : Bytes := journal sampleKey (cs.map .commit)
@@ -276,6 +282,9 @@ def witness : Mutant → Config × Image
   | .none => (sampleConfig, [])
   | .seqUnchecked =>
     (sampleConfig, [(journalName, journalOf [commitOf 1 1, commitOf 1 2]), (finalName 1, [0])])
+  | .idUnchecked =>
+    (sampleConfig, [(journalName, journalOf [commitOf 1 1, { commitOf 2 2 with messageId :=
+      (commitOf 1 1).messageId }]), (finalName 1, [0]), (finalName 2, [0])])
   | .numbersUnchecked | .numbersEqual =>
     (sampleConfig, [(journalName, journalOf [commitOf 1 1, commitOf 2 1]), (finalName 1, [0]),
       (finalName 2, [0])])

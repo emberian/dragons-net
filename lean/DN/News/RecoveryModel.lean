@@ -35,6 +35,7 @@ def faultText : Fault → String
   | .noJournal => "no-journal"
   | .journal at_ w => s!"journal {at_} {whyText w}"
   | .seqTwice s => s!"seq-twice {s}"
+  | .idTwice m => s!"id-twice {hex m}"
   | .numberNotAbove g n => s!"number-not-above {hex g} {n}"
   | .unknownGroup g => s!"unknown-group {hex g}"
   | .missingFile s => s!"missing-file {s}"

@@ -1105,8 +1105,8 @@ def crowd(b: Build) -> str:
 def store_start(b: Build) -> str:
     """Recovery at start on a spool: an empty one gets a journal of its format and a start record, a
     start after it appends another, the server listening each time and greeting a client of loopback,
-    which may post, with 200; and a spool holding a name no store gives ends the start with status 4,
-    the reason named."""
+    which may post, with 200; and a spool holding a name no store gives, or a journal of two commits
+    of one Message-ID, ends the start with status 4, the reason named."""
     with tempfile.TemporaryDirectory() as temp:
         spool, run = Path(temp, "spool"), Path(temp, "run")
         spool.mkdir()
@@ -1128,14 +1128,20 @@ def store_start(b: Build) -> str:
         if data != want or left != ["journal"]:
             raise LaneError(f"two starts on an empty spool left {left}, a journal of "
                             f"{data.hex()}, not {want.hex()}")
-        (spool / "junk").write_bytes(b"")
-        done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
-                               SOURCE.decode(), *options], capture_output=True, text=True,
-                              timeout=b.timeout, check=False)
-    said = "the store is refused: corrupt bad-name 6a756e6b"
-    if done.returncode != 4 or said not in done.stderr:
-        raise LaneError(f"a spool with a name no store gives: status {done.returncode}, {done.stderr[-300:]!r}")
-    return f"a journal of {len(want)} octets; refused: {said}"
+        mid, twice = b"<twice@x>", data
+        for seq in (1, 2):
+            body = store_ref.payload((seq, mid, [(b"local.test", seq)], 0, 1, 0))
+            twice += store_ref.frame(key, len(twice), store_ref.COMMIT, body)
+        cases = (("junk", b"", "bad-name 6a756e6b"), ("journal", twice, f"id-twice {mid.hex()}"))
+        for name, octets, said in cases:
+            (spool / name).write_bytes(octets)
+            done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
+                                   SOURCE.decode(), *options], capture_output=True, text=True,
+                                  timeout=b.timeout, check=False)
+            if done.returncode != 4 or f"the store is refused: corrupt {said}" not in done.stderr:
+                raise LaneError(f"a spool refused for {said}: status {done.returncode}, {done.stderr[-300:]!r}")
+            (spool / "junk").unlink(missing_ok=True)
+    return f"a journal of {len(want)} octets; refused: {'; '.join(said for _, _, said in cases)}"
 
 
 def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> None:

@@ -223,23 +223,21 @@ knows nothing of articles.
   it kept last; taking it back, or removing it, is repair (#21). A name of any other shape makes the
   store corrupt.
 - A corrupt store is refused: the server does not start and says why. Corrupt: a frame that does not
-  check where what follows is no torn append's; a sequence number in two records; an article number
-  in a group not above the one an earlier record gave it there (RFC 3977 §6); a record naming a file
-  that is missing or of another size; a group the configuration lacks; files and no journal, a
-  format cut short beside another name among them; no sequence number left to give. It says the
-  first it finds, once the key is checked (see Configuration): a name of another shape, in the
-  directory's order; files and no journal; where reading the journal stops in corruption; more
-  commits than the store holds (Bounds), which is not corruption — a build with more room wrote them
-  — but keeps the store from starting too; then each of these over the records in the journal's
-  order, before the next — a sequence number a later record repeats, a group the configuration
-  lacks, an article number not above (so only in groups carried, whose highest numbers fit a table
-  of the bounds), a file missing or of another size; last, no number left. A journal is created only
-  in an empty directory, the directory then synced, and made again — cut to nothing, its format
-  written and synced — when nothing is left of it but a format cut short and no other name is there.
-  The store is never repaired silently; repair, when it comes, is a separate operation (#21). A
-  Message-ID in two records is to be corruption too, which recovery does not check yet: the program
-  refuses one the store has or has reserved (Which articles are accepted), and the specification
-  takes up both with the index that reserves it.
+  check where what follows is no torn append's; a sequence number or a Message-ID in two records; an
+  article number in a group not above the one an earlier record gave it there (RFC 3977 §6); a
+  record naming a file that is missing or of another size; a group the configuration lacks; files
+  and no journal, a format cut short beside another name among them; no sequence number left to
+  give. It says the first it finds, once the key is checked (see Configuration): a name of another
+  shape, in the directory's order; files and no journal; where reading the journal stops in
+  corruption; more commits than the store holds (Bounds), which is not corruption — a build with
+  more room wrote them — but keeps the store from starting too; then each of these over the records
+  in the journal's order, before the next — a sequence number a later record repeats, a Message-ID a
+  later record repeats, a group the configuration lacks, an article number not above (so only in
+  groups carried, whose highest numbers fit a table of the bounds), a file missing or of another
+  size; last, no number left. A journal is created only in an empty directory, the directory then
+  synced, and made again — cut to nothing, its format written and synced — when nothing is left of
+  it but a format cut short and no other name is there. The store is never repaired silently;
+  repair, when it comes, is a separate operation (#21).
 - A file is checked as it is read: lines end in CRLF and hold no NUL, a line that starts with a dot
   starts with two, the empty line lies where the record says, and at the end the size and the
   CRC-32C are the record's; octets that fail are never sent. The 220, 221 or 222 line goes with the

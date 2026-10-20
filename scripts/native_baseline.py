@@ -481,7 +481,8 @@ def scan(cake: str) -> dict[str, Any]:
 def recover(cake: str) -> dict[str, Any]:
     """Recovery against the model on the store lane's directories — the table and those drawn, each
     with a key of sixteen octets, as the host gives — and on what the actions of those that recover
-    leave."""
+    leave; again with every Message-ID's tag 0, so that each two of one length are compared by their
+    octets, as only a collision of tags makes them otherwise."""
     host = NATIVE / "recover_check.c"
     model = [str(lanes.DN_COMPILER), "recovery-model"]
     # the store lane's fixed seed, so that both recover the same directories
@@ -503,7 +504,9 @@ def recover(cake: str) -> dict[str, Any]:
         # one article more than the store holds
         "recover-capacity": ("if 4097 <= rcm {", "if 4098 <= rcm {", 1),
         # a sequence number in two commits let be
-        "recover-seq": ("while (rdup == 0) & (ri < rcm) {", "while 0 {", 1),
+        "recover-seq": ("rdup = jz + 1;", "rdup = jz + 0;", 1),
+        # a Message-ID in two commits let be
+        "recover-ids": ("rdup = jz + 2;", "rdup = jz + 0;", 1),
         # an article number equal to the group's last let be
         "recover-numbers": ("if rv <= (lds 1 (rsc + 5248 + (rc * 8))) {",
                             "if rv < (lds 1 (rsc + 5248 + (rc * 8))) {", 1),
@@ -534,12 +537,26 @@ def recover(cake: str) -> dict[str, Any]:
     unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
     if unfound:
         raise LaneError(f"the recovery mutations {unfound} no longer find the text they change")
+    tagless = lanes.plant(text, "st rsl + 152, r;", "st rsl + 152, 0;", 1, "recovery's tag", exact=True)
+    (OUT / "recover-tagless.pnk").write_text(tagless)
+    measured_by(build(cake, "recover-tagless", host), stdin=stdin)
+    compared = {
+        # two Message-IDs of one length taken for the same
+        "recover-ids-octets": ("if ((ld8 (rsl + 160 + rm)) == (ld8 (rcp + 160 + rm))) == 0 {", "if 0 {"),
+        # their last octet not compared
+        "recover-ids-last": ("while rok & (rm < rl) {", "while rok & ((rm + 1) < rl) {"),
+        # a Message-ID taken for one it begins
+        "recover-ids-lengths": ("if ((lds 1 (rcp + 152)) == rv) & ((((lds 1 (rcp + 16)) >>> 8) & 255) == rl) {",
+                                "if (lds 1 (rcp + 152)) == rv {"),
+    }
+    sources = {name: text.replace(old, new) for name, (old, new, _) in mutants.items()} | {
+        name: lanes.plant(tagless, old, new, 1, name, exact=True) for name, (old, new) in compared.items()}
     # Each finds otherwise than the model, but a group the configuration lacks, let be, which takes
     # the index of no group to the table of highest numbers, where the check of its range stops it.
-    refused_all(cake, host, [(name, text.replace(old, new), 1,
+    refused_all(cake, host, [(name, source, 1,
                               "recovery returned 99" if name == "recover-groups" else "recovery found")
-                             for name, (old, new, _) in mutants.items()], stdin=stdin)
-    measured["recover_mutants_rejected"] = len(mutants)
+                             for name, source in sources.items()], stdin=stdin)
+    measured["recover_mutants_rejected"] = len(sources)
     measured["recover_other_keys"] = sum(ln.startswith("recover ") for ln in lines) - len(first)
     return measured
 

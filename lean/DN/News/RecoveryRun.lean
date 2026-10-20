@@ -526,7 +526,7 @@ theorem recover_pos (cfg : Config) (img : Image) (st : Store) (ops : List Action
   rcases hc with ⟨_, rfl, _⟩ | ⟨_, _, ⟨_, _, _, rfl, _⟩ | ⟨_, _, _, _, hr⟩⟩
   · exact Nat.le_refl _
   · exact Nat.le_refl _
-  · obtain ⟨_, _, _, _, _, _, hnext, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+  · obtain ⟨_, _, _, _, _, _, _, hnext, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     rw [hnext]
     split <;> simp only [nextSeq] <;> omega
 
@@ -1283,7 +1283,7 @@ theorem start_safe (cfg : Config) (hkey : cfg.key.length = keyLength) (s : Fs) (
     have hnu := settled_journal _ hset2 ij hl
     obtain ⟨hf, tl, hseen, hrr⟩ :=
       recover_found cfg hkey _ _ hlow k rs back rfl ij d hl hd st acts hrec
-    obtain ⟨_, _, _, _, _, _, hnext, hlt, hend⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hrr
+    obtain ⟨_, _, _, _, _, _, _, hnext, hlt, hend⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hrr
     have hops := recoverRecords_ops _ _ _ _ _ _ _ _ _ hrr
     have harts' : commitsOf rs = st.articles := harts.symm
     have ht := htj2 ij d hl hd
