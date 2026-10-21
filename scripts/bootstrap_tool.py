@@ -9,6 +9,7 @@ once under .deps/tools.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import functools
 import hashlib
 import json
@@ -227,24 +228,38 @@ def build(name: str, lock: dict[str, dict[str, str]], archive: Path, target: Pat
             content.rename(target)
 
 
+def installed(target: Path, pin: dict[str, str]) -> bool:
+    """Whether the tool is in place and still what was installed; one that is not is refused."""
+    try:
+        if (target / MARKER).read_text().strip() != pin["sha256"]:
+            raise SystemExit(f"{target} does not match the lock; remove it")
+        # One installed before stored trees were sealed is redone from the archive, which is still
+        # verified by its digest; it may be being removed under the lock as it is looked at.
+        sealed = (target / MANIFEST).read_text().strip()
+    except FileNotFoundError:
+        return False
+    if sealed != tree_digest(target):
+        raise SystemExit(f"{target} has changed since it was installed; remove it")
+    return True
+
+
 def install(name: str, lock: dict[str, dict[str, str]]) -> Path:
     pin = lock[name]
     target = DEPS / "tools" / f"{name}-{pin['version']}"
-    if target.exists():
-        if (target / MARKER).read_text().strip() != pin["sha256"]:
-            raise SystemExit(f"{target} does not match the lock; remove it")
-        if not (target / MANIFEST).exists():
-            # Installed before the stored tree was sealed: redo it from the
-            # archive, which is still verified by its digest.
-            shutil.rmtree(target)
-        elif (target / MANIFEST).read_text().strip() != tree_digest(target):
-            raise SystemExit(f"{target} has changed since it was installed; remove it")
-    if not target.exists():
+    # A sealed tree is renamed into place whole and never removed, so it is verified without a lock.
+    if not installed(target, pin):
         target.parent.mkdir(parents=True, exist_ok=True)
-        if name in BUILT:
-            build(name, lock, fetch(pin), target)
-        else:
-            unpack(pin, fetch(pin), target)
+        # Checks run side by side and may each ask for a tool not there yet: one installs it while
+        # the others wait, then find it in place.
+        with (target.parent / f"{target.name}.lock").open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            if not installed(target, pin):
+                if target.exists():
+                    shutil.rmtree(target)
+                if name in BUILT:
+                    build(name, lock, fetch(pin), target)
+                else:
+                    unpack(pin, fetch(pin), target)
     return target
 
 
@@ -276,9 +291,9 @@ def main() -> None:
     elif args.tool == "lean":
         home = lean_home(lock)
         toolchain = f"leanprover/lean4:{pin['version']}"
-        installed = subprocess.run(["elan", "toolchain", "list"], capture_output=True, text=True,
-                                   check=True).stdout.split()
-        if toolchain not in installed:
+        linked = subprocess.run(["elan", "toolchain", "list"], capture_output=True, text=True,
+                                check=True).stdout.split()
+        if toolchain not in linked:
             subprocess.run(["elan", "toolchain", "link", toolchain, str(home)], check=True, stdout=sys.stderr)
         prefix = subprocess.run(["lean", f"+{toolchain}", "--print-prefix"], capture_output=True, text=True,
                                 check=True).stdout.strip()

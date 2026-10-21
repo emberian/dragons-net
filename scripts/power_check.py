@@ -59,9 +59,10 @@ class Mounts:
         self.all: list[L.LazyFS] = []
         self.free: queue.Queue[L.LazyFS] = queue.Queue()
         try:
+            lazyfs = lanes.pinned_tool("lazyfs")
             for k in range(lanes.WORKERS):
                 (work / f"fs{k}").mkdir()
-                fs = L.LazyFS(lanes.pinned_tool("lazyfs"), work / f"fs{k}")
+                fs = L.LazyFS(lazyfs, work / f"fs{k}")
                 fs.start()
                 self.all.append(fs)
                 self.free.put(fs)

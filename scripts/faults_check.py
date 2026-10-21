@@ -141,7 +141,7 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
     spool, run = C.laid(where, base) if laid else (where / "spool", where / "run")
     env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
     if enable:
-        env |= {"LD_PRELOAD": str(lanes.pinned_tool("libfiu") / "fiu_run_preload.so"), "FIU_ENABLE": enable}
+        env |= {"LD_PRELOAD": str(C.fiu() / "fiu_run_preload.so"), "FIU_ENABLE": enable}
     err = where / "stderr"
     got: list[list[bytes]] = []
     port: str | None = None

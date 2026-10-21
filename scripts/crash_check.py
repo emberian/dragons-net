@@ -218,7 +218,7 @@ def served(binary: Path, phase: Phase, base: dict[bytes, bytes], enable: str, wh
     ready()
     env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
     if enable:
-        env |= {"LD_PRELOAD": str(lanes.pinned_tool("libfiu") / "fiu_run_preload.so"), "FIU_ENABLE": enable}
+        env |= {"LD_PRELOAD": str(fiu() / "fiu_run_preload.so"), "FIU_ENABLE": enable}
     got: list[list[bytes]] = [[] for _ in phase.parts]
     together = threading.Barrier(len(phase.parts), timeout=TIMEOUT)
     threads: list[threading.Thread] = []
@@ -530,12 +530,23 @@ DEFECTS = [
 ]
 
 
+FIU: list[Path] = []
+FIU_ASKED = threading.Lock()
+
+
+def fiu() -> Path:
+    """libfiu, asked for once by a lane however many servers it builds and runs side by side."""
+    with FIU_ASKED:
+        if not FIU:
+            FIU.append(lanes.pinned_tool("libfiu"))
+        return FIU[0]
+
+
 def test_build(cake: str, out: Path, name: str, source: str, defect: Defect | None = None,
                base: Path | None = None) -> Path:
     """The server's test build of the program `source`, as `name` in `out`, which holds the layout's
     header; with `defect`, planted in the program, or in native/jobs.c linked with `base`'s program."""
-    fiu = lanes.pinned_tool("libfiu")
-    flags = ["-DFIU_ENABLE=1", f"-I{fiu}", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]
+    flags = ["-DFIU_ENABLE=1", f"-I{fiu()}", f"-L{fiu()}", "-lfiu", f"-Wl,-rpath,{fiu()}"]
     if defect is None or defect.program:
         text = source if defect is None else lanes.plant(source, defect.pattern, defect.becomes, defect.times,
                                                           f"the program, for {defect.name},")

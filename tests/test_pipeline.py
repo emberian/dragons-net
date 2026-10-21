@@ -1016,3 +1016,42 @@ class Tools(unittest.TestCase):
             other = bootstrap("lean4export")
             self.assertNotEqual(other.returncode, 0)
             self.assertIn("is not pinned to", other.stderr)
+
+    def test_bootstrap_installs_a_tool_once_when_asked_side_by_side(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            tree, stubs, log = work / "repo", work / "bin", work / "log"
+            (tree / "scripts").mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/bootstrap_tool.py", tree / "scripts")
+            shutil.copy(ROOT / "rust-toolchain.toml", tree)
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            (work / "source").mkdir()
+            with tarfile.open(work / "source.tar.gz", "w:gz") as tar:
+                tar.add(work / "source", arcname="source")
+            lock = json.loads((ROOT / "tools.lock.json").read_text())
+            lock["nanoda"]["sha256"] = sha256(work / "source.tar.gz")
+            (tree / "tools.lock.json").write_text(json.dumps(lock))
+            (tree / ".deps/archives").mkdir(parents=True)
+            shutil.copy(work / "source.tar.gz", tree / ".deps/archives" / lock["nanoda"]["sha256"])
+            # Installed before stored trees were sealed: redone under the lock.
+            tool = tree / ".deps/tools" / f"nanoda-{lock['nanoda']['version']}"
+            tool.mkdir(parents=True)
+            (tool / "archive.sha256").write_text(lock["nanoda"]["sha256"] + "\n")
+            # The build waits until the other two bootstraps wait on the lock, ten seconds at most.
+            stubs.mkdir()
+            (stubs / "cargo").write_text(
+                f"#!/bin/sh\nwaiting=0\nfor _ in $(seq 200); do\n"
+                f"  inode=$(stat -c %i {tool}.lock) && waiting=$(grep -c -- \"-> FLOCK .*:$inode \" /proc/locks)\n"
+                f'  [ "$waiting" -ge 2 ] && break\n  sleep 0.05\ndone\necho "built, $waiting waiting" >> {log}\n'
+                'mkdir -p "$CARGO_TARGET_DIR/release" && touch "$CARGO_TARGET_DIR/release/nanoda_bin"\n')
+            (stubs / "cargo").chmod(0o755)
+            env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "XDG_CACHE_HOME": str(work / "cache")}
+            runs = [subprocess.Popen(["python3", "scripts/bootstrap_tool.py", "nanoda"], cwd=tree, env=env, text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
+            paths = set()
+            for each in runs:
+                out, err = each.communicate()
+                self.assertEqual(each.returncode, 0, err)
+                paths.add(out.strip())
+            self.assertEqual(paths, {str(tool / "nanoda_bin")})
+            self.assertEqual(log.read_text(), "built, 2 waiting\n")
