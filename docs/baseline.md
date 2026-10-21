@@ -59,13 +59,14 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | Article acceptance in Pancake | The compiled check answers 332,497 cases as the model does; 9 hard forms timed at 64 KiB, 6 mutants caught ([details](#article-acceptance-in-pancake)) | Tested, not proven; in the session's program |
 | Journal | Model and reference agree on 15,931 cases; 13 versions of the rules of reading caught ([details](#journal)) | SipHash's strength as a MAC is assumed |
 | File system | Model and reference agree on 25,874 cases; 16 versions of the model caught ([details](#file-system)) | That devices stay within the model |
-| Store | Model and reference agree on 1,611 cases; 25 versions of recovery caught ([details](#store)) | Crashes during recovery: proven in `StoreRun`, not run |
+| Store | Model and reference agree on 1,611 cases; 25 versions of recovery caught ([details](#store)) | Crashes during recovery: proven in `StoreRun`, run from one spool ([details](#crashes)) |
 | Store runs | 120 chains of runs, every point held to what a crash may leave ([details](#store-runs)) | The directories drawn are a sample |
 | Fault points | libfiu points fail as enabled and never without `FIU_ENABLE` ([details](#fault-points)) | — |
 | LazyFS | Synced data survives a cache clear, unsynced does not, appends tear ([details](#lazyfs)) | Tears a write request, not a block; runs apart |
 | Session model | 399 scenarios and 3,285 turns judged by an independent reference, 82 with a store and 9,611 turns; 56 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
 | NNTP server | The server over loopback held three ways; 46 planted defects caught ([details](#nntp-server)) | Tested, not proven |
+| Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss not yet |
 | Host's store | Spool, file jobs and fault points of `native/store.c` and `native/jobs.c` ([details](#hosts-store)) | Tested, not proven |
 | Copy kernel | 26,039 cases of offsets, lengths, capacities and overlaps | No theorem covers overlap |
 | Stopping states | 110 cases, 108 of which stop, against an independent implementation (`scripts/state_check.py`) | Not a proof against HOL |
@@ -178,6 +179,12 @@ It catches 45 planted defects, fourteen in the store's side. The analysis accept
 `scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. It catches 46 planted defects.
 
 It posts on an empty spool, after a restart and through `nntplib`, finds each poster in the host's log by `logging-data`, reads each article back through `nntplib`, and refuses one whose file changed on the disk.
+
+### Crashes
+
+`scripts/crash_check.py` kills the server's test build before each of its 27, 39 and 44 operations. It posts two articles at once into overlapping groups on an empty spool; then one Message-ID from two connections at once, one held already, a crosspost and a read; then one article on a spool a crash left, stopping recovery too.
+
+Each spool left is held to `store_safe` by `scripts/recovery_ref.py`, with every article it held before; each client read what a run not stopped sends, or its start. Started again, the server recovers alike, reads every article back through `nntplib`, takes a new one numbered on and refuses one held. It catches 5 planted defects of the crash lane.
 
 ### Host's store
 

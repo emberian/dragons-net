@@ -107,9 +107,11 @@ knows nothing of articles.
   process holds.
 - The host's test build carries a named point of failure before each file operation (libfiu's
   `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
-  injection points and SQLite's test build do; built without `FIU_ENABLE`, the server has no point
-  and does not load libfiu. libfiu's preload that fails POSIX calls does not know `openat`,
-  `renameat` or `unlinkat`, which the host uses.
+  injection points and SQLite's test build do; `dn/stop` holds the workers before the operation it
+  numbers and each after it, and once the operations before have ended the loop stops the process,
+  for a test to kill it. Built without `FIU_ENABLE`, the server has no point and does not load
+  libfiu. libfiu's preload that fails POSIX calls does not know `openat`, `renameat` or `unlinkat`,
+  which the host uses.
 
 ### On disk
 
@@ -396,12 +398,15 @@ from them are done; what needs the program or the host comes with them, as marke
 - The session with POST, as a specification (`DN.News.PostSpec`, `DN.News.SessionSpec`), is held to
   an independent reference in Python, a crash of the spool's model after each 240 included
   (`scripts/session_check.py`); done.
+- The server killed before each of its file operations, its start's recovery too: every article
+  held or answered 240 is found whole, and nothing else; each client read what it reads unkilled, or
+  its start. Started again, the server reads each back and takes posts (`scripts/crash_check.py`);
+  done.
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the compiled program against the
     model;
   - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
     points of failure;
-  - process crashes: the server killed at each operation of a job, then restarted;
   - power loss: the spool on LazyFS, a FUSE file system that keeps unsynced data in its own cache
     and drops it on command, cleared at each operation of a job, then restarted; LazyFS makes
     creations, renames and removals durable at once, so a missing directory sync is caught by the

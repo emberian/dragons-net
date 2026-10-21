@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
-lanes=(native baseline entry server framing grammar accept session nntp parser fuzz)
+lanes=(native baseline entry server framing grammar accept session nntp crash parser fuzz)
 script_of() {
   case $1 in
     native) script=(scripts/native_check.py) ;;
@@ -19,6 +19,7 @@ script_of() {
     accept) script=(scripts/accept_check.py) ;;
     session) script=(scripts/session_native.py) ;;
     nntp) script=(scripts/nntp_check.py) ;;
+    crash) script=(scripts/crash_check.py) ;;
     parser) script=(scripts/parser_contract.py) ;;
     fuzz) script=(scripts/native_fuzz.py) ;;
     *)

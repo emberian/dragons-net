@@ -9,7 +9,10 @@
  * progress fails as no space; a short read is reported as it is. A failed sync, or close of a file
  * written through its place, leaves the mark of store.c before the program learns of it. The test
  * build fails each operation at a point of its name (faults.h); `dn/write-short` shortens a write to
- * the number given, and `dn/sync-slow` delays a sync by that many milliseconds. */
+ * the number given, `dn/sync-slow` delays a sync by that many milliseconds, and `dn/stop` holds the
+ * workers before the operation it numbers, counted from one over the run, and each after it: once
+ * every operation before has ended, the loop stops the process at the end of its turn, for a test to
+ * kill it with those operations and everything the program did in place. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -21,6 +24,7 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
@@ -52,6 +56,7 @@ static struct file files[PLACES];
 static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t work = PTHREAD_COND_INITIALIZER;
+static atomic_uint_fast64_t begun, ended, held;
 
 /* Whether a failure of the operation is a failed sync: a close is, as decision 0005 has it. */
 static int syncs(uint64_t code) {
@@ -336,6 +341,17 @@ static int run(struct job *j, uint64_t i) {
     }
 }
 
+/* The test build's stop from operation `at` on: the worker holds, and once the operations before
+ * have ended wakes the loop to stop. */
+static void hold(uint64_t at) {
+    struct timespec t = {0, 100000};
+    while (atomic_load(&ended) + 1 < at) nanosleep(&t, NULL);
+    atomic_store(&held, at);
+    uint64_t one = 1;
+    if (write(wake, &one, sizeof one) != sizeof one) dn_harness_now("eventfd: %s", strerror(errno));
+    for (;;) pause();
+}
+
 static void *worker(void *unused) {
     (void)unused;
     for (;;) {
@@ -348,8 +364,13 @@ static void *worker(void *unused) {
         memset(j->results, 0, sizeof j->results);
         j->done = j->count;
         j->class = 0;
-        for (uint64_t i = 0; i < j->count; ++i)
-            if (run(j, i)) {
+        for (uint64_t i = 0; i < j->count; ++i) {
+            uint64_t stop;
+            int counted = DN_FAULT_INFO("dn/stop", stop);
+            if (counted && atomic_fetch_add(&begun, 1) + 1 >= stop) hold(stop);
+            int failed = run(j, i);
+            if (counted) atomic_fetch_add(&ended, 1);
+            if (failed) {
                 j->done = i;
                 j->class = class_of(errno);
                 /* A file only read has nothing a failed close may lose. */
@@ -357,6 +378,7 @@ static void *worker(void *unused) {
                     dn_store_mark_failed();
                 break;
             }
+        }
         pthread_mutex_lock(&lock);
         j->state = DONE;
         pthread_mutex_unlock(&lock);
@@ -401,9 +423,10 @@ void dn_jobs_take(const unsigned char *a) {
 int dn_jobs_ready(void) {
     /* Emptied first: a worker marks its job done before it writes, so a completion after the check
      * below wakes the loop again, and one before it leaves at most one wake for nothing. */
-    uint64_t drained;
+    uint64_t drained, at;
     if (wake >= 0 && read(wake, &drained, sizeof drained) < 0 && errno != EAGAIN)
         dn_harness("eventfd: %s", strerror(errno));
+    if (DN_FAULT_INFO("dn/stop", at) && atomic_load(&held) == at) raise(SIGSTOP);
     pthread_mutex_lock(&lock);
     int ready = 0;
     for (int k = 0; k < JOBS; ++k) ready |= jobs[k].state == DONE;

@@ -249,7 +249,7 @@ class CheckScript(unittest.TestCase):
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
                    "accept_check.py": "accept",
                    "session_native.py": "session",
-                   "nntp_check.py": "nntp", "parser_contract.py": "parser",
+                   "nntp_check.py": "nntp", "crash_check.py": "crash", "parser_contract.py": "parser",
                    "native_fuzz.py": "fuzz"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
@@ -276,7 +276,8 @@ class CheckScript(unittest.TestCase):
                                               "framing --cake /pinned/cake", "grammar --cake /pinned/cake",
                                               "accept --cake /pinned/cake",
                                               "session --cake /pinned/cake",
-                                              "nntp --cake /pinned/cake", "parser --cake /pinned/cake",
+                                              "nntp --cake /pinned/cake", "crash --cake /pinned/cake",
+                                              "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
