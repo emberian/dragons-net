@@ -14,7 +14,7 @@
  * every operation before has ended, the loop stops the process at the end of its turn, for a test to
  * kill it with those operations and everything the program did in place. `dn/fail`, given the number
  * of an operation, so counted, times 256 and an error number, fails that operation at its first point
- * with the error, and names the point on stderr. */
+ * with the error, once, and names the point on stderr. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -69,10 +69,11 @@ static const char *const POINTS[] = {"dn/create", "dn/open", "dn/open-dir", "dn/
                                      "dn/read", "dn/size", "dn/data-sync", "dn/sync", "dn/sync-dir", "dn/truncate",
                                      "dn/rename", "dn/remove", "dn/close"};
 
-/* Whether a point fails now: in the worker running the operation `dn/fail` numbers, said once. */
+/* Whether a point fails now: in the worker running the operation `dn/fail` numbers, once, said. */
 static int fails_now(const char *name, int *failnum, void **failinfo, unsigned *flags) {
     (void)failnum, (void)failinfo, (void)flags;
     if (!running || running != failing / 256) return 0;
+    running = 0;
     dprintf(STDERR_FILENO, "dn/fail %s\n", name);
     return 1;
 }

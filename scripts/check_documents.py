@@ -22,7 +22,8 @@ CHECKS = {"abnf_check.py": "abnf", "article_check.py": "article", "journal_check
           "session_check.py": "session-model", "framing_check.py": "lane-framing",
           "grammar_check.py": "lane-grammar", "accept_check.py": "lane-accept",
           "native_baseline.py": "lane-baseline", "native_fuzz.py": "lane-fuzz", "nntp_check.py": "lane-nntp",
-          "crash_check.py": "lane-crash", "parser_contract.py": "lane-parser", "session_native.py": "lane-session"}
+          "crash_check.py": "lane-crash", "faults_check.py": "lane-faults",
+          "parser_contract.py": "lane-parser", "session_native.py": "lane-session"}
 # Checks run again on any change of the tree, scripts/native_lanes.sh's FUSE lanes, which hold the
 # documents as they run.
 AS_THEY_RUN = {"power_check.py"}

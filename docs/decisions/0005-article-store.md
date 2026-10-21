@@ -109,8 +109,8 @@ knows nothing of articles.
   `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
   injection points and SQLite's test build do; `dn/stop` holds the workers before the operation it
   numbers and each after it, and once the operations before have ended the loop stops the process,
-  for a test to kill it; `dn/fail` fails the operation it numbers at its own points, with the error
-  given. Built without `FIU_ENABLE`, the server has no point and does not load libfiu. libfiu's
+  for a test to kill it; `dn/fail` fails the operation it numbers once, at its first point, with the
+  error given. Built without `FIU_ENABLE`, the server has no point and does not load libfiu. libfiu's
   preload that fails POSIX calls does not know `openat`, `renameat` or `unlinkat`, which the host
   uses.
 
@@ -412,13 +412,15 @@ from them are done; what needs the program or the host comes with them, as marke
 - Not shown there: a missing directory sync, LazyFS making names durable at once; recovery's first
   syncs, which the start record's sync covers for the journal; a failed sync whose data a kernel
   drops at once: here it stays unsynced, lost with the power.
-- To be tested with the program and the host:
-  - that the program is the specification, as for the session: the compiled program against the
-    model;
-  - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
-    points of failure;
-  - a corrupt store at every entry point — start, POST, HEAD, STAT, ARTICLE, BODY — after the table
-    `fn` keeps for its own store.
+- Each operation of a start, two posts and a read, on a spool and on one a crash left, failed once
+  with no space or interrupted, every write cut short, every sync slowed: the server answers as above
+  for the operation, stops accepting where a sync failed and keeps every article answered 240
+  (`scripts/faults_check.py`); done.
+- An article's file changed after the start as the table `fn` keeps for its own store: never sent
+  whole, STAT answered, POST taken, the next start refused where recovery finds the store corrupt; the store corrupt
+  at start (`scripts/nntp_check.py`); done.
+- To be tested with the program and the host: that the program is the specification, as for the
+  session: the compiled program against the model.
 - Not claimed: that the kernel and the file system keep the guarantees of the model; anything about
   the host's workers beyond the tests; that the program is its specification on every run.
 

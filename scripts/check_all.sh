@@ -24,4 +24,4 @@ bash scripts/check.sh
 python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom
 bash scripts/native_lanes.sh
 python3 scripts/check_documents.py
-echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the server loop, the framers, the session program, the NNTP server over sockets and killed at each file operation, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'
+echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the server loop, the framers, the session program, the NNTP server over sockets, killed and failed at each file operation, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'

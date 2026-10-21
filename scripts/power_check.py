@@ -30,7 +30,6 @@ import functools
 import os
 from pathlib import Path
 import queue
-import re
 import shutil
 import sys
 import tempfile
@@ -39,34 +38,18 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import crash_check as C  # the path above is what makes these importable
 import lanes
-from lanes import NATIVE, ROOT, LaneError, Report
+from lanes import ROOT, LaneError, Report
 import lazyfs_check as L
 import nntp_check as N
 import recovery_ref as R
 
 OUT = ROOT / "build/power"
 EIO = 5
-# A whole mark of a boot other than this one, which a start removes.
-OTHER_BOOT = b"00000000-0000-4000-8000-000000000000\n"
 # The parts of a torn write LazyFS keeps: the first, the last, both.
 KEPT = ("1", "3", "1,3")
-# The points of native/jobs.c that fail nothing but carry a number, and those of a read of an
-# article, whose failure answers 403.
-PARAMETERS = {"dn/write-short", "dn/sync-slow", "dn/stop", "dn/fail"}
+# The points of a read of an article, whose failure answers 403.
 READING = {"dn/open", "dn/size", "dn/read"}
 Image = dict[bytes, bytes]
-
-
-def points() -> set[str]:
-    """The points of native/jobs.c's operations, which have to be those `dn/fail` fails."""
-    text = C.JOBS.read_text()
-    start = text.index("POINTS[] = {")
-    end = text.index("};", start)
-    listed = set(re.findall(r'"(dn/[a-z-]+)"', text[start:end]))
-    named = set(re.findall(r'"(dn/[a-z-]+)"', text[:start] + text[end:])) - PARAMETERS
-    if listed != named:
-        raise LaneError(f"dn/fail fails {sorted(listed)}, the operations' points being {sorted(named)}")
-    return listed
 
 
 class Mounts:
@@ -142,7 +125,7 @@ def powered(binary: Path, mounts: Mounts, phase: C.Phase, base: Image, enable: s
         fired = set(said)
         failed = ended == [True] if torn else bool(fired)
         refused = halted and may_fail
-        mark = OTHER_BOOT if C.MARK in image else b""
+        mark = C.OTHER_BOOT if C.MARK in image else b""
         image.pop(C.MARK, None)
         why = ("dn/fail failed " + ", ".join(said) if len(said) > 1
                else "the server ended at its start with status 4, nothing failing" if refused and not failed
@@ -218,7 +201,7 @@ def passes(binary: Path, bases: list[Image] | None = None, only: str = "",
                     raise
         finally:
             mounts.stop()
-    unfailed = points() - fired - {"dn/read-dir"}
+    unfailed = C.points() - fired - {"dn/read-dir"}
     if not only and unfailed:
         raise LaneError(f"dn/fail never failed {sorted(unfailed)}")
     return counts, used
@@ -244,32 +227,18 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    fiu = lanes.pinned_tool("libfiu")
-    flags = ["-DFIU_ENABLE=1", f"-I{fiu}", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]
-
-    def build(k: int, defect: C.Defect | None) -> Path:
-        if defect is None:
-            return lanes.whole_program(cake, "power", source, OUT, N.HOST, N.STORE, flags)
-        if defect.program:
-            text = lanes.plant(source, defect.pattern, defect.becomes, defect.times, f"the program, for {defect.name},")
-            return lanes.whole_program(cake, f"defect-{k}", text, OUT, N.HOST, N.STORE, flags)
-        jobs = OUT / f"defect-{k}-jobs.c"
-        jobs.write_text(lanes.plant(C.JOBS.read_text(), defect.pattern, defect.becomes, defect.times,
-                                    f"the host, for {defect.name},", exact=True))
-        return lanes.link(OUT / f"defect-{k}", [N.HOST, NATIVE / "store.c", jobs, NATIVE / "cake_header.c",
-                                                NATIVE / "cake_runtime.c", base.result().with_suffix(".S")],
-                          includes=[OUT], flags=flags, check=False)
-
     with ThreadPoolExecutor(1 + len(DEFECTS)) as pool:
-        base = pool.submit(build, 0, None)
-        builds = [pool.submit(build, k, d) for k, (d, _) in enumerate(DEFECTS) if d.program]
+        base = pool.submit(C.test_build, cake, OUT, "power", source)
+        builds = [pool.submit(C.test_build, cake, OUT, f"defect-{k}", source, d) for k, (d, _) in enumerate(DEFECTS)
+                  if d.program]
         clock = time.monotonic()
         counts, bases = passes(base.result())
         seconds = {"runs": round(time.monotonic() - clock, 1)}
         found = {}
         programs = iter(builds)
         for k, (defect, caught_by) in enumerate(DEFECTS):
-            built = next(programs).result() if defect.program else build(k, defect)
+            built = (next(programs).result() if defect.program
+                     else C.test_build(cake, OUT, f"defect-{k}", source, defect, base.result()))
             try:
                 passes(built, bases, caught_by, counts["stopped"])
             except LaneError as error:

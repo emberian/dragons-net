@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
-lanes=(native baseline entry server framing grammar accept session nntp crash parser fuzz)
+lanes=(native baseline entry server framing grammar accept session nntp crash faults parser fuzz)
 # Lanes that mount FUSE, run only by name, where it may be mounted (CI's lazyfs job). FUSE's mount
 # helpers look up /etc/mtab, the mount table, which a trace cannot hold still: such a lane is not
 # run again on a tree it passed on.
@@ -24,6 +24,7 @@ script_of() {
     session) script=(scripts/session_native.py) ;;
     nntp) script=(scripts/nntp_check.py) ;;
     crash) script=(scripts/crash_check.py) ;;
+    faults) script=(scripts/faults_check.py) ;;
     power) script=(scripts/power_check.py) ;;
     parser) script=(scripts/parser_contract.py) ;;
     fuzz) script=(scripts/native_fuzz.py) ;;
@@ -61,7 +62,7 @@ fi
 # DN_PARALLEL lanes at a time, the longest first, each one's output shown whole once all are done;
 # an interrupt ends every lane running.
 trap 'trap - INT TERM; kill 0' INT TERM
-longest=(nntp session parser framing grammar baseline fuzz accept power crash server entry native)
+longest=(nntp session parser framing grammar baseline fuzz accept faults power crash server entry native)
 ordered=()
 for name in "${longest[@]}" "${chosen[@]}"; do
   if [[ " ${chosen[*]} " == *" $name "* && " ${ordered[*]} " != *" $name "* ]]; then ordered+=("$name"); fi

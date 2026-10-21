@@ -68,6 +68,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | NNTP server | The server over loopback held three ways; 46 planted defects caught ([details](#nntp-server)) | Tested, not proven |
 | Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss below |
 | Power loss | The server on LazyFS, power lost before each operation, after a run with each failed with EIO, and at each of 10 journal writes torn; held to `store_safe`; 4 planted defects of the power lane caught ([details](#power-loss)) | Names durable at once: a missing directory sync is not shown here |
+| Faults | The server's test build, each of its 35 and 46 operations failed with ENOSPC and interrupted, writes cut short, syncs slowed; an article's file changed in 6 ways after the start; 8 planted defects of the faults lane caught ([details](#faults)) | Faults at the host's points, one client at a time |
 | Host's store | Spool, file jobs and fault points of `native/store.c` and `native/jobs.c` ([details](#hosts-store)) | Tested, not proven |
 | Copy kernel | 26,039 cases of offsets, lengths, capacities and overlaps | No theorem covers overlap |
 | Stopping states | 110 cases, 108 of which stop, against an independent implementation (`scripts/state_check.py`) | Not a proof against HOL |
@@ -192,6 +193,20 @@ Each spool left is held to `store_safe` by `scripts/recovery_ref.py`, with every
 `scripts/power_check.py` runs the crash lane's phases on LazyFS, which caches unsynced data. Power is lost before each of the 27, 39 and 44 operations; after a run with each failed with EIO; and in each of 4, 3 and 3 writes to the journal and a kept tail, torn in three, first, last or both parts kept.
 
 Each spool is held as in the crash lane; where an operation failed, a post may be refused or one closed unanswered, and an article refused is never found. Started again, the server removes a mark of another boot. It catches 4 planted defects of the power lane.
+
+### Faults
+
+`scripts/faults_check.py` runs the crash lane's server on a spool holding an article, and on that spool as a crash leaves it: a post, ARTICLE of the article held, another post, STAT, one client after another.
+
+Each of its 35 and 46 operations at a point fails once with ENOSPC, every reply as decision 0005 has it for the point and the file. An article's creation, write or rename refuses the post; its sync also stops the store and leaves the mark.
+
+The journal's write or sync leaves the post unanswered and stops the store; a read's failure answers 403. Each operation is also interrupted once with EINTR, and where the host makes the call again the run is as without it.
+
+Every write cut to one octet changes nothing; a write of no progress refuses the start. With every sync slowed, a read and a STAT on other connections are answered before a post's 240, which waits for its three syncs.
+
+Each spool is held as in the crash lane. It catches 8 planted defects of the faults lane.
+
+An article's file changed after the start in 6 ways after `fn`'s table, of one buffer and of two, is never sent whole; STAT still answers and a post is taken. The next start refuses the store where recovery finds it corrupt or a file opens no more.
 
 ### Host's store
 

@@ -463,7 +463,7 @@ jobs:
           - {name: nntp, lanes: nntp}
           - {name: session, lanes: session entry server native}
           - {name: programs, lanes: framing grammar parser baseline}
-          - {name: rest, lanes: fuzz accept crash}
+          - {name: rest, lanes: fuzz accept crash faults}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

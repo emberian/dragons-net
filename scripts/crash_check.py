@@ -35,6 +35,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import socket
 import subprocess
@@ -62,6 +63,24 @@ ADDED = (b"path:", b"date:", b"injection-info:", b"injection-date:")
 # The name of the mark of a failed sync, which the host removes, when of another boot, before
 # recovery.
 MARK = b"sync-failed"
+# A whole mark of a boot other than this one, which a start removes.
+OTHER_BOOT = b"00000000-0000-4000-8000-000000000000\n"
+
+
+# The points of native/jobs.c that fail nothing but carry a number.
+PARAMETERS = {"dn/write-short", "dn/sync-slow", "dn/stop", "dn/fail"}
+
+
+def points() -> set[str]:
+    """The points of native/jobs.c's operations, which have to be those `dn/fail` fails."""
+    text = JOBS.read_text()
+    start = text.index("POINTS[] = {")
+    end = text.index("};", start)
+    listed = set(re.findall(r'"(dn/[a-z-]+)"', text[start:end]))
+    named = set(re.findall(r'"(dn/[a-z-]+)"', text[:start] + text[end:])) - PARAMETERS
+    if listed != named:
+        raise LaneError(f"dn/fail fails {sorted(listed)}, the operations' points being {sorted(named)}")
+    return listed
 
 
 def article(mid: str, groups: str, lines: int = 1) -> bytes:
@@ -511,39 +530,44 @@ DEFECTS = [
 ]
 
 
+def test_build(cake: str, out: Path, name: str, source: str, defect: Defect | None = None,
+               base: Path | None = None) -> Path:
+    """The server's test build of the program `source`, as `name` in `out`, which holds the layout's
+    header; with `defect`, planted in the program, or in native/jobs.c linked with `base`'s program."""
+    fiu = lanes.pinned_tool("libfiu")
+    flags = ["-DFIU_ENABLE=1", f"-I{fiu}", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]
+    if defect is None or defect.program:
+        text = source if defect is None else lanes.plant(source, defect.pattern, defect.becomes, defect.times,
+                                                          f"the program, for {defect.name},")
+        return lanes.whole_program(cake, name, text, out, N.HOST, N.STORE, flags)
+    if base is None:
+        raise LaneError(f"{defect.name}: a defect of the host needs a program")
+    jobs = out / f"{name}-jobs.c"
+    jobs.write_text(lanes.plant(JOBS.read_text(), defect.pattern, defect.becomes, defect.times,
+                                f"the host, for {defect.name},", exact=True))
+    return lanes.link(out / name, [N.HOST, NATIVE / "store.c", jobs, NATIVE / "cake_header.c",
+                                   NATIVE / "cake_runtime.c", base.with_suffix(".S")],
+                      includes=[out], flags=flags, check=False)
+
+
 def check(cake: str) -> Report:
     if sys.version_info[:2] != (3, 12):
         raise LaneError(f"this lane needs the nntplib of Python 3.12, not Python {sys.version.split()[0]}")
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    fiu = lanes.pinned_tool("libfiu")
-    flags = ["-DFIU_ENABLE=1", f"-I{fiu}", f"-L{fiu}", "-lfiu", f"-Wl,-rpath,{fiu}"]
-
-    def build(index: int, defect: Defect | None) -> Path:
-        if defect is None:
-            return lanes.whole_program(cake, "crash", source, OUT, N.HOST, N.STORE, flags)
-        name = f"defect-{index}"
-        if defect.program:
-            text = lanes.plant(source, defect.pattern, defect.becomes, defect.times, f"the program, for {defect.name},")
-            return lanes.whole_program(cake, name, text, OUT, N.HOST, N.STORE, flags)
-        jobs = OUT / f"{name}-jobs.c"
-        jobs.write_text(lanes.plant(JOBS.read_text(), defect.pattern, defect.becomes, defect.times,
-                                    f"the host, for {defect.name},", exact=True))
-        return lanes.link(OUT / name, [N.HOST, NATIVE / "store.c", jobs, NATIVE / "cake_header.c",
-                                       NATIVE / "cake_runtime.c", base.result().with_suffix(".S")],
-                          includes=[OUT], flags=flags, check=False)
-
     with ThreadPoolExecutor(lanes.WORKERS) as pool:
-        base = pool.submit(build, 0, None)
-        builds = [pool.submit(build, k, d) for k, d in enumerate(DEFECTS) if d.program]
+        base = pool.submit(test_build, cake, OUT, "crash", source)
+        builds = [pool.submit(test_build, cake, OUT, f"defect-{k}", source, d) for k, d in enumerate(DEFECTS)
+                  if d.program]
         clock = time.monotonic()
         counts, bases = phases(base.result())
         seconds = {"runs": round(time.monotonic() - clock, 1)}
         found = {}
         programs = iter(builds)
         for k, defect in enumerate(DEFECTS):
-            binary = next(programs).result() if defect.program else build(k, defect)
+            binary = (next(programs).result() if defect.program
+                      else test_build(cake, OUT, f"defect-{k}", source, defect, base.result()))
             try:
                 phases(binary, bases)
             except LaneError as error:
