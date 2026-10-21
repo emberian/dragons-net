@@ -391,12 +391,18 @@ class Documents(unittest.TestCase):
 
     def test_every_check_that_holds_the_documents_is_named_and_stamped(self) -> None:
         """A script that leaves requirements on the documents is listed, and a run without its stamp
-        does not pass, for its requirements would go unheld."""
+        does not pass, for its requirements would go unheld; or it is a FUSE lane, run again on any
+        change of the tree, which holds them as it runs."""
         documents = script("check_documents")
         calling = {p.name for p in (ROOT / "scripts").glob("*.py")
                    if p.name not in {"lanes.py", "check_documents.py", "once.py"}
                    and re.search(r"lanes\.require(_quoted|_stated)?\(", p.read_text())}
-        self.assertEqual(calling, set(documents.CHECKS))
+        self.assertEqual(calling, set(documents.CHECKS) | documents.AS_THEY_RUN)
+        lanes = (ROOT / "scripts/native_lanes.sh").read_text()
+        [fuse] = re.findall(r"^fuse=\(([a-z ]+)\)$", lanes, re.MULTILINE)
+        self.assertEqual({f"{name}_check.py" for name in fuse.split()}, documents.AS_THEY_RUN)
+        for name in fuse.split():
+            self.assertIn(f"    {name}) script=(scripts/{name}_check.py) ;;\n", lanes)
         with tempfile.TemporaryDirectory() as temp:
             done = subprocess.run([sys.executable, "scripts/check_documents.py"], cwd=ROOT, text=True,
                                   env={**os.environ, "DN_STAMPS": temp}, capture_output=True, check=False)

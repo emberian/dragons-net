@@ -232,9 +232,11 @@ class CheckScript(unittest.TestCase):
                           "      run: ${{ steps.passed.outputs.run-id || github.run_id }}\n", jobs[job])
             self.assertIn(f"name: ${{{{ needs.{job}.outputs.record }}}}\n          path: build/stamps\n"
                           f"          run-id: ${{{{ needs.{job}.outputs.run }}}}\n", jobs["documents"])
-        # The LazyFS lane mounts FUSE, so it runs beside the chain once the lint has passed.
-        self.assertIn("needs: lint\n", jobs["lazyfs"])
+        # The LazyFS lane mounts FUSE, and the power lane on it needs the build: they run beside the
+        # rest of the chain once the build has passed.
+        self.assertIn("needs: build\n", jobs["lazyfs"])
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
+        self.assertIn("run: bash scripts/native_lanes.sh power\n", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
         for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
             self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
@@ -242,15 +244,16 @@ class CheckScript(unittest.TestCase):
         self.assertEqual(verify_run.REQUIRED_JOBS, tuple(jobs))
 
     def test_native_lanes_run_all_or_the_named_ones(self) -> None:
-        """Without names every lane runs in its order; with names only those, in the order named; a
-        lane that fails stops the run with its status; a misspelt name is refused before any lane
-        runs, or it would run nothing and pass."""
+        """Without names every lane runs in its order, but those that mount FUSE; with names only
+        those, in the order named; a lane that fails stops the run with its status; a misspelt name is
+        refused before any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not
+        run again on a tree it passed on."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
                    "accept_check.py": "accept",
                    "session_native.py": "session",
                    "nntp_check.py": "nntp", "crash_check.py": "crash", "parser_contract.py": "parser",
-                   "native_fuzz.py": "fuzz"}
+                   "native_fuzz.py": "fuzz", "power_check.py": "power"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
@@ -263,11 +266,11 @@ class CheckScript(unittest.TestCase):
                     f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
                     f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
 
-            def lanes(*names: str, failing: str = "") -> tuple[int, str, list[str]]:
+            def lanes(*names: str, failing: str = "", once: str = "none") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
-                                           "DN_ONCE": "none"},
+                                           "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps")},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -281,7 +284,13 @@ class CheckScript(unittest.TestCase):
                                               "fuzz --cake /pinned/cake"]))
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
-                self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")
+                if lane != "power":
+                    self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")
+            self.assertEqual(lanes("power", once=""), (0, "", ["power --cake /pinned/cake"]))
+            self.assertEqual((tree / "build/evidence/power.log").read_text(), "power\n")
+            status, said, run_lanes = lanes("power", once="")
+            self.assertEqual((status, run_lanes), (0, []))
+            self.assertIn("DN SKIP lane-power: passed on this tree", said)
             self.assertEqual(lanes("parser", "native"), (0, "", ["parser --cake /pinned/cake",
                                                                  "native --cake /pinned/cake"]))
             self.assertEqual(lanes(failing="baseline"), (3, "", ["native --cake /pinned/cake",

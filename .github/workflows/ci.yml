@@ -580,10 +580,10 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  # LazyFS mounts a FUSE file system, which the runner allows through fusermount3; the lane runs
-  # beside the chain, needing neither the build nor the proofs.
+  # LazyFS mounts a FUSE file system, which the runner allows through fusermount3: its lane, and the
+  # power lane on it, which needs the build, run beside the rest of the chain.
   lazyfs:
-    needs: lint
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -623,6 +623,25 @@ jobs:
         run: |
           mkdir -p build/evidence
           python3 scripts/lazyfs_check.py 2>&1 | tee build/evidence/lazyfs.log
+      - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/bootstrap_tool.py lean
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/build_archive.py unpack build/lean-build.tar
+      - name: The server on LazyFS, power lost at each operation
+        if: steps.passed.outputs.run-id == ''
+        run: bash scripts/native_lanes.sh power
       # Recorded only once every step above has passed; artifacts are seen across branches, so the
       # run on main after a merge finds it too (scripts/prior_pass.py).
       - name: Record the pass
@@ -646,3 +665,4 @@ jobs:
           path: |
             build/evidence/
             build/lazyfs/report.json
+            build/power/report.json

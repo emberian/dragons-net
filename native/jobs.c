@@ -12,7 +12,9 @@
  * the number given, `dn/sync-slow` delays a sync by that many milliseconds, and `dn/stop` holds the
  * workers before the operation it numbers, counted from one over the run, and each after it: once
  * every operation before has ended, the loop stops the process at the end of its turn, for a test to
- * kill it with those operations and everything the program did in place. */
+ * kill it with those operations and everything the program did in place. `dn/fail`, given the number
+ * of an operation, so counted, times 256 and an error number, fails that operation at its first point
+ * with the error, and names the point on stderr. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -29,6 +31,9 @@
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef FIU_ENABLE
+#include <fiu-control.h>
+#endif
 
 enum { JOBS = DN_SESSION_JOBS, OPS = DN_SESSION_JOB_OPS, DATA = DN_SESSION_JOB_DATA, PLACES = DN_SESSION_HANDLES,
        WORKERS = 2, NAME = 32 };
@@ -57,6 +62,30 @@ static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t work = PTHREAD_COND_INITIALIZER;
 static atomic_uint_fast64_t begun, ended, held;
+#ifdef FIU_ENABLE
+static uint64_t failing;
+static _Thread_local uint64_t running;
+static const char *const POINTS[] = {"dn/create", "dn/open", "dn/open-dir", "dn/read-dir", "dn/list", "dn/write",
+                                     "dn/read", "dn/size", "dn/data-sync", "dn/sync", "dn/sync-dir", "dn/truncate",
+                                     "dn/rename", "dn/remove", "dn/close"};
+
+/* Whether a point fails now: in the worker running the operation `dn/fail` numbers, said once. */
+static int fails_now(const char *name, int *failnum, void **failinfo, unsigned *flags) {
+    (void)failnum, (void)failinfo, (void)flags;
+    if (!running || running != failing / 256) return 0;
+    dprintf(STDERR_FILENO, "dn/fail %s\n", name);
+    return 1;
+}
+#endif
+
+/* The operation a worker runs, by its number, for `dn/fail`. */
+static void numbered(uint64_t number) {
+#ifdef FIU_ENABLE
+    running = number;
+#else
+    (void)number;
+#endif
+}
 
 /* Whether a failure of the operation is a failed sync: a close is, as decision 0005 has it. */
 static int syncs(uint64_t code) {
@@ -365,11 +394,13 @@ static void *worker(void *unused) {
         j->done = j->count;
         j->class = 0;
         for (uint64_t i = 0; i < j->count; ++i) {
-            uint64_t stop;
-            int counted = DN_FAULT_INFO("dn/stop", stop);
-            if (counted && atomic_fetch_add(&begun, 1) + 1 >= stop) hold(stop);
+            uint64_t stop, number = 0;
+            int stopping = DN_FAULT_INFO("dn/stop", stop);
+            if (stopping || fiu_fail("dn/fail")) number = atomic_fetch_add(&begun, 1) + 1;
+            if (stopping && number >= stop) hold(stop);
+            numbered(number);
             int failed = run(j, i);
-            if (counted) atomic_fetch_add(&ended, 1);
+            if (stopping) atomic_fetch_add(&ended, 1);
             if (failed) {
                 j->done = i;
                 j->class = class_of(errno);
@@ -394,6 +425,12 @@ int dn_jobs_start(int dir) {
     for (int p = 0; p < PLACES; ++p) files[p].fd = -1;
     wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (wake < 0) dn_harness("eventfd: %s", strerror(errno));
+#ifdef FIU_ENABLE
+    if (DN_FAULT_INFO("dn/fail", failing))
+        for (size_t k = 0; k < sizeof POINTS / sizeof *POINTS; ++k)
+            if (fiu_enable_external(POINTS[k], 1, (void *)(uintptr_t)(failing % 256), 0, fails_now))
+                dn_harness("fiu_enable_external %s", POINTS[k]);
+#endif
     /* Workers take no signal: the loop takes SIGTERM and SIGINT through its signalfd, which a worker
        taking one would bypass, ending the process at once. */
     sigset_t all, old;

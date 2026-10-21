@@ -28,7 +28,7 @@ In CI an artifact keyed by the job's inputs is seen across branches (`scripts/pr
 
 The default compiler is the release pinned in `tools.lock.json`, run with the simple register allocator (`--reg_alg=0`, [assurance](assurance.md)); `CAKE` selects another, whose digest is recorded, such as the one `scripts/bootstrap_cake.sh` builds ([backend](../backend/README.md#bootstrap-the-compiler)).
 
-The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/bootstrap_tool.py lazyfs`) needs `/dev/fuse`, libfuse 3 and the right to mount it, and runs apart from `check_all.sh`.
+The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/bootstrap_tool.py lazyfs`) and the power lane (`bash scripts/native_lanes.sh power`) need `/dev/fuse`, libfuse 3 and the right to mount it, and run apart from `check_all.sh`; the power lane is not run again on a tree it passed on.
 
 ## What is covered
 
@@ -66,7 +66,8 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | Session model | 399 scenarios and 3,285 turns judged by an independent reference, 82 with a store and 9,611 turns; 56 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
 | NNTP server | The server over loopback held three ways; 46 planted defects caught ([details](#nntp-server)) | Tested, not proven |
-| Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss not yet |
+| Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss below |
+| Power loss | The server on LazyFS, power lost before each operation, after a run with each failed with EIO, and at each of 10 journal writes torn; held to `store_safe`; 4 planted defects of the power lane caught ([details](#power-loss)) | Names durable at once: a missing directory sync is not shown here |
 | Host's store | Spool, file jobs and fault points of `native/store.c` and `native/jobs.c` ([details](#hosts-store)) | Tested, not proven |
 | Copy kernel | 26,039 cases of offsets, lengths, capacities and overlaps | No theorem covers overlap |
 | Stopping states | 110 cases, 108 of which stop, against an independent implementation (`scripts/state_check.py`) | Not a proof against HOL |
@@ -185,6 +186,12 @@ It posts on an empty spool, after a restart and through `nntplib`, finds each po
 `scripts/crash_check.py` kills the server's test build before each of its 27, 39 and 44 operations. It posts two articles at once into overlapping groups on an empty spool; then one Message-ID from two connections at once, one held already, a crosspost and a read; then one article on a spool a crash left, stopping recovery too.
 
 Each spool left is held to `store_safe` by `scripts/recovery_ref.py`, with every article it held before; each client read what a run not stopped sends, or its start. Started again, the server recovers alike, reads every article back through `nntplib`, takes a new one numbered on and refuses one held. It catches 5 planted defects of the crash lane.
+
+### Power loss
+
+`scripts/power_check.py` runs the crash lane's phases on LazyFS, which caches unsynced data. Power is lost before each of the 27, 39 and 44 operations; after a run with each failed with EIO; and in each of 4, 3 and 3 writes to the journal and a kept tail, torn in three, first, last or both parts kept.
+
+Each spool is held as in the crash lane; where an operation failed, a post may be refused or one closed unanswered, and an article refused is never found. Started again, the server removes a mark of another boot. It catches 4 planted defects of the power lane.
 
 ### Host's store
 

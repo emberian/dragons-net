@@ -17,6 +17,7 @@ It needs /dev/fuse and the right to mount it, which it says it lacks when it doe
 """
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -130,8 +131,17 @@ class LazyFS:
             return None
 
     def command(self, line: str) -> None:
-        """Send one command and wait until LazyFS has read it: two read at once would be one."""
-        fd = os.open(self.fifo, os.O_WRONLY)
+        """Send one command and wait until LazyFS has read it: two read at once would be one. The pipe
+        has no reader while LazyFS opens it again between commands, or once it has ended."""
+        deadline = time.monotonic() + WAIT
+        fd = -1
+        while fd < 0:
+            try:
+                fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as error:
+                if error.errno != errno.ENXIO or time.monotonic() > deadline:
+                    raise LaneError(f"LazyFS does not take {line!r}: {error}") from None
+                time.sleep(0.01)
         try:
             os.write(fd, (line + "\n").encode())
             deadline = time.monotonic() + WAIT

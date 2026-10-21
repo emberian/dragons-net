@@ -30,6 +30,7 @@ import argparse
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import functools
 import json
 import os
 from pathlib import Path
@@ -59,6 +60,9 @@ KEY = bytes(16)
 TIMEOUT = 10.0
 # The header fields the server adds to an article that lacks them, as a client here sends it.
 ADDED = (b"path:", b"date:", b"injection-info:", b"injection-date:")
+# The name of the mark of a failed sync, which the host removes, when of another boot, before
+# recovery.
+MARK = b"sync-failed"
 
 
 def article(mid: str, groups: str, lines: int = 1) -> bytes:
@@ -170,23 +174,33 @@ def spool_of(spool: Path) -> dict[bytes, bytes]:
     return {os.fsencode(f.name): f.read_bytes() for f in spool.iterdir()}
 
 
-def laid(where: Path, image: dict[bytes, bytes]) -> tuple[Path, Path]:
-    spool, run = where / "spool", where / "run"
+def laid(where: Path, image: dict[bytes, bytes], spool_at: Path | None = None) -> tuple[Path, Path]:
+    """A spool holding `image`, under `spool_at` synced, and a run directory."""
+    spool, run = (spool_at or where) / "spool", where / "run"
     spool.mkdir(parents=True)
-    run.mkdir()
+    run.mkdir(parents=True)
     for name, data in image.items():
-        (spool / os.fsdecode(name)).write_bytes(data)
+        with (spool / os.fsdecode(name)).open("wb") as file:
+            file.write(data)
+            if spool_at:
+                file.flush()
+                os.fsync(file.fileno())
     return spool, run
 
 
-def served(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int,
-           where: Path) -> tuple[bool, list[list[bytes]], dict[bytes, bytes]]:
-    """The phase's clients served on a spool holding `base` by the server, stopped before operation
-    `stop` and killed: whether it stopped, what each client read, and the spool left."""
-    spool, run = laid(where, base)
-    env = {**{k: v for k, v in os.environ.items() if not k.startswith("FIU_")},
-           "LD_PRELOAD": str(lanes.pinned_tool("libfiu") / "fiu_run_preload.so"),
-           "FIU_ENABLE": f"enable name=dn/stop,failinfo={stop}"}
+def served(binary: Path, phase: Phase, base: dict[bytes, bytes], enable: str, where: Path,
+           spool_at: Path | None = None, ready: Callable[[], None] = lambda: None,
+           lost: Callable[[], None] = lambda: None,
+           refusing: bool = False) -> tuple[bool, list[list[bytes]], dict[bytes, bytes]]:
+    """The phase's clients served on a spool holding `base`, under `spool_at` if given, by the server
+    with the points `enable` names if any, started once `ready` is done, killed once stopped and `lost`
+    done: whether it stopped, or, with `refusing`, ended at its start with status 4, what each client
+    read, and the spool left."""
+    spool, run = laid(where, base, spool_at)
+    ready()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
+    if enable:
+        env |= {"LD_PRELOAD": str(lanes.pinned_tool("libfiu") / "fiu_run_preload.so"), "FIU_ENABLE": enable}
     got: list[list[bytes]] = [[] for _ in phase.parts]
     together = threading.Barrier(len(phase.parts), timeout=TIMEOUT)
     threads: list[threading.Thread] = []
@@ -204,11 +218,14 @@ def served(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int,
             return True
 
         try:
-            halted = watch(proc, listening, "at start")
-            if not halted:
-                if port[0] is None:
+            halted = watch(proc, lambda: listening() or (refusing and proc.poll() is not None), "at start")
+            given = None if halted or not port else port[0]
+            if not halted and given is None:
+                if not refusing or proc.wait(TIMEOUT) != 4:
                     raise LaneError(f"the server gave no port: {err.read_text()[-300:]!r}")
-                at = int(json.loads(port[0])["port"])
+                halted = True
+            if given is not None:
+                at = int(json.loads(given)["port"])
                 threads = [threading.Thread(target=converse, args=(at, p, together, g))
                            for p, g in zip(phase.parts, got, strict=True)]
                 for t in threads:
@@ -220,6 +237,7 @@ def served(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int,
                 if not halted and proc.returncode != 0:
                     raise LaneError(f"on SIGTERM the server ended with status {proc.returncode}: "
                                     f"{err.read_text()[-300:]!r}")
+            lost()
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -302,9 +320,11 @@ def numbering(commits: list[J.Commit]) -> str | None:
 
 
 def violation(phase: Phase, base: dict[bytes, bytes], image: dict[bytes, bytes], got: list[list[bytes]],
-              halted: bool) -> str | None:
+              halted: bool, failing: bool = False, unreadable: bool = False) -> str | None:
     """What the spool a run on `base` left, or what its clients read, breaks of what 0005 promises
-    after a crash, if anything."""
+    after a crash, if anything; with `failing`, an operation failed, so a post may be refused and, in a
+    run not stopped, one connection closed unanswered after its 340, its article held or not; with
+    `unreadable`, a read answered 403, or cut short once its text has begun."""
     try:
         commits = R.recover(KEY, GROUPS, list(image.items()))[3]
     except R.Corrupt as why:
@@ -316,26 +336,37 @@ def violation(phase: Phase, base: dict[bytes, bytes], image: dict[bytes, bytes],
         if held.get(mid) != c or image.get(name) != base[name]:
             return f"{mid.decode()}, held before, is not held as it was"
     answers: dict[bytes, list[bytes]] = {}
+    unanswered = 0
     for part, lines in zip(phase.parts, got, strict=True):
         if part.read:
             kept = before.get(part.read.encode())
             reply = (b"220 0 " + kept[1] + b"\r\n" + text_of(base[R.name_of("a", kept[0])], kept) + b".\r\n"
                      if kept else TEXTS["no-such-id"])
-            wanted = [[TEXTS["greeting-post"], reply, TEXTS["quit"]]]
+            wanted = [[TEXTS["greeting-post"], r, TEXTS["quit"]] for r in (reply, TEXTS["unreadable"])[:1 + unreadable]]
         else:
             wanted = [posting(TEXTS["posted"]), posting(TEXTS["failed"])]
-        if not any(read_as(lines, w, halted) for w in wanted):
-            return f"a client of {part.read or mid_of(part.post).decode()} read {b''.join(lines)[-160:]!r}"
+        seen = f"a client of {part.read or mid_of(part.post).decode()} read {b''.join(lines)[-160:]!r}"
+        if not any(read_as(lines, w, halted or failing) for w in wanted):
+            return seen
+        if not halted and not any(read_as(lines, w, False) for w in wanted) and not (part.read and unreadable):
+            if part.read or b"".join(lines) != TEXTS["greeting-post"] + TEXTS["post"]:
+                return seen
+            unanswered += 1
         if part.post:
             whole = len(lines) > 2 and lines[2].endswith(b"\r\n")
             answers.setdefault(mid_of(part.post), []).append(lines[2][:3] if whole else b"")
+    if unanswered > 1:
+        return f"{unanswered} connections were closed unanswered in a run not stopped"
     for mid, said in answers.items():
         new = mid not in before
         if b"240" in said and mid not in held:
             return f"{mid.decode()}, answered 240, is not found"
-        if said.count(b"240") > new or (new and said.count(b"441") == len(said)):
+        refused = new and said.count(b"441") == len(said)
+        if said.count(b"240") > new or (refused and not failing):
             return f"{mid.decode()} was answered {said}, the spool holding it before: {not new}"
-    if not halted:
+        if refused and mid in held:
+            return f"{mid.decode()}, refused each time it was posted, is found"
+    if not halted and not failing:
         files = {R.name_of("a", c[0]) for c in commits}
         stray = [n for n in image if n != b"journal" and n not in files
                  and (R.name_kind(n) or ("",))[0] not in ("quarantine", "tail")]
@@ -356,14 +387,16 @@ def after_start(image: dict[bytes, bytes], now: dict[bytes, bytes]) -> dict[byte
     return expected
 
 
-def restarted(binary: Path, image: dict[bytes, bytes], where: Path, posted: dict[bytes, bytes]) -> str | None:
-    """What the server started again on `image` does otherwise than 0005 says, if anything: it
-    listens, `nntplib` reads each article the spool holds, with its Xref, and finds no other; it takes
-    `AFTER`, numbered on, and refuses an article held; it leaves the directory `after_start` gives
-    with that article after it, on which a start has nothing more to do."""
+def restarted(binary: Path, image: dict[bytes, bytes], where: Path, posted: dict[bytes, bytes],
+              mark: bytes = b"") -> str | None:
+    """What the server started again on `image`, with `mark` as the mark of a failed sync if given,
+    does otherwise than 0005 says, if anything: it listens, `nntplib` reads each article the spool
+    holds, with its Xref, and finds no other; it takes `AFTER`, numbered on, and refuses an article
+    held; it leaves the directory `after_start` gives, the mark removed, with that article after it,
+    on which a start has nothing more to do."""
     commits = R.recover(KEY, GROUPS, list(image.items()))[3]
     nntplib = N.import_nntplib()
-    spool, run = laid(where, image)
+    spool, run = laid(where, {**image, MARK: mark} if mark else image)
     again = [(AFTER, TEXTS["posted"]), *((posted[c[1]], TEXTS["failed"]) for c in commits[-1:])]
     got: list[list[bytes]] = [[] for _ in again]
     try:
@@ -412,7 +445,7 @@ def restarted(binary: Path, image: dict[bytes, bytes], where: Path, posted: dict
 def one(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int) -> tuple[bool, dict[bytes, bytes]]:
     """A run stopped before operation `stop`, held to 0005: whether it stopped, and the spool left."""
     with tempfile.TemporaryDirectory() as temp:
-        halted, got, image = served(binary, phase, base, stop, Path(temp, "first"))
+        halted, got, image = served(binary, phase, base, f"enable name=dn/stop,failinfo={stop}", Path(temp, "first"))
         why = (violation(phase, base, image, got, halted)
                or restarted(binary, image, Path(temp, "again"), phase.posted()))
     if why:
@@ -420,14 +453,14 @@ def one(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int) -> tupl
     return halted, image
 
 
-def sweep(binary: Path, phase: Phase, base: dict[bytes, bytes]) -> tuple[int, dict[bytes, bytes]]:
-    """The phase stopped before each of its operations, `WORKERS` runs at a time, until a run is not
-    stopped: how many operations it makes, and the spool the run not stopped left."""
+def sweep(phase: Phase, stopped_at: Callable[[int], tuple[bool, dict[bytes, bytes]]]) -> tuple[int, dict[bytes, bytes]]:
+    """The phase stopped before each of its operations by `stopped_at`, `WORKERS` runs at a time,
+    until a run is not stopped: how many operations it makes, and the spool the run not stopped left."""
     with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
         first = 1
         while True:
             batch = list(range(first, first + abnf_check.WORKERS))
-            runs = list(pool.map(lambda stop: one(binary, phase, base, stop), batch))
+            runs = list(pool.map(stopped_at, batch))
             ran = [halted for halted, _ in runs]
             if all(ran):
                 first += len(batch)
@@ -448,7 +481,7 @@ def phases(binary: Path, bases: list[dict[bytes, bytes]] | None = None) -> tuple
     left: dict[bytes, bytes] = {}
     for k, phase in enumerate(PHASES):
         base = bases[k] if bases else crashed(left) if phase is PHASES[-1] else left
-        count, left = sweep(binary, phase, base)
+        count, left = sweep(phase, functools.partial(one, binary, phase, base))
         counts.append(count)
         used.append(base)
     return counts, used

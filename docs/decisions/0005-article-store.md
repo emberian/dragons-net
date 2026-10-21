@@ -109,9 +109,10 @@ knows nothing of articles.
   `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
   injection points and SQLite's test build do; `dn/stop` holds the workers before the operation it
   numbers and each after it, and once the operations before have ended the loop stops the process,
-  for a test to kill it. Built without `FIU_ENABLE`, the server has no point and does not load
-  libfiu. libfiu's preload that fails POSIX calls does not know `openat`, `renameat` or `unlinkat`,
-  which the host uses.
+  for a test to kill it; `dn/fail` fails the operation it numbers at its own points, with the error
+  given. Built without `FIU_ENABLE`, the server has no point and does not load libfiu. libfiu's
+  preload that fails POSIX calls does not know `openat`, `renameat` or `unlinkat`, which the host
+  uses.
 
 ### On disk
 
@@ -402,20 +403,22 @@ from them are done; what needs the program or the host comes with them, as marke
   held or answered 240 is found whole, and nothing else; each client read what it reads unkilled, or
   its start. Started again, the server reads each back and takes posts (`scripts/crash_check.py`);
   done.
+- Two connections posting one Message-ID at once, overlapping crossposts, and POST and reading back
+  through sockets and `nntplib` across restarts, in those runs; done.
+- Power lost on LazyFS, before each operation, after a run with each failed with EIO, and in each
+  journal write torn, a prefix, the end or both ends kept: every article answered 240 is found
+  whole, none refused. Started again, a mark of another boot is removed (`scripts/power_check.py`);
+  done.
+- Not shown there: a missing directory sync, LazyFS making names durable at once; recovery's first
+  syncs, which the start record's sync covers for the journal; a failed sync whose data a kernel
+  drops at once: here it stays unsynced, lost with the power.
 - To be tested with the program and the host:
   - that the program is the specification, as for the session: the compiled program against the
     model;
   - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
     points of failure;
-  - power loss: the spool on LazyFS, a FUSE file system that keeps unsynced data in its own cache
-    and drops it on command, cleared at each operation of a job, then restarted; LazyFS makes
-    creations, renames and removals durable at once, so a missing directory sync is caught by the
-    model, not by this test; and appends torn by LazyFS's `torn-op` — a prefix kept, the end kept,
-    the ends kept and the middle lost;
   - a corrupt store at every entry point — start, POST, HEAD, STAT, ARTICLE, BODY — after the table
-    `fn` keeps for its own store;
-  - two connections posting the same Message-ID, and overlapping crossposts, at once;
-  - POST and reading back with `nntplib` and raw sockets, across restarts.
+    `fn` keeps for its own store.
 - Not claimed: that the kernel and the file system keep the guarantees of the model; anything about
   the host's workers beyond the tests; that the program is its specification on every run.
 
@@ -431,8 +434,8 @@ from them are done; what needs the program or the host comes with them, as marke
   recovery against the table of corruptions, the store's runs, and the tools the crash tests rest
   on: libfiu's points and LazyFS, which needs `/dev/fuse` and the right to mount it, as a user in a
   user namespace of its own or through `fusermount3` — in CI as a job of its own, locally in a
-  container of its own; to come — the crash lane on LazyFS; the `nntp` lane gains POST and
-  restarts.
+  container of its own; the crash lanes, the server killed and its power lost on LazyFS; and the
+  `nntp` lane with POST and restarts.
 - LazyFS, its two dependencies and libfiu are pinned by digest in `tools.lock.json` and built
   offline, as the other tools built from source are; LazyFS also needs the system's libfuse 3.
 - `docs/nntp.md`, `docs/assurance.md` and `docs/baseline.md` move with the code.

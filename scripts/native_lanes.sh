@@ -8,6 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
 lanes=(native baseline entry server framing grammar accept session nntp crash parser fuzz)
+# Lanes that mount FUSE, run only by name, where it may be mounted (CI's lazyfs job). FUSE's mount
+# helpers look up /etc/mtab, the mount table, which a trace cannot hold still: such a lane is not
+# run again on a tree it passed on.
+fuse=(power)
 script_of() {
   case $1 in
     native) script=(scripts/native_check.py) ;;
@@ -20,10 +24,11 @@ script_of() {
     session) script=(scripts/session_native.py) ;;
     nntp) script=(scripts/nntp_check.py) ;;
     crash) script=(scripts/crash_check.py) ;;
+    power) script=(scripts/power_check.py) ;;
     parser) script=(scripts/parser_contract.py) ;;
     fuzz) script=(scripts/native_fuzz.py) ;;
     *)
-      echo "native_lanes.sh: no lane named '$1'; the lanes are ${lanes[*]}" >&2
+      echo "native_lanes.sh: no lane named '$1'; the lanes are ${lanes[*]} ${fuse[*]}" >&2
       exit 2
       ;;
   esac
@@ -39,6 +44,11 @@ for name in "${chosen[@]}"; do
   run=(python3 "${script[@]}" --cake "$cake")
   if [[ ${DN_ONCE:-} == none ]]; then
     "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
+  elif [[ " ${fuse[*]} " == *" $name "* ]]; then
+    if key=$(python3 scripts/once.py check "lane-$name" -- "${run[@]}"); then continue; fi
+    [[ $key =~ ^[0-9a-f]{64}$ ]] || { echo "native_lanes.sh: no key of lane-$name" >&2; exit 1; }
+    "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
+    python3 scripts/once.py stamp "lane-$name" "$key"
   else
     python3 scripts/once.py run "lane-$name" --log "build/evidence/$name.log" -- "${run[@]}"
   fi
