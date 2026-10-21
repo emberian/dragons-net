@@ -34,8 +34,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import abnf_check  # the path above is what makes these importable
-import lanes
+import lanes  # the path above is what makes these importable
 from lanes import NATIVE, ROOT, LaneError, Report
 import session_check as sessions
 from session_check import GREETING, IDENTITY, LONGEST, SHORTEST, SOURCE, WALL, Identity, Speaker
@@ -501,7 +500,7 @@ def check(cake: str) -> Report:
     clock = time.monotonic()
     seconds: dict[str, float] = {}
     # The program and each defect are built at once, while the model answers the hosts.
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
         built = pool.submit(lanes.whole_program, cake, "session", source, OUT, HOST)
         builds = [pool.submit(lanes.whole_program, cake, f"defect-{index}",
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)

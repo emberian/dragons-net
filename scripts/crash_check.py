@@ -44,8 +44,7 @@ import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import abnf_check  # the path above is what makes these importable
-import lanes
+import lanes  # the path above is what makes these importable
 from lanes import NATIVE, ROOT, LaneError, Report
 import nntp_check as N
 import recovery_ref as R
@@ -456,10 +455,10 @@ def one(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int) -> tupl
 def sweep(phase: Phase, stopped_at: Callable[[int], tuple[bool, dict[bytes, bytes]]]) -> tuple[int, dict[bytes, bytes]]:
     """The phase stopped before each of its operations by `stopped_at`, `WORKERS` runs at a time,
     until a run is not stopped: how many operations it makes, and the spool the run not stopped left."""
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
         first = 1
         while True:
-            batch = list(range(first, first + abnf_check.WORKERS))
+            batch = list(range(first, first + lanes.WORKERS))
             runs = list(pool.map(stopped_at, batch))
             ran = [halted for halted, _ in runs]
             if all(ran):
@@ -535,7 +534,7 @@ def check(cake: str) -> Report:
                                        NATIVE / "cake_runtime.c", base.result().with_suffix(".S")],
                           includes=[OUT], flags=flags, check=False)
 
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
         base = pool.submit(build, 0, None)
         builds = [pool.submit(build, k, d) for k, d in enumerate(DEFECTS) if d.program]
         clock = time.monotonic()

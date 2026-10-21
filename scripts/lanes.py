@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +28,8 @@ import time
 from typing import IO, Any
 
 ROOT = Path(__file__).resolve().parents[1]
+# Processes or threads a check runs at once, so many lanes or groups of tests may run side by side.
+WORKERS = max(1, min(4, len(os.sched_getaffinity(0))))
 NATIVE = ROOT / "native"
 DN_COMPILER = ROOT / ".lake/build/bin/dn-compiler"
 RECORD = ROOT / "backend/bootstrap-record.json"
@@ -227,13 +230,17 @@ def pinned_python(requirements: Path) -> Path:
     venv = ROOT / ".deps" / requirements.stem
     stamp = venv / "pins"
     pins = f"{digest(requirements)} {sys.version}"
-    if not (stamp.is_file() and stamp.read_text().strip() == pins):
-        shutil.rmtree(venv, ignore_errors=True)
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
-                        "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
-                       check=True)
-        stamp.write_text(pins + "\n")
+    venv.parent.mkdir(parents=True, exist_ok=True)
+    # Checks running side by side build it once, one waiting for the other.
+    with (venv.parent / f"{venv.name}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (stamp.is_file() and stamp.read_text().strip() == pins):
+            shutil.rmtree(venv, ignore_errors=True)
+            subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+            subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
+                            "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
+                           check=True)
+            stamp.write_text(pins + "\n")
     return venv / "bin/python"
 
 

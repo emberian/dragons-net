@@ -3,6 +3,7 @@
 process cannot trace another."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 import tempfile
 from typing import Any
 import unittest
+from unittest import mock
 
 from gatekit import ROOT, script
 
@@ -62,6 +64,16 @@ class Trace(unittest.TestCase):
         self.assertEqual(t.written, {"/r/log"})
         self.assertEqual(t.named, {"/r/log", "/r/lnk"})
         self.assertEqual(t.absent, {"/r/nodir/x"})
+
+    def test_the_empty_path_names_only_a_descriptor(self) -> None:
+        """A lookup of the empty path names the descriptor it is given, with AT_EMPTY_PATH, and nothing
+        without: Python asks for it of a path entry that does not exist."""
+        log = """\
+7 newfstatat(3</r/f>, "", {st_mode=S_IFREG|0644, st_size=1, ...}, AT_EMPTY_PATH) = 0
+7 newfstatat(AT_FDCWD</r>, "", 0x7f, 0) = -1 ENOENT (No such file or directory)
+"""
+        t = parsed(log)
+        self.assertEqual((t.read, t.absent), ({"/r/f"}, set()))
 
     def test_a_relative_path_is_resolved_where_its_process_runs(self) -> None:
         """A path without a directory is resolved by the process's own directory: as its last
@@ -133,7 +145,7 @@ class Git(unittest.TestCase):
     def test_only_a_run_of_git_that_reads_here_is_run_again(self) -> None:
         def replayable(argv: list[str], env: dict[str, str] | None = None, cwd: str = str(ROOT),
                        wrote: str | None = None) -> bool:
-            call = once.GitCall(cwd, argv, dict(os.environ) if env is None else env)
+            call = once.GitCall(cwd, argv, once.checked_env() if env is None else env)
             if wrote:
                 call.written.add(wrote)
             return bool(once.replayable(call))
@@ -204,6 +216,42 @@ class Live(unittest.TestCase):
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.example", "-c", "commit.gpgsign=false",
                         *args], cwd=self.tree, check=True, capture_output=True, timeout=60)
+
+    def test_a_module_beside_those_imported_is_no_input(self) -> None:
+        """Imports look up the names they search for: a module put beside the one imported leaves
+        the stamp standing; one found first runs the check again."""
+        shutil.copytree(ROOT / "scripts/once_site", self.tree / "scripts/once_site")
+        for name in ("first", "second"):
+            (self.tree / name).mkdir()
+        (self.tree / "second/helper.py").write_text("VALUE = 1\n")
+        self.check("import sys\nsys.path[:0] = ['first', 'second']\nimport helper\nprint(helper.VALUE)\n")
+        self.assertIn("1", self.run_check())
+        (self.tree / "second/other.py").write_text("")
+        (self.tree / "first/unrelated.py").write_text("")
+        self.assertIn("DN SKIP", self.run_check())
+        (self.tree / "first/helper.py").write_text("VALUE = 2\n")
+        self.assertIn("2", self.run_check())
+        (self.tree / "first/helper.py").unlink()
+        (self.tree / "first/helper").mkdir()
+        (self.tree / "first/helper/__init__.py").write_text("VALUE = 3\n")
+        self.assertIn("3", self.run_check())
+
+    def test_a_directory_listed_whole_is_an_input_still(self) -> None:
+        """A check that lists a directory itself, or a Python that ignores the environment and so
+        lists the directories it imports from, runs again when a name is added there."""
+        shutil.copytree(ROOT / "scripts/once_site", self.tree / "scripts/once_site")
+        (self.tree / "second").mkdir()
+        (self.tree / "second/helper.py").write_text("VALUE = 1\n")
+        bodies = ["import os\nprint(sorted(os.listdir('second')))\n",
+                  ("import subprocess, sys\nsubprocess.run([sys.executable, '-I', '-c', "
+                   "\"import sys; sys.path[:0] = ['second']; import helper\"], check=True)\n")]
+        for k, body in enumerate(bodies):
+            with self.subTest(body=body):
+                self.check(body)
+                self.run_check()
+                self.assertIn("DN SKIP", self.run_check())
+                (self.tree / f"second/new{k}.py").write_text("")
+                self.assertNotIn("DN SKIP", self.run_check())
 
     def test_a_check_on_what_git_answers_runs_again_only_when_the_answer_changes(self) -> None:
         self.check("import subprocess\nprint(subprocess.run(['git', 'ls-files', '--cached', '--others', "
@@ -334,9 +382,9 @@ class Stages(unittest.TestCase):
             (tree / "scripts").mkdir(parents=True)
             (tree / "tests").mkdir()
             stubs.mkdir()
-            for name in ("check.sh", "once.py"):
+            for name in ("check.sh", "check_tests.sh", "once.py"):
                 shutil.copy(ROOT / "scripts" / name, tree / "scripts" / name)
-            body = (ROOT / "scripts/check.sh").read_text().partition("\ntests() {")[2].partition("\n}\n")[0]
+            body = (ROOT / "scripts/check_tests.sh").read_text().partition("\ngroup() {")[2].partition("\n}\n")[0]
             ran = re.findall(r"^\s*once [\w-]+ python3 (scripts/\w+\.py)", body, re.MULTILINE)
             for name in ran:
                 (tree / name).write_text("print('checked')\n")
@@ -535,6 +583,40 @@ class Compiled(unittest.TestCase):
         self.rebuild(b"four", "two")
         (self.tree / "lakefile.lean").write_text("-- two\n")
         self.assertIn("ran a", self.run_check())
+
+
+class Schema(unittest.TestCase):
+    """What a stamp records and how a trace is read are pinned to `SCHEMA`: a change of either fails
+    here until `SCHEMA` is raised with the pin, and the stamps made before it then count for nothing."""
+
+    LOG = """\
+7 execve("/r/s.py", ["python3", "s.py"], 0x1 /* 3 vars */) = 0
+7 openat(AT_FDCWD</r>, "a.txt", O_RDONLY|O_CLOEXEC) = 3</r/a.txt>
+7 openat(AT_FDCWD</r>, "out", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4</r/out>
+7 openat(AT_FDCWD</r>, "log", O_RDWR|O_APPEND) = 5</r/log>
+7 newfstatat(AT_FDCWD</r>, "/r/missing", 0x7f, 0) = -1 ENOENT (No such file or directory)
+7 newfstatat(AT_FDCWD</r>, "lnk", {st_mode=S_IFLNK|0777, st_size=3, ...}, AT_SYMLINK_NOFOLLOW) = 0
+7 newfstatat(3</r/a.txt>, "", {st_mode=S_IFREG|0644, st_size=1, ...}, AT_EMPTY_PATH) = 0
+7 newfstatat(AT_FDCWD</r>, "", 0x7f, 0) = -1 ENOENT (No such file or directory)
+7 openat(AT_FDCWD</r>, "/r/d", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 6</r/d>
+7 renameat2(AT_FDCWD</r>, "out", AT_FDCWD</r>, "final", RENAME_NOREPLACE) = 0
+7 unlink("/r/locked") = -1 EACCES (Permission denied)
+7 readlink("/r/lnk", "a.txt", 4096) = 5
+"""
+
+    def test_what_a_stamp_records_is_pinned_to_its_schema(self) -> None:
+        rules = [sorted(once.ASIDE), sorted(once.WHERE), sorted(once.OPENS), sorted(once.WRITES), sorted(once.LOOKUPS),
+                 sorted(once.WITH_DIRFD), sorted(once.READING), sorted(once.VALUED), sorted(once.ELSEWHERE),
+                 once.VOLATILE.pattern, once.SECRET.pattern, once.SECRET_ARG.pattern]
+        t = parsed(self.LOG)
+        seen = [sorted(getattr(t, n)) for n in ("read", "named", "listed", "absent", "written", "updated")]
+        pin = hashlib.sha256(json.dumps([rules, seen]).encode()).hexdigest()[:16]
+        self.assertEqual((once.SCHEMA, pin), (2, "5bd1c78cade1fddc"))
+
+    def test_the_schema_is_in_every_key(self) -> None:
+        keys = once.tracer(), once.tree_key("lane", ["run"])
+        with mock.patch.object(once, "SCHEMA", once.SCHEMA + 1):
+            self.assertNotEqual((once.tracer(), once.tree_key("lane", ["run"])), keys)
 
 
 class TreeKey(unittest.TestCase):

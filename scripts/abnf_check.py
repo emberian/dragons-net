@@ -20,7 +20,6 @@ mutants of the interpreter (`DN.News.AbnfMutant`), have to show as answers that 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import os
 from pathlib import Path
 import random
 import re
@@ -42,7 +41,7 @@ SEED = 20260929
 CASES = 40
 CHUNK = 2000
 # The model and the reference each run in this many processes at once.
-WORKERS = max(1, min(4, len(os.sched_getaffinity(0))))
+WORKERS = lanes.WORKERS
 # Rules inside the fields whose own branches are worth covering apart from a field's.
 INNER = ["date-time", "zone", "mailbox-list", "address-list", "msg-id", "path-identity",
          "newsgroup-list", "comment", "quoted-string", "domain-literal", "dot-atom", "phrase",

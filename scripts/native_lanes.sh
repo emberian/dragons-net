@@ -39,17 +39,52 @@ for name in "${chosen[@]}"; do script_of "$name"; done
 cake="${CAKE:-}"
 if [[ -z "$cake" ]]; then cake=$(python3 scripts/bootstrap_tool.py cake); fi
 mkdir -p build/evidence
-for name in "${chosen[@]}"; do
+lane() {
+  local name=$1 key
   script_of "$name"
   run=(python3 "${script[@]}" --cake "$cake")
   if [[ ${DN_ONCE:-} == none ]]; then
     "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
   elif [[ " ${fuse[*]} " == *" $name "* ]]; then
-    if key=$(python3 scripts/once.py check "lane-$name" -- "${run[@]}"); then continue; fi
+    if key=$(python3 scripts/once.py check "lane-$name" -- "${run[@]}"); then return 0; fi
     [[ $key =~ ^[0-9a-f]{64}$ ]] || { echo "native_lanes.sh: no key of lane-$name" >&2; exit 1; }
     "${run[@]}" 2>&1 | tee "build/evidence/$name.log"
     python3 scripts/once.py stamp "lane-$name" "$key"
   else
     python3 scripts/once.py run "lane-$name" --log "build/evidence/$name.log" -- "${run[@]}"
   fi
+}
+if ((${DN_PARALLEL:-1} < 2 || ${#chosen[@]} < 2)); then
+  for name in "${chosen[@]}"; do lane "$name"; done
+  exit 0
+fi
+# DN_PARALLEL lanes at a time, the longest first, each one's output shown whole once all are done;
+# an interrupt ends every lane running.
+trap 'trap - INT TERM; kill 0' INT TERM
+longest=(nntp session parser framing grammar baseline fuzz accept power crash server entry native)
+ordered=()
+for name in "${longest[@]}" "${chosen[@]}"; do
+  if [[ " ${chosen[*]} " == *" $name "* && " ${ordered[*]} " != *" $name "* ]]; then ordered+=("$name"); fi
 done
+chosen=("${ordered[@]}")
+started=0
+for name in "${chosen[@]}"; do
+  # Once as many run as may, each next one waits for one of them to end.
+  if ((started >= DN_PARALLEL)); then wait -n || true; fi
+  started=$((started + 1))
+  (
+    set +e
+    (set -e; lane "$name") >"build/evidence/$name.out" 2>&1
+    echo $? >"build/evidence/$name.status"
+  ) &
+done
+wait
+status=0
+for name in "${chosen[@]}"; do
+  cat "build/evidence/$name.out"
+  if [[ $(<"build/evidence/$name.status") != 0 ]]; then
+    echo "native_lanes.sh: the lane $name failed" >&2
+    status=1
+  fi
+done
+exit "$status"

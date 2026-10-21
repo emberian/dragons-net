@@ -37,8 +37,7 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import abnf_check  # the path above is what makes these importable
-import crash_check as C
+import crash_check as C  # the path above is what makes these importable
 import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
 import lazyfs_check as L
@@ -77,7 +76,7 @@ class Mounts:
         self.all: list[L.LazyFS] = []
         self.free: queue.Queue[L.LazyFS] = queue.Queue()
         try:
-            for k in range(abnf_check.WORKERS):
+            for k in range(lanes.WORKERS):
                 (work / f"fs{k}").mkdir()
                 fs = L.LazyFS(lanes.pinned_tool("lazyfs"), work / f"fs{k}")
                 fs.start()
@@ -199,7 +198,7 @@ def passes(binary: Path, bases: list[Image] | None = None, only: str = "",
     with tempfile.TemporaryDirectory(prefix="dn-power-") as work:
         mounts = Mounts(Path(work))
         try:
-            with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+            with ThreadPoolExecutor(lanes.WORKERS) as pool:
                 try:
                     for k, phase in enumerate(C.PHASES):
                         base = bases[k] if bases else C.crashed(left) if phase is C.PHASES[-1] else left

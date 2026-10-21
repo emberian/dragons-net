@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 # same for tests/, which this flag does not cover, so a gate test forbids the
 # names there instead.
 export PYTHONSAFEPATH=1
+# Groups of tests and native lanes that need nothing of each other run this many at a time.
+export DN_PARALLEL="${DN_PARALLEL:-3}"
 # shellcheck disable=SC2312 # a failed uname compares unequal, which refuses to run
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo 'The checks require Linux x86-64; elsewhere, scripts/check.sh build runs the source gate and the build.' >&2

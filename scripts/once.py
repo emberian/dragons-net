@@ -5,8 +5,9 @@
 `once.py run NAME [--log FILE] -- COMMAND...` runs COMMAND under strace, its standard input empty,
 and when it passes records what it read: each file by content, each directory it listed by its
 names, each path it looked for and did not find, each symbolic link on the way by its target, in
-the repository and outside it (`/proc`, `/sys`, `/dev`, `/run` and temporary files aside). Next
-time, if the command, the environment, this script and every one of those are the same, it says
+the repository and outside it (`/proc`, `/sys`, `/dev`, `/run` and temporary files aside); Python's
+imports look up the names they search for rather than list a directory (`SITE`). Next time, if the
+command, the environment, this script's `SCHEMA` and every one of those are the same, it says
 `DN SKIP` instead of running, and leaves FILE as it was; otherwise it runs, a copy of its output
 going to FILE. A path the check writes and does not read is its output. A file of the sources the
 check both read and wrote, an input that changed while the check ran, or a path the trace leaves
@@ -41,11 +42,17 @@ import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+# The version of what a stamp records and how it is judged, raised whenever either changes: a change
+# of this script that keeps both leaves every stamp standing.
+SCHEMA = 2
+# Where each Python a check runs finds sitecustomize.py, which looks up the names an import asks for
+# instead of listing the directory.
+SITE = ROOT / "scripts/once_site"
 # What the source gate and the build of the Lean library read, and the proofs over what it built.
 BUILD = ["lean", "lakefile.lean", "lake-manifest.json", "lean-toolchain", "tools.lock.json", "backend/lock.json",
          "backend/patches", "rfcs", "migration", "docs/provenance.json", "scripts/check.sh",
          "scripts/check_structure.py", "scripts/SourceGate.lean", "scripts/measured.py", "scripts/build_archive.py",
-         "scripts/bootstrap_tool.py", "scripts/once.py"]
+         "scripts/bootstrap_tool.py"]
 INPUTS = {"check-gate": BUILD, "check-build": BUILD,
           "check-proofs": [*BUILD, "scripts/Audit.lean", "scripts/nanoda.json"]}
 NAME = re.compile(r"[a-z0-9-]+")
@@ -53,7 +60,7 @@ NAME = re.compile(r"[a-z0-9-]+")
 # check does, and secrets, of which only the presence counts.
 VOLATILE = re.compile(r"(HOSTNAME|PWD|OLDPWD|SHLVL|_|TERM|COLUMNS|LINES|INVOCATION_ID|JOURNAL_STREAM|DISPLAY"
                       r"|SYSTEMD_EXEC_PID|SSH_[A-Z_]+|XDG_[A-Z_]+|GITHUB_[A-Z_]+|RUNNER_[A-Z_]+|ACTIONS_[A-Z_]+"
-                      r"|DN_ONCE|DN_STAMPS|DN_DOCUMENTED)")
+                      r"|DN_ONCE|DN_STAMPS|DN_DOCUMENTED|DN_PARALLEL)")
 SECRET = re.compile(r"[A-Z_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z_]*")
 # What no check's outcome rests on.
 ASIDE = ("/proc/", "/sys/", "/dev/", "/run/", "/tmp/", "/var/tmp/")  # noqa: S108 # left out, not used
@@ -94,13 +101,22 @@ def environment() -> dict[str, str]:
 
 
 def tracer() -> str:
-    """This script and the one that names what `dn-compiler` runs: a stamp another made counts for
-    nothing."""
-    whole = hashlib.sha256()
-    for name in ("scripts/once.py", "scripts/Fingerprint.lean"):
-        file = ROOT / name
-        whole.update(file.read_bytes() if file.is_file() else b"none")
+    """What a stamp records, by `SCHEMA`, and the script that names what `dn-compiler` runs: a stamp
+    another made counts for nothing."""
+    whole = hashlib.sha256(f"schema {SCHEMA}\0".encode())
+    file = ROOT / "scripts/Fingerprint.lean"
+    whole.update(file.read_bytes() if file.is_file() else b"none")
     return whole.hexdigest()
+
+
+def replaced(path: Path, text: str) -> None:
+    """`path` holding `text`, written whole under a name of its own and put in place at once, as
+    checks running side by side may write it too."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    with os.fdopen(fd, "w") as out:
+        out.write(text)
+    Path(part).replace(path)
 
 
 def unescape(text: str) -> str:
@@ -196,6 +212,8 @@ class Trace(Seen):
             count = 2 if call in {"rename", "link", "symlink"} else 1
         out = []
         for s in strings[:count]:
+            if not s and "AT_EMPTY_PATH" not in args:
+                continue  # the empty path names nothing but the descriptor a call is given
             if s.startswith("/"):
                 out.append(os.path.normpath(s))
             elif base is not None and base.startswith("/"):
@@ -349,8 +367,7 @@ class Hashes:
         return digest
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.known))
+        replaced(self.path, json.dumps(self.known))
 
 
 @functools.cache
@@ -462,14 +479,16 @@ def compiled(commands: set[str], hashes: Hashes) -> dict[str, str] | None:
             cache["commands"].update(digests(done.stdout))
         except (ValueError, IndexError):
             return None
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        part = cache_file.with_suffix(".part")
-        part.write_text(json.dumps(cache))
-        part.replace(cache_file)
+        replaced(cache_file, json.dumps(cache))
     if not commands <= set(cache["commands"]):
         return None
     return {c: hashlib.sha256(f"{cache['start']} {cache['commands'][c]}".encode()).hexdigest()
             for c in sorted(commands)}
+
+
+def checked_env() -> dict[str, str]:
+    """The environment a check runs in: this one, with `SITE` first on Python's path."""
+    return {**os.environ, "PYTHONPATH": os.pathsep.join([str(SITE), *filter(None, [os.environ.get("PYTHONPATH")])])}
 
 
 def steady(env: dict[str, str] | os._Environ[str]) -> dict[str, str]:
@@ -489,7 +508,7 @@ def replayable(call: GitCall) -> bool:
     cwd = key_of(call.cwd) if call.cwd else None
     return (call.whole and bool(rest) and rest[0] in READING and cwd is not None and not cwd.startswith("/") and
             not any(a == "--stdin" or a.startswith("--batch") or SECRET_ARG.search(a) for a in call.argv) and
-            not any(key_of(w) is not None for w in call.written) and steady(call.env) == steady(os.environ))
+            not any(key_of(w) is not None for w in call.written) and steady(call.env) == steady(checked_env()))
 
 
 def answer(cwd: str, argv: list[str]) -> str | None:
@@ -593,7 +612,7 @@ def traced(command: list[str], log: Path, documented: Path, copy: Path | None) -
     # The environment of each program run is printed whole, for the runs of git.
     strace = ["strace", "-f", "-y", "-qq", "--seccomp-bpf", "-s", "65535", "-e", "trace=%file,%process",
               "-e", "signal=none", "-e", "abbrev=!execve,execveat", "-o", str(log), *command]
-    env = {**os.environ, "DN_DOCUMENTED": str(documented)}
+    env = {**checked_env(), "DN_DOCUMENTED": str(documented)}
     if copy is None:
         return subprocess.run(strace, env=env, stdin=subprocess.DEVNULL, check=False).returncode
     copy.parent.mkdir(parents=True, exist_ok=True)
@@ -655,7 +674,7 @@ def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) 
     listed = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
                              *(pathspecs or [])], cwd=ROOT, capture_output=True, check=True).stdout
     whole = hashlib.sha256()
-    for part in (name, "\0".join(command), os.environ.get("CAKE", "")):
+    for part in (name, "\0".join(command), os.environ.get("CAKE", ""), f"schema {SCHEMA}"):
         whole.update(part.encode() + b"\0")
     for path in sorted(p for p in listed.decode().split("\0") if p):
         file = ROOT / path

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import random
@@ -178,8 +179,9 @@ def check(cake: str) -> Report:
             raise LaneError(f"{rule} {data[:200]!r} from {starts}: the interpreter answers {want}, "
                             f"the program {got}")
     caught = {}
-    for mutant in MUTANTS:
-        planted = build(cake, f"grammar-{mutant}", lanes.emit("emit-grammar-mutant", mutant))
+    with ThreadPoolExecutor(A.WORKERS) as pool:
+        mutants = list(pool.map(lambda m: build(cake, f"grammar-{m}", lanes.emit("emit-grammar-mutant", m)), MUTANTS))
+    for mutant, planted in zip(MUTANTS, mutants, strict=True):
         said = run(planted, lines, f"the mutant {mutant}")
         differs = next(((case, want) for case, want, got in zip(cases, model, said, strict=True)
                         if want != got), None)

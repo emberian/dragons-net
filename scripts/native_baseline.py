@@ -209,7 +209,7 @@ def refused_all(cake: str, host: Path, planted: list[tuple[str, str, int, str | 
                 stdin: str | None = None) -> None:
     """Each kernel of `planted` (its name, its source, and the status and message it has to be
     refused with) built and run on its own, several at once."""
-    with ThreadPoolExecutor(max_workers=abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=lanes.WORKERS) as pool:
         for done in [pool.submit(refuses, cake, name, source, host, status, message, *args, stdin=stdin)
                      for name, source, status, message in planted]:
             done.result()
@@ -430,7 +430,7 @@ def scan(cake: str) -> dict[str, Any]:
     families, _ = journal_check.case_families(random.Random(journal_check.SEED))  # noqa: S311
     journals = [c.line.split()[1] for family in families.values() for c in family if c.line.startswith("scan ")]
     answers = abnf_check.answer_lines([str(lanes.DN_COMPILER), "journal-model"], [f"scan {j}" for j in journals],
-                                      abnf_check.WORKERS)
+                                      lanes.WORKERS)
     lines = "".join(f"{j} {most} {said}\n" for j, said in zip(journals, answers, strict=True)
                     for most in (16384, 1 if len(j) <= 8192 else 997))
     measured = measured_by(build(cake, "scan", host), stdin=lines)
@@ -489,12 +489,12 @@ def recover(cake: str) -> dict[str, Any]:
     rng = random.Random(store_check.SEED)  # noqa: S311
     lines = [c.line for c in (*store_check.table(), *store_check.drawn(rng))]
     first = [ln for ln in lines if ln.startswith("recover ") and len(ln.split(" ")[1]) == 32]
-    found = abnf_check.answer_lines(model, first, abnf_check.WORKERS)
+    found = abnf_check.answer_lines(model, first, lanes.WORKERS)
     done = [(ln.split(" "), said.split(" ")) for ln, said in zip(first, found, strict=True) if said.startswith("ok ")]
-    left = abnf_check.answer_lines(model, [f"apply {ln[3]} {said[6]}" for ln, said in done], abnf_check.WORKERS)
+    left = abnf_check.answer_lines(model, [f"apply {ln[3]} {said[6]}" for ln, said in done], lanes.WORKERS)
     again = [f"recover {ln[1]} {ln[2]} {image}" for (ln, _), image in zip(done, left, strict=True)]
     asked = first + again
-    answers = found + abnf_check.answer_lines(model, again, abnf_check.WORKERS)
+    answers = found + abnf_check.answer_lines(model, again, lanes.WORKERS)
     stdin = "".join(f"{ln.split(' ', 1)[1]} {said}\n" for ln, said in zip(asked, answers, strict=True))
     measured = measured_by(build(cake, "recover", host), stdin=stdin)
     text = (OUT / "recover.pnk").read_text()

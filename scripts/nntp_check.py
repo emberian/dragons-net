@@ -259,7 +259,8 @@ class Server:
         self.delivered: dict[Conn, bytearray] = {}
         self.gone: dict[Conn, int] = {}
         self.last = Turn(0, [], [], 0)
-        self.batch = session_native.layout(OUT)["BATCH"]
+        # The layout the server was built with lies beside it (lanes.whole_program).
+        self.batch = session_native.layout(binary.parent)["BATCH"]
         self.idle_allowed = 0
         self.traced, self.judged = traced, judged
         self.err: str | None = None
@@ -1350,7 +1351,7 @@ def store_directories(b: Build) -> str:
                                 f"{store_check.image(sorted(again.items()))[:300]}: {err[-300:]!r}")
             return True
 
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
         results = list(pool.map(lambda kc: one(kc[0], *kc[1]), enumerate(cases)))
     recovered = sum(results)
     refused = len(results) - recovered
@@ -1544,15 +1545,19 @@ def spelled(n: int) -> str:
     return tens[n // 10] + (f"-{ones[n % 10]}" if n % 10 else "")
 
 
-def planted(cake: str, source: str, build: Build, index: int, defect: Defect) -> Build:
-    """The server with `defect` planted, waited for no longer than a defect needs."""
+def planted(source: str, defect: Defect) -> str:
+    """The program's text, or the host's, with `defect` planted."""
     text = source if defect.program else HOST.read_text()
     for pattern, becomes, times in defect.edits:
         what = f"the {'program' if defect.program else 'host'}, for {defect.name},"
         text = lanes.plant(text, pattern, becomes, times, what, exact=not defect.program)
+    return text
+
+
+def hosted(index: int, defect: Defect, text: str, build: Build) -> Build:
+    """The server with `defect` planted in its host, linked with the programs of `build`, waited for no
+    longer than a defect needs."""
     name = f"defect-{index}"
-    if defect.program:
-        return Build(lanes.whole_program(cake, name, text, OUT, HOST, STORE), build.stale, DEFECT_TIMEOUT)
     host = OUT / f"{name}.c"
     host.write_text(text)
     runtime = [NATIVE / "cake_header.c", NATIVE / "cake_runtime.c"]
@@ -1565,11 +1570,11 @@ def planted(cake: str, source: str, build: Build, index: int, defect: Defect) ->
     return Build(linked(name, "nntp.S"), stale, DEFECT_TIMEOUT)
 
 
-def caught(cake: str, source: str, build: Build) -> dict[str, str]:
+def caught(builds: list[Build]) -> dict[str, str]:
     found = {}
-    for index, defect in enumerate(DEFECTS):
+    for defect, built in zip(DEFECTS, builds, strict=True):
         try:
-            CHECKS[defect.check](planted(cake, source, build, index, defect))
+            CHECKS[defect.check](built)
         except (LaneError, OSError) as error:
             if defect.sign not in str(error):
                 raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error!r}") from None
@@ -1586,8 +1591,18 @@ def check(cake: str) -> Report:
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
     stale = lanes.plant(source, *STALE, "the program, for acting for the generation before,", exact=True)
-    build = Build(lanes.whole_program(cake, "nntp", source, OUT, HOST, STORE),
-                  lanes.whole_program(cake, "stale", stale, OUT, HOST, STORE))
+    texts = [planted(source, d) for d in DEFECTS]
+    # Every program is compiled before any check runs, so that none of them shares the machine with
+    # a compiler, the checks of real time least of all.
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+        base, old = (pool.submit(lanes.whole_program, cake, name, text, OUT, HOST, STORE)
+                     for name, text in (("nntp", source), ("stale", stale)))
+        made = {k: pool.submit(lanes.whole_program, cake, f"defect-{k}", texts[k], OUT, HOST, STORE)
+                for k, d in enumerate(DEFECTS) if d.program}
+        build = Build(base.result(), old.result())
+        linked = {k: pool.submit(hosted, k, d, texts[k], build) for k, d in enumerate(DEFECTS) if not d.program}
+        builds = [Build(made[k].result(), build.stale, DEFECT_TIMEOUT) if k in made else linked[k].result()
+                  for k in range(len(DEFECTS))]
     results = {}
     for name, run in CHECKS.items():
         try:
@@ -1596,7 +1611,7 @@ def check(cake: str) -> Report:
             raise LaneError(f"{name}: {error!r}") from None
         except LaneError as error:
             raise LaneError(f"{name}: {error}") from None
-    found = caught(cake, source, build)
+    found = caught(builds)
     cuts = sum(len(sent) - 1 for sent, _ in transcripts().values())
     program = sum(d.program for d in DEFECTS)
     lanes.require_quoted({

@@ -39,7 +39,8 @@ class CheckScript(unittest.TestCase):
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("all) build; once check-proofs bash scripts/check.sh proofs-now; tests ;;", CHECK)
+        self.assertIn("all) build; once check-proofs bash scripts/check.sh proofs-now; bash scripts/check_tests.sh ;;",
+                      CHECK)
         self.assertIn("once check-gate python3 scripts/check_structure.py", CHECK)
         self.assertNotIn("lake env", CHECK)
 
@@ -112,7 +113,8 @@ class CheckScript(unittest.TestCase):
             parent = Path(temp)
             tree = parent / "dn"
             (tree / "scripts").mkdir(parents=True)
-            shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            for script in ("check.sh", "check_tests.sh"):
+                shutil.copy(ROOT / "scripts" / script, tree / "scripts" / script)
 
             def refused(message: str) -> None:
                 result = subprocess.run(["bash", "scripts/check.sh"], cwd=tree, text=True, capture_output=True,
@@ -135,7 +137,8 @@ class CheckScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             tree, stubs, toolchain = (Path(temp) / name for name in ("repo", "bin", "toolchain"))
             (tree / "scripts").mkdir(parents=True)
-            shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            for script in ("check.sh", "check_tests.sh"):
+                shutil.copy(ROOT / "scripts" / script, tree / "scripts" / script)
             (tree / "tests").mkdir()
             for module in ("test_a.py", "test_once.py"):
                 (tree / "tests" / module).write_text("")
@@ -165,6 +168,8 @@ class CheckScript(unittest.TestCase):
             env = {key: value for key, value in os.environ.items() if key not in ("LEAN_PATH", "LEAN_ABORT_ON_PANIC")}
             env["PATH"] = f"{stubs}:{os.environ['PATH']}"
             env["DN_ONCE"] = "none"
+            # One group after another, in their order.
+            env["DN_PARALLEL"] = "1"
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py",
@@ -212,14 +217,31 @@ class CheckScript(unittest.TestCase):
         for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
             name, _, body = block.partition(":\n")
             jobs[name] = body
-        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test", "native", "documents", "lazyfs"])
-        chain = ["lint", "build", "proofs", "test"]
+        self.assertEqual(list(jobs), ["lint", "build", "proofs", "tests", "test", "lanes", "native", "documents",
+                                      "lazyfs"])
+        chain = ["lint", "build", "proofs", "tests", "test"]
         for job, previous in zip(chain[1:], chain, strict=False):
             self.assertIn(f"needs: {previous}\n", jobs[job])
-        # The native lanes run beside the tests; the documents are held to the stamps of both.
-        self.assertIn("needs: proofs\n", jobs["native"])
-        self.assertIn("run: bash scripts/native_lanes.sh\n", jobs["native"])
-        self.assertNotIn("native_lanes.sh", jobs["test"])
+        # The native lanes run beside the tests, each in shards, all of them; a job gathers each one's
+        # shards, and fails unless every shard passed. The documents are held to the stamps of both.
+        self.assertIn("needs: proofs\n", jobs["lanes"])
+        self.assertIn("needs: lanes\n", jobs["native"])
+        lanes = (ROOT / "scripts/native_lanes.sh").read_text()
+        [listed] = re.findall(r"^lanes=\(([a-z ]+)\)$", lanes, re.MULTILINE)
+        sharded = " ".join(re.findall(r"^          - \{name: [a-z]+, lanes: ([a-z ]+)\}$", jobs["lanes"], re.MULTILINE))
+        self.assertEqual(sorted(sharded.split()), sorted(listed.split()))
+        groups = (ROOT / "scripts/check_tests.sh").read_text()
+        [named] = re.findall(r"^TEST_GROUPS=\(([a-z ]+)\)$", groups, re.MULTILINE)
+        sharded = " ".join(re.findall(r"^          - \{name: [a-z]+, groups: ([a-z ]+)\}$", jobs["tests"],
+                                      re.MULTILINE))
+        self.assertEqual(sorted(sharded.split()), sorted(named.split()))
+        self.assertIn("bash scripts/native_lanes.sh $LANES\n", jobs["lanes"])
+        for job in ("tests", "test"):
+            self.assertNotIn("native_lanes.sh", jobs[job])
+        for job, shards in (("test", "tests"), ("native", "lanes")):
+            self.assertIn("    if: ${{ !cancelled() }}\n", jobs[job])
+            self.assertIn(f"SHARDS: ${{{{ needs.{shards}.result }}}}\n        run: test \"$SHARDS\" = success\n",
+                          jobs[job])
         self.assertIn("needs: [test, native]\n", jobs["documents"])
         self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
         # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
@@ -238,10 +260,11 @@ class CheckScript(unittest.TestCase):
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
         self.assertIn("run: bash scripts/native_lanes.sh power\n", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
-        for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
+        for job, stage in (("build", "build"), ("proofs", "proofs"), ("tests", "tests")):
             self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
-        # A job added or renamed here is a job the verify lane stops requiring.
-        self.assertEqual(verify_run.REQUIRED_JOBS, tuple(jobs))
+        # A job added or renamed here is a job the verify lane stops requiring; the shards of a matrix
+        # have names of their own, and answer through the job that gathers them.
+        self.assertEqual(verify_run.REQUIRED_JOBS, tuple(j for j in jobs if "    strategy:\n" not in jobs[j]))
 
     def test_native_lanes_run_all_or_the_named_ones(self) -> None:
         """Without names every lane runs in its order, but those that mount FUSE; with names only
@@ -266,11 +289,13 @@ class CheckScript(unittest.TestCase):
                     f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
                     f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
 
-            def lanes(*names: str, failing: str = "", once: str = "none") -> tuple[int, str, list[str]]:
+            def lanes(*names: str, failing: str = "", once: str = "none",
+                      parallel: str = "1") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
-                                           "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps")},
+                                           "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps"),
+                                           "DN_PARALLEL": parallel},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -298,6 +323,13 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
+            # Several at a time, every lane runs, a failing one among them, which fails the run.
+            every = sorted(f"{lane} --cake /pinned/cake" for lane in scripts.values() if lane != "power")
+            status, said, run_lanes = lanes(parallel="3")
+            self.assertEqual((status, sorted(r.replace("entry check", "entry") for r in run_lanes)), (0, every))
+            status, said, run_lanes = lanes(failing="baseline", parallel="3")
+            self.assertEqual((status, len(run_lanes)), (1, len(every)))
+            self.assertIn("the lane baseline failed", said)
 
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
         """CI skips a job whose pass an earlier run recorded: the newest such run of this repository's
@@ -319,13 +351,19 @@ class CheckScript(unittest.TestCase):
         failed half way records none."""
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().split("\njobs:\n", 1)[1]
         jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=\n\n  [#a-z]|\Z)", workflow, re.MULTILINE | re.DOTALL))
-        self.assertEqual(set(jobs), set(verify_run.REQUIRED_JOBS))
+        shards = {name for name, job in jobs.items() if "    strategy:\n" in job}
+        self.assertEqual(set(jobs) - shards, set(verify_run.REQUIRED_JOBS))
         for name, job in jobs.items():
             with self.subTest(job=name):
                 steps = re.split(r"(?m)^      - ", job)[1:]
                 found = [i for i, s in enumerate(steps) if 'run: python3 scripts/prior_pass.py "passed-' in s]
                 recorded = [i for i, s in enumerate(steps) if "name: passed-${{" in s]
                 self.assertEqual(len(found), 1)
+                if name in shards:
+                    # A shard records no pass: the job that gathers the shards does, once all passed.
+                    self.assertEqual(recorded, [])
+                    self.assertTrue(all("if:" in s for s in steps[found[0] + 1:]))
+                    continue
                 self.assertEqual(len(recorded), 1)
                 # Only the build's archive goes up either way: a later job of the run needs it.
                 self.assertTrue(all("if:" in s or "name: lean-build" in s for s in steps[found[0] + 1:recorded[0] + 1]))
@@ -370,7 +408,8 @@ class CheckScript(unittest.TestCase):
 
     def test_checkers_cover_what_decides_the_checks(self) -> None:
         """The tests stage runs code from the change; what it may not change is this."""
-        function = re.search(r"^checkers\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)
+        function = re.search(r"^checkers\(\) \{.*?^\}", (ROOT / "scripts/check_tests.sh").read_text(),
+                             re.MULTILINE | re.DOTALL)
         assert function is not None
         with tempfile.TemporaryDirectory() as temp:
             tree = Path(temp)
