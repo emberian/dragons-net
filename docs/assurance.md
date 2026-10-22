@@ -66,11 +66,11 @@ The audit covers 18,995 declarations, including 8,471 theorems and generated one
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
-The source gate (`scripts/SourceGate.lean`) parses every module before elaboration and allow-lists commands, attributes, options and imports for Lean 4.30.0; it is a tripwire, so CI builds without secrets or network and re-checks on a fresh machine before running built code.
+The source gate (`scripts/SourceGate.lean`) parses every module before elaboration and allow-lists commands, attributes, options and imports for Lean 4.30.0; it is a tripwire, so CI builds without secrets or network. The proofs are re-checked on fresh machines of their own, from the archive the build names by its digest.
 
 A green `checks` run certifies the change with its own scripts; `.github/workflows/verify.yml`, taken from the default branch, reports whether every required job passed and whether the change edits its checks, which a branch rule must require to block a merge.
 
-A job's pass recorded by a run of this repository's branches lets a run on the same inputs skip it (`scripts/prior_pass.py`): such runs are trusted as the writers are, a fork's never.
+A job's pass recorded by a run of this repository's branches lets a run on the same inputs skip it (`scripts/prior_pass.py`): such runs are trusted as the writers are, a fork's never, and a pass counts only where GitHub says the step recording it passed.
 
 ## Open proof connections
 

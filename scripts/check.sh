@@ -42,7 +42,7 @@ main() {
     guard) ;;
     build) build ;;
     proofs) once check-proofs bash scripts/check.sh proofs-now ;;
-    proofs-now) proofs ;;
+    proofs-now) shift; proofs "$@" ;;
     tests) shift; bash scripts/check_tests.sh "$@" ;;
     all) build; once check-proofs bash scripts/check.sh proofs-now; bash scripts/check_tests.sh ;;
     *)
@@ -84,24 +84,35 @@ build() {
 
 # Kernel re-checks and proof audit; no built code runs before the audit's static checks pass.
 # The checkers come from the toolchain and the lock, never from PATH, which Lake prefixes with
-# .lake/build/bin.
+# .lake/build/bin. Given a part, only that one runs: Lean's own checker, or the independent kernel
+# and the audit, which CI runs beside each other.
 proofs() {
-  local leanchecker lean prefix exporter nanoda args
+  local part=${1:-} leanchecker lean prefix exporter nanoda args
+  if [[ ! $part =~ ^(|leanchecker|nanoda)$ ]]; then
+    echo "check.sh: no part of the proofs named '$part'; the parts are leanchecker and nanoda" >&2
+    exit 2
+  fi
   leanchecker=$(elan which leanchecker)
   lean=$(elan which lean)
   prefix=$("$lean" --print-prefix)
-  exporter=$(python3 scripts/bootstrap_tool.py lean4export)
-  nanoda=$(python3 scripts/bootstrap_tool.py nanoda)
+  if [[ $part != leanchecker ]]; then
+    exporter=$(python3 scripts/bootstrap_tool.py lean4export)
+    nanoda=$(python3 scripts/bootstrap_tool.py nanoda)
+  fi
   # Toolchain modules come first, and a panic stops a checker instead of returning a default.
   local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
   python3 scripts/check_structure.py outputs
-  python3 scripts/measured.py "$leanchecker" DN
-  # The independent kernel checks the library's declarations and everything they use.
-  mkdir -p build/proofs
-  "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
-  mapfile -d '' -t args <build/proofs/export-list
-  LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
-  "$lean" --run scripts/Audit.lean --regressions 264
+  if [[ $part != nanoda ]]; then
+    python3 scripts/measured.py "$leanchecker" DN
+  fi
+  if [[ $part != leanchecker ]]; then
+    # The independent kernel checks the library's declarations and everything they use.
+    mkdir -p build/proofs
+    "$lean" --run scripts/Audit.lean --export-list >build/proofs/export-list
+    mapfile -d '' -t args <build/proofs/export-list
+    LEAN_SYSROOT=$prefix "$exporter" "${args[@]}" | "$nanoda" scripts/nanoda.json
+    "$lean" --run scripts/Audit.lean --regressions 264
+  fi
 }
 
 main "$@"

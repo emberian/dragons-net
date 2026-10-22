@@ -28,17 +28,17 @@ checkers() {
 TEST_GROUPS=(unit rust session models host)
 group() {
   local module name
+  tools "$1"
   case $1 in
     unit)
       # Each module of tests on its own, so that a change reruns only the modules that read it. The
       # tracer's own test runs untraced, since a traced process cannot trace another.
       for module in $(git ls-files --cached --others --exclude-standard 'tests/test_*.py'); do
-        module=$(basename "$module")
-        if [[ $module == test_once.py ]]; then
-          python3 -m unittest discover -s tests -p "$module" -v
+        name=$(basename "$module" .py)
+        if [[ $name == test_once ]]; then
+          python3 scripts/unit.py "$name"
         else
-          name=${module%.py}
-          once "unit-${name//_/-}" python3 -m unittest discover -s tests -p "$module" -v
+          once "unit-${name//_/-}" python3 scripts/unit.py "$name"
         fi
       done
       ;;
@@ -88,6 +88,17 @@ group() {
       exit 2
       ;;
   esac
+}
+
+# The pinned tools and wheels a group's checks take, put in place first and untraced: a check that
+# installed one would read what it wrote, and so would run every time.
+tools() {
+  case $1 in
+    unit) python3 scripts/bootstrap_tool.py lean4export && python3 scripts/bootstrap_tool.py nanoda ;;
+    session) python3 scripts/wheels.py scripts/requirements-tests.txt ;;
+    models) python3 scripts/bootstrap_tool.py abnfgen && python3 scripts/wheels.py scripts/requirements-tests.txt ;;
+    host) python3 scripts/bootstrap_tool.py libfiu ;;
+  esac >/dev/null
 }
 
 main() {

@@ -44,7 +44,7 @@ bash scripts/check_all.sh
 
 `dn-compiler` prints the native examples, fixtures and programs the lanes compile, for instance `.lake/build/bin/dn-compiler emit-region > build/region.pnk`.
 
-[CI](.github/workflows/ci.yml) runs lint, a build without network, the proofs on a fresh machine and the tests and native lanes; [`verify`](.github/workflows/verify.yml) reports from the default branch whether a run's checks are the project's; [backend](.github/workflows/backend.yml) rebuilds the patched proof; [nightly](.github/workflows/scheduled.yml) runs the slow and networked checks.
+[CI](.github/workflows/ci.yml) runs lint, a build without network, then the proofs on fresh machines beside the tests and native lanes; [`verify`](.github/workflows/verify.yml) reports from the default branch whether a run's checks are the project's; [backend](.github/workflows/backend.yml) rebuilds the patched proof; [nightly](.github/workflows/scheduled.yml) runs the slow and networked checks.
 
 ## Pick up the work
 
