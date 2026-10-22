@@ -508,20 +508,29 @@ def check(cake: str) -> Report:
         scenarios = list(sessions.scenarios())
         posts = [*sessions.post_scenarios(), *sessions.read_scenarios()]
         model = sessions.model_command()
-        expected = {name: sessions.run(clients, model, ghosts, identity)
-                    for name, clients, ghosts, identity in scenarios}
-        stored = {name: sessions.run_post(clients, spool, model) for name, clients, spool in posts}
-        answers = {name: sessions.check_breach(script, code, model)
-                   for name, script, code in (*sessions.breaches(), *sessions.post_breaches(),
-                                              *sessions.read_breaches())
-                   if name not in UNWRITTEN}
-        answers |= edge_answers(model)
-        seconds["model"] = round(time.monotonic() - clock, 1)
-        binary = built.result()
-        scenarios_hold(binary, scenarios, expected)
-        posts_hold(binary, posts, stored)
-        scripts_hold(binary, answers)
-        random_hosts = wander(binary, RUNS)
+        scripts = [(name, script, code) for name, script, code in
+                   (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())
+                   if name not in UNWRITTEN]
+        # The model runs as a process for each scenario, in parallel; then the program on each kind of
+        # host at once. Each is taken in this order, and a difference told in it.
+        with sessions.runs() as runs:
+            plain = [runs.submit(sessions.run, clients, model, ghosts, identity)
+                     for _, clients, ghosts, identity in scenarios]
+            with_store = [runs.submit(sessions.run_post, clients, spool, model) for _, clients, spool in posts]
+            answered = [runs.submit(sessions.check_breach, script, code, model) for _, script, code in scripts]
+            edged = runs.submit(edge_answers, model)
+            expected = {name: played.result() for (name, *_), played in zip(scenarios, plain, strict=True)}
+            stored = {name: played.result() for (name, *_), played in zip(posts, with_store, strict=True)}
+            answers = {name: answer.result() for (name, *_), answer in zip(scripts, answered, strict=True)}
+            answers |= edged.result()
+            seconds["model"] = round(time.monotonic() - clock, 1)
+            binary = built.result()
+            held = [runs.submit(scenarios_hold, binary, scenarios, expected),
+                    runs.submit(posts_hold, binary, posts, stored), runs.submit(scripts_hold, binary, answers)]
+            wandered = runs.submit(wander, binary, RUNS)
+            for each in held:
+                each.result()
+            random_hosts = wandered.result()
         seconds["program"] = round(time.monotonic() - clock - seconds["model"], 1)
 
         def judged(index: int, name: str, sign: str) -> tuple[str, str]:

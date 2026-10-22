@@ -25,7 +25,7 @@ checkers() {
 # Tests that run the built code, and the Rust crates, in groups that need nothing of each other.
 # CI runs each group as a job of its own; given no group, they run here DN_PARALLEL at a time, each
 # group's output kept in build/evidence and shown whole once it is done.
-TEST_GROUPS=(unit rust session models host)
+TEST_GROUPS=(unit rust session models host runs)
 group() {
   local module name
   tools "$1"
@@ -73,9 +73,11 @@ group() {
       # How the store recovers when it starts, against an independent reference.
       once store python3 scripts/store_check.py
       ;;
-    host)
+    runs)
       # The store's program, every point of its runs held to what a crash may leave there.
       once runs python3 scripts/runs_check.py
+      ;;
+    host)
       # Each source of native/ on its own, as the nightly CodeQL job builds it.
       once sources python3 scripts/compile_sources.py
       # The points of failure the host's test build carries, held to what its tests take of libfiu.

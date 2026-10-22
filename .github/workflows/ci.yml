@@ -311,6 +311,7 @@ jobs:
           - {name: session, groups: session}
           - {name: models, groups: models}
           - {name: host, groups: host}
+          - {name: runs, groups: runs}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -360,13 +361,15 @@ jobs:
           # shellcheck disable=SC2086 # none or one word
           sudo apt-get install --yes --no-install-recommends strace $VALGRIND
       # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
-      # the last run of this repository's branches to record them are taken up.
+      # the last run of this branch or the default one to record them are taken up.
       - name: The checks' last passes
         id: stamps
         if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/prior_pass.py checks-test >> "$GITHUB_OUTPUT"
+          OWN: ${{ github.head_ref || github.ref_name }}
+          MAIN: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/prior_pass.py checks-test --branch "$OWN" --branch "$MAIN" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
         with:
@@ -447,13 +450,15 @@ jobs:
           KEY: ${{ steps.tree.outputs.key }}
         run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
       # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
-      # the last run of this repository's branches to record them are taken up.
+      # the last run of this branch or the default one to record them are taken up.
       - name: The checks' last passes
         id: stamps
         if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/prior_pass.py checks-test >> "$GITHUB_OUTPUT"
+          OWN: ${{ github.head_ref || github.ref_name }}
+          MAIN: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/prior_pass.py checks-test --branch "$OWN" --branch "$MAIN" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
         with:
@@ -465,8 +470,12 @@ jobs:
         if: steps.passed.outputs.run-id == ''
         with:
           pattern: checks-test-*
-          path: build/stamps
+          path: build/made
           merge-multiple: true
+      # A stamp keeps a pass in each of the last environments, the runners' images and kernels.
+      - name: The shards' passes over the last ones
+        if: steps.passed.outputs.run-id == ''
+        run: mkdir -p build/made && python3 scripts/once.py merge build/stamps build/made
       - name: Record checks-test
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.run-id == ''
@@ -517,9 +526,9 @@ jobs:
       matrix:
         shard:
           - {name: nntp, lanes: nntp}
-          - {name: session, lanes: session entry server native}
+          - {name: session, lanes: session}
           - {name: programs, lanes: framing grammar parser baseline}
-          - {name: rest, lanes: fuzz accept crash faults}
+          - {name: rest, lanes: fuzz accept crash faults entry server native}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -566,13 +575,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends strace
       # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
-      # the last run of this repository's branches to record them are taken up.
+      # the last run of this branch or the default one to record them are taken up.
       - name: The checks' last passes
         id: stamps
         if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/prior_pass.py checks-native >> "$GITHUB_OUTPUT"
+          OWN: ${{ github.head_ref || github.ref_name }}
+          MAIN: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/prior_pass.py checks-native --branch "$OWN" --branch "$MAIN" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
         with:
@@ -695,13 +706,15 @@ jobs:
           KEY: ${{ steps.tree.outputs.key }}
         run: python3 scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
       # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
-      # the last run of this repository's branches to record them are taken up.
+      # the last run of this branch or the default one to record them are taken up.
       - name: The checks' last passes
         id: stamps
         if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/prior_pass.py checks-native >> "$GITHUB_OUTPUT"
+          OWN: ${{ github.head_ref || github.ref_name }}
+          MAIN: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/prior_pass.py checks-native --branch "$OWN" --branch "$MAIN" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
         with:

@@ -229,8 +229,8 @@ def table : List (String × (List String → IO UInt32)) :=
       | none => noMutant name
     | _ => usageError),
    ("emit-reply-cases", plain fun _ => (output (.ok DN.Dsl.Example.cases.compress))),
-   ("emit-baseline", plain fun _ => (output (Baseline.fixture.map (·.compress)))),
-   ("emit-trees", plain fun _ => (output (DN.Printed.all.map fun ps =>
+   ("emit-baseline", plain fun _ => (output ((Baseline.fixture ()).map (·.compress)))),
+   ("emit-trees", plain fun _ => (output ((DN.Printed.all ()).map fun ps =>
       (Lean.Json.arr (ps.map (·.tree)).toArray).compress))),
    ("emit-cells", plain fun _ => (output (Precedence.cells.map (·.compress)))),
    ("emit-fuzz", fun
@@ -246,7 +246,7 @@ def table : List (String × (List String → IO UInt32)) :=
       let answer ← Gen.replay (← Lean.Json.parse input)
       return answer.compress)),
    ("fuzz-samples", plain fun _ => (output (.ok Gen.samples.compress))),
-   ("emit-corpus", plain fun _ => (output (GenCorpus.json.map (·.compress)))),
+   ("emit-corpus", plain fun _ => (output ((GenCorpus.json ()).map (·.compress)))),
    -- The corpus of stopping states, with what the model makes of each case;
    -- `scripts/state_check.py` recomputes the same answers independently.
    ("dump-states", plain fun _ => IO.println StateCorpus.dump *> pure 0)]
@@ -256,7 +256,7 @@ end DN.Compiler.Cli
 def main (args : List String) : IO UInt32 := do
   if let [command] := args then
     if let some (_, program) := DN.Printed.named.find? (command == "emit-" ++ ·.1) then
-      return ← output (program.map (·.source))
+      return ← output ((program ()).map (·.source))
   match args with
   | ["--help"] | [] =>
     IO.println usage

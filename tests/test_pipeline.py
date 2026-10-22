@@ -195,9 +195,8 @@ class CheckScript(unittest.TestCase):
                           "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
                           "python3 scripts/journal_check.py", "python3 scripts/fs_check.py",
                           "python3 scripts/store_check.py", "python3 scripts/bootstrap_tool.py libfiu",
-                          "python3 scripts/runs_check.py",
                           "python3 scripts/compile_sources.py", "python3 scripts/fiu_check.py",
-                          "python3 scripts/host_check.py"],
+                          "python3 scripts/host_check.py", "python3 scripts/runs_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -290,6 +289,13 @@ class CheckScript(unittest.TestCase):
         self.assertIn("bash scripts/native_lanes.sh $LANES\n", jobs["lanes"])
         for job in ("tests", "test"):
             self.assertNotIn("native_lanes.sh", jobs[job])
+        # The stamps of the checks come from this branch's runs or the default branch's alone; the
+        # test job merges the shards' passes into the last ones.
+        for job in ("tests", "test", "lanes", "native"):
+            looked = re.findall(r'prior_pass\.py checks-\w+ --branch "\$OWN" --branch "\$MAIN"', jobs[job])
+            self.assertEqual(len(looked), 1, job)
+        self.assertIn("run: mkdir -p build/made && python3 scripts/once.py merge build/stamps build/made\n",
+                      jobs["test"])
         for job, shards in (("test", "tests"), ("native", "lanes")):
             # The stamps the shards take up next time count where this step passed (scripts/prior_pass.py).
             self.assertIn(f"      - name: Record checks-{job}\n        uses: actions/upload-artifact@", jobs[job])
@@ -393,14 +399,15 @@ class CheckScript(unittest.TestCase):
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
         """CI skips a job whose pass an earlier run recorded: the newest such runs of this repository's
         own branches, never one of a fork, whose workflow is its own, nor an expired record, nor the run
-        asking. Of those, one counts only where its step recording the pass passed: any code a job runs
-        can upload an artifact of the same name."""
-        def artifact(run: int, repository: int = 7, head: int = 7, expired: bool = False) -> dict[str, Any]:
+        asking; for the checks' stamps, only of the branches named. Of those, one counts only where its
+        step recording the pass passed: any code a job runs can upload an artifact of the same name."""
+        def artifact(run: int, repository: int = 7, head: int = 7, expired: bool = False,
+                     branch: str = "main") -> dict[str, Any]:
             return {"expired": expired, "workflow_run": {"id": run, "repository_id": repository,
-                                                         "head_repository_id": head}}
+                                                         "head_repository_id": head, "head_branch": branch}}
 
-        def runs(*found: dict[str, Any]) -> list[int]:
-            held: list[int] = prior_pass.candidates({"artifacts": list(found)}, 7, 8)
+        def runs(*found: dict[str, Any], branches: list[str] | None = None) -> list[int]:
+            held: list[int] = prior_pass.candidates({"artifacts": list(found)}, 7, 8, branches)
             return held
 
         self.assertEqual(runs(), [])
@@ -411,6 +418,9 @@ class CheckScript(unittest.TestCase):
         self.assertEqual(runs(artifact(5, head=9), artifact(2)), [2])
         self.assertEqual(runs(artifact(8), artifact(2)), [2])
         self.assertEqual(runs({"expired": False}), [])
+        others = (artifact(5, branch="other"), artifact(4, branch="mine"), artifact(3))
+        self.assertEqual(runs(*others), [5, 4, 3])
+        self.assertEqual(runs(*others, branches=["mine", "main"]), [4, 3])
 
         def jobs(*steps: tuple[str, str]) -> dict[str, Any]:
             return {"jobs": [{"steps": [{"name": "Lint", "conclusion": "success"}]},

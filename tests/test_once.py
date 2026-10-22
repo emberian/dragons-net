@@ -258,7 +258,7 @@ class Live(unittest.TestCase):
                    "'--exclude-standard'], capture_output=True, text=True, check=True).stdout.split())\n")
         self.git("add", "-A")
         self.assertIn("check.py", self.run_check())
-        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        inputs = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]["inputs"]
         self.assertIsNone(inputs["git"])
         self.assertEqual([c[1] for c in inputs["commands"]],
                          [["git", "ls-files", "--cached", "--others", "--exclude-standard"]])
@@ -300,7 +300,7 @@ class Live(unittest.TestCase):
 
     def test_a_check_runs_again_only_when_what_it_read_changes(self) -> None:
         self.assertIn("one", self.run_check())
-        stamp = json.loads((self.tree / "build/stamps/probe.json").read_text())
+        stamp = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]
         self.assertIn("input.txt", stamp["inputs"]["files"])
         self.assertIn("check.py", stamp["inputs"]["files"])
         self.assertNotIn("build-output.txt", stamp["inputs"]["files"])
@@ -364,6 +364,60 @@ class Live(unittest.TestCase):
         self.assertIn("read ''", log.read_text())
         self.assertIn("DN SKIP", self.run_check("--log", str(log)))
         self.assertIn("read ''", log.read_text())
+
+    def test_a_stamp_keeps_a_pass_in_each_environment(self) -> None:
+        """A pass in one environment leaves the passes in others standing, the newest `PASSES` of them;
+        a run that fails drops its own environment's alone, and a stamp of one pass, as stamps were
+        made before, is that pass."""
+        def env(name: str) -> dict[str, str]:
+            return {**os.environ, "DN_PROBE_RUNNER": name}
+
+        def kept() -> list[str]:
+            stamp = json.loads((self.tree / "build/stamps/probe.json").read_text())
+            return [p["environment"]["DN_PROBE_RUNNER"] for p in once.passes(stamp)]
+
+        self.assertIn("one", self.run_check(env=env("a")))
+        self.assertIn("one", self.run_check(env=env("b")))
+        self.assertIn("DN SKIP probe", self.run_check(env=env("a")))
+        self.assertEqual(kept(), ["b", "a"])
+        for name in ("c", "d"):
+            self.run_check(env=env(name))
+        self.assertEqual(kept(), ["d", "c", "b"])
+        self.check("raise SystemExit(3)\n")
+        failed = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", "--", sys.executable, "check.py"],
+                                cwd=self.tree, env=env("c"), capture_output=True, text=True, check=False, timeout=120)
+        self.assertEqual(failed.returncode, 3)
+        self.assertEqual(kept(), ["d", "b"])
+        stamp = self.tree / "build/stamps/probe.json"
+        stamp.write_text(json.dumps(once.passes(json.loads(stamp.read_text()))[0]))
+        self.assertEqual(kept(), ["d"])
+        # A stamp that does not read as one records nothing: the check runs.
+        self.check("print('ran')\n")
+        for broken in ('{"passes": 5}', "[1]", "not json"):
+            stamp.write_text(broken)
+            self.assertIn("ran", self.run_check(env=env("d")))
+
+    def test_stamps_made_elsewhere_are_merged_pass_by_pass(self) -> None:
+        """Merging lays each stamp's passes over those of the same name, the newest in each
+        environment kept, and leaves the lanes' stamps and the hashes alone."""
+        def stamp(*passes: tuple[str, str]) -> str:
+            return json.dumps({"passes": [{"command": ["c"], "environment": {"E": e}, "tracer": "t", "inputs": None,
+                                           "passed": at} for e, at in passes]})
+
+        dest, made = self.tree / "dest", self.tree / "made"
+        for d in (dest, made):
+            d.mkdir()
+        (dest / "x.json").write_text(stamp(("a", "2026-01-01T00:00:00Z"), ("b", "2026-01-01T00:00:00Z")))
+        (made / "x.json").write_text(stamp(("b", "2026-02-01T00:00:00Z"), ("c", "2026-02-01T00:00:00Z")))
+        (made / "y.json").write_text(stamp(("a", "2026-02-01T00:00:00Z")))
+        for name in ("lane-z.json", "hashes.json"):
+            (made / name).write_text("{}")
+        subprocess.run([sys.executable, "scripts/once.py", "merge", str(dest), str(made)], cwd=self.tree, check=True)
+        x = once.passes(json.loads((dest / "x.json").read_text()))
+        self.assertEqual([(p["environment"]["E"], p["passed"][5:7]) for p in x],
+                         [("b", "02"), ("c", "02"), ("a", "01")])
+        self.assertTrue((dest / "y.json").is_file())
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ["x.json", "y.json"])
 
     def test_a_failing_check_records_nothing(self) -> None:
         (self.tree / "check.py").write_text("raise SystemExit(3)\n")
@@ -566,7 +620,7 @@ class Compiled(unittest.TestCase):
 
     def test_dn_compiler_counts_by_what_its_commands_run_and_how_it_starts(self) -> None:
         self.assertIn("ran a", self.run_check())
-        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        inputs = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]["inputs"]
         self.assertEqual(list(inputs["compiler"]), ["a"])
         self.assertNotIn(".lake/build/bin/dn-compiler", inputs["files"])
         self.assertIn("lakefile.lean", inputs["files"])

@@ -72,6 +72,8 @@ A green `checks` run certifies the change with its own scripts; `.github/workflo
 
 A job's pass recorded by a run of this repository's branches lets a run on the same inputs skip it (`scripts/prior_pass.py`): such runs are trusted as the writers are, a fork's never, and a pass counts only where GitHub says the step recording it passed.
 
+The checks' stamps are made by the code they run, so a branch takes up only its own and the default branch's.
+
 ## Open proof connections
 
 1. **Semantics correspondence.** `DN.Compiler.Semantics` is a transcription of HOL4's, compared clause by clause in [pancake-semantics](pancake-semantics.md), not a certified translation.

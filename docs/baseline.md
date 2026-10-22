@@ -22,7 +22,7 @@ A run of git in the repository that only reads, in the same environment, counts 
 
 What the checks require of the documents is kept with their stamps and held by `scripts/check_documents.py`, so a change to the documents alone runs no check again.
 
-In CI an artifact keyed by the job's inputs is seen across branches (`scripts/prior_pass.py`), so the run on `main` after a merge says `DN SKIP`; only runs of this repository's branches count, trusted as its writers are.
+In CI an artifact keyed by the job's inputs is seen across branches (`scripts/prior_pass.py`), so the run on `main` after a merge says `DN SKIP`; only runs of this repository's branches count, trusted as its writers are. The checks' stamps keep a pass in each of the last three runner environments and come from the branch's own runs or `main`'s.
 
 `python3 scripts/native_fuzz.py --cake "$(python3 scripts/bootstrap_tool.py cake)" --seed N --count C --vectors V` runs the generated lane larger, as the nightly run does with 5,000 programs from a seed of the date, reducing a disagreement to `build/fuzz/minimized/`; `--bootstrapped` uses the compiler built from the patched source.
 

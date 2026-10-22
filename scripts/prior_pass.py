@@ -8,10 +8,13 @@ passed on the same tree. Only runs of this repository's own branches count; a pu
 fork runs a workflow of its own, which could record anything. A run of this repository's branches
 is trusted as its writers are, who choose its workflow. But any code a job runs can upload an
 artifact of any name, the change's tests among it, so a run counts only where GitHub says the step
-`Record NAME` of one of its jobs passed, and the run asking never does. When the API does not
-answer, the checks run."""
+`Record NAME` of one of its jobs passed, and the run asking never does. `--branch B`, given
+for the stamps of the checks, counts only runs of the branches named: those stamps are made by the
+code the checks run, so one branch's are never taken up by another, but from the default branch.
+When the API does not answer, the checks run."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -23,12 +26,13 @@ import urllib.request
 ASKED = 5
 
 
-def candidates(listing: dict[str, Any], repository: int, asking: int) -> list[int]:
-    """The runs of this repository's branches that hold the artifact unexpired, newest first, but the
-    run asking."""
+def candidates(listing: dict[str, Any], repository: int, asking: int, branches: list[str] | None = None) -> list[int]:
+    """The runs of this repository's branches, or of `branches`, that hold the artifact unexpired,
+    newest first, but the run asking."""
     runs = [a.get("workflow_run") or {} for a in listing.get("artifacts", []) if not a.get("expired")]
     found = {r["id"] for r in runs if r.get("repository_id") == repository == r.get("head_repository_id")
-             and isinstance(r.get("id"), int) and r["id"] != asking}
+             and isinstance(r.get("id"), int) and r["id"] != asking
+             and (branches is None or r.get("head_branch") in branches)}
     return sorted(found, reverse=True)
 
 
@@ -39,9 +43,11 @@ def recorded(jobs: dict[str, Any], name: str) -> bool:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: prior_pass.py NAME")
-    name = sys.argv[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("name")
+    parser.add_argument("--branch", action="append", dest="branches")
+    args = parser.parse_args()
+    name = args.name
     api, repo = os.environ["GITHUB_API_URL"], os.environ["GITHUB_REPOSITORY"]
     if not api.startswith("https://"):
         raise SystemExit(f"prior_pass.py: the API is not at an https URL: {api}")
@@ -56,7 +62,8 @@ def main() -> None:
     run = None
     try:
         listing = get("actions/artifacts", {"name": name, "per_page": 100})
-        held = candidates(listing, int(os.environ["GITHUB_REPOSITORY_ID"]), int(os.environ["GITHUB_RUN_ID"]))
+        held = candidates(listing, int(os.environ["GITHUB_REPOSITORY_ID"]), int(os.environ["GITHUB_RUN_ID"]),
+                          args.branches)
         for each in held[:ASKED]:
             if recorded(get(f"actions/runs/{each}/jobs", {"filter": "all", "per_page": 100}), name):
                 run = each

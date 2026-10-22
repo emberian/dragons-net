@@ -91,8 +91,9 @@ def caseJson (c : Case) : Except String Json := do
     ("functions", Json.arr (c.functions.map funJson).toArray), ("input", vectorJson c.input),
     ("model", Json.mkObj (outcomeJson o))]
 
-/-- The cases, as the lane compares them with the recorded files. -/
-def json : Except String Json := do
+/-- The cases, as the lane compares them with the recorded files; made when asked for, as
+`Baseline.fixture`. -/
+def json (_ : Unit) : Except String Json := do
   return Json.mkObj [("mutants", Json.arr (← mutants.mapM caseJson).toArray),
     ("found", Json.arr (← found.mapM caseJson).toArray)]
 

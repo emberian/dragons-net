@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import copy
 from dataclasses import dataclass, field
 import itertools
@@ -1420,36 +1421,53 @@ def caught_apart(mutant: str, all_scenarios: list[Scenario], posts: list[PostSce
         return caught(mutant, all_scenarios, posts, checker)
 
 
+@contextlib.contextmanager
+def runs() -> Iterator[ThreadPoolExecutor]:
+    """A pool for runs of the session, as many at once as this process may use cores; a refusal is
+    told at once, the runs waiting behind it dropped."""
+    pool = ThreadPoolExecutor(len(os.sched_getaffinity(0)))
+    try:
+        yield pool
+    finally:
+        pool.shutdown(cancel_futures=True)
+
+
 def check() -> Report:
     all_scenarios = list(scenarios())
+    broken = [*breaches(), *post_breaches(), *read_breaches()]
+    posts = [*post_scenarios(), *read_scenarios()]
     turns = 0
     traces = {}
-    for name, clients, ghosts, identity in all_scenarios:
-        trace = run(clients, model_command(), ghosts, identity)
-        try:
-            ref.judge(*identity, trace)
-        except Violation as error:
-            raise LaneError(f"scenario {name!r}: {error}") from None
-        traces[name] = trace
-        turns += len(trace)
-    for name, script, code in (*breaches(), *post_breaches(), *read_breaches()):
-        try:
-            check_breach(script, code, model_command())
-        except LaneError as error:
-            raise LaneError(f"breach {name!r}: {error}") from None
-    posts = [*post_scenarios(), *read_scenarios()]
     post_traces = {}
-    with Articles() as checker:
-        for name, clients, spool in posts:
-            trace = run_post(clients, spool, model_command())
+    # The model runs as a process for each scenario, in parallel, each judged in order; then the
+    # mutants, once the model passed.
+    with runs() as pool, Articles() as checker:
+        plain = [pool.submit(run, clients, model_command(), ghosts, identity)
+                 for _, clients, ghosts, identity in all_scenarios]
+        answered = [pool.submit(check_breach, script, code, model_command()) for _, script, code in broken]
+        stored = [pool.submit(run_post, clients, spool, model_command()) for _, clients, spool in posts]
+        for (name, _, _, identity), played in zip(all_scenarios, plain, strict=True):
+            trace = played.result()
+            try:
+                ref.judge(*identity, trace)
+            except Violation as error:
+                raise LaneError(f"scenario {name!r}: {error}") from None
+            traces[name] = trace
+            turns += len(trace)
+        for (name, _, _), answer in zip(broken, answered, strict=True):
+            try:
+                answer.result()
+            except LaneError as error:
+                raise LaneError(f"breach {name!r}: {error}") from None
+        for (name, _, spool), played in zip(posts, stored, strict=True):
+            trace = played.result()
             try:
                 ref.judge(REVISION, SOURCE, trace, spool.start(), checker)
             except Violation as error:
                 raise LaneError(f"scenario {name!r}: {error}") from None
             post_traces[name] = trace
-        with ThreadPoolExecutor(os.cpu_count()) as pool:
-            mutants = dict(zip(MUTANTS, pool.map(lambda m: caught_apart(m, all_scenarios, posts), MUTANTS),
-                               strict=True))
+        caught = [pool.submit(caught_apart, m, all_scenarios, posts) for m in MUTANTS]
+        mutants = {m: found.result() for m, found in zip(MUTANTS, caught, strict=True)}
         planted = {}
         spools = {name: given for name, _, given in posts}
         for name, scenario, kind, plant in PLANTS + POST_PLANTS:
@@ -1469,7 +1487,7 @@ def check() -> Report:
                                                f"{len(post_traces)} with a store and {post_turns:,} turns"]})
     return Report("checked", None, [ARTICLES, REQUIREMENTS], {
         "scenarios": len(traces), "turns": turns, "store_scenarios": len(post_traces), "store_turns": post_turns,
-        "breaches": sum(1 for _ in (*breaches(), *post_breaches(), *read_breaches())), "mutants_caught": mutants,
+        "breaches": len(broken), "mutants_caught": mutants,
         "planted_defects_caught": planted})
 
 

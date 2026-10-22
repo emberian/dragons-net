@@ -18,8 +18,10 @@ which may not change while the check runs. `dn-compiler` stands for the declarat
 reach and the code the compiler made of them (`scripts/Fingerprint.lean`), what it does when it
 starts, the toolchain and the build's options, when the executable is newer than the compiled
 library. What the run requires of the documents (`lanes.require`) is kept
-with its stamp, for `scripts/check_documents.py`. The stamps lie in `build/stamps`, or where
-`DN_STAMPS` says; `DN_ONCE=off` runs everything again and records it.
+with its stamp, for `scripts/check_documents.py`. A stamp keeps the last passes of the check in
+`PASSES` environments, CI's runners changing their image and kernel from run to run; `once.py merge
+DEST SRC...` lays the passes of stamps made elsewhere over those in DEST. The stamps lie in
+`build/stamps`, or where `DN_STAMPS` says; `DN_ONCE=off` runs everything again and records it.
 
 `once.py check NAME -- COMMAND...` and `once.py stamp NAME KEY` do the same by every file of the
 tree, for a check that cannot be traced; `once.py key NAME` prints the key of NAME's inputs alone,
@@ -45,6 +47,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # The version of what a stamp records and how it is judged, raised whenever either changes: a change
 # of this script that keeps both leaves every stamp standing.
 SCHEMA = 2
+# The environments a stamp keeps a pass of, the newest.
+PASSES = 3
 # Where each Python a check runs finds sitecustomize.py, which looks up the names an import asks for
 # instead of listing the directory.
 SITE = ROOT / "scripts/once_site"
@@ -626,23 +630,57 @@ def traced(command: list[str], log: Path, documented: Path, copy: Path | None) -
         return proc.wait()
 
 
+def passes(stamp: Any) -> list[dict[str, Any]]:
+    """The passes a stamp keeps, newest first; a stamp of one pass, as they were made before they kept
+    several, is that pass."""
+    if not isinstance(stamp, dict):
+        return []
+    kept = stamp.get("passes", [stamp] if "command" in stamp else [])
+    if not isinstance(kept, list):
+        return []
+    return sorted((p for p in kept if isinstance(p, dict)), key=lambda p: str(p.get("passed", "")), reverse=True)
+
+
+def where_passed(record: dict[str, Any]) -> list[Any]:
+    """What makes a pass one environment's: the command, the environment and the tracer."""
+    return [record.get(k) for k in ("command", "environment", "tracer")]
+
+
+def stamped(path: Path, kept: list[dict[str, Any]]) -> None:
+    """The stamp at `path`, of the newest of `kept` in each environment, `PASSES` at most; none of none."""
+    newest: dict[str, dict[str, Any]] = {}
+    for record in passes({"passes": kept}):
+        newest.setdefault(json.dumps(where_passed(record), sort_keys=True), record)
+    if newest:
+        path.write_text(json.dumps({"passes": list(newest.values())[:PASSES]}, indent=1))
+    else:
+        path.unlink(missing_ok=True)
+
+
 def run(name: str, command: list[str], copy: Path | None) -> int:
     stamps = stamps_dir()
     stamp = stamps / f"{name}.json"
     hashes = Hashes(stamps / "hashes.json")
     want = {"command": command, "environment": environment(), "tracer": tracer()}
-    if os.environ.get("DN_ONCE") != "off" and stamp.is_file():
-        old: dict[str, Any] = {}
+    kept: list[dict[str, Any]] = []
+    if stamp.is_file():
         try:
-            old = json.loads(stamp.read_text())
-            fresh = all(old.get(k) == v for k, v in want.items()) and old["inputs"] is not None and \
-                current(old["inputs"], hashes)
-        except (ValueError, KeyError, TypeError):
-            fresh = False
-        if fresh:
-            hashes.save()
-            print(f"DN SKIP {name}: passed on these inputs at {old['passed']}", file=sys.stderr, flush=True)
-            return 0
+            kept = passes(json.loads(stamp.read_text()))
+        except ValueError:
+            kept = []
+    here = where_passed(want)
+    if os.environ.get("DN_ONCE") != "off":
+        for old in kept:
+            try:
+                fresh = where_passed(old) == here and old["inputs"] is not None and current(old["inputs"], hashes)
+            except (KeyError, TypeError, AttributeError):
+                fresh = False
+            if fresh:
+                hashes.save()
+                print(f"DN SKIP {name}: passed on these inputs at {old['passed']}", file=sys.stderr, flush=True)
+                return 0
+    # Another environment's passes stay; this one's goes, and comes back only if the check passes.
+    others = [old for old in kept if where_passed(old) != here]
     stamp.unlink(missing_ok=True)
     # Made before the check runs, so that a listing it takes holds the stamps' directory, as later.
     stamps.mkdir(parents=True, exist_ok=True)
@@ -652,6 +690,7 @@ def run(name: str, command: list[str], copy: Path | None) -> int:
         log, documented = Path(temp) / "trace", Path(temp) / "documented"
         status = traced(command, log, documented, copy)
         if status != 0:
+            stamped(stamp, others)
             return status
         trace = Trace(str(Path.cwd())).parse(log.read_text(errors="surrogateescape"))
         required = [json.loads(line) for line in documented.read_text().splitlines()] if documented.exists() else []
@@ -663,9 +702,31 @@ def run(name: str, command: list[str], copy: Path | None) -> int:
     record = {**want, "inputs": deps, "documented": required,
               "passed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     stamps.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(json.dumps(record, indent=1))
+    stamped(stamp, [record, *others])
     hashes.save()
     return 0
+
+
+def merge(dest: Path, sources: list[Path]) -> None:
+    """The passes of the stamps of the traced checks in `sources` laid over those of the same names in
+    `dest`, the newest `PASSES` in each environment kept."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for source in sources:
+        for path in sorted(source.glob("*.json")):
+            if path.name == "hashes.json" or path.name.startswith("lane-"):
+                continue
+            mine = dest / path.name
+            try:
+                made = passes(json.loads(path.read_text()))
+            except ValueError:
+                # A stamp that does not read records nothing: its check runs again.
+                print(f"once.py merge: {path} does not read as a stamp", file=sys.stderr)
+                continue
+            try:
+                kept = passes(json.loads(mine.read_text())) if mine.is_file() else []
+            except ValueError:
+                kept = []
+            stamped(mine, [*made, *kept])
 
 
 def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) -> str:
@@ -685,7 +746,7 @@ def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) 
 
 def main() -> None:
     usage = ("usage: once.py run NAME [--log FILE] -- COMMAND... | check NAME -- COMMAND... | stamp NAME KEY"
-             " | key NAME")
+             " | key NAME | merge DEST SRC...")
     args = sys.argv[1:]
     stamps = stamps_dir()
     if len(args) >= 4 and args[0] == "run" and NAME.fullmatch(args[1]):
@@ -698,6 +759,9 @@ def main() -> None:
     if len(args) == 3 and args[0] == "stamp" and NAME.fullmatch(args[1]) and re.fullmatch(r"[0-9a-f]{64}", args[2]):
         stamps.mkdir(parents=True, exist_ok=True)
         (stamps / f"{args[1]}-{args[2]}").write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ\n", time.gmtime()))
+        return
+    if len(args) >= 3 and args[0] == "merge":
+        merge(Path(args[1]), [Path(a) for a in args[2:]])
         return
     if len(args) == 2 and args[0] == "key" and args[1] in INPUTS:
         print(f"{args[1]}-{tree_key(args[1], [], INPUTS[args[1]])}")

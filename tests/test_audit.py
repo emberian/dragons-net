@@ -219,7 +219,14 @@ GATE_PROBES: dict[str, tuple[str, str | None]] = {
     "Import": ("import Lean\n", "import of Lean is not allowed"),
     "EscapedImport": ("import «Lean».«Elab»\n", "import of Lean.Elab is not allowed"),
     "ParseError": ("def := 1\n", "unexpected token"),
-    "ElabError": ('def f : Nat := "x"\n', "error"),
+    # A declaration the build refuses: the gate parses and checks it, and leaves it to the build.
+    "Unelaborated": ('def f : Nat := "x"\n', None),
+    # `open` brings in the scoped syntax of the namespace the build opens: BitVec's at the root, none
+    # where a declaration made `X.BitVec` first; refused where only the build would know.
+    "RootOpen": ("open BitVec\ndef a (x y : Nat) := x#'y\n", None),
+    "DeclaredOpen": ("namespace X\ndef BitVec.q := 1\nopen BitVec\ndef a (x y : Nat) := x#'y\nend X\n",
+                     "unexpected token"),
+    "MaybeOpen": ("namespace X\ndef BitVec : Nat := 1\nopen BitVec\nend X\n", "the build may open X.BitVec"),
     "QuoteIdent": ('def «q"» : Nat := 1\n#eval 1\n-- "\n', EVAL),
     "CommentIdent": ("def «/-» : Nat := 1\n#eval 1\n-- -/\n", EVAL),
     "Interpolation": ('def s : String := s!"{\'"\'}"\n#eval 1\n-- "\n', EVAL),
@@ -453,11 +460,13 @@ class SourceGate(unittest.TestCase):
             self.assertFalse((root / ".lake").exists())
 
     def test_uses_lakefile_options(self) -> None:
+        """A reviewed syntax file, which the gate elaborates whole, is elaborated as the build does."""
         with tempfile.TemporaryDirectory() as temp:
             root = source_tree(Path(temp))
             (root / "lakefile.lean").write_text("package dn where\n  leanOptions := #[⟨`maxRecDepth, 8⟩]\n")
-            (root / "lean/DN/Deep.lean").write_text("theorem t : [1, 2, 3].length = 3 := by decide\n")
-            errors = structure.gate_errors(root, {})
+            deep = root / "lean/DN/Deep.lean"
+            deep.write_text("theorem t : [1, 2, 3].length = 3 := by decide\n")
+            errors = structure.gate_errors(root, {"lean/DN/Deep.lean": sha256(deep)})
             self.assertTrue(any("maximum recursion depth" in e for e in errors), errors)
 
     def test_documented_loom_count_matches_the_recorded_tests(self) -> None:
@@ -471,8 +480,9 @@ class SourceGate(unittest.TestCase):
         self.assertIn("⟨`autoImplicit, false⟩", (ROOT / "lakefile.lean").read_text())
         with tempfile.TemporaryDirectory() as temp:
             root = source_tree(Path(temp))
-            (root / "lean/DN/Deep.lean").write_text("theorem t (x : Unbound) : x = x := rfl\n")
-            errors = structure.gate_errors(root, {})
+            deep = root / "lean/DN/Deep.lean"
+            deep.write_text("theorem t (x : Unbound) : x = x := rfl\n")
+            errors = structure.gate_errors(root, {"lean/DN/Deep.lean": sha256(deep)})
             self.assertTrue(any("Unknown identifier" in e for e in errors), errors)
 
     def test_static_checks(self) -> None:
@@ -506,6 +516,16 @@ class SourceGate(unittest.TestCase):
                              "backend patch digest mismatch",
                              "preserved reference changed: migration/kept.rs"):
                 self.assertIn(expected, errors)
+
+    def test_a_syntax_file_imports_only_syntax_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = source_tree(Path(temp))
+            (root / "lean/DN/Plain.lean").write_text("def DN.one : Nat := 1\n")
+            pinned = root / "lean/DN/Pinned.lean"
+            pinned.write_text("import DN.Plain\nnotation \"probe_one\" => DN.one\n")
+            errors = structure.static_errors(root, {"lean/DN/Pinned.lean": sha256(pinned)})
+            self.assertIn("lean/DN/Pinned.lean: a file with syntax definitions imports DN.Plain, which is not one",
+                          errors)
 
     def test_check_reports_static_and_gate_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
