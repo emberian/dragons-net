@@ -20,6 +20,7 @@ from unittest import mock
 
 from gatekit import DN_COMPILER, ROOT, run, script
 
+analysis_cert = script("analysis_cert")
 entry_bench = script("entry_bench")
 fuzz_interp = script("fuzz_interp")
 fuzz_reduce = script("fuzz_reduce")
@@ -72,13 +73,15 @@ class Emitted(unittest.TestCase):
 
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator
-        prints for the programs as they are."""
-        for what, module in (("session", "lean/DN/Server/SessionCert.lean"),
-                             ("recover", "lean/DN/News/RecoverCert.lean")):
-            done = subprocess.run([str(DN_COMPILER), "analysis-cert", what], text=True, capture_output=True,
-                                  check=False, timeout=600)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertEqual(done.stdout, (ROOT / module).read_text(), f"{module} is stale: regenerate it")
+        prints for the programs as they are, and no others are left under them."""
+        for what in analysis_cert.MODULES:
+            with self.subTest(certificate=what):
+                printed = analysis_cert.printed(what)
+                self.assertEqual(sorted(printed), analysis_cert.present(what),
+                                 f"write them with scripts/analysis_cert.py {what}")
+                for path, text in printed.items():
+                    self.assertEqual(text, path.read_text(),
+                                     f"{path.relative_to(ROOT)} is stale: scripts/analysis_cert.py {what}")
 
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:

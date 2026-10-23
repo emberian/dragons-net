@@ -210,7 +210,7 @@ inductive PancakeExp
   | loadWord (addr : PancakeExp)              -- `Load One addr`
   | shiftR   (l r : PancakeExp)               -- `Shift Lsr l r` (logical, right)
   | shiftL   (l r : PancakeExp)               -- `Shift Lsl l r`
-deriving Repr
+deriving Repr, DecidableEq
 
 /-- The word `k`, as a constant. -/
 def PancakeExp.c (k : Nat) : PancakeExp := .const (BitVec.ofNat 64 k)
@@ -235,7 +235,7 @@ inductive PancakeProg
   | storeByte (dst src : PancakeExp)                            -- `StoreByte dst src`
   /-- `DecCall rt One f args cont`: `rt` bound to what the call of `f` returns, for `cont`. -/
   | decCall (rt : String) (f : String) (args : List PancakeExp) (cont : PancakeProg)
-deriving Repr
+deriving Repr, DecidableEq
 
 /-- panSem `('a,'ffi) state`, restricted to the fields the region subset reads.
 `locals` is the partial map `varname |-> v` (region uses only `Local`); `memory`

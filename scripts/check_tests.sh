@@ -25,22 +25,28 @@ checkers() {
 # Tests that run the built code, and the Rust crates, in groups that need nothing of each other.
 # CI runs each group as a job of its own; given no group, they run here DN_PARALLEL at a time, each
 # group's output kept in build/evidence and shown whole once it is done.
-TEST_GROUPS=(unit rust session models host runs)
+TEST_GROUPS=(unit audit rust session models host runs)
 group() {
   local module name
   tools "$1"
   case $1 in
     unit)
-      # Each module of tests on its own, so that a change reruns only the modules that read it. The
-      # tracer's own test runs untraced, since a traced process cannot trace another.
+      # Each module of tests on its own, so that a change reruns only the modules that read it, but
+      # the proof audit's: a group of its own, which CI runs beside the rest. The tracer's own test
+      # runs untraced, since a traced process cannot trace another.
       for module in $(git ls-files --cached --others --exclude-standard 'tests/test_*.py'); do
         name=$(basename "$module" .py)
-        if [[ $name == test_once ]]; then
+        if [[ $name == test_audit ]]; then
+          continue
+        elif [[ $name == test_once ]]; then
           python3 scripts/unit.py "$name"
         else
           once "unit-${name//_/-}" python3 scripts/unit.py "$name"
         fi
       done
+      ;;
+    audit)
+      once unit-test-audit python3 scripts/unit.py test_audit
       ;;
     rust)
       once clippy cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -96,7 +102,7 @@ group() {
 # installed one would read what it wrote, and so would run every time.
 tools() {
   case $1 in
-    unit) python3 scripts/bootstrap_tool.py lean4export && python3 scripts/bootstrap_tool.py nanoda ;;
+    audit) python3 scripts/bootstrap_tool.py lean4export && python3 scripts/bootstrap_tool.py nanoda ;;
     session) python3 scripts/wheels.py scripts/requirements-tests.txt ;;
     models) python3 scripts/bootstrap_tool.py abnfgen && python3 scripts/wheels.py scripts/requirements-tests.txt ;;
     host) python3 scripts/bootstrap_tool.py libfiu ;;

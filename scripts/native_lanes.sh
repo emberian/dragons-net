@@ -40,9 +40,19 @@ for name in "${chosen[@]}"; do script_of "$name"; done
 cake="${CAKE:-}"
 if [[ -z "$cake" ]]; then cake=$(python3 scripts/bootstrap_tool.py cake); fi
 mkdir -p build/evidence
+# The pinned tools a lane takes, put in place first and untraced: a lane that installed one would
+# read what it wrote, and so would run every time.
+tools() {
+  case $1 in
+    grammar) python3 scripts/bootstrap_tool.py abnfgen ;;
+    crash | faults) python3 scripts/bootstrap_tool.py libfiu ;;
+    power) python3 scripts/bootstrap_tool.py lazyfs && python3 scripts/bootstrap_tool.py libfiu ;;
+  esac >/dev/null
+}
 lane() {
   local name=$1 key
   script_of "$name"
+  tools "$name"
   run=(python3 "${script[@]}" --cake "$cake")
   if [[ ${DN_ONCE:-} == none ]]; then
     "${run[@]}" 2>&1 | tee "build/evidence/$name.log"

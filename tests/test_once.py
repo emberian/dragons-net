@@ -440,15 +440,17 @@ class Stages(unittest.TestCase):
                 shutil.copy(ROOT / "scripts" / name, tree / "scripts" / name)
             text = (ROOT / "scripts/check_tests.sh").read_text()
             body = text.partition("\ngroup() {")[2].partition("\n}\n")[0]
-            ran = re.findall(r"^\s*once [\w-]+ python3 (scripts/\w+\.py)", body, re.MULTILINE)
+            ran = re.findall(r"^\s*once [\w-]+ python3 (scripts/(?!unit\.py)\w+\.py)", body, re.MULTILINE)
+            # Modules of tests a group of their own runs.
+            apart = re.findall(r"^\s*once [\w-]+ python3 scripts/unit\.py (\w+)$", body, re.MULTILINE)
             for name in ran:
                 (tree / name).write_text("print('checked')\n")
             # What puts a group's tools in place, which here puts none.
             tools = text.partition("\ntools() {")[2].partition("\n}\n")[0]
             for name in set(re.findall(r"python3 (scripts/\w+\.py)", tools)):
                 (tree / name).write_text("")
-            for module in ("test_a.py", "test_once.py"):
-                (tree / "tests" / module).write_text("import unittest\n\n\nclass A(unittest.TestCase):\n"
+            for module in ("test_a", "test_once", *apart):
+                (tree / "tests" / f"{module}.py").write_text("import unittest\n\n\nclass A(unittest.TestCase):\n"
                                                      "    def test_a(self) -> None:\n        pass\n")
             (stubs / "cargo").write_text("#!/bin/sh\necho cargo \"$@\"\n")
             (stubs / "cargo").chmod(0o755)
@@ -467,11 +469,13 @@ class Stages(unittest.TestCase):
             self.assertNotIn("DN SKIP", first)
             self.assertEqual(first.count("checked"), len(ran))
             second = stage()
-            # The unit module, the five runs of cargo and the scripts; the tracer's own test runs always.
-            self.assertEqual(second.count("DN SKIP"), 1 + 5 + len(ran))
+            # The modules of tests, the five runs of cargo and the scripts; the tracer's own test runs
+            # always.
+            skipped = 1 + len(apart) + 5 + len(ran)
+            self.assertEqual(second.count("DN SKIP"), skipped)
             self.assertNotIn("checked", second)
             (tree / ran[0]).write_text("print('checked again')\n")
-            self.assertEqual(stage().count("DN SKIP"), 5 + len(ran))
+            self.assertEqual(stage().count("DN SKIP"), skipped - 1)
 
 
 class Documents(unittest.TestCase):

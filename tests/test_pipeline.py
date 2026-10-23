@@ -3,6 +3,7 @@
 from elsewhere, and the pinned tools; on disposable copies, never on the working tree."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -25,6 +26,26 @@ check_prose = script("check_prose")
 structure = script("check_structure")
 upstream_sources = script("check_upstream_sources")
 verify_run = script("verify_run")
+
+
+def taken_tools(sources: list[Path]) -> set[str]:
+    """The pinned tools, and the pinned wheels, that these sources install when they call for them;
+    libfiu also by a call of crash_check's `fiu()`, or of a function of it that calls that, which is
+    how the lanes that import it as `C` take it."""
+    crash = ast.parse((ROOT / "scripts/crash_check.py").read_text())
+    fiu = {"fiu"} | {f.name for f in crash.body if isinstance(f, ast.FunctionDef) and any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "fiu" for n in ast.walk(f))}
+    taken: set[str] = set()
+    for source in sources:
+        code = source.read_text()
+        taken.update(*re.findall(r'(?:pinned_tool|\btool)\("(\w+)"\)|bootstrap_tool\.py"\), "(\w+)"', code))
+        if re.search(r"lanes\.release_cake\(", code):
+            taken.add("cake")
+        if re.search(r"lanes\.pinned_python\(", code):
+            taken.add("wheels")
+        if set(re.findall(r"\bC\.(\w+)\(", code)) & fiu:
+            taken.add("libfiu")
+    return taken - {""}
 
 
 class CheckScript(unittest.TestCase):
@@ -161,7 +182,8 @@ class CheckScript(unittest.TestCase):
             stub(stubs, "lean4export", f'echo "lean4export $* $LEAN_SYSROOT {checker_env}" >> {log}\n'
                  'echo export\nexit "${FAIL_EXPORT:-0}"')
             stub(stubs, "nanoda", f'echo "nanoda $* $(cat)" >> {log}\nexit "${{FAIL_NANODA:-0}}"')
-            stub(toolchain, "leanchecker", f'echo "toolchain leanchecker $* {checker_env}" >> {log}')
+            stub(toolchain, "leanchecker",
+                 f'echo "toolchain leanchecker $* {checker_env} on $LEAN_NUM_THREADS" >> {log}')
             stub(toolchain, "lean", f'echo "toolchain lean $* {checker_env}" >> {log}\ncase "$*" in\n'
                  "  --print-prefix) echo /sysroot ;;\n  *--export-list*) printf 'M\\0--\\0N\\0' ;;\nesac")
             stub(stubs, "elan", f"echo {toolchain}/$2")
@@ -179,13 +201,13 @@ class CheckScript(unittest.TestCase):
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
                            f"python3 scripts/measured.py {toolchain}/leanchecker DN",
-                           f"toolchain leanchecker DN {checked}",
+                           f"toolchain leanchecker DN {checked} on 2",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
-                "tests": ["python3 scripts/bootstrap_tool.py lean4export", "python3 scripts/bootstrap_tool.py nanoda",
-                          "python3 scripts/unit.py test_a", "python3 scripts/unit.py test_once",
-                          "cargo clippy", "cargo clippy", "cargo clippy",
+                "tests": ["python3 scripts/unit.py test_a", "python3 scripts/unit.py test_once",
+                          "python3 scripts/bootstrap_tool.py lean4export", "python3 scripts/bootstrap_tool.py nanoda",
+                          "python3 scripts/unit.py test_audit", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
                           "python3 scripts/state_check.py",
                           "python3 scripts/wheels.py scripts/requirements-tests.txt",
@@ -232,7 +254,7 @@ class CheckScript(unittest.TestCase):
         """A check that installed a pinned tool or the pinned wheels would read what it wrote, and so would
         run every time: what the scripts a group names, or the modules of tests/, take themselves is put in
         place before them. A module they import is not followed: most import others for what they share
-        and never call their checks."""
+        and never call their checks. The unit group runs every module of tests/ that no other group runs."""
         text = (ROOT / "scripts/check_tests.sh").read_text()
         groups = re.search(r"^group\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
         tools = re.search(r"^tools\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
@@ -242,19 +264,37 @@ class CheckScript(unittest.TestCase):
         blocks = dict(re.findall(r"^    (\w+)\)\n(.*?)^      ;;$", groups.group(1), re.MULTILINE | re.DOTALL))
         [named] = re.findall(r"^TEST_GROUPS=\(([a-z ]+)\)$", text, re.MULTILINE)
         self.assertEqual(sorted(blocks), sorted(named.split()))
+        # The unit group runs each module of tests/ but those another group names, and skips no other.
+        apart = {module for name, block in blocks.items() if name != "unit"
+                 for module in re.findall(r"scripts/unit\.py (\w+)", block)}
+        skipped = set(re.findall(r"if \[\[ \$name == (\w+) \]\]; then\n\s*continue\n", blocks["unit"]))
+        self.assertEqual(skipped, apart)
+        self.assertLessEqual(apart, {path.stem for path in (ROOT / "tests").glob("test_*.py")})
         for name, block in blocks.items():
             with self.subTest(group=name):
-                sources = (sorted((ROOT / "tests").glob("test_*.py")) if name == "unit" else
-                           [ROOT / f"scripts/{script}.py" for script in re.findall(r"scripts/(\w+)\.py", block)])
-                taken: set[str] = set()
-                for source in sources:
-                    code = source.read_text()
-                    taken.update(*re.findall(r'(?:pinned_tool|\btool)\("(\w+)"\)|bootstrap_tool\.py"\), "(\w+)"', code))
-                    if re.search(r"lanes\.release_cake\(", code):
-                        taken.add("cake")
-                    if re.search(r"lanes\.pinned_python\(", code):
-                        taken.add("wheels")
-                self.assertEqual(taken - {""}, put.get(name, set()))
+                sources = ([path for path in sorted((ROOT / "tests").glob("test_*.py")) if path.stem not in apart]
+                           if name == "unit" else
+                           [ROOT / f"tests/{module}.py" for module in re.findall(r"scripts/unit\.py (\w+)", block)] +
+                           [ROOT / f"scripts/{script}.py" for script in re.findall(r"scripts/(\w+)\.py", block)
+                            if script != "unit"])
+                self.assertEqual(taken_tools(sources), put.get(name, set()))
+
+    def test_each_lane_has_its_tools_put_in_place_first(self) -> None:
+        """So with the native lanes: each one's tools are put in place before it, the compiler before
+        them all."""
+        text = (ROOT / "scripts/native_lanes.sh").read_text()
+        tools = re.search(r"^tools\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
+        assert tools is not None
+        put = {name: set(re.findall(r"bootstrap_tool\.py (\w+)", line))
+               for names, line in re.findall(r"^    ([\w |]+)\) (.*) ;;$", tools.group(1), re.MULTILINE)
+               for name in names.split(" | ")}
+        self.assertIn('\n  script_of "$name"\n  tools "$name"\n', text)
+        self.assertIn('cake=$(python3 scripts/bootstrap_tool.py cake)', text)
+        scripts = dict(re.findall(r"^    (\w+)\) script=\((scripts/\w+\.py)", text, re.MULTILINE))
+        self.assertTrue(scripts)
+        for name, source in scripts.items():
+            with self.subTest(lane=name):
+                self.assertEqual(taken_tools([ROOT / source]) - {"cake"}, put.get(name, set()))
 
     def test_ci_runs_the_stages_in_one_chain(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]
@@ -333,7 +373,7 @@ class CheckScript(unittest.TestCase):
         """Without names every lane runs in its order, but those that mount FUSE; with names only
         those, in the order named; a lane that fails stops the run with its status; a misspelt name is
         refused before any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not
-        run again on a tree it passed on."""
+        run again on a tree it passed on. A lane's tools are put in place before it."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
                    "accept_check.py": "accept",
@@ -346,8 +386,11 @@ class CheckScript(unittest.TestCase):
             (tree / "scripts").mkdir()
             shutil.copy(ROOT / "scripts/native_lanes.sh", tree / "scripts")
             shutil.copy(ROOT / "scripts/once.py", tree / "scripts")
+            put = tree / "put"
+            (tree / "scripts/bootstrap_tool.py").write_text(
+                f"import sys\nwith open({str(put)!r}, 'a') as f:\n    print(sys.argv[1], file=f)\n")
             subprocess.run(["git", "init", "-q", str(tree)], check=True)
-            (tree / ".gitignore").write_text("build/\nran\n")
+            (tree / ".gitignore").write_text("build/\nran\nput\n")
             for name, lane in scripts.items():
                 (tree / "scripts" / name).write_text(
                     f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
@@ -372,6 +415,7 @@ class CheckScript(unittest.TestCase):
                                               "faults --cake /pinned/cake",
                                               "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))
+            self.assertEqual(put.read_text().split(), ["abnfgen", "libfiu", "libfiu"])
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
                 if lane != "power":

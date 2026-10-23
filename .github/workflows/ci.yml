@@ -307,6 +307,7 @@ jobs:
       matrix:
         shard:
           - {name: unit, groups: unit}
+          - {name: audit, groups: audit}
           - {name: rust, groups: rust}
           - {name: session, groups: session}
           - {name: models, groups: models}
@@ -527,7 +528,8 @@ jobs:
         shard:
           - {name: nntp, lanes: nntp}
           - {name: session, lanes: session}
-          - {name: programs, lanes: framing grammar parser baseline}
+          - {name: framing, lanes: framing parser}
+          - {name: programs, lanes: grammar baseline}
           - {name: rest, lanes: fuzz accept crash faults entry server native}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

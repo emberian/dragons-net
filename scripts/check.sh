@@ -103,7 +103,9 @@ proofs() {
   local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
   python3 scripts/check_structure.py outputs
   if [[ $part != nanoda ]]; then
-    python3 scripts/measured.py "$leanchecker" DN
+    # On two threads: on four it checks the modules of a certificate side by side, which took it to
+    # 15.5 GB here, next to all of a CI runner's 16; on two, 8.9 GB.
+    LEAN_NUM_THREADS=2 python3 scripts/measured.py "$leanchecker" DN
   fi
   if [[ $part != leanchecker ]]; then
     # The independent kernel checks the library's declarations and everything they use.
