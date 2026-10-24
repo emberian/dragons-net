@@ -19,7 +19,7 @@ fi
 # A check that passed on the inputs it read is not run again (scripts/once.py); check.sh and
 # native_lanes.sh do the same for each of theirs. The documents are held last to what the checks
 # measured on their last passes, so that a change to them alone runs no check again.
-python3 scripts/once.py run lint -- bash scripts/lint.sh
+bash scripts/lint.sh
 bash scripts/check.sh
 python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom
 bash scripts/native_lanes.sh

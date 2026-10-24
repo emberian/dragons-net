@@ -12,7 +12,7 @@ bash scripts/check_all.sh
 
 It fails if any lane fails and skips nothing on an unsupported host; `scripts/check.sh` is the baseline without the native lanes and `scripts/lint.sh` the static checks.
 
-The native lanes are listed once, in `scripts/native_lanes.sh` (`bash scripts/native_lanes.sh parser` runs only the ones named). CI runs them after lint and a build without network, in shards beside the proofs, the tests' groups and LazyFS; `check_all.sh` runs three lanes or groups at a time (`DN_PARALLEL`); the nightly run starts each lane alone.
+The native lanes are listed once, in `scripts/native_lanes.sh` (`bash scripts/native_lanes.sh parser` runs only the ones named). CI runs each on a machine of its own after lint and a build without network, beside the proofs, the tests' groups and LazyFS; `check_all.sh` runs three lanes or groups at a time (`DN_PARALLEL`).
 
 Each lane writes `build/<lane>/report.json` with the platform, the digests of the compiler, `dn-compiler` and the host sources and its time, removes its last report before it starts, and says why it refuses in one line starting with `DN`.
 
@@ -23,6 +23,10 @@ A run of git in the repository that only reads, in the same environment, counts 
 What the checks require of the documents is kept with their stamps and held by `scripts/check_documents.py`, so a change to the documents alone runs no check again.
 
 In CI an artifact keyed by the job's inputs is seen across branches (`scripts/prior_pass.py`), so the run on `main` after a merge says `DN SKIP`; only runs of this repository's branches count, trusted as its writers are. The checks' stamps keep a pass in each of the last three runner environments and come from the branch's own runs or `main`'s.
+
+Each linter is a check of its own, and each commit is read for secrets once. A pull request's next run waits for the one in progress instead of cancelling it. A nightly job whose inputs are the repository's alone runs once per key, on CI's build; advisories, the network's answers and new seeds run every night.
+
+A writer who ran every check on a tree notes it on the commit (`refs/notes/checked`, `CHECKED` in `scripts/verify_run.py`), which only a writer can push. CI then runs none of them again, and `verify` accepts the skipped jobs. Each night `checks` runs on `main` by itself.
 
 `python3 scripts/native_fuzz.py --cake "$(python3 scripts/bootstrap_tool.py cake)" --seed N --count C --vectors V` runs the generated lane larger, as the nightly run does with 5,000 programs from a seed of the date, reducing a disagreement to `build/fuzz/minimized/`; `--bootstrapped` uses the compiler built from the patched source.
 

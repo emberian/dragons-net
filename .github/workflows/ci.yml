@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The run on its own: the default branch each night, before the nightly jobs that take its build,
+  # and any branch by hand. Neither takes a note of a tree checked before the push (the job checked).
+  schedule:
+    - cron: "17 1 * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -11,10 +15,12 @@ defaults:
   run:
     shell: bash
 
-# Only superseded pull request runs are cancelled; every push to main is checked.
+# A pull request's next run waits for the one in progress rather than cancel it: what that one
+# passes it records, and the next takes up, where a run cut short would be run again. Every push to
+# main is checked.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   PYTHONSAFEPATH: "1"
@@ -27,7 +33,44 @@ env:
 # them cannot alter what they check; nor can they record a pass, which counts only where GitHub says
 # the step recording it passed (scripts/prior_pass.py).
 jobs:
+  # A writer of this repository who ran every check on a tree before the push leaves a note on the
+  # commit in refs/notes/checked, which only a writer can push; the jobs after this one then do not
+  # run them again (scripts/verify_run.py, CHECKED).
+  checked:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tree: ${{ steps.note.outputs.tree }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pushed commit and its parents: a merge into main carries the tree of the one merged.
+          fetch-depth: 2
+      - name: The note on the tree
+        id: note
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          if ! git fetch --quiet --depth=1 origin refs/notes/checked:refs/notes/checked; then exit 0; fi
+          shas=("$HEAD_SHA")
+          if second=$(git rev-parse --verify --quiet 'HEAD^2'); then shas+=("$second"); fi
+          for sha in "${shas[@]}"; do
+            note=$(git notes --ref=checked show "$sha" 2>/dev/null) || continue
+            if [[ "$note" == "tree $tree passed scripts/check_all.sh, the LazyFS lane and the power lane" ]]; then
+              echo "DN SKIP checks: the tree $tree passed them before the push (refs/notes/checked)"
+              echo "tree=$tree" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
   lint:
+    needs: checked
+    if: needs.checked.outputs.tree == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -62,11 +105,50 @@ jobs:
             echo 'the shell does not propagate a failing pipeline' >&2
             exit 1
           fi
+      - name: Strace, which records what a check reads
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends strace
+      # Each linter that passed on the inputs it read is not run again (scripts/once.py): the stamps of
+      # the last run of this branch or the default one to record them are taken up.
+      - name: The checks' last passes
+        id: stamps
+        if: steps.passed.outputs.run-id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWN: ${{ github.head_ref || github.ref_name }}
+          MAIN: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/prior_pass.py checks-lint --branch "$OWN" --branch "$MAIN" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == '' && steps.stamps.outputs.run-id != ''
+        with:
+          name: checks-lint
+          path: build/stamps
+          run-id: ${{ steps.stamps.outputs.run-id }}
+          github-token: ${{ github.token }}
+      # A push to main names the commits it brings, and a pull request's are those after the default
+      # branch; the nightly run reads every commit, each once.
       - name: Lint
         if: steps.passed.outputs.run-id == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          DN_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DN_COMMITS_FROM: >-
+            ${{ github.event_name == 'push' && github.event.before || github.event_name == 'schedule' && 'all' || '' }}
         run: bash scripts/lint.sh
+      # Kept even when a linter failed: a stamp records only a check that passed.
+      - name: Record checks-lint
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.passed.outputs.run-id == ''
+        with:
+          name: checks-lint
+          path: |
+            build/stamps/*.json
+            !build/stamps/hashes.json
+          if-no-files-found: ignore
+          # Lint asks the network too, whose answers change: a week, not months.
+          retention-days: 7
       # Recorded only once every step above has passed; artifacts are seen across branches, so the
       # run on main after a merge finds it too (scripts/prior_pass.py).
       - name: The time of the pass
@@ -253,8 +335,8 @@ jobs:
 
   # The pass recorded once both kernels have passed.
   proofs:
-    needs: kernels
-    if: ${{ !cancelled() }}
+    needs: [kernels, checked]
+    if: ${{ !cancelled() && needs.checked.outputs.tree == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -425,8 +507,8 @@ jobs:
   # The shards' stamps over those of the last run, kept for the next; the pass recorded once every
   # shard has passed.
   test:
-    needs: tests
-    if: ${{ !cancelled() }}
+    needs: [tests, checked]
+    if: ${{ !cancelled() && needs.checked.outputs.tree == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -514,7 +596,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  # The native lanes in shards, each a job of its own.
+  # The native lanes, each alone on a machine of its own: a lane that leaned on what another left in
+  # build/ would fail here.
   lanes:
     needs: build
     runs-on: ubuntu-24.04
@@ -528,9 +611,17 @@ jobs:
         shard:
           - {name: nntp, lanes: nntp}
           - {name: session, lanes: session}
-          - {name: framing, lanes: framing parser}
-          - {name: programs, lanes: grammar baseline}
-          - {name: rest, lanes: fuzz accept crash faults entry server native}
+          - {name: parser, lanes: parser}
+          - {name: framing, lanes: framing}
+          - {name: grammar, lanes: grammar}
+          - {name: baseline, lanes: baseline}
+          - {name: fuzz, lanes: fuzz}
+          - {name: accept, lanes: accept}
+          - {name: crash, lanes: crash}
+          - {name: faults, lanes: faults}
+          - {name: entry, lanes: entry}
+          - {name: server, lanes: server}
+          - {name: native, lanes: native}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -682,8 +773,8 @@ jobs:
   # The shards' stamps over those of the last run, kept for the next; the pass recorded once every
   # shard has passed.
   native:
-    needs: lanes
-    if: ${{ !cancelled() }}
+    needs: [lanes, checked]
+    if: ${{ !cancelled() && needs.checked.outputs.tree == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

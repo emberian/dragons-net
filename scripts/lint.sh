@@ -7,6 +7,24 @@ set -euo pipefail
 # names there instead.
 export PYTHONSAFEPATH=1
 
+# A check that passed on the inputs it read is not run again (scripts/once.py); DN_ONCE=none runs it
+# untraced. Each linter is a check of its own, so that a change runs again only those that read it.
+once() {
+  local name=$1
+  shift
+  if [[ ${DN_ONCE:-} == none ]]; then "$@"; else python3 scripts/once.py run "$name" -- "$@"; fi
+}
+
+# The files git tracks that the pathspecs after the first word name, into the array it names.
+tracked() {
+  local -n into=$1
+  shift
+  mkdir -p build
+  git ls-files -z "$@" >build/lint-files
+  # shellcheck disable=SC2034 # the caller's array
+  mapfile -d '' -t into <build/lint-files
+}
+
 # Checks that need no build: workflows, shell, Python, Rust formatting, secrets, and the
 # spelling and whitespace of documentation. Every tool is pinned by digest in
 # tools.lock.json or scripts/requirements-lint.txt.
@@ -38,45 +56,70 @@ main() {
   local sources=(':!:migration/**' ':!:rfcs/**' ':!:tests/corpus/inn-articles/**'
     ':!:tests/corpus/siphash/**')
 
-  "$actionlint" -shellcheck "$shellcheck"
-  # Online audits, such as impostor commits, need a token; offline ones always run.
+  local shells docs files prose commit
+  tracked shells '*.sh' "${sources[@]}"
+  tracked docs '*.md' "${sources[@]}"
+  tracked files "${sources[@]}"
+  # Prose stays short. Decisions and reviews are records, kept as written; the files after them have
+  # not been brought to the limits yet, and leave this list once they are.
+  tracked prose '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/' ':!:AGENTS.md' \
+    ':!:CONTRIBUTING.md' ':!:SECURITY.md' ':!:backend/README.md' ':!:docs/architecture.md' ':!:docs/echo.md' \
+    ':!:docs/handoff.md' ':!:docs/nntp.md' ':!:docs/pancake-semantics.md' ':!:docs/porting-risks.md' \
+    ':!:docs/project.md' ':!:models/README.md'
+
+  once lint-actionlint "$actionlint" -shellcheck "$shellcheck"
+  # Online audits, such as impostor commits, need a token; offline ones always run. The answers of
+  # the network change with nothing here changed: the nightly run asks them again.
   local online=(--offline)
   [[ -z ${GH_TOKEN:-} ]] || online=()
-  "$zizmor" "${online[@]}" .github/workflows
+  once lint-zizmor "$zizmor" "${online[@]}" .github/workflows
   # The optional checks are the ones that matter for scripts whose correctness rests on
   # `set -euo pipefail`: a command whose failure is masked, or an exit status swallowed by the
   # assignment it is written into, turns a failed check into a passing one.
-  git ls-files -z '*.sh' "${sources[@]}" | xargs -0 "$shellcheck" \
+  once lint-shellcheck "$shellcheck" \
     --enable=check-set-e-suppressed,check-extra-masked-returns,quote-safe-variables \
-    --enable=avoid-nullary-conditions,check-unassigned-uppercase
-  "$venv/bin/ruff" check scripts tests
+    --enable=avoid-nullary-conditions,check-unassigned-uppercase "${shells[@]}"
+  # Without caches: a check that read what it wrote would run every time (scripts/once.py).
+  once lint-ruff "$venv/bin/ruff" check --no-cache scripts tests
   # A checker that cannot fire, a comparison that is always false and a name that may be unbound
   # all read as "this passed" from the outside, so they are errors here.
-  "$venv/bin/mypy" --strict --python-version 3.12 --warn-unreachable --strict-equality \
+  once lint-mypy "$venv/bin/mypy" --strict --python-version 3.12 --warn-unreachable --strict-equality \
     --enable-error-code redundant-expr --enable-error-code possibly-undefined \
     --enable-error-code truthy-bool --enable-error-code ignore-without-code \
-    scripts tests
-  "$gitleaks" git --no-banner --redact --log-level warn .
-  git ls-files -z '*.md' "${sources[@]}" | xargs -0 "$typos"
-  git ls-files -z "${sources[@]}" | xargs -0 "$editorconfig"
-  # Prose stays short. Decisions and reviews are records, kept as written; the files after them have
-  # not been brought to the limits yet, and leave this list once they are.
-  git ls-files -z '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/' ':!:AGENTS.md' \
-    ':!:CONTRIBUTING.md' ':!:SECURITY.md' ':!:backend/README.md' ':!:docs/architecture.md' ':!:docs/echo.md' \
-    ':!:docs/handoff.md' ':!:docs/nntp.md' ':!:docs/pancake-semantics.md' ':!:docs/porting-risks.md' \
-    ':!:docs/project.md' ':!:models/README.md' | xargs -0 python3 -P scripts/check_prose.py
+    --cache-dir=/dev/null scripts tests
+  # Each commit once: those the default branch has were read before they reached it, a push to it
+  # names those it brings, and `all` is every one (DN_COMMITS_FROM). A merge adds nothing git log shows.
+  local default=origin/${DN_DEFAULT_BRANCH:-main} from=${DN_COMMITS_FROM:-} range commits
+  git rev-parse -q --verify "$default^{commit}" >/dev/null || default=${default#origin/}
+  if [[ $from == all ]]; then
+    range=HEAD
+  else
+    if [[ -z $from ]] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then from=$(git merge-base HEAD "$default"); fi
+    range=$from..HEAD
+  fi
+  commits=$(git rev-list --no-merges "$range")
+  for commit in $commits; do
+    once "lint-gitleaks-$commit" "$gitleaks" git --no-banner --redact --log-level warn --log-opts="$commit^!" .
+  done
+  once lint-typos "$typos" "${docs[@]}"
+  once lint-editorconfig "$editorconfig" "${files[@]}"
+  once lint-prose python3 -P scripts/check_prose.py "${prose[@]}"
   # Cargo here keeps a cache of its own: the build rewrites the shared one under other flags, which
   # would change what this read and run it again (scripts/once.py).
   local -x CARGO_TARGET_DIR=build/lint-target
-  cargo fmt --all -- --check
-  cargo fmt --manifest-path models/Cargo.toml --all -- --check
-  "$deny" --locked check
-  "$deny" --locked --manifest-path models/Cargo.toml check
+  once lint-fmt cargo fmt --all -- --check
+  once lint-fmt-models cargo fmt --manifest-path models/Cargo.toml --all -- --check
+  # The advisories are fetched first, untraced: a check that wrote what it read would run every time.
+  # New ones make it run again.
+  "$deny" --locked fetch
+  "$deny" --locked --manifest-path models/Cargo.toml fetch
+  once lint-deny "$deny" --locked --offline check
+  once lint-deny-models "$deny" --locked --offline --manifest-path models/Cargo.toml check
   # A dependency nobody uses is a dependency nobody reads, and it still ships its advisories.
   # It reports `[dependencies]` only — dev and target-scoped entries are invisible to it, and
   # every dependency here is one of those today, so this guards what gets added next. Our
   # crates only: the preserved snapshot carries manifests of its own and is not built here.
-  "$machete" crates models
+  once lint-machete "$machete" crates models
   echo 'DN LINT: PASS'
 }
 
