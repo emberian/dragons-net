@@ -78,9 +78,13 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "refused-reserves", "stop-spares-flight", "commit-after-stop", "wait-through-stop", "lowest-first",
            "ninth-read", "lines-unchecked", "crc-unchecked", "longer-served", "no-xref", "status-early",
            "read-lowest-first", "idle-while-fetching", "read-while-fetching", "end-unsought", "header-unchecked",
-           "jobs-shared", "left-open")
-# Those of reading, tried on the scenarios that read first.
-READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):]
+           "jobs-shared", "left-open", "group-keeps-current", "empty-keeps-current", "unknown-deselects",
+           "number-keeps-current", "id-moves", "next-inclusive", "last-inclusive", "move-stays", "number-any-group",
+           "group-caseless", "number-without-group", "utf8-unchecked", "group-name-unchecked", "unread-moves")
+# Those of reading, tried on the scenarios that read first, and those of the selected group, on the
+# scenarios that select one.
+READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):MUTANTS.index("group-keeps-current")]
+GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -1106,6 +1110,57 @@ def read_scenarios() -> Iterator[PostScenario]:
         Spool(GROUPS, image=TWO)
 
 
+# A spool of articles in three groups, one of them empty: numbers with a hole, and two crossposts.
+READER_GROUPS = [b"local.test", b"local.other", b"local.empty"]
+READER_SPOOL = spool_holding([(stored(b"one"), [(b"local.test", 1)]),
+                              (stored(b"two"), [(b"local.test", 2), (b"local.other", 5)]),
+                              (stored(b"four"), [(b"local.test", 4)]),
+                              (stored(b"six"), [(b"local.other", 6), (b"local.test", 6)])])
+
+
+def group_scenarios() -> Iterator[PostScenario]:
+    yield "a group's articles walked", [
+        reader("GROUP local.test", "ARTICLE", "STAT", "NEXT", "NEXT", "NEXT", "NEXT", "LAST", "STAT 3", "STAT",
+               "ARTICLE 4", "HEAD", "BODY 2", "LAST", "LAST", "STAT 0005", "STAT <3@old.example>", "STAT", "STAT 2",
+               "NEXT", "STAT 4",
+               "GROUP local.test", "STAT", "GROUP local.other", "ARTICLE", "NEXT", "HEAD 2147483647")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "no group selected, and an unknown one", [
+        reader("STAT 1", "ARTICLE", "NEXT", "LAST", "HEAD 2", "BODY", "GROUP local.none", "STAT", "GROUP local.test",
+               "STAT 2", "GROUP local.none", "STAT", "NEXT", "ARTICLE <1@old.example>", "STAT")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "an empty group", [
+        reader("GROUP local.test", "STAT 2", "GROUP local.empty", "STAT", "NEXT", "LAST", "ARTICLE 1", "HEAD",
+               "GROUP local.other", "STAT")], Spool(READER_GROUPS, image=READER_SPOOL)
+    names = (b"GROUP", b"GROUP a b", b"GROUP local*", b"GROUP local.test,local.other", b"GROUP LOCAL.TEST",
+             b"group local.test", b"GROUP local.\xc3\xa9t\xc3\xa9", b"GROUP local.\xc3", b"GROUP local.\xed\xa0\x80",
+             b"GROUP local.\xe2\x82\xac", b"GROUP " + b"a" * 65, b"GROUP !local", b"NEXT 1", b"LAST x",
+             b"STAT 2147483648", b"STAT 2147483647", b"QUIT")
+    yield "group names and arguments", [Client(1, [(5, b"".join(line + b"\r\n" for line in names))])], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "a group with no article at all", [reader("GROUP local.test", "STAT", "NEXT", "ARTICLE 1")], \
+        Spool(READER_GROUPS)
+    posted = article(*BASIC, "Message-ID: <new@x.example>")
+    yield "a group as an article is posted to it", [
+        Client(1, [(5, ascii_lines("GROUP local.test", "STAT 6", "NEXT")),
+                   (3_000, ascii_lines("NEXT", "STAT", "GROUP local.test", "LAST", "QUIT"))]),
+        poster(at=10, sent=posted)], Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "an empty group an article is posted to", [
+        Client(1, [(5, ascii_lines("GROUP local.empty", "next")),
+                   (3_000, ascii_lines("next", "stat", "group local.empty", "last", "QUIT"))]),
+        poster(at=10, sent=article("From: a@b.example", "Newsgroups: local.empty", "Subject: hi"))], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    longest = b"local." + b"g" * 58
+    sent = b"GROUP " + longest + b"\r\nGROUP " + longest + b"g\r\nQUIT\r\n"
+    yield "names of 64 and 65 octets", [Client(1, [(5, sent)])], Spool([longest, longest[:-1]])
+    yield "an article by number that cannot be read", [
+        reader("GROUP local.test", "ARTICLE 4", "STAT", "HEAD 2", "STAT")], \
+        Spool(READER_GROUPS, image=READER_SPOOL, failures=[Failure("open")])
+    yield "groups of two readers apart", [
+        reader("GROUP local.other", "NEXT", "ARTICLE"), reader("GROUP local.test", "STAT 4", "BODY", at=6)], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+
+
 def read_breaches() -> Iterator[tuple[str, list[str], int]]:
     """Scripts with a store in which a host reports a read, or a file opened at a place still in use,
     as it may not: code 14."""
@@ -1405,6 +1460,9 @@ def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario]
     if mutant in READ_MUTANTS:
         reads = {name for name, _, _ in read_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in reads)
+    if mutant in GROUP_MUTANTS:
+        selects = {name for name, _, _ in group_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in selects)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1435,7 +1493,7 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}

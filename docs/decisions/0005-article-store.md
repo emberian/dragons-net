@@ -338,9 +338,16 @@ counting the lines it could not.
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
 - ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
-  number 0, or 430), and 412 to a number or, ARTICLE and BODY, to no argument, since GROUP is not
-  implemented. READER is not advertised until the reader commands are (#18). HELP lists ARTICLE,
-  BODY and POST.
+  number 0, or 430). READER is not advertised until the reader commands are (#18). HELP lists
+  ARTICLE, BODY and POST.
+- GROUP selects a group the store carries and makes its first article current: 211 with the count
+  of its articles and their lowest and highest numbers, an empty group's 1 and 0; else 411 (RFC
+  3977 §6.1, §6.2). By number the four find the article in the selected group and make it current
+  once they answer it, not after a 403; else 423. With no argument they take the current article,
+  or answer 420. NEXT and LAST move
+  to the nearest article above or below it (223), or answer 421 and 422. With no group selected,
+  412. The specification has these; the program answers GROUP, NEXT and LAST 500 and a number 412
+  still.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested

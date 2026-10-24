@@ -52,7 +52,9 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .ignore => 0 | .capabilities => 1 | .help => 2 | .quit => 3 | .noGroup => 4
   | .noSuchId => 5 | .unknown => 6 | .syntax => 7 | .post => 8 | .posted => 9 | .failed => 10
   | .notPermitted => 11 | .unavailable => 12 | .capabilitiesPost => 13 | .helpPost => 14
-  | .lookup .. => 17 | .stat _ => 18 | .unreadable => 19
+  | .lookup .. => 17 | .stat .. => 18 | .unreadable => 19 | .select _ => 20 | .byNumber .. => 21
+  | .current _ => 22 | .move _ => 23 | .selected .. => 24 | .noSuchGroup => 25 | .noCurrent => 26
+  | .noNext => 27 | .noPrevious => 28 | .noNumber => 29
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15
@@ -154,7 +156,7 @@ def connText : PFun :=
        appendSource, appendText tBlockEnd],
      text (replyCode .helpPost) [appendText tHelpPostHead, appendRevision, appendText tHelpMid,
        appendSource, appendText tBlockEnd],
-     text (replyCode (.stat [])) [appendText tStat, appendId, appendText tCrlf]] ++
+     text (replyCode (.stat 0 [])) [appendText tStat, appendId, appendText tCrlf]] ++
     ([(.quit, tQuit), (.noGroup, tNoGroup), (.noSuchId, tNoSuchId), (.unknown, tUnknown),
       (.syntax, tSyntax), (.post, tPost), (.posted, tPosted), (.failed, tFailed),
       (.notPermitted, tNotPermitted), (.unavailable, tUnavailable), (.unreadable, tUnreadable)].map
@@ -280,7 +282,7 @@ def classify : List PStmt :=
                         [.ite (v "ok") [reply .noGroup]
                           (messageIdCheck ++
                            [.ite (v "ok")
-                             [.ite hasStore [reply (.lookup .head [])] [reply .noSuchId]]
+                             [.ite hasStore [reply (.lookup .head 0 [])] [reply .noSuchId]]
                              [reply .syntax]])])
                        [reply .syntax]]]]]]]]])]
 
@@ -296,13 +298,13 @@ def resolve : List PStmt :=
    ifs (isReply .post)
      [.ite (eEq (fld "cb" cGreeted) (n 0)) [reply .notPermitted]
        [ifs (eEq (ownW ownAccepting) (n 0)) [reply .unavailable]]],
-   ifs (isReply (.lookup .head []))
+   ifs (isReply (.lookup .head 0 []))
      ([keptIn (v "l1") 250, .store (at_ (ownOff + ownIdLen)) (v "l1"), .dec "ij" (n 0),
        .while (eLt (v "ij") (v "l1"))
          [.storeb (eAdd (at_ (ownOff + ownId)) (v "ij")) (kept (eAdd (v "s1") (v "ij"))), inc "ij"]] ++
       callS "fi" "idFind" [v "l1"] ++
       [.ite (eEq found (n 0)) [reply .noSuchId]
-        [.ite (eEq (v "cmd") (n 5)) [reply (.stat [])]
+        [.ite (eEq (v "cmd") (n 5)) [reply (.stat 0 [])]
           [.assign "wci" (eSub found (n 1)), .assign "wc" (n 2),
            ifs (eEq (v "cmd") (n 7)) [.assign "wc" (n 1)], ifs (eEq (v "cmd") (n 8)) [.assign "wc" (n 3)]]]])]
 
@@ -1062,6 +1064,6 @@ def regression_967 : Bool :=
    (SessionStore.tXref, News.CommandSpec.ascii "Xref: "),
    (SessionStore.tDot, News.CommandSpec.ascii ".\r\n")].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
-    (texts[SessionStore.tStatus + j]?).map (· ++ News.CommandSpec.crlf) == some (News.CommandSpec.found c [])
+    (texts[SessionStore.tStatus + j]?).map (· ++ News.CommandSpec.crlf) == some (News.CommandSpec.found c 0 [])
 
 end DN.Server.Session

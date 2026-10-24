@@ -36,7 +36,7 @@ Acceptance: a real loopback connection; input split at arbitrary byte boundaries
 
 Follow [the NNTP plan](nntp.md). The first slice is built: greeting, capability discovery, HELP, QUIT, HEAD and STAT against an empty store, and error handling, run in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)) behind a reference `poll` host ([decision 0003](decisions/0003-nntp-slice.md), [details](baseline.md#nntp-server)), without claiming READER support.
 
-The durable store (#17, [decision 0005](decisions/0005-article-store.md)) is recovered at start and takes POST from the networks `--post-from` names, loopback by default; reading by Message-ID comes next. Advertise a capability only once its behaviour is implemented and tested: POST is.
+The durable store (#17, [decision 0005](decisions/0005-article-store.md)) is recovered at start, takes POST from the networks `--post-from` names, loopback by default, and serves ARTICLE, HEAD, BODY and STAT by message-id; the reader commands come next (#18). Advertise a capability only once its behaviour is implemented and tested: POST is.
 
 Acceptance: transcript tests against an independent client, command/article framing under arbitrary chunk splits, dot transparency, bounded input, stable Message-ID deduplication, crosspost indexing, and crash/restart tests around article acceptance. A POST success response needs a specified durability point.
 

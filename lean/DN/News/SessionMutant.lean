@@ -129,6 +129,34 @@ inductive Mutant
   | jobsShared
   /-- a file a failed read or a connection gone leaves open never closed -/
   | leftOpen
+  /-- GROUP leaves the current article as it was -/
+  | groupKeepsCurrent
+  /-- GROUP of an empty group leaves the current article as it was -/
+  | emptyKeepsCurrent
+  /-- a GROUP answered 411 leaves no group selected -/
+  | unknownDeselects
+  /-- an article found by number not made current -/
+  | numberKeepsCurrent
+  /-- an article found by message-id made current when the selected group holds it -/
+  | idMoves
+  /-- NEXT may stay on the current article -/
+  | nextInclusive
+  /-- LAST may stay on the current article -/
+  | lastInclusive
+  /-- NEXT and LAST answer without moving -/
+  | moveStays
+  /-- a number found in another group when the selected one lacks it -/
+  | numberAnyGroup
+  /-- groups named without regard to case -/
+  | groupCaseless
+  /-- a number with no group selected answered 423 -/
+  | numberWithoutGroup
+  /-- octets past US-ASCII taken in a group's name whatever they are -/
+  | utf8Unchecked
+  /-- a group's name of any bytes -/
+  | groupNameUnchecked
+  /-- an article to be read by its number made current before the read answers, so after a 403 -/
+  | unreadMoves
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -158,7 +186,13 @@ def names : List (String × Mutant) :=
    ("status-early", .statusEarly), ("read-lowest-first", .readLowestFirst),
    ("idle-while-fetching", .idleWhileFetching), ("read-while-fetching", .readWhileFetching),
    ("end-unsought", .endUnsought), ("header-unchecked", .headerUnchecked), ("jobs-shared", .jobsShared),
-   ("left-open", .leftOpen)]
+   ("left-open", .leftOpen), ("group-keeps-current", .groupKeepsCurrent),
+   ("empty-keeps-current", .emptyKeepsCurrent), ("unknown-deselects", .unknownDeselects),
+   ("number-keeps-current", .numberKeepsCurrent), ("id-moves", .idMoves),
+   ("next-inclusive", .nextInclusive), ("last-inclusive", .lastInclusive), ("move-stays", .moveStays),
+   ("number-any-group", .numberAnyGroup), ("group-caseless", .groupCaseless),
+   ("number-without-group", .numberWithoutGroup), ("utf8-unchecked", .utf8Unchecked),
+   ("group-name-unchecked", .groupNameUnchecked), ("unread-moves", .unreadMoves)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -256,16 +290,72 @@ def waitLineM (m : Mutant) (now : Nat) (c : Conn) : Conn :=
     if c.lineDue == 0 then { c with lineDue := now + lineTime } else c
   else { c with lineDue := 0 }
 
+/-- A GROUP's name taken without its check, or with octets past US-ASCII unchecked. -/
+def replyInM (m : Mutant) (offered : Bool) (l : Line) : Reply :=
+  match replyIn offered l, words l.kept with
+  | .syntax, [w, g] =>
+    if offered && l.kind == .command && commandIn offered w == some .group && !g.isEmpty &&
+        (m = .groupNameUnchecked || (m = .utf8Unchecked && g.all fun b => 128 ≤ b.toNat || isExactAscii b))
+    then (if g.length ≤ groupNameMax then .select g else .noSuchGroup)
+    else .syntax
+  | r, _ => r
+
 def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
     if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
     else .capabilities
-  | .help => if p.offered then .helpPost else .help
   | .post =>
     if !c.greeted && !(m = .postUnpermitted && p.offered) then .notPermitted
     else if !p.accepting && m != .postAfterStop then .unavailable else .post
-  | .lookup k id => if !p.ids.contains id then .noSuchId else if k = .stat then .stat id else .lookup k id
-  | r => r
+  | .select g =>
+    if m = .groupCaseless then
+      match p.groups.find? (·.map upper == g.map upper) with
+      | some g' => summary p.held g'
+      | none => .noSuchGroup
+    else resolve p c (.select g)
+  | .byNumber k n =>
+    if m = .numberWithoutGroup && c.group.isNone then .noNumber
+    else if m = .numberAnyGroup then
+      match c.group with
+      | none => .noGroup
+      | some g =>
+        (((atNumber p.held g n).orElse fun _ => p.groups.findSome? fun g' => atNumber p.held g' n).map
+          (foundAs k)).getD .noNumber
+    else resolve p c (.byNumber k n)
+  | .move fwd =>
+    if (m = .nextInclusive && fwd) || (m = .lastInclusive && !fwd) then
+      match c.group with
+      | none => .noGroup
+      | some g =>
+        if c.current = 0 then .noCurrent
+        else (((if fwd then nextAfter p.held g (c.current - 1) else prevBefore p.held g (c.current + 1))).map
+          fun (n, id) => .stat n id).getD (if fwd then .noNext else .noPrevious)
+    else resolve p c (.move fwd)
+  | r => resolve p c r
+
+/-- The selected group and the current article after a reply, as `Reply.groupAfter` and
+`Reply.currentAfter` have them, but for the mutant's rule. -/
+def groupAfterM (m : Mutant) (r : Reply) (g : Option (List Byte)) : Option (List Byte) :=
+  if m = .unknownDeselects && r = .noSuchGroup then none else r.groupAfter g
+
+def currentAfterM (m : Mutant) (p : Posting) (c : Conn) (asked r : Reply) : Nat :=
+  match r with
+  | .selected count _ _ _ =>
+    if m = .groupKeepsCurrent || (m = .emptyKeepsCurrent && count = 0) then c.current
+    else r.currentAfter c.current
+  | .noSuchGroup => if m = .unknownDeselects then 0 else c.current
+  | .stat n id | .lookup _ n id =>
+    let byNumber := match asked with | .byNumber .. => true | _ => false
+    let moved := match asked with | .move _ => true | _ => false
+    let read := match r with | .lookup .. => true | _ => false
+    if (m = .numberKeepsCurrent && byNumber) || (m = .moveStays && moved) then c.current
+    else if m = .idMoves && n = 0 then
+      match c.group with
+      | some g => (((numbered p.held g).find? (·.2 == id)).map (·.1)).getD c.current
+      | none => c.current
+    else if m = .unreadMoves && read && n != 0 then n
+    else r.currentAfter c.current
+  | _ => r.currentAfter c.current
 
 def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
   | 0, c => c
@@ -277,7 +367,8 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
       match v with
       | none => c1
       | some l =>
-        match resolveM m p c (replyIn p.offered l) with
+        let asked := replyInM m p.offered l
+        match resolveM m p c asked with
         | .ignore =>
           serveM m i p now fuel
             (if m = .blankCounts then { c1 with first := 0, idle := now + inactivity } else c1)
@@ -286,11 +377,14 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
           else if r = .post then
             if m = .waitDeadlines then { c1 with waiting := true }
             else { c1 with waiting := true, first := 0, idle := 0 }
-          else if let .lookup k id := r then
-            serveM m i p now fuel { c1 with want := some (k, id), first := 0, idle := 0 }
+          else if let .lookup k n id := r then
+            serveM m i p now fuel
+              { c1 with want := some (k, n, id), first := 0, idle := 0,
+                        current := currentAfterM m p c1 asked (.lookup k n id) }
           else
             let first := if m = .firstNotCleared then c1.first else 0
-            let c2 := { c1 with out := text i r, first := first, idle := now + inactivity }
+            let c2 := { c1 with out := text i r, first := first, idle := now + inactivity,
+                                group := groupAfterM m r c1.group, current := currentAfterM m p c1 asked r }
             if r = .quit && m != .quitTail then { c2 with phase := .quitting, held := [] }
             else serveM m i p now fuel c2
 
@@ -319,11 +413,12 @@ def claimM (m : Mutant) (i : Identity) (now idx : Nat) (st : Option Store) (c : 
   else k
 
 /-- `progressRead`, inactivity left running while the read has nothing to give by
-`idleWhileFetching`. -/
+`idleWhileFetching`; an article read by its number not made current by `numberKeepsCurrent`. -/
 def progressReadM (m : Mutant) (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
     Conn × Option Store × Bool :=
   let g := progressRead i now st c
   if m = .idleWhileFetching && g.1.read.isSome && g.1.idle == 0 then ({ g.1 with idle := c.idle }, g.2)
+  else if m = .numberKeepsCurrent then ({ g.1 with current := c.current }, g.2)
   else g
 
 /-- `claimRead`, the connection first among those waiting by `readLowestFirst`. -/
@@ -436,9 +531,23 @@ theorem wantsWithM_none : wantsWithM .none = Conn.wantsWith := by
   funext st c
   simp [wantsWithM]
 
+theorem replyInM_none : replyInM .none = replyIn := by
+  funext offered l
+  unfold replyInM
+  split <;> simp_all
+
 theorem resolveM_none : resolveM .none = resolve := by
   funext p c r
   cases r <;> simp [resolveM, resolve]
+
+theorem groupAfterM_none : groupAfterM .none = Reply.groupAfter := by
+  funext r g
+  simp [groupAfterM]
+
+theorem currentAfterM_none (p : Posting) (c : Conn) (asked r : Reply) :
+    currentAfterM .none p c asked r = r.currentAfter c.current := by
+  unfold currentAfterM
+  split <;> simp [Reply.currentAfter]
 
 theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
     serveM .none i p now = serve i p now := by
@@ -448,8 +557,8 @@ theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
   | succ fuel ih =>
     have h1 : (Mutant.none != Mutant.answerWhileBusy) = true := rfl
     have h2 : (Mutant.none != Mutant.quitTail) = true := rfl
-    simp only [serveM, serve, ih, resolveM_none, reduceCtorEq, if_false, h1, h2, Bool.and_true,
-      decide_eq_true_eq]
+    simp only [serveM, serve, ih, resolveM_none, replyInM_none, groupAfterM_none, currentAfterM_none,
+      reduceCtorEq, if_false, h1, h2, Bool.and_true, decide_eq_true_eq]
     rfl
 
 theorem progressM_none : progressM .none = progress := by
