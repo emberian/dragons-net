@@ -35,7 +35,7 @@ namespace DN.Server.Session
 
 open DN.Compiler DN.Compiler.Syntax DN.Server.SessionLayout
 open DN.Server.SessionStore (at_ ld fld setf ne or2 inc ifs stop keptIn copy copyNew callS found
-  Op outPosted outLost waiters readers textOf tStat tUnreadable)
+  Op outPosted outLost waiters readers textOf tStat tUnreadable digits)
 open DN.News.SessionSpec (inactivity firstCommand lineTime articleTime lineLimit clockLimit
   wallLimit)
 
@@ -127,6 +127,21 @@ def appendId : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownId)) (v "il") ++
   [.assign "o" (eAdd (v "o") (v "il"))]
 
+/-- A number, below 2^32, then a space; the locals named from `p` count. -/
+def appendNumber (p : String) (x : PExpr) : List PStmt :=
+  digits p (v "ob") "o" x (data - 1) ++ [.storeb (eAdd (v "ob") (v "o")) (n 32), inc "o"]
+
+/-- The texts of the group's commands and replies, by their place in `SessionLayout.texts`. -/
+def tGroup : Nat := 36
+def tNext : Nat := 37
+def tLast : Nat := 38
+def tSelected : Nat := 39
+def tNoSuchGroup : Nat := 40
+def tNoCurrent : Nat := 41
+def tNoNext : Nat := 42
+def tNoPrevious : Nat := 43
+def tNoNumber : Nat := 44
+
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownSrc)) (v "sl") ++
@@ -156,10 +171,23 @@ def connText : PFun :=
        appendSource, appendText tBlockEnd],
      text (replyCode .helpPost) [appendText tHelpPostHead, appendRevision, appendText tHelpMid,
        appendSource, appendText tBlockEnd],
-     text (replyCode (.stat 0 [])) [appendText tStat, appendId, appendText tCrlf]] ++
+     text (replyCode (.stat 0 []))
+       [appendText tStat, appendNumber "sn" (ownW ownNum), appendId, appendText tCrlf],
+     text (replyCode (.selected 0 0 0 []))
+       [appendText tSelected, appendNumber "nc" (ownW ownCount), appendNumber "nl" (ownW ownLow),
+        appendNumber "nh" (ownW ownHigh),
+        [.dec "sg" (fld "cb" cGroup), keptIn (v "sg") groupsMax,
+         ifs (eEq (v "sg") (n 0)) (stop brokenState),
+         .dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+           (eMul (eSub (v "sg") (n 1)) (n News.RecoverProg.rGroupSlot))),
+         .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax, keptIn (v "o") (data - groupMax - 2)],
+        copy "j" (eAdd (v "ob") (v "o")) (atOff (v "gp") 8) (v "gl"),
+        [.assign "o" (eAdd (v "o") (v "gl"))], appendText tCrlf]] ++
     ([(.quit, tQuit), (.noGroup, tNoGroup), (.noSuchId, tNoSuchId), (.unknown, tUnknown),
       (.syntax, tSyntax), (.post, tPost), (.posted, tPosted), (.failed, tFailed),
-      (.notPermitted, tNotPermitted), (.unavailable, tUnavailable), (.unreadable, tUnreadable)].map
+      (.notPermitted, tNotPermitted), (.unavailable, tUnavailable), (.unreadable, tUnreadable),
+      (.noSuchGroup, tNoSuchGroup), (.noCurrent, tNoCurrent), (.noNext, tNoNext),
+      (.noPrevious, tNoPrevious), (.noNumber, tNoNumber)].map
       fun ((r : News.CommandSpec.Reply), k) => text (replyCode r) [appendText k]) ++
     [setf "cb" cOutLen (v "o"), .ret (n 0)] }
 
@@ -236,6 +264,33 @@ def numberCheck : List PStmt :=
       inc "jq"],
    .ite (v "ok") [.assign "ok" (eLe (v "val") (n 2147483647))] []]
 
+/-- `ok` is one when the second word is a newsgroup name: `wildmat-exact` characters (§9.8), the
+US-ASCII ones printable but for `!*,?[\]`, past US-ASCII UTF-8 as RFC 3629 §4 writes it; `nd`
+counts the continuation octets a character still needs, the first of them between `clo` and
+`chi`. -/
+def groupNameCheck : List PStmt :=
+  let between (lo hi : Nat) (e : PExpr) : PExpr := eAnd (eLe (n lo) e) (eLe e (n hi))
+  [.assign "ok" (eLe (n 1) (v "l1")), .dec "nd" (n 0), .dec "clo" (n 128), .dec "chi" (n 191),
+   .assign "jq" (n 0),
+   .while (eAnd (v "ok") (eLt (v "jq") (v "l1")))
+     [.dec "cz" (kept (eAdd (v "s1") (v "jq"))),
+      .ite (eLt (n 0) (v "nd"))
+        [ifs (or2 (eLt (v "cz") (v "clo")) (eLt (v "chi") (v "cz"))) [.assign "ok" (n 0)],
+         .assign "nd" (eSub (v "nd") (n 1)), .assign "clo" (n 128), .assign "chi" (n 191)]
+        [.ite (eLt (v "cz") (n 128))
+          [.assign "ok" (or2 (or2 (or2 (between 34 41 (v "cz")) (eEq (v "cz") (n 43)))
+              (or2 (between 45 62 (v "cz")) (between 64 90 (v "cz")))) (between 94 126 (v "cz")))]
+          [.ite (between 194 223 (v "cz")) [.assign "nd" (n 1)]
+            [.ite (eEq (v "cz") (n 224)) [.assign "nd" (n 2), .assign "clo" (n 160)]
+              [.ite (or2 (between 225 236 (v "cz")) (between 238 239 (v "cz"))) [.assign "nd" (n 2)]
+                [.ite (eEq (v "cz") (n 237)) [.assign "nd" (n 2), .assign "chi" (n 159)]
+                  [.ite (eEq (v "cz") (n 240)) [.assign "nd" (n 3), .assign "clo" (n 144)]
+                    [.ite (between 241 243 (v "cz")) [.assign "nd" (n 3)]
+                      [.ite (eEq (v "cz") (n 244)) [.assign "nd" (n 3), .assign "chi" (n 143)]
+                        [.assign "ok" (n 0)]]]]]]]]],
+      inc "jq"],
+   ifs (eLt (n 0) (v "nd")) [.assign "ok" (n 0)]]
+
 /-- `ok` is one when the second word is a message-id (§3.6, §9.8). -/
 def messageIdCheck : List PStmt :=
   [.assign "ok" (eAnd (eLe (n 3) (v "l1")) (eLe (v "l1") (n 250))),
@@ -250,8 +305,9 @@ def messageIdCheck : List PStmt :=
       inc "jq"]]
 
 /-- The reply `r` to the line the framer reported (`kind`, `kept`, the bytes from `blk + 40`),
-as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE and BODY commands when there is a store,
-which looks up a message-id (`lookup`). -/
+as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE, BODY, GROUP, NEXT and LAST commands when
+there is a store, which looks up a message-id (`lookup`), a number (`byNumber`, its value in `val`),
+the current article (`current`), a group (`select`) and the next or previous article (`move`). -/
 def classify : List PStmt :=
   scanWords ++
   [.dec "cmd" (n 0), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "ok" (n 0), .dec "val" (n 0),
@@ -261,7 +317,10 @@ def classify : List PStmt :=
         [.ite (v "eqk") [.assign "cmd" (n (k + 1))] []]) ++
       [ifs hasStore (nameIs 5 ++ [ifs (v "eqk") [.assign "cmd" (n 6)]] ++
          nameIsAt tArticle ++ [ifs (v "eqk") [.assign "cmd" (n 7)]] ++
-         nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]]),
+         nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]] ++
+         nameIsAt tGroup ++ [ifs (v "eqk") [.assign "cmd" (n 9)]] ++
+         nameIsAt tNext ++ [ifs (v "eqk") [.assign "cmd" (n 10)]] ++
+         nameIsAt tLast ++ [ifs (v "eqk") [.assign "cmd" (n 11)]]),
        .ite (eEq (v "cmd") (n 0)) [reply .unknown]
         [.ite (ne (v "kind") (n (News.FramerProg.kindCode .command))) [reply .syntax]
           [.dec "args" (eSub (v "w") (n 1)),
@@ -276,22 +335,98 @@ def classify : List PStmt :=
                  [.ite (eEq (v "args") (n 0)) [reply .quit] [reply .syntax]]
                  [.ite (eEq (v "cmd") (n 6))
                    [.ite (eEq (v "args") (n 0)) [reply .post] [reply .syntax]]
-                   [.ite (eEq (v "args") (n 0)) [reply .noGroup]
+                   [.ite (eEq (v "cmd") (n 9))
                      [.ite (eEq (v "args") (n 1))
-                       (numberCheck ++
-                        [.ite (v "ok") [reply .noGroup]
-                          (messageIdCheck ++
-                           [.ite (v "ok")
-                             [.ite hasStore [reply (.lookup .head 0 [])] [reply .noSuchId]]
-                             [reply .syntax]])])
-                       [reply .syntax]]]]]]]]])]
+                       (groupNameCheck ++
+                        [.ite (v "ok")
+                          [.ite (eLe (v "l1") (n News.CommandSpec.groupNameMax))
+                            [reply (.select [])] [reply .noSuchGroup]]
+                          [reply .syntax]])
+                       [reply .syntax]]
+                     [.ite (or2 (eEq (v "cmd") (n 10)) (eEq (v "cmd") (n 11)))
+                       [.ite (eEq (v "args") (n 0)) [reply (.move true)] [reply .syntax]]
+                       [.ite (eEq (v "args") (n 0))
+                         [.ite hasStore [reply (.current .head)] [reply .noGroup]]
+                         [.ite (eEq (v "args") (n 1))
+                           (numberCheck ++
+                            [.ite (v "ok")
+                              [.ite hasStore [reply (.byNumber .head 0)] [reply .noGroup]]
+                              (messageIdCheck ++
+                               [.ite (v "ok")
+                                 [.ite hasStore [reply (.lookup .head 0 [])] [reply .noSuchId]]
+                                 [reply .syntax]])])
+                           [reply .syntax]]]]]]]]]]])]
+
+/-- The read an ARTICLE (one), HEAD (two) or BODY (three) is answered by, as `wc`, of the commit at
+`wci`, its first line giving the number `no`; or, for STAT, 223. -/
+def readOrStat (no : PExpr) : List PStmt :=
+  [.ite (eEq (v "cmd") (n 5)) [reply (.stat 0 []), SessionStore.sset ownNum no]
+    [.assign "wci" (eSub found (n 1)), .assign "wc" (n 2), .assign "wno" no,
+     ifs (eEq (v "cmd") (n 7)) [.assign "wc" (n 1)],
+     ifs (eEq (v "cmd") (n 8)) [.assign "wc" (n 3)]]]
+
+/-- GROUP (`SessionSpec.resolve`): the group of the store whose name is the second word, its count
+and its lowest and highest numbers, an empty group's 1 and 0, to be selected and its first article
+made current; or 411. -/
+def selectGroup : List PStmt :=
+  [.dec "gc" (ld (at_ (recOff + News.RecoverProg.rGroupCount))), keptIn (v "gc") groupsMax,
+   .dec "gx" (n groupsMax), .dec "gq" (n 0),
+   .while (eLt (v "gq") (v "gc"))
+     [.dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+        (eMul (v "gq") (n News.RecoverProg.rGroupSlot))),
+      .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax,
+      ifs (eAnd (eEq (v "gx") (n groupsMax)) (eEq (v "gl") (v "l1")))
+        [.dec "same" (n 1), .dec "jg" (n 0),
+         .while (eLt (v "jg") (v "gl"))
+           [ifs (ne (.loadb (eAdd (atOff (v "gp") 8) (v "jg"))) (kept (eAdd (v "s1") (v "jg"))))
+              [.assign "same" (n 0)],
+            inc "jg"],
+         ifs (v "same") [.assign "gx" (v "gq")]],
+      inc "gq"],
+   .ite (eEq (v "gx") (n groupsMax)) [reply .noSuchGroup]
+     (callS "gs" "groupScan" [v "gx", n 0, n 0] ++
+      [.dec "gk" (ownW ownCount),
+       ifs (eEq (v "gk") (n 0)) [SessionStore.sset ownLow (n 1), SessionStore.sset ownHigh (n 0)],
+       reply (.selected 0 0 0 []), .assign "setg" (n 1), .assign "gnew" (eAdd (v "gx") (n 1)),
+       .assign "setc" (n 1), .assign "cnew" (n 0),
+       ifs (ne (v "gk") (n 0)) [.assign "cnew" (ownW ownLow)]])]
+
+/-- By number or of the current article (`SessionSpec.resolve`): with no group selected 412; the
+article of that number in the selected group, else 423, or the current one, else 420. -/
+def numberLookup : List PStmt :=
+  [.dec "gg" (fld "cb" cGroup), keptIn (v "gg") groupsMax, .dec "isc" (isReply (.current .head)),
+   .ite (eEq (v "gg") (n 0)) [reply .noGroup]
+     [.dec "wn" (v "val"),
+      ifs (v "isc") [.assign "wn" (fld "cb" cCurrent)], keptIn (v "wn") 2147483647,
+      .ite (eAnd (v "isc") (eEq (v "wn") (n 0))) [reply .noCurrent]
+        (callS "gs" "groupScan" [eSub (v "gg") (n 1), n 1, v "wn"] ++
+         [.ite (eEq found (n 0)) [.ite (v "isc") [reply .noCurrent] [reply .noNumber]]
+           ([.dec "fci" (eSub found (n 1))] ++ callS "io" "idOf" [v "fci"] ++ readOrStat (v "wn") ++
+            [ifs (eEq (v "cmd") (n 5)) [.assign "setc" (n 1), .assign "cnew" (v "wn")]])])]]
+
+/-- NEXT and LAST (`SessionSpec.resolve`): with no group selected 412, with no current article 420;
+the article of the lowest number above the current one, or the highest below, made current with
+223, else 421 and 422. -/
+def moveLookup : List PStmt :=
+  [.dec "gm" (fld "cb" cGroup), keptIn (v "gm") groupsMax,
+   .ite (eEq (v "gm") (n 0)) [reply .noGroup]
+     [.dec "cur" (fld "cb" cCurrent), keptIn (v "cur") 2147483647,
+      .ite (eEq (v "cur") (n 0)) [reply .noCurrent]
+        (callS "gs" "groupScan" [eSub (v "gm") (n 1), eAdd (n 2) (eEq (v "cmd") (n 11)), v "cur"] ++
+         [.ite (eEq found (n 0)) [.ite (eEq (v "cmd") (n 10)) [reply .noNext] [reply .noPrevious]]
+           ([.dec "mn" (ownW ownNum), .dec "mci" (eSub found (n 1))] ++
+            callS "im" "idOf" [v "mci"] ++
+            [reply (.stat 0 []), .assign "setc" (n 1), .assign "cnew" (v "mn")])])]]
 
 /-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with POST while the
 connection may post, the help with POST, for a POST 440 or 403 unless it may have a slot, and for a
 message-id 430 when the store does not hold it, 223 for STAT when it does; else the ARTICLE (one),
-HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`. -/
+HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`, its first line
+giving the number `wno`; the replies of the selected group and the current article, and where they
+leave them (`setg`, `gnew`, `setc`, `cnew`). -/
 def resolve : List PStmt :=
-  [.dec "wc" (n 0), .dec "wci" (n 0),
+  [.dec "wc" (n 0), .dec "wci" (n 0), .dec "wno" (n 0), .dec "setg" (n 0), .dec "gnew" (n 0),
+   .dec "setc" (n 0), .dec "cnew" (n 0),
    ifs (eAnd (isReply .capabilities) (eAnd (fld "cb" cGreeted) (ownW ownAccepting)))
      [reply .capabilitiesPost],
    ifs (eAnd (isReply .help) hasStore) [reply .helpPost],
@@ -303,10 +438,10 @@ def resolve : List PStmt :=
        .while (eLt (v "ij") (v "l1"))
          [.storeb (eAdd (at_ (ownOff + ownId)) (v "ij")) (kept (eAdd (v "s1") (v "ij"))), inc "ij"]] ++
       callS "fi" "idFind" [v "l1"] ++
-      [.ite (eEq found (n 0)) [reply .noSuchId]
-        [.ite (eEq (v "cmd") (n 5)) [reply (.stat 0 [])]
-          [.assign "wci" (eSub found (n 1)), .assign "wc" (n 2),
-           ifs (eEq (v "cmd") (n 7)) [.assign "wc" (n 1)], ifs (eEq (v "cmd") (n 8)) [.assign "wc" (n 3)]]]])]
+      [.ite (eEq found (n 0)) [reply .noSuchId] (readOrStat (n 0))]),
+   ifs (isReply (.select [])) selectGroup,
+   ifs (or2 (isReply (.byNumber .head 0)) (isReply (.current .head))) numberLookup,
+   ifs (isReply (.move true)) moveLookup]
 
 /-! ## A connection's turn -/
 
@@ -338,9 +473,11 @@ def serve : List PStmt :=
                  [setf "cb" cWaiting (n 1), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0),
                   .assign "sv" (n 0)]
                  [.ite (v "wc")
-                   [setf "cb" cWant (v "wc"), setf "cb" cWantCi (v "wci"), setf "cb" cFirst (n 0),
-                    setf "cb" cIdle (n 0)]
-                 (callS "wt" "connText" [v "c", v "r"] ++
+                   [setf "cb" cWant (v "wc"), setf "cb" cWantCi (v "wci"),
+                    setf "cb" cWantNo (v "wno"), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0)]
+                 ([ifs (v "setg") [setf "cb" cGroup (v "gnew")],
+                   ifs (v "setc") [setf "cb" cCurrent (v "cnew")]] ++
+                  callS "wt" "connText" [v "c", v "r"] ++
                   [setf "cb" cFirst (n 0),
                    setf "cb" cIdle (eAdd (v "now") (n inactivity)),
                    .ite (isReply .quit)
@@ -451,7 +588,8 @@ def claimRead : List PStmt :=
         ifs (eLt (v "fq") (n reads))
           (callS "u3" "queueDrop" [readers, v "c", fld "cb" cGen] ++
            [setf "cb" cRead (eAdd (v "fq") (n 1))] ++
-           callS "rc" "readClaim" [v "fq", v "c", fld "cb" cGen, fld "cb" cWant, fld "cb" cWantCi])]])]
+           callS "rc" "readClaim"
+             [v "fq", v "c", fld "cb" cGen, fld "cb" cWant, fld "cb" cWantCi, fld "cb" cWantNo])]])]
 
 /-- `SessionSpec.claim`: a POST that waits gets the first free slot and 340 when fewer came before
 it than slots are free, or 403 once the store has stopped accepting. -/
@@ -533,7 +671,8 @@ def openConn : List PStmt :=
       setf "cb" cFramer (n 0), setf "cb" (cFramer + 8) (n 0), setf "cb" (cFramer + 16) (n 0),
       setf "cb" cNumber (v "op"), setf "cb" cGreeted (v "gr"), setf "cb" cWaiting (n 0),
       setf "cb" cPost (n 0), setf "cb" cArticleDue (n 0), setf "cb" cWant (n 0),
-      setf "cb" cWantCi (n 0), setf "cb" cRead (n 0),
+      setf "cb" cWantCi (n 0), setf "cb" cRead (n 0), setf "cb" cGroup (n 0),
+      setf "cb" cCurrent (n 0), setf "cb" cWantNo (n 0),
       .dec "gt" (n greetCode), ifs (v "gr") [.assign "gt" (n greetPostCode)]] ++
      callS "wg" "connText" [v "ex", v "gt"])]
 
@@ -1059,11 +1198,18 @@ def regression_967 : Bool :=
    (tNotPermitted, News.CommandSpec.text i .notPermitted),
    (tUnavailable, News.CommandSpec.text i .unavailable),
    (tNames + 5, News.CommandSpec.ascii "POST"), (tArticle, News.CommandSpec.ascii "ARTICLE"),
-   (tBody, News.CommandSpec.ascii "BODY"), (SessionStore.tStat, News.CommandSpec.ascii "223 0 "),
+   (tBody, News.CommandSpec.ascii "BODY"), (SessionStore.tStat, News.CommandSpec.ascii "223 "),
    (SessionStore.tUnreadable, News.CommandSpec.text i .unreadable),
    (SessionStore.tXref, News.CommandSpec.ascii "Xref: "),
-   (SessionStore.tDot, News.CommandSpec.ascii ".\r\n")].all (fun (k, t) => texts[k]? == some t) &&
+   (SessionStore.tDot, News.CommandSpec.ascii ".\r\n"), (tGroup, News.CommandSpec.ascii "GROUP"),
+   (tNext, News.CommandSpec.ascii "NEXT"), (tLast, News.CommandSpec.ascii "LAST"),
+   (tSelected, News.CommandSpec.ascii "211 "), (tNoSuchGroup, News.CommandSpec.text i .noSuchGroup),
+   (tNoCurrent, News.CommandSpec.text i .noCurrent), (tNoNext, News.CommandSpec.text i .noNext),
+   (tNoPrevious, News.CommandSpec.text i .noPrevious),
+   (tNoNumber, News.CommandSpec.text i .noNumber)].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
-    (texts[SessionStore.tStatus + j]?).map (· ++ News.CommandSpec.crlf) == some (News.CommandSpec.found c 0 [])
+    (texts[SessionStore.tStatus + j]?).map
+      (· ++ News.CommandSpec.decimal 0 ++ [News.CommandSpec.SP] ++ News.CommandSpec.crlf) ==
+      some (News.CommandSpec.found c 0 [])
 
 end DN.Server.Session

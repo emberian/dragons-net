@@ -1138,6 +1138,13 @@ def group_scenarios() -> Iterator[PostScenario]:
              b"STAT 2147483648", b"STAT 2147483647", b"QUIT")
     yield "group names and arguments", [Client(1, [(5, b"".join(line + b"\r\n" for line in names))])], \
         Spool(READER_GROUPS, image=READER_SPOOL)
+    octets = [b for b in range(1, 256) if b not in (9, 10, 13, 32)]
+    leads = (0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF3, 0xF4, 0xF5)
+    edges = (0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0)
+    tried = [b"a" + bytes([b]) for b in octets] + [b"a" + bytes([lead, edge]) + b"\x80" * k
+                                                   for lead in leads for edge in edges for k in range(3)]
+    yield "every octet in a group's name", [Client(1, [(5, b"".join(b"GROUP " + name + b"\r\n" for name in tried)
+                                                       + b"QUIT\r\n")])], Spool(READER_GROUPS)
     yield "a group with no article at all", [reader("GROUP local.test", "STAT", "NEXT", "ARTICLE 1")], \
         Spool(READER_GROUPS)
     posted = article(*BASIC, "Message-ID: <new@x.example>")

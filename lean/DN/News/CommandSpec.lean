@@ -276,9 +276,9 @@ def greetingPostHead : List Byte := ascii "200 dragons-net "
 def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
 def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
 def helpPostHead : List Byte :=
-  ascii "100 Help text follows\r\nARTICLE [message-ID|number]\r\nBODY [message-ID|number]\r\n" ++
-    ascii "CAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\nPOST\r\nQUIT\r\n" ++
-    ascii "STAT [message-ID|number]\r\ndragons-net "
+  ascii "100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n" ++
+    ascii "CAPABILITIES [keyword]\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nNEXT\r\nPOST\r\nQUIT\r\n" ++
+    ascii "dragons-net "
 
 /-- The greeting (§5.1): posting is not allowed, and the source is offered. -/
 def greeting (i : Identity) : List Byte :=
@@ -374,7 +374,7 @@ theorem parts_short :
     greetingHead.length ≤ 16 ∧ greetingMid.length ≤ 35 ∧ capabilitiesHead.length ≤ 60 ∧
       helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
-      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 184 ∧
+      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 153 ∧
       ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →
         ∀ i, (text i r).length ≤ 40 := by

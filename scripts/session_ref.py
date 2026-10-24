@@ -99,9 +99,6 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
 
 
 def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
-    help_lines = (b"100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\n",
-                  b"QUIT\r\nSTAT [message-ID|number]\r\ndragons-net " + revision
-                  + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n")
     return {
         "greeting": b"201 dragons-net " + revision + b" ready, no posting; source code at " + source
         + b"\r\n",
@@ -109,8 +106,9 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         + b"\r\n",
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
         + b"\r\nPOST\r\n.\r\n",
-        "help-post": b"100 Help text follows\r\nARTICLE [message-ID|number]\r\nBODY [message-ID|number]\r\n"
-        + help_lines[0][len(b"100 Help text follows\r\n"):] + b"POST\r\n" + help_lines[1],
+        "help-post": b"100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n"
+        b"CAPABILITIES [keyword]\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nNEXT\r\nPOST\r\nQUIT\r\ndragons-net "
+        + revision + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n",
         "unreadable": b"403 Article not readable\r\n",
         "post": b"340 Send article to be posted\r\n",
         "posted": b"240 Article received OK\r\n",

@@ -1172,12 +1172,42 @@ def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> No
         raise LaneError("an article the store lacks found")
 
 
+def past_end(move: Any, nntplib: ModuleType, code: str) -> None:
+    """NEXT or LAST past an end of the group: `code`, 421 or 422."""
+    try:
+        found = move()
+    except nntplib.NNTPTemporaryError as error:
+        if not str(error).startswith(code):
+            raise LaneError(f"{move.__name__.upper()} past an end answered {error}") from None
+    else:
+        raise LaneError(f"{move.__name__.upper()} found {found} past an end")
+
+
+def walk(news: Any, nntplib: ModuleType, ids: list[str]) -> None:
+    """`local.test` selected by `nntplib`, its count and its numbers; each of its articles reached by
+    STAT and NEXT, and back by LAST, 421 and 422 at the ends; ARTICLE by number makes it current."""
+    _, count, first, last, name = news.group("local.test")
+    if (count, first, last, name) != (len(ids), 1, len(ids), "local.test"):
+        raise LaneError(f"GROUP local.test answered {count} {first} {last} {name}")
+    steps = [news.stat(), *(news.next() for _ in ids[1:])]
+    if [(num, mid) for _, num, mid in steps] != list(enumerate(ids, 1)):
+        raise LaneError(f"STAT and NEXT over local.test gave {steps}")
+    past_end(news.next, nntplib, "421")
+    back = [news.last() for _ in ids[1:]]
+    if [(num, mid) for _, num, mid in back] != list(enumerate(ids, 1))[-2::-1]:
+        raise LaneError(f"LAST over local.test gave {back}")
+    past_end(news.last, nntplib, "422")
+    _, info = news.article(2)
+    if (info.number, info.message_id) != (2, ids[1]) or news.stat()[1:] != (2, ids[1]):
+        raise LaneError(f"ARTICLE 2 gave {info.number} {info.message_id}, then STAT {news.stat()}")
+
+
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
     refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
     16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
     `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
-    of a file is changed on the disk, its ARTICLE is answered 403."""
+    of a file is changed on the disk, its ARTICLE is answered 403; and walks the group (`walk`)."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
     third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
@@ -1223,6 +1253,7 @@ def post_over_sockets(b: Build) -> str:
             with serving(b, False, *options, traced=False) as server, \
                     nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
                 read_back(news, nntplib, spool, ids)
+                walk(news, nntplib, ids)
             first_file = spool / "a0000000000000001"
             changed = bytearray(first_file.read_bytes())
             changed[-3] ^= 1
@@ -1532,6 +1563,10 @@ DEFECTS = [
     Defect("a file's CRC-32C not compared",
            [(r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1)],
            "a post over sockets", "changed on the disk answered", program=True),
+    Defect("NEXT taken at the current article", [(r"\(mode == 2\) & \(x < num\)", "(mode == 2) & (x <= num)", 1)],
+           "a post over sockets", "STAT and NEXT over local.test gave", program=True),
+    Defect("LAST taken at the current article", [(r"\(mode == 3\) & \(num < x\)", "(mode == 3) & (num <= x)", 1)],
+           "a post over sockets", "LAST over local.test gave", program=True),
 ]
 
 
