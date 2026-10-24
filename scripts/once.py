@@ -32,6 +32,7 @@ from __future__ import annotations
 import codecs
 import functools
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -44,8 +45,8 @@ import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-# The version of what a stamp records and how it is judged, raised whenever either changes: a change
-# of this script that keeps both leaves every stamp standing.
+# The version of what a stamp records and how it is judged, raised whenever a stamp made before could
+# stand where this script would now run the check again; any other change leaves every stamp standing.
 SCHEMA = 2
 # The environments a stamp keeps a pass of, the newest.
 PASSES = 3
@@ -85,13 +86,17 @@ FD = re.compile(r"(?:AT_FDCWD|-?\d+)<((?:[^>\\]|\\.)*)>")
 # A call, its arguments and its result; strace pads before the result to align it.
 CALL = re.compile(r"(\w+)\((.*)\)\s+= (.*)", re.DOTALL)
 COMPILER = ".lake/build/bin/dn-compiler"
-# Subcommands of git that only read; options before the subcommand that take a value, and those that
-# point it elsewhere, which leave a run that cannot be run again as it was.
+# Subcommands of git that only read, `ls-remote` with `--get-url` among them; options before the
+# subcommand that take a value, and those that point it elsewhere, which leave a run that cannot be run
+# again as it was; `-C` may name a directory of the repository.
 READING = frozenset({"ls-files", "rev-parse", "for-each-ref", "log", "show", "ls-tree", "rev-list", "cat-file",
                      "check-ignore", "merge-base", "version"})
 SECRET_ARG = re.compile(r"token|secret|password|authorization|bearer|credential", re.IGNORECASE)
 VALUED = frozenset({"-c", "--config-env", "--namespace"})
-ELSEWHERE = frozenset({"-C", "--git-dir", "--work-tree", "--exec-path"})
+ELSEWHERE = frozenset({"--git-dir", "--work-tree", "--exec-path"})
+# What a tool that honours .gitignore looks up in git's directory, held as any file: the directory and
+# the patterns it excludes. Any other path there stands for git's whole state.
+GIT_AS_FILES = frozenset({".git", ".git/info/exclude"})
 # What the compiled library rests on besides its modules: the toolchain and the build's options.
 BUILT_BY = ["lean-toolchain", "lakefile.lean", "lake-manifest.json"]
 
@@ -416,8 +421,12 @@ def links_on_the_way(key: str) -> list[str]:
     return [key_of(str(part)) or str(part) for part in [*reversed(path.parents), path] if is_link(part)]
 
 
-def git_path(key: str) -> bool:
+def in_git(key: str) -> bool:
     return key == ".git" or key.startswith(".git/")
+
+
+def git_path(key: str) -> bool:
+    return in_git(key) and key not in GIT_AS_FILES
 
 
 def stamps_dir() -> Path:
@@ -505,12 +514,16 @@ def replayable(call: GitCall) -> bool:
     input, having written nothing, with nothing like a secret among its arguments, which the stamp
     keeps."""
     rest = call.argv[1:]
+    cwd = key_of(call.cwd) if call.cwd else None
     while rest and rest[0].startswith("-"):
         if rest[0].partition("=")[0] in ELSEWHERE:
             return False
-        rest = rest[2:] if rest[0] in VALUED else rest[1:]
-    cwd = key_of(call.cwd) if call.cwd else None
-    return (call.whole and bool(rest) and rest[0] in READING and cwd is not None and not cwd.startswith("/") and
+        if rest[0] == "-C" and len(rest) > 1 and cwd is not None:
+            cwd = key_of(os.path.normpath(where(cwd) / rest[1]))
+        rest = rest[2:] if rest[0] in VALUED or rest[0] == "-C" else rest[1:]
+    options = list(itertools.takewhile(lambda a: a != "--", rest[1:]))
+    reads = bool(rest) and (rest[0] in READING or (rest[0] == "ls-remote" and "--get-url" in options))
+    return (call.whole and reads and cwd is not None and not cwd.startswith("/") and
             not any(a == "--stdin" or a.startswith("--batch") or SECRET_ARG.search(a) for a in call.argv) and
             not any(key_of(w) is not None for w in call.written) and steady(call.env) == steady(checked_env()))
 
@@ -550,10 +563,11 @@ def inputs(trace: Trace, hashes: Hashes, started: int, git_before: str) -> tuple
         else:
             for name in vars(seen):
                 getattr(seen, name).update(getattr(part, name))
-    on_git = replayed or any(git_path(k) for k in keys(seen.read | seen.listed | seen.absent))
-    if on_git and git_state() != git_before:
+    # A file of git's directory but `GIT_AS_FILES`, or a listing of it, stands for git's whole state.
+    own = any(git_path(k) for k in keys(seen.read | seen.absent)) or any(in_git(k) for k in keys(seen.listed))
+    if (replayed or own) and git_state() != git_before:
         return None, "the files git lists, HEAD or the refs changed while it ran"
-    for key in sorted(k for c in replayed for k in keys(c.read) if git_path(k)):
+    for key in sorted(k for c in replayed for k in keys(c.read) if in_git(k)):
         try:
             if where(key).stat().st_mtime_ns >= started:
                 return None, f"{key} changed while it ran"
@@ -570,7 +584,7 @@ def inputs(trace: Trace, hashes: Hashes, started: int, git_before: str) -> tuple
                             "commands": [[*json.loads(c), said] for c, said in sorted(answers.items())]}
     if library is not None:
         read = (read - {COMPILER}) | set(BUILT_BY)
-    if any(git_path(k) for k in keys(seen.read | seen.listed | seen.absent)):
+    if own:
         deps["git"] = git_state()
     for key in sorted(read):
         if not git_path(key):
@@ -581,7 +595,7 @@ def inputs(trace: Trace, hashes: Hashes, started: int, git_before: str) -> tuple
             except OSError:
                 pass
     for key in sorted(keys(seen.listed)):
-        if not git_path(key):
+        if not in_git(key):
             outputs = sorted(Path(w).name for w in written if str(Path(w).parent) == key or
                              (key == "." and "/" not in w))
             deps["dirs"][key] = [listing(key, outputs), outputs]

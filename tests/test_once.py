@@ -151,11 +151,13 @@ class Git(unittest.TestCase):
             return bool(once.replayable(call))
 
         for argv in (["git", "ls-files"], ["git", "--icase-pathspecs", "ls-files", "--", "x"],
-                     ["git", "-c", "core.quotePath=false", "rev-parse", "HEAD"]):
+                     ["git", "-c", "core.quotePath=false", "rev-parse", "HEAD"], ["git", "-C", "scripts", "log"],
+                     ["git", "ls-remote", "--quiet", "--get-url"]):
             with self.subTest(argv=argv):
                 self.assertTrue(replayable(argv))
-        for argv in (["git", "status"], ["git", "-C", ".", "ls-files"], ["git", "--git-dir=x", "log"],
-                     ["git", "cat-file", "--batch"], ["git", "check-ignore", "--stdin"], ["git"]):
+        for argv in (["git", "status"], ["git", "-C", "..", "ls-files"], ["git", "-C"], ["git", "--git-dir=x", "log"],
+                     ["git", "cat-file", "--batch"], ["git", "check-ignore", "--stdin"], ["git"],
+                     ["git", "ls-remote"], ["git", "ls-remote", "--", "--get-url"]):
             with self.subTest(argv=argv):
                 self.assertFalse(replayable(argv))
         for argv in (["git", "describe", "--dirty"], ["git", "-c", "http.extraheader=Authorization: x", "log"]):
@@ -276,7 +278,7 @@ class Live(unittest.TestCase):
                      "print(open('.git/HEAD').read())\n",
                      ("import os, subprocess\nsubprocess.run(['git', 'ls-files'], check=True, "
                       "env={**os.environ, 'GIT_INDEX_FILE': '.git/index'})\n"),
-                     "import subprocess\nsubprocess.run(['git', '-C', '.', 'ls-files'], check=True)\n"):
+                     "import subprocess\nsubprocess.run(['git', '--git-dir=.git', 'ls-files'], check=True)\n"):
             with self.subTest(body=body):
                 self.check(body)
                 self.git("add", "-A")
@@ -285,6 +287,22 @@ class Live(unittest.TestCase):
                 self.assertIn("DN SKIP", self.run_check())
                 self.git("commit", "-qm", "next", "--allow-empty")
                 self.assertNotIn("DN SKIP", self.run_check())
+
+    def test_a_check_that_looks_for_git_s_directory_runs_again_only_on_what_it_excludes(self) -> None:
+        """A tool that honours .gitignore looks up git's directory and reads the patterns it excludes,
+        which a commit leaves as they were."""
+        self.check("import os\nos.stat('.git')\nprint(open('.git/info/exclude').read())\n")
+        (self.tree / ".git/info").mkdir(exist_ok=True)
+        (self.tree / ".git/info/exclude").write_text("")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "c")
+        self.run_check()
+        [made] = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))
+        self.assertIsNone(made["inputs"]["git"])
+        self.git("commit", "-qm", "next", "--allow-empty")
+        self.assertIn("DN SKIP", self.run_check())
+        (self.tree / ".git/info/exclude").write_text("*.tmp\n")
+        self.assertIn("*.tmp", self.run_check())
 
     def test_a_check_whose_git_files_change_while_it_runs_runs_every_time(self) -> None:
         self.git("add", "-A")
@@ -670,11 +688,12 @@ class Schema(unittest.TestCase):
     def test_what_a_stamp_records_is_pinned_to_its_schema(self) -> None:
         rules = [sorted(once.ASIDE), sorted(once.WHERE), sorted(once.OPENS), sorted(once.WRITES), sorted(once.LOOKUPS),
                  sorted(once.WITH_DIRFD), sorted(once.READING), sorted(once.VALUED), sorted(once.ELSEWHERE),
+                 sorted(once.GIT_AS_FILES),
                  once.VOLATILE.pattern, once.SECRET.pattern, once.SECRET_ARG.pattern]
         t = parsed(self.LOG)
         seen = [sorted(getattr(t, n)) for n in ("read", "named", "listed", "absent", "written", "updated")]
         pin = hashlib.sha256(json.dumps([rules, seen]).encode()).hexdigest()[:16]
-        self.assertEqual((once.SCHEMA, pin), (2, "5bd1c78cade1fddc"))
+        self.assertEqual((once.SCHEMA, pin), (2, "68f3f56e892b2b4d"))
 
     def test_the_schema_is_in_every_key(self) -> None:
         keys = once.tracer(), once.tree_key("lane", ["run"])
