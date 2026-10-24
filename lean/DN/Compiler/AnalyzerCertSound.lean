@@ -411,19 +411,6 @@ theorem fnChecks_range {size : Nat} {env : Env} {fns : List FnC} {a n : Nat}
     simp only [Bool.and_eq_true] at this
     exact ⟨this.1, obsOk_all this.2⟩
 
-/-- Two lists mapped are equal once they are as long and equal at each place: how the lowerings a
-certificate writes out are held to the program's own, a run of places at a time. -/
-theorem map_eq_of_places {α β γ : Type} {f : α → γ} {g : β → γ} {l₁ : List α} {l₂ : List β}
-    (hl : l₁.length = l₂.length) (h : ∀ i, i < l₁.length → (l₁[i]?).map f = (l₂[i]?).map g) :
-    l₁.map f = l₂.map g := by
-  apply List.ext_getElem?
-  intro i
-  rw [List.getElem?_map, List.getElem?_map]
-  by_cases hi : i < l₁.length
-  · exact h i hi
-  · rw [List.getElem?_eq_none (by omega), List.getElem?_eq_none (by omega)]
-    rfl
-
 /-- The functions of `fns`, defined after those `env` names and each accepted by its certificate,
 its claims holding, in code that holds them: the code holds them all, as `CodeOk` asks. -/
 theorem fnsOk_codeOk {size : Nat} {code : String → Option (List String × PancakeProg)} :

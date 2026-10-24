@@ -182,8 +182,7 @@ class CheckScript(unittest.TestCase):
             stub(stubs, "lean4export", f'echo "lean4export $* $LEAN_SYSROOT {checker_env}" >> {log}\n'
                  'echo export\nexit "${FAIL_EXPORT:-0}"')
             stub(stubs, "nanoda", f'echo "nanoda $* $(cat)" >> {log}\nexit "${{FAIL_NANODA:-0}}"')
-            stub(toolchain, "leanchecker",
-                 f'echo "toolchain leanchecker $* {checker_env} on $LEAN_NUM_THREADS" >> {log}')
+            stub(toolchain, "leanchecker", f'echo "toolchain leanchecker $* {checker_env}" >> {log}')
             stub(toolchain, "lean", f'echo "toolchain lean $* {checker_env}" >> {log}\ncase "$*" in\n'
                  "  --print-prefix) echo /sysroot ;;\n  *--export-list*) printf 'M\\0--\\0N\\0' ;;\nesac")
             stub(stubs, "elan", f"echo {toolchain}/$2")
@@ -201,7 +200,7 @@ class CheckScript(unittest.TestCase):
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
                            f"python3 scripts/measured.py {toolchain}/leanchecker DN",
-                           f"toolchain leanchecker DN {checked} on 2",
+                           f"toolchain leanchecker DN {checked}",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],

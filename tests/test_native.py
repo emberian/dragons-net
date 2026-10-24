@@ -20,7 +20,6 @@ from unittest import mock
 
 from gatekit import DN_COMPILER, ROOT, run, script
 
-analysis_cert = script("analysis_cert")
 entry_bench = script("entry_bench")
 fuzz_interp = script("fuzz_interp")
 fuzz_reduce = script("fuzz_reduce")
@@ -73,26 +72,29 @@ class Emitted(unittest.TestCase):
 
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator
-        prints for the programs as they are, and no others are left under them."""
-        for what in analysis_cert.MODULES:
-            with self.subTest(certificate=what):
-                printed = analysis_cert.printed(what)
-                self.assertEqual(sorted(printed), analysis_cert.present(what),
-                                 f"write them with scripts/analysis_cert.py {what}")
-                for path, text in printed.items():
-                    self.assertEqual(text, path.read_text(),
-                                     f"{path.relative_to(ROOT)} is stale: scripts/analysis_cert.py {what}")
+        prints for the programs as they are."""
+        for what, module in (("session", "lean/DN/Server/SessionCert.lean"),
+                             ("recover", "lean/DN/News/RecoverCert.lean")):
+            done = subprocess.run([str(DN_COMPILER), "analysis-cert", what], text=True, capture_output=True,
+                                  check=False, timeout=600)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout, (ROOT / module).read_text(), f"{module} is stale: regenerate it")
 
     def test_emitted_sources_match_the_golden_files(self) -> None:
         def emit(target: str) -> str:
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "crc", "sip", "scan", "recover", "reply", "skeleton",
-                     "frame-line", "frame-line-4", "frame-block-64", "frame-block-4", "session"):
+        for name in ("region", "echo", "render", "crc", "sip", "scan", "reply", "skeleton",
+                     "frame-line", "frame-line-4", "frame-block-64", "frame-block-4"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
-        # The differential fixture is 200 KB of cases; its digest catches a change just as well.
+        # The whole programs, the differential fixture and the reply cases are too long to read in a
+        # diff; their digests catch a change just as well.
+        self.assertEqual(hashlib.sha256(emit("session").encode()).hexdigest(),
+                         "4a642644d0a90c944f55477821496e4a26238bc06ba9a757851d069f14256293")
+        self.assertEqual(hashlib.sha256(emit("recover").encode()).hexdigest(),
+                         "8f562e94aa1ba27b2c0c00f99fed5732470d27594079e46a8778fbf369b24472")
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
                          "b9a5c824739f6d6fe047d99b6a7a7b150b4c71897d30054a7f3aa5abbcbe51e6")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),

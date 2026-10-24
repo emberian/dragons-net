@@ -36,7 +36,7 @@ private def commands : List String :=
    "emit-layout", "emit-session", "emit-session-layout", "emit-scan-layout",
    "emit-recover-layout", "emit-grammar-layout", "emit-grammar-mutant NAME",
    "emit-article-layout", "emit-article-mutant NAME",
-   "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET] (a JSON object of each module's text by its name)",
+   "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
    "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
    "emit-corpus", "dump-states"]
@@ -95,7 +95,7 @@ private def sessionCert : Analyzer.Gen.ProgramTarget :=
       "of\n" ++
       "certificates of `DN.Compiler.AnalyzerCert`, of its functions together as their costs " ++
       "allow and\n" ++
-      "of its `main` one declaration each; the modules under this one check them." }
+      "of its `main` one declaration each." }
 
 private def recoverCert : Analyzer.Gen.Target :=
   { module := "DN.News.RecoverCert", imports := ["DN.News.RecoverProg"],
@@ -108,10 +108,6 @@ private def output (result : Except String String) : IO UInt32 :=
   match result with
   | .ok text => IO.print text *> pure 0
   | .error e => IO.eprintln ("error: " ++ e) *> pure 1
-
-/-- The modules of a certificate: a JSON object of each one's text by its name. -/
-private def modules (ms : List (String × String)) : String :=
-  (Lean.Json.mkObj (ms.map fun (m, text) => (m, Lean.Json.str text))).compress ++ "\n"
 
 private def usageError : IO UInt32 := IO.eprintln ("usage: " ++ usage) *> pure 2
 
@@ -163,7 +159,7 @@ def table : List (String × (List String → IO UInt32)) :=
         (g.name, g.params.map (·.2), (Lower.lower g).getD .skip)
       match Lower.lower DN.Server.Session.main with
       | some p => output ((Analyzer.Gen.certifyProgram size budget fns p).map fun (cs, k, _) =>
-          modules (Analyzer.Gen.renderProgram sessionCert size claimsBudget cs p k))
+          Analyzer.Gen.renderProgram sessionCert size claimsBudget cs p k)
       | none => output (.error "the program does not lower")
     | what :: rest =>
       let budget := (rest.head?.bind String.toNat?).getD certBudget
@@ -175,7 +171,7 @@ def table : List (String × (List String → IO UInt32)) :=
       match target with
       | some (t, size, some p) =>
         output ((Analyzer.Gen.certifyMain size budget p).map fun (k, _) =>
-          modules [(t.module, Analyzer.Gen.render t size claimsBudget p k)])
+          Analyzer.Gen.render t size claimsBudget p k)
       | some (_, _, none) => output (.error "the program does not lower")
       | none => output (.error s!"no certificate for {what}")
     | [] => usageError),
