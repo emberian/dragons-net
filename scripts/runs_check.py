@@ -18,7 +18,7 @@ storage systems, with tools written apart from the model:
 - events the program may not make are refused where it may not, for each thing `Cmd.allowed`
   checks; a store as full as it may be takes no commit, and one an article short does, which no
   drawn run reaches;
-- the program broken in each of the nine ways `regression_923` sets out, and by a commit of another
+- the program broken in each of the ten ways `regression_923` sets out, and by a commit of another
   CRC-32C, is caught by drawn scenarios, each at least three times, a scenario counting for 240
   before the journal's sync when it has a commit, and for the others only when the break makes an
   event the program may not make.
@@ -71,8 +71,8 @@ class Post:
 class Prog:
     """What the program keeps: the run, the next sequence number, the last article number the
     records synced gave each group, the articles in flight, the commit appended and not yet synced,
-    whether it still accepts articles and still trusts syncs of the journal and the directory, and how
-    many commits the records synced hold."""
+    whether it still accepts articles and still trusts syncs of the journal and the directory, how
+    many commits the records synced hold and their Message-IDs."""
     run: int
     next: int
     highest: dict[bytes, int]
@@ -81,6 +81,7 @@ class Prog:
     accepting: bool = True
     trusting: bool = True
     held: int = 0
+    ids: set[bytes] = field(default_factory=set)
 
 
 @dataclass
@@ -136,7 +137,7 @@ def frame_length(c: Commit) -> int:
 def allowed(p: Prog, groups: list[bytes], e: Event) -> bool:
     """Whether the program may make the event: each phase of 0005's after the one before, a commit
     only for a file in place, one record at a time, while accepting and the store has room, numbered
-    above the group's last."""
+    above the group's last, with a Message-ID no record has."""
     post = p.posts.get(e.q)
     stage = None if post is None else post.stage
     match e.kind:
@@ -155,9 +156,10 @@ def allowed(p: Prog, groups: list[bytes], e: Event) -> bool:
         case "commit":
             if stage != "placed" or post is None or p.committing is not None or not p.accepting:
                 return False
-            seq, _, gs, _, size, crc = e.commit
+            seq, mid, gs, _, size, crc = e.commit
             return (seq == e.q and size == len(post.octets) and crc == J.crc32c(post.octets) and J.fits(e.commit)
-                    and p.held < R.CAPACITY and all(n in groups and k > p.highest.get(n, 0) for n, k in gs))
+                    and p.held < R.CAPACITY and mid not in p.ids
+                    and all(n in groups and k > p.highest.get(n, 0) for n, k in gs))
         case "publish":
             return p.committing is not None and p.accepting
         case "refuse":
@@ -215,6 +217,7 @@ def happen(p: Prog, h: History, e: Event, *, early: bool = False) -> None:
             for n, k in p.committing[2]:
                 p.highest[n] = max(p.highest.get(n, 0), k)
             p.held += 1
+            p.ids.add(p.committing[1])
             if not early:
                 h.answered.append(p.committing)
             p.committing = None
@@ -337,6 +340,8 @@ def probe_for(rng: random.Random, kind: str, p: Prog, groups: list[bytes]) -> Ev
         case "commit numbered not above":
             last = p.highest.get(groups[0], 0)
             return Event("commit", q, commit=(c[0], c[1], [(groups[0], last)], *c[3:])) if last else None
+        case "commit of a Message-ID a record has":
+            return Event("commit", q, commit=(c[0], rng.choice(sorted(p.ids)), *c[2:])) if p.ids else None
     return None
 
 
@@ -344,6 +349,7 @@ PROBES = ["no article", "another stage", "sync before the file is written", "pla
           "commit once not accepting", "commit while a record is in flight", "publish once not accepting",
           "publish with no record in flight", "commit of another number", "commit of another size",
           "commit of another CRC-32C", "commit in a group not carried", "commit the journal cannot hold",
+          "commit of a Message-ID a record has",
           "commit numbered not above"]
 
 
@@ -416,7 +422,7 @@ def start_state(image: dict[bytes, bytes], run: int, groups: list[bytes]) -> Pro
     for c in commits:
         for n, k in c[2]:
             highest[n] = max(highest.get(n, 0), k)
-    return Prog(run, nxt, highest, held=len(commits))
+    return Prog(run, nxt, highest, held=len(commits), ids={c[1] for c in commits})
 
 
 def after_start(image: dict[bytes, bytes], groups: list[bytes]) -> dict[bytes, bytes]:
@@ -659,6 +665,19 @@ def number_again(events: list[Event]) -> list[Event] | None:
     return out
 
 
+def id_again(events: list[Event]) -> list[Event] | None:
+    """A commit giving the Message-ID the last commit gave."""
+    commits = [k for k, e in enumerate(events) if e.kind == "commit"]
+    if len(commits) < 2:
+        return None
+    second, fails = events[commits[1]].commit, events[commits[1]].fails
+    new = (second[0], events[commits[0]].commit[1], *second[2:])
+    out = list(events)
+    out[commits[1]] = replace(events[commits[1]], commit=new,
+                              fails=None if fails is None else min(fails, frame_length(new)))
+    return out
+
+
 def other_group(events: list[Event]) -> list[Event] | None:
     """A commit in a group the store does not carry."""
     return changed_commit(events, lambda c: (c[0], c[1], [(b"local.other", 1)], c[3], c[4], c[5]))
@@ -692,7 +711,7 @@ def going_on(events: list[Event]) -> list[Event] | None:
 BREAKS: dict[str, Callable[[list[Event]], list[Event] | None]] = {
     "commit before the directory's sync": no_place, "commit for a file never moved": never_moved,
     "commit of another size": other_size, "commit of another CRC-32C": other_crc,
-    "article number not above": number_again, "group not carried": other_group,
+    "article number not above": number_again, "Message-ID a record has": id_again, "group not carried": other_group,
     "record the journal cannot hold": no_group, "two records before a sync": two_records,
     "going on after a failed write of the record": going_on}
 EARLY = "240 before the journal's sync"

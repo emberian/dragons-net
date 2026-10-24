@@ -13,6 +13,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lanes
+import once
 
 ROOT = Path(__file__).resolve().parent.parent
 # The stamp of each script that holds the documents to what it measured, as check.sh and
@@ -20,8 +21,13 @@ ROOT = Path(__file__).resolve().parent.parent
 CHECKS = {"abnf_check.py": "abnf", "article_check.py": "article", "journal_check.py": "journal",
           "fs_check.py": "fs", "store_check.py": "store", "runs_check.py": "runs",
           "session_check.py": "session-model", "framing_check.py": "lane-framing",
+          "grammar_check.py": "lane-grammar", "accept_check.py": "lane-accept",
           "native_baseline.py": "lane-baseline", "native_fuzz.py": "lane-fuzz", "nntp_check.py": "lane-nntp",
+          "crash_check.py": "lane-crash", "faults_check.py": "lane-faults",
           "parser_contract.py": "lane-parser", "session_native.py": "lane-session"}
+# Checks run again on any change of the tree, scripts/native_lanes.sh's FUSE lanes, which hold the
+# documents as they run.
+AS_THEY_RUN = {"power_check.py"}
 
 
 def main() -> int:
@@ -32,7 +38,9 @@ def main() -> int:
     for stamp in sorted(stamps.glob("*.json")):
         if stamp.name == "hashes.json":
             continue
-        for requirement in json.loads(stamp.read_text()).get("documented", []):
+        # A traced check's newest pass; a lane's stamp is one pass of its own.
+        data = json.loads(stamp.read_text())
+        for requirement in (once.passes(data) or [data])[0].get("documented", []):
             held += 1
             wrong += [f"{stamp.stem}: {w}" for w in lanes.unheld(requirement)]
     for w in wrong:

@@ -89,10 +89,12 @@ knows nothing of articles.
   host only what is left at the end. A file is synced through the descriptor it was written through:
   Linux reports a failed write-back only to descriptors open at the time.
 - The host retries a call a signal interrupted; writes on after a short write, one without progress
-  failing as no space; reports a short read as it is. A failed close is a failed sync. Classes:
+  failing as no space; reports a short read as it is. A failed close of a file written is a failed
+  sync, of one only read nothing. Classes:
   `EIO` an I/O error; `ENOSPC`, `EDQUOT` no space; `EEXIST`, `ENOENT` the name's; any other,
   another.
-- Jobs are identified by a slot and a generation, like connections; at most eight are in flight.
+- Jobs are identified by a slot and a generation, like connections; at most twelve are in flight,
+  one for each POST and each read.
   Bytes to write are copied out of the heap inside `dn_emit` and bytes read are copied in inside
   `dn_next`, so the host still touches the heap only inside a call; a job moves at most 16,384
   octets.
@@ -105,9 +107,12 @@ knows nothing of articles.
   process holds.
 - The host's test build carries a named point of failure before each file operation (libfiu's
   `fiu_return_on`), enabled from outside as the host starts or while it runs, as PostgreSQL's
-  injection points and SQLite's test build do; built without `FIU_ENABLE`, the server has no point
-  and does not load libfiu. libfiu's preload that fails POSIX calls does not know `openat`,
-  `renameat` or `unlinkat`, which the host uses.
+  injection points and SQLite's test build do; `dn/stop` holds the workers before the operation it
+  numbers and each after it, and once the operations before have ended the loop stops the process,
+  for a test to kill it; `dn/fail` fails the operation it numbers once, at its first point, with the
+  error given. Built without `FIU_ENABLE`, the server has no point and does not load libfiu. libfiu's
+  preload that fails POSIX calls does not know `openat`, `renameat` or `unlinkat`, which the host
+  uses.
 
 ### On disk
 
@@ -121,19 +126,22 @@ knows nothing of articles.
   same digits; the journal is `journal`.
 - The file holds the article as a reader receives it, without Xref: lines ending in CRLF,
   dot-stuffed, without the final dot line, the fields the server added in place.
+- The header section's size, as a commit records it, does not count the empty line after it.
 - An article is accepted in four phases:
-  1. reserve: the program checks the header section, reserves the Message-ID in the index and a
-     sequence number, and counts the article against the bounds;
+  1. reserve: the program checks the header section, reserves the Message-ID — its slot holds it,
+     and no other slot or article may have it — and a sequence number, and counts the article
+     against the bounds;
   2. body: it creates the temporary file, writes the article, syncs it, renames it to its final
      name and syncs the directory;
   3. commit: it appends one journal record — the sequence number, the Message-ID, each group by
      name with the number it allocates there, the sizes of the header section and of the file, and
      the file's CRC-32C — and syncs the journal;
-  4. publish: it adds the article to the index and answers 240.
+  4. publish: it adds the article to the index of Message-IDs and answers 240.
 
   Numbers are allocated when the record is appended, one record at a time, so articles are numbered
-  in commit order, and a crosspost is one record. ARTICLE and HEAD insert the Xref field, built from
-  the record, after the stored header fields.
+  in commit order, and a crosspost is one record. ARTICLE and HEAD insert the Xref field
+  (RFC 5536 §3.2.14), built from the record, after the stored header fields, folded before a
+  location that would take its line past 998 octets (RFC 5322 §2.1.1).
 - A failure is known only until the commit record is written: the article is refused with 441 and
   its temporary or final file removed. After that, a failed write or sync of the journal leaves the
   outcome unknown: the connection is closed without an answer (RFC 3977 §6.3.1 asks the client to
@@ -151,6 +159,8 @@ knows nothing of articles.
   a mark of this boot, or one it cannot read whole, until the machine restarts or the store is
   repaired (#21), and removes a whole mark of another boot. Not covered: a process killed between
   the failure and its mark.
+- A record whose sync completes after the store has stopped is not answered either, the sync
+  succeeding or not.
 - A journal record is framed as Kafka's record batches are, with a length, a type and a check over
   the type and the payload, and an end mark: the payload's length, four octets, least significant
   first as every number here; the tag, eight octets; the type, one octet; the payload; and the end
@@ -216,26 +226,27 @@ knows nothing of articles.
   it kept last; taking it back, or removing it, is repair (#21). A name of any other shape makes the
   store corrupt.
 - A corrupt store is refused: the server does not start and says why. Corrupt: a frame that does not
-  check where what follows is no torn append's; a sequence number in two records; an article number
-  in a group not above the one an earlier record gave it there (RFC 3977 §6); a record naming a file
-  that is missing or of another size; a group the configuration lacks; files and no journal, a
-  format cut short beside another name among them; no sequence number left to give. It says the
-  first it finds, once the key is checked (see Configuration): a name of another shape, in the
-  directory's order; files and no journal; where reading the journal stops in corruption; more
-  commits than the store holds (Bounds), which is not corruption — a build with more room wrote them
-  — but keeps the store from starting too; then each of these over the records in the journal's
-  order, before the next — a sequence number a later record repeats, a group the configuration
-  lacks, an article number not above (so only in groups carried, whose highest numbers fit a table
-  of the bounds), a file missing or of another size; last, no number left. A journal is created only
-  in an empty directory, the directory then synced, and made again — cut to nothing, its format
-  written and synced — when nothing is left of it but a format cut short and no other name is there.
-  The store is never repaired silently; repair, when it comes, is a separate operation (#21). A
-  Message-ID in two records is to be corruption too, which recovery does not check yet: the program
-  refuses one the store has or has reserved (Which articles are accepted), and the specification
-  takes up both with the index that reserves it.
-- A file is checked as it is read: the program re-checks its lines — CRLF only, dot-stuffed — and
-  its CRC-32C at the end. One that fails before anything was sent is answered 403; found while
-  sending, it closes the connection without the final dot.
+  check where what follows is no torn append's; a sequence number or a Message-ID in two records; an
+  article number in a group not above the one an earlier record gave it there (RFC 3977 §6); a
+  record naming a file that is missing or of another size; a group the configuration lacks; files
+  and no journal, a format cut short beside another name among them; no sequence number left to
+  give. It says the first it finds, once the key is checked (see Configuration): a name of another
+  shape, in the directory's order; files and no journal; where reading the journal stops in
+  corruption; more commits than the store holds (Bounds), which is not corruption — a build with
+  more room wrote them — but keeps the store from starting too; then each of these over the records
+  in the journal's order, before the next — a sequence number a later record repeats, a Message-ID a
+  later record repeats, a group the configuration lacks, an article number not above (so only in
+  groups carried, whose highest numbers fit a table of the bounds), a file missing or of another
+  size; last, no number left. A journal is created only in an empty directory, the directory then
+  synced, and made again — cut to nothing, its format written and synced — when nothing is left of
+  it but a format cut short and no other name is there. The store is never repaired silently;
+  repair, when it comes, is a separate operation (#21).
+- A file is checked as it is read: lines end in CRLF and hold no NUL, a line that starts with a dot
+  starts with two, the empty line lies where the record says, and at the end the size and the
+  CRC-32C are the record's; octets that fail are never sent. The 220, 221 or 222 line goes with the
+  first octets checked: a read or check failing before is answered `403 Article not readable`,
+  after, the connection is closed without the final dot, the client left with the start of an
+  article whose end failed. HEAD and BODY read the whole file too.
 - Recovery runs before the first connection: the first batch comes at once, and the host listens
   only from the `dn_emit` whose word says the store is ready. The program drives it in `main` by
   file jobs, one in flight; refused, or a job failed, it stops the run, and the host ends with
@@ -245,6 +256,7 @@ knows nothing of articles.
 
 - At most four connections are in a POST at once; another POST waits, unanswered and not read,
   until one ends. Each POST holds a header buffer of 65,536 octets and a write buffer of 16,384.
+- POSTs that wait get the slots that free in the order they came.
 - The article is framed as it arrives by a streaming block framer: it checks each line — CRLF only,
   no NUL or bare CR or LF — and finds the end of the block, keeping only its state. The header
   section is gathered in the header buffer and checked when it ends; the file is then created and
@@ -252,12 +264,18 @@ knows nothing of articles.
   buffer and written a buffer at a time, and the connection is not read again until that write
   completes. A line the block may not hold, or an article past its size, refuses the article; the
   rest of the block is read and discarded, and the file removed.
-- ARTICLE, HEAD and BODY read a file 16,384 octets at a time into a buffer of the connection's, at
-  most eight reads in flight, and send it a slot at a time before reading more.
+- ARTICLE, HEAD and BODY wait, unanswered and with no deadline, for one of eight reads, in the order
+  they came. A read holds a buffer and the file open, reads 16,384 octets at a time and, last, one
+  more than are left, even none, closing the file, and sends what it read a slot at a time before
+  reading more. Meanwhile the host is not told to read, and inactivity runs only while some of what
+  was sent is untaken. Readers that take slowly keep the eight reads, as idle clients keep the 64
+  connections; limits per address are operations' (#21).
 - An article must arrive within 1,800 seconds of its 340, a deadline bytes do not renew; waiting
   for a POST slot or for the store is not inactivity. A connection that ends before the terminator
   abandons its article once its job in flight completes: the file is removed and the reservation
   released. One that ends after the terminator does not stop the commit.
+- After the terminator no deadline runs: a job the host never completes keeps its slot, and four
+  such keep every POST waiting. Bounding a job's time is the host's, with operations (#21).
 - The heap holds the index, the group table, the POST and read buffers and the session's layout:
   4 MiB in all, which the host provisions.
 
@@ -281,8 +299,9 @@ domain name. Each opened connection carries whether it may post. The host also h
 wall clock, in UTC and not checked to move forward, and random octets: the run's value, which
 Message-IDs carry, sixteen more that key a journal the program creates, written only to that journal
 and used for nothing else, the program refusing to start without sixteen, and sixteen that key the
-index of Message-IDs, never written; and it logs each connection's address with the run and its
-index.
+index of Message-IDs, never written; and it logs each connection's address and port with the run
+and its number, as `logging-data` names them (RFC 5536 §3.2.8), when its log has room at once,
+counting the lines it could not.
 
 ### Which articles are accepted, and what the server adds
 
@@ -318,10 +337,10 @@ index.
 - POST, and the capability `POST`, while the store accepts, has at least one group and the client
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
-- HEAD and STAT by message-id answer from the store (221, 223). ARTICLE and BODY are implemented in
-  full: by message-id from the store, with the number 0, and 412 to a number or to no argument,
-  since GROUP is not implemented. READER is not advertised until the reader commands are (#18).
-  HELP lists ARTICLE, BODY and POST.
+- ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
+  number 0, or 430), and 412 to a number or, ARTICLE and BODY, to no argument, since GROUP is not
+  implemented. READER is not advertised until the reader commands are (#18). HELP lists ARTICLE,
+  BODY and POST.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested
@@ -360,11 +379,10 @@ from them are done; what needs the program or the host comes with them, as marke
     After its actions a start finds the same articles again (`recover_again`, while numbers last);
     that it then has nothing left to do is tested. A restart after a failed sync of the journal or
     the directory without a loss of power is not covered, as above.
-- To be proved of the program, once it is written: the CRC-32C and SipHash-2-4 functions it prints
-  compute what `DN.News.Journal` and `DN.News.SipHash` define, through `DN.Compiler.Wp` (both
-  do: `DN.News.CrcCode`, `DN.News.SipHashCode`); no run of the program fails, by the analysis of [0004](0004-safety-analysis.md). The
-  analysis now costs about 40 s and 7.4 GB; if the store's code takes it past 12 GB, the program is
-  split into functions and the analysis extended to calls.
+- Of the program: its SipHash-2-4 and CRC-32C table are the statements `DN.News.SipHashCode` and
+  `DN.News.CrcCode` prove of their kernels, through `DN.Compiler.Wp`; the CRC-32C it takes of a
+  file as the file is written is tested, not proven. No run of it fails, by the analysis of
+  [0004](0004-safety-analysis.md) with calls (`DN.Server.SessionSafe`).
 - Tested against references written apart from the specifications ([baseline](../baseline.md)):
   the grammar of header fields; acceptance, with the article corpus of INN's tests
   (`tests/data/articles`, ISC licence) and our own expected outcomes for an injecting agent, and the
@@ -374,21 +392,35 @@ from them are done; what needs the program or the host comes with them, as marke
   LazyFS, each held to what the tests below take of it. The program's journal scanner
   (`DN.News.ScanProg`) and recovery (`DN.News.RecoverProg`) are held to the models on the journal
   and store lanes' cases.
-- To be tested with the program and the host:
-  - that the program is the specification, as for the session: the model, an independent reference
-    in Python and the compiled program against each other;
-  - the host's worker pool, with failed and slow syncs, no space and short writes injected at its
-    points of failure;
-  - process crashes: the server killed at each operation of a job, then restarted;
-  - power loss: the spool on LazyFS, a FUSE file system that keeps unsynced data in its own cache
-    and drops it on command, cleared at each operation of a job, then restarted; LazyFS makes
-    creations, renames and removals durable at once, so a missing directory sync is caught by the
-    model, not by this test; and appends torn by LazyFS's `torn-op` — a prefix kept, the end kept,
-    the ends kept and the middle lost;
-  - a corrupt store at every entry point — start, POST, HEAD, STAT, ARTICLE, BODY — after the table
-    `fn` keeps for its own store;
-  - two connections posting the same Message-ID, and overlapping crossposts, at once;
-  - POST and reading back with `nntplib` and raw sockets, across restarts.
+- The grammar of header fields as the program's functions (`DN.News.AbnfProg`) is held to its
+  interpreter on the grammar lane's cases and on hostile fields (`scripts/grammar_check.py`).
+- The article's check as the program's functions (`DN.News.ArticleProg`) is held to the model on the
+  article lane's cases and dates and on hard forms (`scripts/accept_check.py`).
+- The session with POST, as a specification (`DN.News.PostSpec`, `DN.News.SessionSpec`), is held to
+  an independent reference in Python, a crash of the spool's model after each 240 included
+  (`scripts/session_check.py`); done.
+- The server killed before each of its file operations, its start's recovery too: every article
+  held or answered 240 is found whole, and nothing else; each client read what it reads unkilled, or
+  its start. Started again, the server reads each back and takes posts (`scripts/crash_check.py`);
+  done.
+- Two connections posting one Message-ID at once, overlapping crossposts, and POST and reading back
+  through sockets and `nntplib` across restarts, in those runs; done.
+- Power lost on LazyFS, before each operation, after a run with each failed with EIO, and in each
+  journal write torn, a prefix, the end or both ends kept: every article answered 240 is found
+  whole, none refused. Started again, a mark of another boot is removed (`scripts/power_check.py`);
+  done.
+- Not shown there: a missing directory sync, LazyFS making names durable at once; recovery's first
+  syncs, which the start record's sync covers for the journal; a failed sync whose data a kernel
+  drops at once: here it stays unsynced, lost with the power.
+- Each operation of a start, two posts and a read, on a spool and on one a crash left, failed once
+  with no space or interrupted, every write cut short, every sync slowed: the server answers as above
+  for the operation, stops accepting where a sync failed and keeps every article answered 240
+  (`scripts/faults_check.py`); done.
+- An article's file changed after the start as the table `fn` keeps for its own store: never sent
+  whole, STAT answered, POST taken, the next start refused where recovery finds the store corrupt; the store corrupt
+  at start (`scripts/nntp_check.py`); done.
+- The compiled program held to the model, as for the session: its trace, jobs included, on the
+  scenarios with a store (`scripts/session_native.py`); done.
 - Not claimed: that the kernel and the file system keep the guarantees of the model; anything about
   the host's workers beyond the tests; that the program is its specification on every run.
 
@@ -404,8 +436,8 @@ from them are done; what needs the program or the host comes with them, as marke
   recovery against the table of corruptions, the store's runs, and the tools the crash tests rest
   on: libfiu's points and LazyFS, which needs `/dev/fuse` and the right to mount it, as a user in a
   user namespace of its own or through `fusermount3` — in CI as a job of its own, locally in a
-  container of its own; to come — the crash lane on LazyFS; the `nntp` lane gains POST and
-  restarts.
+  container of its own; the crash lanes, the server killed and its power lost on LazyFS; and the
+  `nntp` lane with POST and restarts.
 - LazyFS, its two dependencies and libfiu are pinned by digest in `tools.lock.json` and built
   offline, as the other tools built from source are; LazyFS also needs the system's libfuse 3.
 - `docs/nntp.md`, `docs/assurance.md` and `docs/baseline.md` move with the code.

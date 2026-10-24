@@ -16,18 +16,19 @@ ended cleanly and no kept tail is numbered above it, so no cut tail can have hel
 failed action stops recovery, and the store does not start.
 
 Proven: what recovery starts with is sound — every article's file in the directory with its size, no
-sequence number twice, article numbers rising in every group, every group carried (`recover_sound`);
-its articles are the journal's commits (`recover_articles`); its next sequence number is above every
-number a record or a name carries (`recover_next`); it takes files only from temporary names and
-final names no record has, and gives only names no file holds (`recover_safe`); it changes the
-journal only by cutting its torn tail or making again one with no record (`recover_journal`); it
-takes no file before the cut (`recover_order`), and removes a final file no record names only when
-no cut tail can have held its record (`recover_removes`); afterwards the journal ends where the next
-record goes (`recover_journalEnd`); whatever a crash leaves of its actions — of each nothing or all,
-a file renamed under both its names or neither, a tail kept with any of its octets — the next start
-finds the same articles, under any key of sixteen octets and the same groups while a number is left
-(`recover_partly`), and so does a start after all of them (`recover_again`). A cut or creation of
-the journal a crash leaves in part is reasoned about with the frames written in it.
+sequence number or Message-ID twice, article numbers rising in every group, every group carried
+(`recover_sound`); its articles are the journal's commits (`recover_articles`); its next sequence
+number is above every number a record or a name carries (`recover_next`); it takes files only from
+temporary names and final names no record has, and gives only names no file holds (`recover_safe`);
+it changes the journal only by cutting its torn tail or making again one with no record
+(`recover_journal`); it takes no file before the cut (`recover_order`), and removes a final file no
+record names only when no cut tail can have held its record (`recover_removes`); afterwards the
+journal ends where the next record goes (`recover_journalEnd`); whatever a crash leaves of its
+actions — of each nothing or all, a file renamed under both its names or neither, a tail kept with
+any of its octets — the next start finds the same articles, under any key of sixteen octets and the
+same groups while a number is left (`recover_partly`), and so does a start after all of them
+(`recover_again`). A cut or creation of the journal a crash leaves in part is reasoned about with
+the frames written in it.
 -/
 
 namespace DN.News.Recovery
@@ -59,6 +60,8 @@ inductive Fault
   | journal (at_ : Nat) (why : Why)
   /-- a sequence number in two records -/
   | seqTwice (seq : Nat)
+  /-- a Message-ID in two records -/
+  | idTwice (messageId : Bytes)
   /-- an article number in a group not above the one an earlier record gave it there -/
   | numberNotAbove (group : Bytes) (number : Nat)
   /-- a group the configuration lacks -/
@@ -122,6 +125,11 @@ def commitsOf (rs : List Record) : List Commit :=
 def seqTwice? : List Commit → Option Nat
   | [] => none
   | c :: cs => if cs.any (·.seq == c.seq) then some c.seq else seqTwice? cs
+
+/-- A Message-ID two commits carry. -/
+def idTwice? : List Commit → Option Bytes
+  | [] => none
+  | c :: cs => if cs.any (·.messageId == c.messageId) then some c.messageId else idTwice? cs
 
 /-- The highest article number groups give one of them. -/
 def highOf : List Group → Bytes → Nat
@@ -196,12 +204,13 @@ tail starts, if any. -/
 def recoverRecords (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
     (cs : List Commit) (cut : Option Nat) : Except Fault (Store × List Action) :=
   if capacity < cs.length then .error (.tooMany cs.length) else
-  match seqTwice? cs, unknownGroup? cfg cs, notAbove? [] cs, fileFault? img cs with
-  | some s, _, _, _ => .error (.seqTwice s)
-  | none, some g, _, _ => .error (.unknownGroup g)
-  | none, none, some (g, n), _ => .error (.numberNotAbove g n)
-  | none, none, none, some f => .error f
-  | none, none, none, none =>
+  match seqTwice? cs, idTwice? cs, unknownGroup? cfg cs, notAbove? [] cs, fileFault? img cs with
+  | some s, _, _, _, _ => .error (.seqTwice s)
+  | none, some m, _, _, _ => .error (.idTwice m)
+  | none, none, some g, _, _ => .error (.unknownGroup g)
+  | none, none, none, some (g, n), _ => .error (.numberNotAbove g n)
+  | none, none, none, none, some f => .error f
+  | none, none, none, none, none =>
     let next0 := nextSeq cs names
     let next := if cut.isSome then next0 + 1 else next0
     if 2 ^ 64 ≤ next then .error .exhausted
@@ -321,6 +330,19 @@ theorem seqTwice_none : ∀ cs : List Commit, seqTwice? cs = none → (cs.map (�
       obtain ⟨c', hc', he⟩ := hm
       exact hany (List.any_eq_true.mpr ⟨c', hc', by simp [he]⟩)
 
+theorem idTwice_none : ∀ cs : List Commit, idTwice? cs = none → (cs.map (·.messageId)).Nodup
+  | [], _ => List.nodup_nil
+  | c :: cs, h => by
+    simp only [idTwice?] at h
+    split at h
+    · simp at h
+    · rename_i hany
+      refine List.nodup_cons.mpr ⟨?_, idTwice_none cs h⟩
+      intro hm
+      simp only [List.mem_map] at hm
+      obtain ⟨c', hc', he⟩ := hm
+      exact hany (List.any_eq_true.mpr ⟨c', hc', by simp [he]⟩)
+
 theorem le_highOf : ∀ (gs : List Group) (g : Group), g ∈ gs → g.number ≤ highOf gs g.name
   | x :: gs, g, hg => by
     simp only [List.mem_cons] at hg
@@ -426,8 +448,8 @@ theorem fileFault_congr (img img' : Image) : ∀ cs : List Commit,
 theorem recoverRecords_ok (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
     (cs : List Commit) (cut : Option Nat) (st : Store) (ops : List Action)
     (h : recoverRecords cfg img names content key cs cut = .ok (st, ops)) :
-    seqTwice? cs = none ∧ notAbove? [] cs = none ∧ unknownGroup? cfg cs = none ∧
-      fileFault? img cs = none ∧ st.key = key ∧ st.articles = cs ∧
+    seqTwice? cs = none ∧ idTwice? cs = none ∧ notAbove? [] cs = none ∧
+      unknownGroup? cfg cs = none ∧ fileFault? img cs = none ∧ st.key = key ∧ st.articles = cs ∧
       st.next = (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names) ∧
       st.next < 2 ^ 64 ∧ st.journalEnd = cut.getD content.length := by
   unfold recoverRecords at h
@@ -438,7 +460,8 @@ theorem recoverRecords_ok (cfg : Config) (img : Image) (names : List Name) (cont
   · simp at h
   · simp at h
   · simp at h
-  · rename_i h1 h3 h2 h4
+  · simp at h
+  · rename_i h1 h5 h3 h2 h4
     dsimp only at h
     by_cases hlt : 2 ^ 64 ≤ (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names)
     · rw [if_pos hlt] at h
@@ -446,7 +469,7 @@ theorem recoverRecords_ok (cfg : Config) (img : Image) (names : List Name) (cont
     · rw [if_neg hlt] at h
       simp only [Except.ok.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, -⟩ := h
-      exact ⟨h1, h2, h3, h4, rfl, rfl, rfl, by dsimp only; omega, rfl⟩
+      exact ⟨h1, h5, h2, h3, h4, rfl, rfl, rfl, by dsimp only; omega, rfl⟩
 
 theorem recoverWith_cases (cfg : Config) (img : Image) (st : Store) (ops : List Action)
     (h : recoverWith cfg img = .ok (st, ops)) :
@@ -515,6 +538,7 @@ theorem recoverRecords_ops (cfg : Config) (img : Image) (names : List Name) (con
   · simp at h
   · simp at h
   · simp at h
+  · simp at h
   · dsimp only at h
     by_cases hlt : 2 ^ 64 ≤ (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names)
     · rw [if_pos hlt] at h
@@ -542,22 +566,22 @@ theorem recover_cases (cfg : Config) (img : Image) (st : Store) (ops : List Acti
     simp at h
 
 /-- **What recovery starts with is sound**: every article's file is in the directory it read, of the
-size its record gives; no sequence number twice; article numbers rising in every group; every group
-carried; and a sequence number left to give. -/
+size its record gives; no sequence number or Message-ID twice; article numbers rising in every group;
+every group carried; and a sequence number left to give. -/
 theorem recover_sound (cfg : Config) (img : Image) (st : Store) (ops : List Action)
     (h : recover cfg img = .ok (st, ops)) :
     (∀ c ∈ st.articles, ∃ f, img.lookup (finalName c.seq) = some f ∧ f.length = c.fileSize) ∧
-      (st.articles.map (·.seq)).Nodup ∧ Rising st.articles ∧
+      (st.articles.map (·.seq)).Nodup ∧ (st.articles.map (·.messageId)).Nodup ∧ Rising st.articles ∧
       (∀ c ∈ st.articles, ∀ g ∈ c.groups, g.name ∈ cfg.groups) ∧ st.next < 2 ^ 64 := by
   obtain ⟨_, _, hc⟩ := recover_cases cfg img st ops h
   rcases hc with ⟨_, rfl, _⟩ | ⟨content, _, ⟨_, _, _, rfl, _⟩ | ⟨key, rest, _, _, hr⟩⟩
-  · exact ⟨by simp [fresh], by simp [fresh], fun c c' h => by simp [fresh] at h, by simp [fresh],
-      by simp [fresh]⟩
-  · exact ⟨by simp [fresh], by simp [fresh], fun c c' h => by simp [fresh] at h, by simp [fresh],
-      by simp [fresh]⟩
-  · obtain ⟨h1, h2, h3, h4, _, harts, _, hnext, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+  · exact ⟨by simp [fresh], by simp [fresh], by simp [fresh], fun c c' h => by simp [fresh] at h,
+      by simp [fresh], by simp [fresh]⟩
+  · exact ⟨by simp [fresh], by simp [fresh], by simp [fresh], fun c c' h => by simp [fresh] at h,
+      by simp [fresh], by simp [fresh]⟩
+  · obtain ⟨h1, h5, h2, h3, h4, _, harts, _, hnext, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     rw [harts]
-    exact ⟨fileFault_none img _ h4, seqTwice_none _ h1, (notAbove_none [] _ h2).2,
+    exact ⟨fileFault_none img _ h4, seqTwice_none _ h1, idTwice_none _ h5, (notAbove_none [] _ h2).2,
       unknownGroup_none cfg _ h3, hnext⟩
 
 /-- **Recovery's articles are the journal's commits**, in its order. -/
@@ -572,7 +596,7 @@ theorem recover_articles (cfg : Config) (img : Image) (st : Store) (ops : List A
     cases hj'
     rcases hc with ⟨hrs, _, _, rfl, _⟩ | ⟨key, rest, hrs, _, hr⟩
     · simp [hrs, fresh, commitsOf]
-    · obtain ⟨_, _, _, _, _, harts, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+    · obtain ⟨_, _, _, _, _, _, harts, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
       simp [hrs, harts]
 
 /-! ## What recovery's actions touch -/
@@ -795,6 +819,7 @@ theorem recoverRecords_planned (cfg : Config) (img : Image) (names : List Name)
   · simp at h
   · simp at h
   · simp at h
+  · simp at h
   · dsimp only at h
     by_cases hlt : 2 ^ 64 ≤ (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names)
     · rw [if_pos hlt] at h
@@ -983,14 +1008,14 @@ theorem recoverRecords_fits (cfg : Config) (img : Image) (names : List Name) (co
 
 theorem recoverRecords_of (cfg : Config) (img : Image) (names : List Name) (content key : Bytes)
     (cs : List Commit) (cut : Option Nat) (h0 : cs.length ≤ capacity)
-    (h1 : seqTwice? cs = none) (h2 : notAbove? [] cs = none)
+    (h1 : seqTwice? cs = none) (h5 : idTwice? cs = none) (h2 : notAbove? [] cs = none)
     (h3 : unknownGroup? cfg cs = none) (h4 : fileFault? img cs = none)
     (hn : (if cut.isSome then nextSeq cs names + 1 else nextSeq cs names) < 2 ^ 64) :
     ∃ st ops, recoverRecords cfg img names content key cs cut = .ok (st, ops) ∧ st.articles = cs ∧
       st.key = key := by
   unfold recoverRecords
   rw [if_neg (by omega)]
-  simp only [h1, h2, h3, h4]
+  simp only [h1, h5, h2, h3, h4]
   rw [if_neg (by omega)]
   exact ⟨_, _, rfl, rfl, rfl⟩
 
@@ -1022,7 +1047,7 @@ theorem recover_new (cfg : Config) (hkey : cfg.key.length = keyLength) (k : Byte
     (by intro p hp; simp only [List.mem_singleton] at hp; subst hp
         rw [show journalName = Name.journal.bytes from rfl, parseName_bytes _ rfl]; rfl)
     (by simp) hs (by simp)]
-  exact recoverRecords_of cfg _ _ _ _ [] none (Nat.zero_le _) rfl rfl rfl rfl
+  exact recoverRecords_of cfg _ _ _ _ [] none (Nat.zero_le _) rfl rfl rfl rfl rfl
     (by simp [nextSeq, List.filterMap]; decide)
 
 theorem parse_journal : parseName journalName = some .journal := by
@@ -1111,7 +1136,7 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
         refine ⟨st', ops', ?_, by simp [ha, fresh], fun h => absurd (by simp) h⟩
         simpa [apply, setName] using h'
   · -- a journal with records
-    obtain ⟨h1, h2, h3, h4, hkeyst, harts, hnext, hlt, -⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+    obtain ⟨h1, h5, h2, h3, h4, hkeyst, harts, hnext, hlt, -⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     have h0 := recoverRecords_fits _ _ _ _ _ _ _ _ _ hr
     have h3' : unknownGroup? cfg' (commitsOf rest) = none := by
       rw [← h3]; simp [unknownGroup?, hgroups]
@@ -1120,7 +1145,7 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
     have hsc : scan content = ⟨.format key :: rest, e⟩ := by rw [← hrs, ← he]
     rw [he] at hcor hnext hplan
     generalize hnamesdef : img.filterMap (parseName ·.1) = names at hnext hplan
-    generalize hcsdef : commitsOf rest = cs at h0 h1 h2 h3 h3' h4 harts hnext hplan
+    generalize hcsdef : commitsOf rest = cs at h0 h1 h5 h2 h3 h3' h4 harts hnext hplan
     generalize hcutdef : cutOf e = cut at hnext hplan
     have hmem : ∀ n, n ∈ names ↔ ∃ q ∈ img, parseName q.1 = some n := by
       intro n; rw [← hnamesdef]; exact mem_names img n
@@ -1165,8 +1190,8 @@ theorem recover_partly (cfg cfg' : Config) (hgroups : cfg'.groups = cfg.groups)
           (.create cfg.key ∉ ops → st'.key = st.key) := by
       intro content' e' cut' hj' hs' hc' hcut' hn'
       rw [recover_of cfg' hkey' img' content' key rest e' hall' hj' hs' hc', hcut', hcsdef]
-      obtain ⟨st', ops', h', ha, hk⟩ := recoverRecords_of cfg' img' _ content' key cs cut' h0 h1 h2
-        h3' h4' hn'
+      obtain ⟨st', ops', h', ha, hk⟩ := recoverRecords_of cfg' img' _ content' key cs cut' h0 h1 h5
+        h2 h3' h4' hn'
       exact ⟨st', ops', h', by rw [ha, harts], fun _ => by rw [hk, hkeyst]⟩
     rcases k2 with hj' | ⟨x, hx, hj'⟩
     · -- the journal as it was
@@ -1242,7 +1267,7 @@ theorem recover_safe (cfg : Config) (img : Image) (st : Store) (ops : List Actio
   · simp only [List.mem_singleton] at ha
     subst ha
     simp [Action.takes, Action.gives]
-  · obtain ⟨_, _, _, _, _, harts, hnext, _, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+  · obtain ⟨_, _, _, _, _, _, harts, hnext, _, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     have hnext0 : nextSeq (commitsOf rest) (img.filterMap (parseName ·.1)) < 2 ^ 64 := by
       split at hnext <;> omega
     have hp := recoverRecords_planned _ _ _ _ _ _ _ _ _ hr a ha
@@ -1462,7 +1487,7 @@ theorem recover_journalEnd (cfg : Config) (img : Image) (st : Store) (ops : List
   · refine ⟨_, ?_, hf⟩
     simp only [applyAll, List.foldl_cons, List.foldl_nil, apply]
     rw [lookup_setName, if_pos rfl]
-  · obtain ⟨_, _, _, _, _, _, _, _, hend⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+  · obtain ⟨_, _, _, _, _, _, _, _, _, hend⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     have hops := recoverRecords_ops _ _ _ _ _ _ _ _ _ hr
     have hplan := recoverRecords_planned _ _ _ _ _ _ _ _ _ hr
     generalize hs : scan content = sc at hend hops hplan hcor
@@ -1507,7 +1532,7 @@ theorem recover_next (cfg : Config) (img : Image) (st : Store) (ops : List Actio
         cases hn
         simp [seqOf] at hs
       · simp at hj
-  · obtain ⟨_, _, _, _, _, harts, hnext, _, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
+  · obtain ⟨_, _, _, _, _, _, harts, hnext, _, _⟩ := recoverRecords_ok _ _ _ _ _ _ _ _ _ hr
     have hat : nextSeq (commitsOf rest) (img.filterMap (parseName ·.1)) ≤ st.next := by
       split at hnext <;> omega
     refine ⟨fun c hc => ?_, fun q hq n s hn hs => ?_⟩

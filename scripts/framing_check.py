@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import itertools
 import os
@@ -322,10 +323,8 @@ def ended_as(want: str, how: str, detail: str) -> bool:
     return how == want if want == FAULT else how == "stopped" and want in detail
 
 
-def caught(cake: str, source: str, index: int, defect: Defect, by_program: dict[str, tuple[list[str], list[str]]]
-           ) -> dict[str, str]:
+def caught(planted: Path, defect: Defect, by_program: dict[str, tuple[list[str], list[str]]]) -> dict[str, str]:
     """Each program the defect is planted in, and how its cases caught it."""
-    planted = build(cake, f"defect-{index}", plant(source, defect))
     seen = {}
     for name in defect.programs:
         cases, expected = by_program[name]
@@ -365,7 +364,9 @@ def check(cake: str) -> Report:
     for c, e in zip(cases, expected, strict=True):
         by_program[program(c)][0].append(c)
         by_program[program(c)][1].append(e)
-    seen = {d.name: caught(cake, source, index, d, by_program) for index, d in enumerate(DEFECTS)}
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+        planted = list(pool.map(lambda k: build(cake, f"defect-{k}", plant(source, DEFECTS[k])), range(len(DEFECTS))))
+    seen = {d.name: caught(p, d, by_program) for p, d in zip(planted, DEFECTS, strict=True)}
     lanes.require_quoted({"docs/baseline.md": [f"{len(cases):,} cases"]})
     return Report("checked", cake, HOSTS, {
         "source_sha256": lanes.digest(OUT / "framers.pnk"), "executable_sha256": lanes.digest(binary),

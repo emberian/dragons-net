@@ -7,13 +7,13 @@ scripts/recovery_ref.py, which have to give the same answer, to the byte, on eve
 - a table of directories after the one `fn` keeps for its own store, each with the answer 0005 gives
   it: every corruption 0005 lists, at its boundary and beside it — a name of no shape the store
   gives, files and no journal, a journal that does not read back or holds a frame of no record, a
-  sequence number in two records, an article number not above the group's last, a group the
-  configuration lacks, a file missing or of another size, no sequence number left — more articles
-  than the store holds, and a key not of sixteen octets, which the configuration refuses; which is
-  reported when several hold, of one kind and of several; and the directories that recover — empty,
-  a journal alone, a format cut short or filled with zeros alone, commits and starts and their
-  files, crossposts and a last record whole but not answered, a torn commit, a torn start or zeros
-  after the records, kept and cut, temporary files, final files no record names removed or set
+  sequence number or a Message-ID in two records, an article number not above the group's last, a
+  group the configuration lacks, a file missing or of another size, no sequence number left — more
+  articles than the store holds, and a key not of sixteen octets, which the configuration refuses;
+  which is reported when several hold, of one kind and of several; and the directories that recover
+  — empty, a journal alone, a format cut short or filled with zeros alone, commits and starts and
+  their files, crossposts and a last record whole but not answered, a torn commit, a torn start or
+  zeros after the records, kept and cut, temporary files, final files no record names removed or set
   aside, files set aside before, tails kept below and above a final file;
 - directories drawn at random from a fixed seed, with starts among their records and some breaking
   a rule across records, and the same damaged at random;
@@ -56,14 +56,14 @@ LIMIT = 2**64
 CAPACITY = 4096
 # The versions of recovery with one rule changed, by the name `dn-compiler recovery-model --mutant`
 # takes.
-MUTANTS = ["seq-unchecked", "numbers-unchecked", "numbers-equal", "groups-unchecked", "size-unchecked",
-           "missing-unchecked", "names-ignored", "journal-among-files", "remade-among-files",
+MUTANTS = ["seq-unchecked", "id-unchecked", "numbers-unchecked", "numbers-equal", "groups-unchecked",
+           "size-unchecked", "missing-unchecked", "names-ignored", "journal-among-files", "remade-among-files",
            "next-records-only", "torn-no-bump", "tail-dropped", "tidy-first", "aside-never",
            "aside-always", "aside-at-tail", "temp-kept", "tidy-unsynced", "exhausted-late",
            "key-unchecked", "tail-unprefixed", "aside-over-quarantine", "key-from-config", "capacity-late"]
 # Why recovery finds a store corrupt, as both print it.
-FAULTS = ["bad-name", "no-journal", "journal", "seq-twice", "number-not-above", "unknown-group",
-          "missing-file", "wrong-size", "exhausted", "bad-key", "too-many"]
+FAULTS = ["bad-name", "no-journal", "journal", "seq-twice", "id-twice", "number-not-above",
+          "unknown-group", "missing-file", "wrong-size", "exhausted", "bad-key", "too-many"]
 # Lines both have to refuse to answer.
 REFUSED = ["recover", "recover - - - -", "recover 0g - -", "recover - local -", "recover - 6a,,6b -",
            "recover - - 6a", "recover - - 6a=00;6a=01", "recover - - 6a=00;", "recover - - 6A=00",
@@ -112,9 +112,10 @@ def corrupt(why: str) -> str:
 
 
 def commit(seq: int, number: int = 1, *, group: bytes = b"local.test", size: int = 1,
-           more: tuple[tuple[bytes, int], ...] = ()) -> J.Commit:
-    """A commit a correct store writes: its article `number` in `group`, and `more` groups."""
-    return (seq, b"<%d@x>" % seq, ((group, number), *more), 0, size, 0)
+           more: tuple[tuple[bytes, int], ...] = (), mid: int | None = None) -> J.Commit:
+    """A commit a correct store writes: its article `number` in `group`, and `more` groups; its
+    Message-ID numbered `mid`, by default its own."""
+    return (seq, b"<%d@x>" % (seq if mid is None else mid), ((group, number), *more), 0, size, 0)
 
 
 def commits_of(items: Sequence[J.Item]) -> list[J.Commit]:
@@ -201,6 +202,12 @@ def table() -> list[Case]:
         j, files = store(cs)
         dup = next(s for k, s in enumerate(seqs) if s in seqs[k + 1:])
         case(files, corrupt(f"seq-twice {dup}"))
+    # A Message-ID in two records: the first that a later one repeats.
+    for mids in ([1, 1], [1, 2, 1], [2, 1, 1], [1, 2, 2, 1]):
+        cs = [commit(k + 1, k + 1, mid=m) for k, m in enumerate(mids)]
+        j, files = store(cs)
+        dup = next(m for k, m in enumerate(mids) if m in mids[k + 1:])
+        case(files, corrupt(f"id-twice {hexed(b'<%d@x>' % dup)}"))
     # An article number not above the group's last: the first record's, its first group's.
     for numbers, low in (([1, 1], 1), ([2, 1], 1), ([5, 6, 6], 6), ([1, 2, 1], 1)):
         cs = [commit(k + 1, number) for k, number in enumerate(numbers)]
@@ -237,6 +244,9 @@ def table() -> list[Case]:
     cs = [commit(1, 2, group=b"other"), commit(1, 1)]
     j, _ = store(cs)
     case([(b"journal", j)], corrupt("seq-twice 1"))
+    cs = [commit(1, 2, group=b"other"), commit(2, 1, mid=1)]
+    j, _ = store(cs)
+    case([(b"journal", j)], corrupt(f"id-twice {hexed(b'<1@x>')}"))
     cs = [commit(1, 2), commit(2, 1, group=b"other", more=((test, 1),))]
     j, _ = store(cs)
     case([(b"journal", j)], corrupt(f"unknown-group {b'other'.hex()}"))
@@ -326,7 +336,8 @@ def table() -> list[Case]:
 
 def random_commits(rng: random.Random, groups: list[bytes]) -> list[J.Commit]:
     """Commits whose article numbers rise in each group, perhaps one breaking a rule across
-    records: a sequence number another has, an article number not above, a group not carried."""
+    records: a sequence number or a Message-ID another has, an article number not above, a group not
+    carried."""
     highest: dict[bytes, int] = {}
     cs = []
     for seq in sorted(rng.sample(range(1, 40), rng.randint(0, 6))):
@@ -340,10 +351,12 @@ def random_commits(rng: random.Random, groups: list[bytes]) -> list[J.Commit]:
     if cs and rng.random() < 0.25:
         k = rng.randrange(len(cs))
         seq, message_id, (first, *rest), header, size, crc = cs[k]
-        match rng.randrange(3):
+        match rng.randrange(4):
             case 0:
                 seq = rng.choice(cs)[0]
             case 1:
+                message_id = rng.choice(cs)[1]
+            case 2:
                 first = (first[0], rng.randint(1, first[1]))
             case _:
                 rest = [g for g in rest if g[0] != b"local.zzz"] + [(b"local.zzz", 1)]

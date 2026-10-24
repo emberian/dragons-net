@@ -500,6 +500,81 @@ theorem emitMain_prints {externals : List String} {f : PFun} {src : String}
     | exact absurd h (by simp)
     | (simp only [pure, Except.pure, Except.ok.injEq] at h; exact h.symm)
 
+/-- The same of a whole program with functions: its `main` has the shape the semantics enters. -/
+theorem emitProgram_entry {externals : List String} {funs : List PFun} {f : PFun} {src : String}
+    (h : emitProgram externals funs f = .ok src) :
+    f.exported = false ∧ f.name = "main" ∧ f.params = [] := by
+  unfold emitProgram at h
+  by_cases hc : (!f.exported && f.name == "main" && f.params.isEmpty) = true
+  · simp only [Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at hc
+    exact ⟨hc.1.1, hc.1.2, hc.2⟩
+  · simp only [hc] at h
+    exact absurd h (by simp [bind, Except.bind])
+
+/-- …and the text it prints is its functions', then `main`'s. -/
+theorem emitProgram_prints {externals : List String} {funs : List PFun} {f : PFun} {src : String}
+    (h : emitProgram externals funs f = .ok src) :
+    src = String.intercalate "\n" ((funs ++ [f]).map ppFun) := by
+  simp only [emitProgram, bind, Except.bind] at h
+  repeat' split at h
+  all_goals first
+    | exact (Except.ok.inj h).symm
+    | exact absurd h (by simp)
+
+/-- Each function of a run of `checkFunctions`'s loop that succeeds lowers. -/
+theorem forIn_each {p : Profile} :
+    ∀ (funs : List PFun),
+      (forIn funs PUnit.unit fun (g : PFun) (_ : PUnit) => do
+          let scope ← paramScope g.params []
+          statements p scope g.body
+          unless exitsL g.body do throw Reason.missingReturn
+          pure (ForInStep.yield PUnit.unit) : Except Reason PUnit) = .ok PUnit.unit →
+      ∀ g ∈ funs, (Lower.lower g).isSome = true
+  | [], _, g, hg => by cases hg
+  | f :: fs, h, g, hg => by
+    simp only [List.forIn_cons, bind, Except.bind] at h
+    cases hp : paramScope f.params [] with
+    | error e => simp [hp] at h
+    | ok sc =>
+      cases hs : statements p sc f.body with
+      | error e => simp [hp, hs] at h
+      | ok u =>
+        have hf : (Lower.lower f).isSome = true := statements_lower hs
+        cases he : exitsL f.body
+        · simp [hp, hs, he] at h
+        · simp only [hp, hs, he, if_true, pure, Except.pure] at h
+          rcases List.mem_cons.mp hg with rfl | hg
+          · exact hf
+          · exact forIn_each fs h g hg
+
+/-- The functions `checkFunctions` takes lower. -/
+theorem checkFunctions_lowers {p : Profile} {entry : String} {funs : List PFun}
+    (h : checkFunctions p entry funs = .ok ()) : ∀ g ∈ funs, (Lower.lower g).isSome = true := by
+  unfold checkFunctions at h
+  simp only [bind, Except.bind] at h
+  split at h
+  · simp only [pure, Except.pure] at h
+    split at h
+    · cases h
+    · rename_i w hw
+      cases w
+      exact forIn_each funs hw
+  · cases h
+
+/-- …and so do those of a whole program the gate prints. -/
+theorem emitProgram_lowers {externals : List String} {funs : List PFun} {f : PFun} {src : String}
+    (h : emitProgram externals funs f = .ok src) :
+    ∀ g ∈ funs, (Lower.lower g).isSome = true := by
+  simp only [emitProgram, bind, Except.bind] at h
+  split at h
+  · simp only [pure, Except.pure] at h
+    split at h
+    · cases h
+    · rename_i u hc
+      cases u
+      exact checkFunctions_lowers hc
+  · cases h
+
 /-- The exported profile refuses every external call, whatever its name and arguments. -/
 theorem exported_refuses_external (scope : List String) (name : String) (args : List PExpr) :
     statement exportedProfile scope (.ffi name args) = .error .externalEffect := by

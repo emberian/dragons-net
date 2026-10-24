@@ -7,9 +7,12 @@ every module, in import order, before `lake build`:
 
   lean --run scripts/SourceGate.lean --out DIR [--syntax] [--option NAME=VALUE]... FILE MODULE
 
-Lean's own parser reads the module and every command is checked before it is elaborated,
-so a command that breaks the rules never runs. Imports come from the toolchain and from
-DIR, where the gate writes each module it accepts.
+Lean's own parser reads the module and every command is checked before any is elaborated,
+so a command that breaks the rules never runs. The gate elaborates only what changes how
+the rest parses: the scopes, the scoped syntax an `open` brings in, and every command of
+the files passed with `--syntax`; the build elaborates the rest once every module passed.
+Imports come from the toolchain and from DIR, where the gate writes each module it accepts,
+with the names its declarations give, for the `open`s of the modules that import it.
 
 The rules keep code written in the library from running while the library is built.
 Commands, attributes, options and imports are allow-listed; syntax may be defined only in
@@ -53,10 +56,20 @@ def codeRunners : NameSet :=
 def unsafeKinds : NameSet :=
   [``Parser.Command.«unsafe», ``Parser.Term.«unsafe»].foldl NameSet.insert {}
 
+/-- Commands that change how the rest of a module parses, elaborated as they come. -/
+def scopeCommands : NameSet :=
+  [``Parser.Command.namespace, ``Parser.Command.section, ``Parser.Command.end].foldl
+    NameSet.insert {}
+
 structure Rules where
   commands : Parser.SyntaxNodeKindSet
   attributes : Parser.SyntaxNodeKindSet
   syntaxAllowed : Bool
+  /-- Names of declarations here and in the imports, each a namespace in the build only if a
+  constant under it was made too. -/
+  maybe : IO.Ref NameSet
+  /-- Those of this module, for the modules that import it. -/
+  own : IO.Ref NameSet
 
 def headText (stx : Syntax) : String :=
   match stx[0] with
@@ -98,7 +111,73 @@ def reportMessages (log : MessageLog) : IO Unit := do
   for m in log.reportedPlusUnreported.toList do
     if m.severity matches .error then IO.print (← m.toString)
 
-/-- Parse, check and elaborate commands until the end of the module; `false` on failure. -/
+/-- Whether Lean registers namespaces under `n`: every part of it a string. -/
+def isNamespaceName : Name → Bool
+  | .str .anonymous _ => true
+  | .str p _ => isNamespaceName p
+  | _ => false
+
+/-- The namespaces a constant named `name` makes, as Lean registers them on adding it: the prefixes
+of its name, unless it is internal. -/
+def namePrefixes (name : Name) : List Name :=
+  match name with
+  | .str _ s => if s.front == '_' then [] else go name
+  | _ => []
+where go
+  | .str p _ => if isNamespaceName p then p :: go p else []
+  | _ => []
+
+/-- The names the declarations of `stx` give their constants in namespace `ns`; a private one's
+makes no namespace. -/
+partial def declared (ns : Name) (stx : Syntax) : Array Name :=
+  match stx with
+  | .node _ kind args =>
+    if kind == ``Parser.Command.declaration &&
+        (stx[0].find? (·.isOfKind ``Parser.Command.private)).isSome then #[]
+    else if kind == ``Parser.Command.declId then
+      let id := stx[0].getId
+      #[if rootNamespace.isPrefixOf id then id.replacePrefix rootNamespace .anonymous else ns ++ id]
+    else args.foldl (· ++ declared ns ·) #[]
+  | _ => #[]
+
+/-- Where Lean looks for the namespace `n` names from namespace `ns`, innermost first. -/
+def scopeChain (ns n : Name) : List Name :=
+  match ns with
+  | .str p _ => (ns ++ n) :: scopeChain p n
+  | _ => [n.replacePrefix rootNamespace .anonymous]
+
+/-- What an `open` does to how the rest of the module parses, as Lean elaborates it: the scoped
+syntax of the namespaces it opens, each one then resolving the next. The gate knows the namespaces
+the build has but for one a declaration's own name makes, which it is only when a constant under it
+was made too (`maybe`): an `open` that one of those could take from a namespace with syntax is
+refused, the build and the gate parsing on with different syntax otherwise. -/
+def openForParsing (maybe : NameSet) (decl : Syntax) : Command.CommandElabM Unit := do
+  let resolved (id : Syntax) : Command.CommandElabM (List Name) := do
+    let scope ← Command.getScope
+    let env ← getEnv
+    let chain := scopeChain scope.currNamespace id.getId
+    if let some i := chain.findIdx? env.isNamespace then
+      if (Parser.parserExtension.ext.getState env).scopedEntries.map.contains chain[i]! then
+        if let some other := (chain.take i).find? maybe.contains then
+          throwErrorAt id m!"`open {id.getId}` brings in the syntax of {chain[i]!}, and the build \
+            may open {other} instead, which a declaration names: open it outside that namespace"
+    return ResolveName.resolveNamespace env scope.currNamespace scope.openDecls id.getId
+  let opened (ns : Name) (except : List Name) : Command.CommandElabM Unit := do
+    activateScoped ns
+    Command.modifyScope fun s => { s with openDecls := .simple ns except :: s.openDecls }
+  match decl with
+  | `(Parser.Command.openDecl| $nss*) =>
+    for id in nss do
+      for ns in ← resolved id do opened ns []
+  | `(Parser.Command.openDecl| scoped $nss*) =>
+    for id in nss do
+      for ns in ← resolved id do activateScoped ns
+  | `(Parser.Command.openDecl| $ns hiding $ids*) =>
+    if let [n] ← resolved ns then opened n (ids.map (·.getId)).toList
+  | _ => pure ()
+
+/-- Parse and check commands until the end of the module, elaborating what changes how the rest
+parses; `false` on failure. -/
 partial def processCommands (r : Rules) : FrontendM Bool := do
   updateCmdPos
   let s ← getCommandState
@@ -114,7 +193,18 @@ partial def processCommands (r : Rules) : FrontendM Bool := do
   let found := problems r cmd
   unless found.isEmpty do
     report ctx found; return false
-  elabCommandAtFrontend cmd
+  if r.syntaxAllowed || scopeCommands.contains cmd.getKind then
+    elabCommandAtFrontend cmd
+  else if cmd.getKind == ``Parser.Command.open then
+    let maybe ← r.maybe.get
+    runCommandElabM (Command.withLoggingExceptions (openForParsing maybe cmd[1]))
+  else
+    -- The namespaces the declarations will make in the build, for the `open`s after them.
+    for name in declared scope.currNamespace cmd do
+      runCommandElabM (modifyEnv fun env => (namePrefixes name).foldl Environment.registerNamespace env)
+      if isNamespaceName name then
+        r.maybe.modify (·.insert name)
+        r.own.modify (·.insert name)
   let messages := (← getCommandState).messages
   if messages.hasErrors then
     reportMessages messages; return false
@@ -168,12 +258,20 @@ unsafe def main (args : List String) : IO UInt32 := do
     reportMessages messages; return 1
   let categories := (Parser.parserExtension.getState env).categories
   let kinds cat := (Parser.getCategory categories cat).map (·.kinds) |>.getD {}
+  let mut imported : NameSet := {}
+  for m in env.header.moduleNames do
+    let names := modToFilePath out m "names"
+    if (`DN).isPrefixOf m && (← names.pathExists) then
+      let some found := (Json.parse (← IO.FS.readFile names) >>= fromJson? (α := Array Name)).toOption
+        | IO.eprintln s!"{names}: not the names the gate wrote"; return 1
+      imported := found.foldl NameSet.insert imported
   let rules := { commands := kinds `command, attributes := kinds `attr,
-                 syntaxAllowed := a.syntaxAllowed }
+                 syntaxAllowed := a.syntaxAllowed, maybe := ← IO.mkRef imported, own := ← IO.mkRef {} }
   let (ok, s) ← (processCommands rules { inputCtx := ctx }).run
     { commandState := Command.mkState env messages a.opts, parserState, cmdPos := parserState.pos }
   unless ok do return 1
   let olean := modToFilePath out module "olean"
   if let some dir := olean.parent then IO.FS.createDirAll dir
   writeModule s.commandState.env olean
+  IO.FS.writeFile (modToFilePath out module "names") (toJson (← rules.own.get).toArray).compress
   return 0

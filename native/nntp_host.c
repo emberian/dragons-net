@@ -375,6 +375,7 @@ static void take_connections(unsigned char *a, uint64_t now) {
                                                    : ((struct sockaddr_in6 *)&peer)->sin6_port;
         conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
         event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
+        dn_store_log_opened(&peer);
         dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
                     (uint64_t)dn_store_may_post(&peer));
     }

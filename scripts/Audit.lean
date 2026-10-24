@@ -117,16 +117,19 @@ def compilerModules : Array Name :=
     `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
     `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.News.Abnf,
-    `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfRules, `DN.News.ArticleModel,
-    `DN.News.ArticleSpec, `DN.News.CommandSpec, `DN.News.CrcProg, `DN.News.FrameModel,
+    `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfProg, `DN.News.AbnfRules,
+    `DN.News.ArticleModel, `DN.News.ArticleProg, `DN.News.ArticleSpec, `DN.News.CommandSpec,
+    `DN.News.CrcProg,
+    `DN.News.FrameModel,
     `DN.News.FrameSpec, `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves,
     `DN.News.FsModel, `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash,
-    `DN.News.JournalModel, `DN.News.RecoverProg, `DN.News.Recovery, `DN.News.RecoveryModel,
+    `DN.News.JournalModel, `DN.News.PostSpec, `DN.News.RecoverProg, `DN.News.Recovery,
+    `DN.News.RecoveryModel,
     `DN.News.RecoveryMutant, `DN.News.RecoveryRun, `DN.News.ScanProg, `DN.News.SessionModel,
     `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash, `DN.News.SipProg,
     `DN.News.Spool, `DN.News.SpoolOps, `DN.News.StoreCases, `DN.News.StoreOps, `DN.News.StoreRun,
     `DN.Printed, `DN.Server.Layout, `DN.Server.Session, `DN.Server.SessionLayout,
-    `DN.Server.Skeleton]
+    `DN.Server.SessionStore, `DN.Server.Skeleton]
 
 /-- What `dn-compiler` imports, transitively, read from the compiled module headers. -/
 def compilerClosure (env : Environment) (ours : NameSet) : NameSet := Id.run do

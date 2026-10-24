@@ -32,7 +32,8 @@ import sys
 import tempfile
 import termios
 import time
-from typing import IO, NamedTuple
+from types import ModuleType
+from typing import IO, Any, NamedTuple
 import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -61,7 +62,7 @@ LINGER_QUIET, LINGER_TOTAL, ACCEPT_PAUSE, LINGERING = 5_000, 30_000, 100, 64
 # How long a check waits for the server, and for a server with a planted defect.
 TIMEOUT, DEFECT_TIMEOUT = 10.0, 1.5
 # The program acts for the generation before its connection's, to see the host refuse it.
-STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 3)
+STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 6)
 Conn = tuple[int, int]
 
 
@@ -258,7 +259,8 @@ class Server:
         self.delivered: dict[Conn, bytearray] = {}
         self.gone: dict[Conn, int] = {}
         self.last = Turn(0, [], [], 0)
-        self.batch = session_native.layout(OUT)["BATCH"]
+        # The layout the server was built with lies beside it (lanes.whole_program).
+        self.batch = session_native.layout(binary.parent)["BATCH"]
         self.idle_allowed = 0
         self.traced, self.judged = traced, judged
         self.err: str | None = None
@@ -657,13 +659,18 @@ def cpu_seconds(pid: int) -> float:
     return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
 
-def with_nntplib(b: Build) -> str:
+def import_nntplib() -> ModuleType:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             import nntplib  # noqa: PLC0415 -- deprecated, and gone after Python 3.12
     except ImportError:
         raise LaneError("this check needs the nntplib of Python 3.12") from None
+    return nntplib
+
+
+def with_nntplib(b: Build) -> str:
+    nntplib = import_nntplib()
     with serving(b, traced=False) as server:
         news = nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout)
         welcome = news.getwelcome()
@@ -1098,8 +1105,9 @@ def crowd(b: Build) -> str:
 
 def store_start(b: Build) -> str:
     """Recovery at start on a spool: an empty one gets a journal of its format and a start record, a
-    start after it appends another, the server listening and greeting each time; and a spool holding
-    a name no store gives ends the start with status 4, the reason named."""
+    start after it appends another, the server listening each time and greeting a client of loopback,
+    which may post, with 200; and a spool holding a name no store gives, or a journal of two commits
+    of one Message-ID, ends the start with status 4, the reason named."""
     with tempfile.TemporaryDirectory() as temp:
         spool, run = Path(temp, "spool"), Path(temp, "run")
         spool.mkdir()
@@ -1108,7 +1116,7 @@ def store_start(b: Build) -> str:
                    "--group", "local.test")
         for _ in range(2):
             with serving(b, False, *options, traced=False) as server:
-                read_expected(server.client(), GREETING, "the greeting after recovery")
+                read_expected(server.client(), TEXTS["greeting-post"], "the greeting after recovery")
         data = (spool / "journal").read_bytes()
         at = store_ref.HEADER + len(store_ref.MAGIC)
         key = data[at:at + store_ref.KEY]
@@ -1121,14 +1129,127 @@ def store_start(b: Build) -> str:
         if data != want or left != ["journal"]:
             raise LaneError(f"two starts on an empty spool left {left}, a journal of "
                             f"{data.hex()}, not {want.hex()}")
-        (spool / "junk").write_bytes(b"")
-        done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
-                               SOURCE.decode(), *options], capture_output=True, text=True,
-                              timeout=b.timeout, check=False)
-    said = "the store is refused: corrupt bad-name 6a756e6b"
-    if done.returncode != 4 or said not in done.stderr:
-        raise LaneError(f"a spool with a name no store gives: status {done.returncode}, {done.stderr[-300:]!r}")
-    return f"a journal of {len(want)} octets; refused: {said}"
+        mid, twice = b"<twice@x>", data
+        for seq in (1, 2):
+            body = store_ref.payload((seq, mid, [(b"local.test", seq)], 0, 1, 0))
+            twice += store_ref.frame(key, len(twice), store_ref.COMMIT, body)
+        cases = (("junk", b"", "bad-name 6a756e6b"), ("journal", twice, f"id-twice {mid.hex()}"))
+        for name, octets, said in cases:
+            (spool / name).write_bytes(octets)
+            done = subprocess.run([str(b.path), "--port", "0", "--revision", REVISION.decode(), "--source",
+                                   SOURCE.decode(), *options], capture_output=True, text=True,
+                                  timeout=b.timeout, check=False)
+            if done.returncode != 4 or f"the store is refused: corrupt {said}" not in done.stderr:
+                raise LaneError(f"a spool refused for {said}: status {done.returncode}, {done.stderr[-300:]!r}")
+            (spool / "junk").unlink(missing_ok=True)
+    return f"a journal of {len(want)} octets; refused: {'; '.join(said for _, _, said in cases)}"
+
+
+def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> None:
+    """Each article read back by `nntplib` as its file holds it: ARTICLE the header fields, Xref with
+    its number in `local.test`, the empty line and the body; HEAD up to Xref, BODY after the empty line,
+    STAT the number 0 and the Message-ID; an article the store lacks 430."""
+    for k, mid in enumerate(ids, 1):
+        octets = (spool / f"a{k:016x}").read_bytes()
+        header, body = octets.split(b"\r\n\r\n", 1)
+        unstuffed = [line[1:] if line.startswith(b".") else line for line in (header + b"\r\n").split(b"\r\n")]
+        head = [*unstuffed[:-1], f"Xref: dn.example local.test:{k}".encode()]
+        lines = [line[1:] if line.startswith(b".") else line for line in body.split(b"\r\n")[:-1]]
+        got = {"article": news.article(mid), "head": news.head(mid), "body": news.body(mid)}
+        wanted = {"article": (220, [*head, b"", *lines]), "head": (221, head), "body": (222, lines)}
+        for what, (resp, info) in got.items():
+            code, lines_wanted = wanted[what]
+            if resp != f"{code} 0 {mid}" or info.lines != lines_wanted:
+                raise LaneError(f"{what.upper()} {mid} answered {resp!r}, {info.lines[:6]}, not {lines_wanted[:6]}")
+        if news.stat(mid)[0] != f"223 0 {mid}":
+            raise LaneError(f"STAT {mid} answered otherwise than 223 0 {mid}")
+    try:
+        news.article("<none@x.example>")
+    except nntplib.NNTPTemporaryError as error:
+        if not str(error).startswith("430"):
+            raise LaneError(f"an article the store lacks answered {error}") from None
+    else:
+        raise LaneError("an article the store lacks found")
+
+
+def post_over_sockets(b: Build) -> str:
+    """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
+    refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
+    16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
+    `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
+    of a file is changed on the disk, its ARTICLE is answered 403."""
+    first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
+    second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
+    third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
+                         *(f"line {k} " + "y" * 70 for k in range(500)))).encode()
+    nntplib = import_nntplib()
+    posters: list[int] = []
+    logs: list[str] = []
+
+    def post(server: Server, article: bytes, reply: str) -> None:
+        c = server.client()
+        read_expected(c, TEXTS["greeting-post"], "the greeting")
+        c.sendall(b"POST\r\n")
+        read_expected(c, TEXTS["post"], "the reply to POST")
+        c.sendall(article)
+        read_expected(c, TEXTS[reply], "the reply to the article")
+        if reply == "posted":
+            posters.append(c.port)
+
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            post(server, first, "posted")
+        logs.append(server.said())
+        with serving(b, False, *options, traced=False) as server:
+            post(server, first, "failed")
+            post(server, second, "posted")
+            try:
+                with nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                    posters.append(news.sock.getsockname()[1])
+                    welcome, posted, bye = news.getwelcome(), news.post(third), news.quit()
+            except nntplib.NNTPError as error:
+                raise LaneError(f"nntplib could not post: {error}") from None
+        logs.append(server.said())
+        left = sorted(f.name for f in spool.iterdir())
+        data = [f.read_bytes().split(b"logging-data=", 1)[-1].split(b"\r\n", 1)[0].decode()
+                for f in sorted(spool.glob("a*"))]
+        ids = ["<one@x.example>", "<two@x.example>", "<three@x.example>"]
+        try:
+            with serving(b, False, *options, traced=False) as server, \
+                    nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                read_back(news, nntplib, spool, ids)
+            first_file = spool / "a0000000000000001"
+            changed = bytearray(first_file.read_bytes())
+            changed[-3] ^= 1
+            first_file.write_bytes(changed)
+            with serving(b, False, *options, traced=False) as server, \
+                    nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                try:
+                    news.article(ids[0])
+                except nntplib.NNTPTemporaryError as error:
+                    refused = str(error)
+                else:
+                    refused = "found"
+        except nntplib.NNTPError as error:
+            raise LaneError(f"nntplib could not read: {error}") from None
+    if refused != TEXTS["unreadable"].decode().rstrip("\r\n"):
+        raise LaneError(f"an article whose file changed on the disk answered {refused!r}")
+    if left != ["a0000000000000001", "a0000000000000002", "a0000000000000003", "journal"]:
+        raise LaneError(f"three articles posted left {left}")
+    said = [welcome, posted, bye]
+    if [line + "\r\n" for line in said] != [TEXTS[t].decode() for t in ("greeting-post", "posted", "quit")]:
+        raise LaneError(f"nntplib was greeted, its article answered and its QUIT with {said}")
+    logged = [line for log in logs for line in log.splitlines() if line.startswith("connection ")]
+    for value, port in zip(data, posters, strict=True):
+        if f"connection {value} from 127.0.0.1 port {port}" not in logged:
+            raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
+    return ("posted, the Message-ID refused after a restart, two others posted, their posters logged, each read "
+            "back, a changed file refused")
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1230,7 +1351,7 @@ def store_directories(b: Build) -> str:
                                 f"{store_check.image(sorted(again.items()))[:300]}: {err[-300:]!r}")
             return True
 
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
         results = list(pool.map(lambda kc: one(kc[0], *kc[1]), enumerate(cases)))
     recovered = sum(results)
     refused = len(results) - recovered
@@ -1258,6 +1379,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "over IPv6": over_ipv6,
     "sixty-five clients": crowd,
     "a store recovered at start": store_start,
+    "a post over sockets": post_over_sockets,
     "the store lane's directories": store_directories,
 }
 
@@ -1280,6 +1402,8 @@ class Defect:
 # acknowledged, which on loopback no check can time reliably, and no portable call reads another
 # process's socket option.
 DEFECTS = [
+    Defect("a connection not logged", [("        dn_store_log_opened(&peer);\n", "", 1)], "a post over sockets",
+           "is not in the log"),
     Defect("input no longer read after a read", [(
         "            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);",
         "            c->reading = 0;\n            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);", 1)],
@@ -1387,7 +1511,8 @@ DEFECTS = [
            "a store recovered at start", "status 3"),
     Defect("the start record written as a commit", [(r"(st8 @base \+ \d+ \+ 12), 3;", r"\1, 2;", 1)],
            "a store recovered at start", "a journal of", program=True),
-    Defect("a final file set aside removed instead", [(r"st @base \+ 182384, 8;", "st @base + 182384, 9;", 1)],
+    Defect("a final file set aside removed instead",
+           [(r"(st @base \+ \d+, 1;\n\s*st @base \+ \d+, )8;", r"\g<1>9;", 1)],
            "the store lane's directories", "after a start the spool holds", program=True),
     Defect("the second pass not begun at the first name", [(r"if lds 1 \(rsc \+ 32\) \{", "if 0 {", 1)],
            "the store lane's directories", "the spool holds", program=True),
@@ -1395,7 +1520,8 @@ DEFECTS = [
            "first command", "asked to be woken at 10000", program=True),
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
-    Defect("the inactivity deadline a millisecond early", [(r"now \+ 1800000;", "now + 1799999;", 3)],
+    Defect("the inactivity deadline a millisecond early",
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 7)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),
@@ -1403,6 +1529,9 @@ DEFECTS = [
            "pipeline", "broke the session's contract", program=True),
     Defect("the session kept after QUIT", [(r"if r == 3 \{\s+st cb \+ 16, 1;", "if r == 3 {", 1)],
            "pipeline", "the stream did not end", program=True),
+    Defect("a file's CRC-32C not compared",
+           [(r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1)],
+           "a post over sockets", "changed on the disk answered", program=True),
 ]
 
 
@@ -1416,15 +1545,19 @@ def spelled(n: int) -> str:
     return tens[n // 10] + (f"-{ones[n % 10]}" if n % 10 else "")
 
 
-def planted(cake: str, source: str, build: Build, index: int, defect: Defect) -> Build:
-    """The server with `defect` planted, waited for no longer than a defect needs."""
+def planted(source: str, defect: Defect) -> str:
+    """The program's text, or the host's, with `defect` planted."""
     text = source if defect.program else HOST.read_text()
     for pattern, becomes, times in defect.edits:
         what = f"the {'program' if defect.program else 'host'}, for {defect.name},"
         text = lanes.plant(text, pattern, becomes, times, what, exact=not defect.program)
+    return text
+
+
+def hosted(index: int, defect: Defect, text: str, build: Build) -> Build:
+    """The server with `defect` planted in its host, linked with the programs of `build`, waited for no
+    longer than a defect needs."""
     name = f"defect-{index}"
-    if defect.program:
-        return Build(lanes.whole_program(cake, name, text, OUT, HOST, STORE), build.stale, DEFECT_TIMEOUT)
     host = OUT / f"{name}.c"
     host.write_text(text)
     runtime = [NATIVE / "cake_header.c", NATIVE / "cake_runtime.c"]
@@ -1437,11 +1570,11 @@ def planted(cake: str, source: str, build: Build, index: int, defect: Defect) ->
     return Build(linked(name, "nntp.S"), stale, DEFECT_TIMEOUT)
 
 
-def caught(cake: str, source: str, build: Build) -> dict[str, str]:
+def caught(builds: list[Build]) -> dict[str, str]:
     found = {}
-    for index, defect in enumerate(DEFECTS):
+    for defect, built in zip(DEFECTS, builds, strict=True):
         try:
-            CHECKS[defect.check](planted(cake, source, build, index, defect))
+            CHECKS[defect.check](built)
         except (LaneError, OSError) as error:
             if defect.sign not in str(error):
                 raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error!r}") from None
@@ -1458,8 +1591,18 @@ def check(cake: str) -> Report:
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
     stale = lanes.plant(source, *STALE, "the program, for acting for the generation before,", exact=True)
-    build = Build(lanes.whole_program(cake, "nntp", source, OUT, HOST, STORE),
-                  lanes.whole_program(cake, "stale", stale, OUT, HOST, STORE))
+    texts = [planted(source, d) for d in DEFECTS]
+    # Every program is compiled before any check runs, so that none of them shares the machine with
+    # a compiler, the checks of real time least of all.
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+        base, old = (pool.submit(lanes.whole_program, cake, name, text, OUT, HOST, STORE)
+                     for name, text in (("nntp", source), ("stale", stale)))
+        made = {k: pool.submit(lanes.whole_program, cake, f"defect-{k}", texts[k], OUT, HOST, STORE)
+                for k, d in enumerate(DEFECTS) if d.program}
+        build = Build(base.result(), old.result())
+        linked = {k: pool.submit(hosted, k, d, texts[k], build) for k, d in enumerate(DEFECTS) if not d.program}
+        builds = [Build(made[k].result(), build.stale, DEFECT_TIMEOUT) if k in made else linked[k].result()
+                  for k in range(len(DEFECTS))]
     results = {}
     for name, run in CHECKS.items():
         try:
@@ -1468,7 +1611,7 @@ def check(cake: str) -> Report:
             raise LaneError(f"{name}: {error!r}") from None
         except LaneError as error:
             raise LaneError(f"{name}: {error}") from None
-    found = caught(cake, source, build)
+    found = caught(builds)
     cuts = sum(len(sent) - 1 for sent, _ in transcripts().values())
     program = sum(d.program for d in DEFECTS)
     lanes.require_quoted({

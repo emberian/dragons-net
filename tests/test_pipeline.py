@@ -3,6 +3,7 @@
 from elsewhere, and the pinned tools; on disposable copies, never on the working tree."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -27,6 +28,26 @@ upstream_sources = script("check_upstream_sources")
 verify_run = script("verify_run")
 
 
+def taken_tools(sources: list[Path]) -> set[str]:
+    """The pinned tools, and the pinned wheels, that these sources install when they call for them;
+    libfiu also by a call of crash_check's `fiu()`, or of a function of it that calls that, which is
+    how the lanes that import it as `C` take it."""
+    crash = ast.parse((ROOT / "scripts/crash_check.py").read_text())
+    fiu = {"fiu"} | {f.name for f in crash.body if isinstance(f, ast.FunctionDef) and any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "fiu" for n in ast.walk(f))}
+    taken: set[str] = set()
+    for source in sources:
+        code = source.read_text()
+        taken.update(*re.findall(r'(?:pinned_tool|\btool)\("(\w+)"\)|bootstrap_tool\.py"\), "(\w+)"', code))
+        if re.search(r"lanes\.release_cake\(", code):
+            taken.add("cake")
+        if re.search(r"lanes\.pinned_python\(", code):
+            taken.add("wheels")
+        if set(re.findall(r"\bC\.(\w+)\(", code)) & fiu:
+            taken.add("libfiu")
+    return taken - {""}
+
+
 class CheckScript(unittest.TestCase):
     """`check.sh`, its stages and the chain CI runs them in."""
 
@@ -39,7 +60,8 @@ class CheckScript(unittest.TestCase):
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("all) build; once check-proofs bash scripts/check.sh proofs-now; tests ;;", CHECK)
+        self.assertIn("all) build; once check-proofs bash scripts/check.sh proofs-now; bash scripts/check_tests.sh ;;",
+                      CHECK)
         self.assertIn("once check-gate python3 scripts/check_structure.py", CHECK)
         self.assertNotIn("lake env", CHECK)
 
@@ -112,7 +134,8 @@ class CheckScript(unittest.TestCase):
             parent = Path(temp)
             tree = parent / "dn"
             (tree / "scripts").mkdir(parents=True)
-            shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            for script in ("check.sh", "check_tests.sh"):
+                shutil.copy(ROOT / "scripts" / script, tree / "scripts" / script)
 
             def refused(message: str) -> None:
                 result = subprocess.run(["bash", "scripts/check.sh"], cwd=tree, text=True, capture_output=True,
@@ -135,7 +158,8 @@ class CheckScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             tree, stubs, toolchain = (Path(temp) / name for name in ("repo", "bin", "toolchain"))
             (tree / "scripts").mkdir(parents=True)
-            shutil.copy(ROOT / "scripts/check.sh", tree / "scripts/check.sh")
+            for script in ("check.sh", "check_tests.sh"):
+                shutil.copy(ROOT / "scripts" / script, tree / "scripts" / script)
             (tree / "tests").mkdir()
             for module in ("test_a.py", "test_once.py"):
                 (tree / "tests" / module).write_text("")
@@ -165,6 +189,8 @@ class CheckScript(unittest.TestCase):
             env = {key: value for key, value in os.environ.items() if key not in ("LEAN_PATH", "LEAN_ABORT_ON_PANIC")}
             env["PATH"] = f"{stubs}:{os.environ['PATH']}"
             env["DN_ONCE"] = "none"
+            # One group after another, in their order.
+            env["DN_PARALLEL"] = "1"
             checked = "[/sysroot/lib/lean:.lake/build/lib/lean 1]"
             expected = {
                 "build": ["python3 scripts/check_structure.py",
@@ -178,16 +204,20 @@ class CheckScript(unittest.TestCase):
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
-                "tests": ["python3 -m unittest discover -s tests -p test_a.py",
-                          "python3 -m unittest discover -s tests -p test_once.py",
-                          "cargo clippy", "cargo clippy", "cargo clippy",
+                "tests": ["python3 scripts/unit.py test_a", "python3 scripts/unit.py test_once",
+                          "python3 scripts/bootstrap_tool.py lean4export", "python3 scripts/bootstrap_tool.py nanoda",
+                          "python3 scripts/unit.py test_audit", "cargo clippy", "cargo clippy", "cargo clippy",
                           "cargo clippy", "cargo test", "python3 scripts/check_models.py",
-                          "python3 scripts/state_check.py", "python3 scripts/session_check.py",
+                          "python3 scripts/state_check.py",
+                          "python3 scripts/wheels.py scripts/requirements-tests.txt",
+                          "python3 scripts/session_check.py",
+                          "python3 scripts/bootstrap_tool.py abnfgen",
+                          "python3 scripts/wheels.py scripts/requirements-tests.txt",
                           "python3 scripts/abnf_check.py", "python3 scripts/article_check.py",
                           "python3 scripts/journal_check.py", "python3 scripts/fs_check.py",
-                          "python3 scripts/store_check.py", "python3 scripts/runs_check.py",
+                          "python3 scripts/store_check.py", "python3 scripts/bootstrap_tool.py libfiu",
                           "python3 scripts/compile_sources.py", "python3 scripts/fiu_check.py",
-                          "python3 scripts/host_check.py"],
+                          "python3 scripts/host_check.py", "python3 scripts/runs_check.py"],
             }
             for stage, steps in expected.items():
                 with self.subTest(stage=stage):
@@ -198,6 +228,19 @@ class CheckScript(unittest.TestCase):
                     self.assertEqual(len(calls), len(steps), calls)
                     for call, step in zip(calls, steps, strict=True):
                         self.assertTrue(call == step if stage == "proofs" else call.startswith(step), (call, step))
+            # Each part of the proofs alone, as CI runs them on machines of their own; a part not named
+            # is refused.
+            whole = expected["proofs"]
+            for part, steps in (("leanchecker", [*whole[:1], *whole[3:6]]), ("nanoda", [*whole[:4], *whole[6:]])):
+                with self.subTest(part=part):
+                    log.write_text("")
+                    subprocess.run(["bash", "scripts/check.sh", "proofs-now", part], cwd=tree, env=env, check=True,
+                                   capture_output=True)
+                    self.assertEqual(log.read_text().splitlines(), steps)
+            refused = subprocess.run(["bash", "scripts/check.sh", "proofs-now", "lean"], cwd=tree, env=env,
+                                     capture_output=True, text=True, check=False)
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("no part of the proofs named 'lean'", refused.stderr)
             for failing in ("FAIL_EXPORT", "FAIL_NANODA"):
                 with self.subTest(failing=failing):
                     log.write_text("")
@@ -206,61 +249,181 @@ class CheckScript(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertNotIn("--regressions", log.read_text())
 
+    def test_each_group_has_its_tools_put_in_place_first(self) -> None:
+        """A check that installed a pinned tool or the pinned wheels would read what it wrote, and so would
+        run every time: what the scripts a group names, or the modules of tests/, take themselves is put in
+        place before them. A module they import is not followed: most import others for what they share
+        and never call their checks. The unit group runs every module of tests/ that no other group runs."""
+        text = (ROOT / "scripts/check_tests.sh").read_text()
+        groups = re.search(r"^group\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
+        tools = re.search(r"^tools\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
+        assert groups is not None and tools is not None
+        put = {name: set(re.findall(r"bootstrap_tool\.py (\w+)", line)) | ({"wheels"} if "wheels.py" in line else set())
+               for name, line in re.findall(r"^    (\w+)\) (.*) ;;$", tools.group(1), re.MULTILINE)}
+        blocks = dict(re.findall(r"^    (\w+)\)\n(.*?)^      ;;$", groups.group(1), re.MULTILINE | re.DOTALL))
+        [named] = re.findall(r"^TEST_GROUPS=\(([a-z ]+)\)$", text, re.MULTILINE)
+        self.assertEqual(sorted(blocks), sorted(named.split()))
+        # The unit group runs each module of tests/ but those another group names, and skips no other.
+        apart = {module for name, block in blocks.items() if name != "unit"
+                 for module in re.findall(r"scripts/unit\.py (\w+)", block)}
+        skipped = set(re.findall(r"if \[\[ \$name == (\w+) \]\]; then\n\s*continue\n", blocks["unit"]))
+        self.assertEqual(skipped, apart)
+        self.assertLessEqual(apart, {path.stem for path in (ROOT / "tests").glob("test_*.py")})
+        for name, block in blocks.items():
+            with self.subTest(group=name):
+                sources = ([path for path in sorted((ROOT / "tests").glob("test_*.py")) if path.stem not in apart]
+                           if name == "unit" else
+                           [ROOT / f"tests/{module}.py" for module in re.findall(r"scripts/unit\.py (\w+)", block)] +
+                           [ROOT / f"scripts/{script}.py" for script in re.findall(r"scripts/(\w+)\.py", block)
+                            if script != "unit"])
+                self.assertEqual(taken_tools(sources), put.get(name, set()))
+
+    def test_each_lane_has_its_tools_put_in_place_first(self) -> None:
+        """So with the native lanes: each one's tools are put in place before it, the compiler before
+        them all."""
+        text = (ROOT / "scripts/native_lanes.sh").read_text()
+        tools = re.search(r"^tools\(\) \{\n(.*?)^\}", text, re.MULTILINE | re.DOTALL)
+        assert tools is not None
+        put = {name: set(re.findall(r"bootstrap_tool\.py (\w+)", line))
+               for names, line in re.findall(r"^    ([\w |]+)\) (.*) ;;$", tools.group(1), re.MULTILINE)
+               for name in names.split(" | ")}
+        self.assertIn('\n  script_of "$name"\n  tools "$name"\n', text)
+        self.assertIn('cake=$(python3 scripts/bootstrap_tool.py cake)', text)
+        scripts = dict(re.findall(r"^    (\w+)\) script=\((scripts/\w+\.py)", text, re.MULTILINE))
+        self.assertTrue(scripts)
+        for name, source in scripts.items():
+            with self.subTest(lane=name):
+                self.assertEqual(taken_tools([ROOT / source]) - {"cake"}, put.get(name, set()))
+
     def test_ci_runs_the_stages_in_one_chain(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]
         jobs: dict[str, str] = {}
         for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
             name, _, body = block.partition(":\n")
             jobs[name] = body
-        self.assertEqual(list(jobs), ["lint", "build", "proofs", "test", "lazyfs"])
-        chain = ["lint", "build", "proofs", "test"]
-        for job, previous in zip(chain[1:], chain, strict=False):
-            self.assertIn(f"needs: {previous}\n", jobs[job])
-        # The LazyFS lane mounts FUSE, so it runs beside the chain once the lint has passed.
-        self.assertIn("needs: lint\n", jobs["lazyfs"])
+        self.assertEqual(list(jobs), ["lint", "build", "kernels", "proofs", "tests", "test", "lanes", "native",
+                                      "documents", "lazyfs"])
+        # Once the build has passed, the kernels, the tests and the native lanes run beside each other,
+        # each in jobs of their own; a job gathers each one's, and fails unless every one of them passed.
+        # The documents are held to the stamps of the tests and the lanes.
+        for job, previous in (("build", "lint"), ("kernels", "build"), ("proofs", "kernels"), ("tests", "build"),
+                              ("test", "tests"), ("lanes", "build"), ("native", "lanes")):
+            self.assertIn(f"    needs: {previous}\n", jobs[job])
+        # What each job unpacks is the archive the build named by its digest.
+        self.assertIn("      archive: ${{ steps.archive.outputs.sha256 }}\n", jobs["build"])
+        for job in ("kernels", "tests", "lanes", "lazyfs"):
+            self.assertIn('ARCHIVE: ${{ needs.build.outputs.archive }}\n        run: |\n'
+                          '          echo "$ARCHIVE  build/lean-build.tar" | sha256sum --check --strict\n'
+                          "          python3 scripts/build_archive.py unpack build/lean-build.tar\n", jobs[job])
+            self.assertEqual(jobs[job].count("build_archive.py unpack"), 1)
+        lanes = (ROOT / "scripts/native_lanes.sh").read_text()
+        [listed] = re.findall(r"^lanes=\(([a-z ]+)\)$", lanes, re.MULTILINE)
+        sharded = " ".join(re.findall(r"^          - \{name: [a-z]+, lanes: ([a-z ]+)\}$", jobs["lanes"], re.MULTILINE))
+        self.assertEqual(sorted(sharded.split()), sorted(listed.split()))
+        groups = (ROOT / "scripts/check_tests.sh").read_text()
+        [named] = re.findall(r"^TEST_GROUPS=\(([a-z ]+)\)$", groups, re.MULTILINE)
+        sharded = " ".join(re.findall(r"^          - \{name: [a-z]+, groups: ([a-z ]+)\}$", jobs["tests"],
+                                      re.MULTILINE))
+        self.assertEqual(sorted(sharded.split()), sorted(named.split()))
+        self.assertIn("bash scripts/native_lanes.sh $LANES\n", jobs["lanes"])
+        for job in ("tests", "test"):
+            self.assertNotIn("native_lanes.sh", jobs[job])
+        # The stamps of the checks come from this branch's runs or the default branch's alone; the
+        # test job merges the shards' passes into the last ones.
+        for job in ("tests", "test", "lanes", "native"):
+            looked = re.findall(r'prior_pass\.py checks-\w+ --branch "\$OWN" --branch "\$MAIN"', jobs[job])
+            self.assertEqual(len(looked), 1, job)
+        self.assertIn("run: mkdir -p build/made && python3 scripts/once.py merge build/stamps build/made\n",
+                      jobs["test"])
+        for job, shards in (("test", "tests"), ("native", "lanes")):
+            # The stamps the shards take up next time count where this step passed (scripts/prior_pass.py).
+            self.assertIn(f"      - name: Record checks-{job}\n        uses: actions/upload-artifact@", jobs[job])
+            self.assertIn("    if: ${{ !cancelled() }}\n", jobs[job])
+            self.assertIn(f"SHARDS: ${{{{ needs.{shards}.result }}}}\n        run: test \"$SHARDS\" = success\n",
+                          jobs[job])
+        self.assertIn("    if: ${{ !cancelled() }}\n", jobs["proofs"])
+        self.assertIn('KERNELS: ${{ needs.kernels.result }}\n        run: test "$KERNELS" = success\n', jobs["proofs"])
+        self.assertIn("        part: [leanchecker, nanoda]\n", jobs["kernels"])
+        self.assertIn("needs: [test, native]\n", jobs["documents"])
+        self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
+        # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
+        # names the run that holds it; the documents job takes both records by them.
+        self.assertEqual(jobs["test"].count("!build/stamps/lane-*.json\n"), 2)
+        self.assertEqual(jobs["native"].count(" build/stamps/lane-*.json\n"), 2)
+        self.assertNotIn("build/stamps/*.json", jobs["native"])
+        for job in ("test", "native"):
+            self.assertIn("      record: passed-${{ steps.tree.outputs.key }}\n"
+                          "      run: ${{ steps.passed.outputs.run-id || github.run_id }}\n", jobs[job])
+            self.assertIn(f"name: ${{{{ needs.{job}.outputs.record }}}}\n          path: build/stamps\n"
+                          f"          run-id: ${{{{ needs.{job}.outputs.run }}}}\n", jobs["documents"])
+        # The LazyFS lane mounts FUSE, and the power lane on it needs the build: they run beside the
+        # rest of the chain once the build has passed.
+        self.assertIn("needs: build\n", jobs["lazyfs"])
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
+        self.assertIn("run: bash scripts/native_lanes.sh power\n", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
-        for job, stage in (("build", "build"), ("proofs", "proofs"), ("test", "tests")):
-            self.assertEqual(re.findall(r"scripts/check\.sh (\w+)", jobs[job]), [stage])
-        # A job added or renamed here is a job the verify lane stops requiring.
-        self.assertEqual(verify_run.REQUIRED_JOBS, tuple(jobs))
+        for job, stage in (("build", "build"), ("kernels", "proofs-now \"$PART\""), ("tests", "tests")):
+            self.assertEqual(re.findall(r"scripts/check\.sh ([\w-]+(?: \"\$PART\")?)", jobs[job]), [stage])
+        # A job added or renamed here is a job the verify lane stops requiring; the shards of a matrix
+        # have names of their own, and answer through the job that gathers them.
+        self.assertEqual(verify_run.REQUIRED_JOBS, tuple(j for j in jobs if "    strategy:\n" not in jobs[j]))
 
     def test_native_lanes_run_all_or_the_named_ones(self) -> None:
-        """Without names every lane runs in its order; with names only those, in the order named; a
-        lane that fails stops the run with its status; a misspelt name is refused before any lane
-        runs, or it would run nothing and pass."""
+        """Without names every lane runs in its order, but those that mount FUSE; with names only
+        those, in the order named; a lane that fails stops the run with its status; a misspelt name is
+        refused before any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not
+        run again on a tree it passed on. A lane's tools are put in place before it."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
-                   "server_check.py": "server", "framing_check.py": "framing", "session_native.py": "session",
-                   "nntp_check.py": "nntp", "parser_contract.py": "parser",
-                   "native_fuzz.py": "fuzz"}
+                   "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
+                   "accept_check.py": "accept",
+                   "session_native.py": "session",
+                   "nntp_check.py": "nntp", "crash_check.py": "crash", "faults_check.py": "faults",
+                   "parser_contract.py": "parser",
+                   "native_fuzz.py": "fuzz", "power_check.py": "power"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
             shutil.copy(ROOT / "scripts/native_lanes.sh", tree / "scripts")
             shutil.copy(ROOT / "scripts/once.py", tree / "scripts")
+            put = tree / "put"
+            (tree / "scripts/bootstrap_tool.py").write_text(
+                f"import sys\nwith open({str(put)!r}, 'a') as f:\n    print(sys.argv[1], file=f)\n")
             subprocess.run(["git", "init", "-q", str(tree)], check=True)
-            (tree / ".gitignore").write_text("build/\nran\n")
+            (tree / ".gitignore").write_text("build/\nran\nput\n")
             for name, lane in scripts.items():
                 (tree / "scripts" / name).write_text(
                     f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
                     f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
 
-            def lanes(*names: str, failing: str = "") -> tuple[int, str, list[str]]:
+            def lanes(*names: str, failing: str = "", once: str = "none",
+                      parallel: str = "1") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
-                                           "DN_ONCE": "none"},
+                                           "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps"),
+                                           "DN_PARALLEL": parallel},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
             self.assertEqual(lanes(), (0, "", ["native --cake /pinned/cake", "baseline --cake /pinned/cake",
                                               "entry check --cake /pinned/cake", "server --cake /pinned/cake",
-                                              "framing --cake /pinned/cake", "session --cake /pinned/cake",
-                                              "nntp --cake /pinned/cake", "parser --cake /pinned/cake",
+                                              "framing --cake /pinned/cake", "grammar --cake /pinned/cake",
+                                              "accept --cake /pinned/cake",
+                                              "session --cake /pinned/cake",
+                                              "nntp --cake /pinned/cake", "crash --cake /pinned/cake",
+                                              "faults --cake /pinned/cake",
+                                              "parser --cake /pinned/cake",
                                               "fuzz --cake /pinned/cake"]))
+            self.assertEqual(put.read_text().split(), ["abnfgen", "libfiu", "libfiu"])
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
-                self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")
+                if lane != "power":
+                    self.assertEqual((tree / f"build/evidence/{lane}.log").read_text(), f"{lane}\n")
+            self.assertEqual(lanes("power", once=""), (0, "", ["power --cake /pinned/cake"]))
+            self.assertEqual((tree / "build/evidence/power.log").read_text(), "power\n")
+            status, said, run_lanes = lanes("power", once="")
+            self.assertEqual((status, run_lanes), (0, []))
+            self.assertIn("DN SKIP lane-power: passed on this tree", said)
             self.assertEqual(lanes("parser", "native"), (0, "", ["parser --cake /pinned/cake",
                                                                  "native --cake /pinned/cake"]))
             self.assertEqual(lanes(failing="baseline"), (3, "", ["native --cake /pinned/cake",
@@ -268,37 +431,77 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
+            # Several at a time, every lane runs, a failing one among them, which fails the run.
+            every = sorted(f"{lane} --cake /pinned/cake" for lane in scripts.values() if lane != "power")
+            status, said, run_lanes = lanes(parallel="3")
+            self.assertEqual((status, sorted(r.replace("entry check", "entry") for r in run_lanes)), (0, every))
+            status, said, run_lanes = lanes(failing="baseline", parallel="3")
+            self.assertEqual((status, len(run_lanes)), (1, len(every)))
+            self.assertIn("the lane baseline failed", said)
 
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
-        """CI skips a job whose pass an earlier run recorded: the newest such run of this repository's
-        own branches, never one of a fork, whose workflow is its own, nor an expired record."""
-        def artifact(run: int, repository: int = 7, head: int = 7, expired: bool = False) -> dict[str, Any]:
+        """CI skips a job whose pass an earlier run recorded: the newest such runs of this repository's
+        own branches, never one of a fork, whose workflow is its own, nor an expired record, nor the run
+        asking; for the checks' stamps, only of the branches named. Of those, one counts only where its
+        step recording the pass passed: any code a job runs can upload an artifact of the same name."""
+        def artifact(run: int, repository: int = 7, head: int = 7, expired: bool = False,
+                     branch: str = "main") -> dict[str, Any]:
             return {"expired": expired, "workflow_run": {"id": run, "repository_id": repository,
-                                                         "head_repository_id": head}}
+                                                         "head_repository_id": head, "head_branch": branch}}
 
-        self.assertIsNone(prior_pass.choose({"artifacts": []}, 7))
-        self.assertEqual(prior_pass.choose({"artifacts": [artifact(3), artifact(5), artifact(4)]}, 7), 5)
-        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, head=9)]}, 7))
-        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, repository=9, head=9)]}, 7))
-        self.assertIsNone(prior_pass.choose({"artifacts": [artifact(5, expired=True)]}, 7))
-        self.assertEqual(prior_pass.choose({"artifacts": [artifact(5, head=9), artifact(2)]}, 7), 2)
-        self.assertIsNone(prior_pass.choose({"artifacts": [{"expired": False}]}, 7))
+        def runs(*found: dict[str, Any], branches: list[str] | None = None) -> list[int]:
+            held: list[int] = prior_pass.candidates({"artifacts": list(found)}, 7, 8, branches)
+            return held
+
+        self.assertEqual(runs(), [])
+        self.assertEqual(runs(artifact(3), artifact(5), artifact(4), artifact(5)), [5, 4, 3])
+        self.assertEqual(runs(artifact(5, head=9)), [])
+        self.assertEqual(runs(artifact(5, repository=9, head=9)), [])
+        self.assertEqual(runs(artifact(5, expired=True)), [])
+        self.assertEqual(runs(artifact(5, head=9), artifact(2)), [2])
+        self.assertEqual(runs(artifact(8), artifact(2)), [2])
+        self.assertEqual(runs({"expired": False}), [])
+        others = (artifact(5, branch="other"), artifact(4, branch="mine"), artifact(3))
+        self.assertEqual(runs(*others), [5, 4, 3])
+        self.assertEqual(runs(*others, branches=["mine", "main"]), [4, 3])
+
+        def jobs(*steps: tuple[str, str]) -> dict[str, Any]:
+            return {"jobs": [{"steps": [{"name": "Lint", "conclusion": "success"}]},
+                             {"steps": [{"name": n, "conclusion": c} for n, c in steps]}]}
+
+        self.assertTrue(prior_pass.recorded(jobs(("Record passed-a", "success")), "passed-a"))
+        self.assertFalse(prior_pass.recorded(jobs(("Record passed-a", "failure")), "passed-a"))
+        self.assertFalse(prior_pass.recorded(jobs(("Record passed-a", "skipped")), "passed-a"))
+        self.assertFalse(prior_pass.recorded(jobs(("Record passed-b", "success")), "passed-a"))
+        self.assertFalse(prior_pass.recorded(jobs(), "passed-a"))
+        self.assertFalse(prior_pass.recorded({"jobs": [{"steps": None}]}, "passed-a"))
 
     def test_ci_records_a_pass_only_after_its_steps(self) -> None:
         """Every job looks for a recorded pass first, and records its own last, so a job that
         failed half way records none."""
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().split("\njobs:\n", 1)[1]
         jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=\n\n  [#a-z]|\Z)", workflow, re.MULTILINE | re.DOTALL))
-        self.assertEqual(set(jobs), set(verify_run.REQUIRED_JOBS))
+        shards = {name for name, job in jobs.items() if "    strategy:\n" in job}
+        self.assertEqual(set(jobs) - shards, set(verify_run.REQUIRED_JOBS))
         for name, job in jobs.items():
             with self.subTest(job=name):
                 steps = re.split(r"(?m)^      - ", job)[1:]
                 found = [i for i, s in enumerate(steps) if 'run: python3 scripts/prior_pass.py "passed-' in s]
                 recorded = [i for i, s in enumerate(steps) if "name: passed-${{" in s]
                 self.assertEqual(len(found), 1)
+                if name in shards:
+                    # A shard records no pass: the job that gathers the shards does, once all passed.
+                    self.assertEqual(recorded, [])
+                    self.assertTrue(all("if:" in s for s in steps[found[0] + 1:]))
+                    continue
                 self.assertEqual(len(recorded), 1)
-                # Only the build's archive goes up either way: a later job of the run needs it.
-                self.assertTrue(all("if:" in s or "name: lean-build" in s for s in steps[found[0] + 1:recorded[0] + 1]))
+                # The step that uploads a pass is named after it, for scripts/prior_pass.py to find.
+                [upload] = re.findall(r"^          name: (passed-\$\{\{ steps\.\w+\.outputs\.key \}\})$",
+                                      steps[recorded[0]], re.MULTILINE)
+                self.assertTrue(steps[recorded[0]].startswith(f"name: Record {upload}\n"), steps[recorded[0]])
+                # Only the build's archive and its digest go up either way: the later jobs of the run need them.
+                self.assertTrue(all("if:" in s or "name: lean-build" in s or "id: archive" in s
+                                    for s in steps[found[0] + 1:recorded[0] + 1]))
                 self.assertTrue(all("upload-artifact" in s or "lean-build" in s
                                     for s in steps[recorded[0] + 1:]))
 
@@ -340,7 +543,8 @@ class CheckScript(unittest.TestCase):
 
     def test_checkers_cover_what_decides_the_checks(self) -> None:
         """The tests stage runs code from the change; what it may not change is this."""
-        function = re.search(r"^checkers\(\) \{.*?^\}", CHECK, re.MULTILINE | re.DOTALL)
+        function = re.search(r"^checkers\(\) \{.*?^\}", (ROOT / "scripts/check_tests.sh").read_text(),
+                             re.MULTILINE | re.DOTALL)
         assert function is not None
         with tempfile.TemporaryDirectory() as temp:
             tree = Path(temp)
@@ -683,7 +887,7 @@ class Sources(unittest.TestCase):
                 self.assertIn("SPDX-License-Identifier: AGPL-3.0-or-later", head)
 
     def test_no_script_shadows_a_standard_library_module(self) -> None:
-        """`unittest discover` puts tests/ first on the path, which PYTHONSAFEPATH does not undo."""
+        """scripts/unit.py puts tests/ first on the path, which PYTHONSAFEPATH does not undo."""
         for directory in ("scripts", "tests"):
             for path in sorted((ROOT / directory).rglob("*.py")):
                 with self.subTest(module=str(path.relative_to(ROOT))):
@@ -945,3 +1149,42 @@ class Tools(unittest.TestCase):
             other = bootstrap("lean4export")
             self.assertNotEqual(other.returncode, 0)
             self.assertIn("is not pinned to", other.stderr)
+
+    def test_bootstrap_installs_a_tool_once_when_asked_side_by_side(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            tree, stubs, log = work / "repo", work / "bin", work / "log"
+            (tree / "scripts").mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/bootstrap_tool.py", tree / "scripts")
+            shutil.copy(ROOT / "rust-toolchain.toml", tree)
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+            (work / "source").mkdir()
+            with tarfile.open(work / "source.tar.gz", "w:gz") as tar:
+                tar.add(work / "source", arcname="source")
+            lock = json.loads((ROOT / "tools.lock.json").read_text())
+            lock["nanoda"]["sha256"] = sha256(work / "source.tar.gz")
+            (tree / "tools.lock.json").write_text(json.dumps(lock))
+            (tree / ".deps/archives").mkdir(parents=True)
+            shutil.copy(work / "source.tar.gz", tree / ".deps/archives" / lock["nanoda"]["sha256"])
+            # Installed before stored trees were sealed: redone under the lock.
+            tool = tree / ".deps/tools" / f"nanoda-{lock['nanoda']['version']}"
+            tool.mkdir(parents=True)
+            (tool / "archive.sha256").write_text(lock["nanoda"]["sha256"] + "\n")
+            # The build waits until the other two bootstraps wait on the lock, ten seconds at most.
+            stubs.mkdir()
+            (stubs / "cargo").write_text(
+                f"#!/bin/sh\nwaiting=0\nfor _ in $(seq 200); do\n"
+                f"  inode=$(stat -c %i {tool}.lock) && waiting=$(grep -c -- \"-> FLOCK .*:$inode \" /proc/locks)\n"
+                f'  [ "$waiting" -ge 2 ] && break\n  sleep 0.05\ndone\necho "built, $waiting waiting" >> {log}\n'
+                'mkdir -p "$CARGO_TARGET_DIR/release" && touch "$CARGO_TARGET_DIR/release/nanoda_bin"\n')
+            (stubs / "cargo").chmod(0o755)
+            env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "XDG_CACHE_HOME": str(work / "cache")}
+            runs = [subprocess.Popen(["python3", "scripts/bootstrap_tool.py", "nanoda"], cwd=tree, env=env, text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
+            paths = set()
+            for each in runs:
+                out, err = each.communicate()
+                self.assertEqual(each.returncode, 0, err)
+                paths.add(out.strip())
+            self.assertEqual(paths, {str(tool / "nanoda_bin")})
+            self.assertEqual(log.read_text(), "built, 2 waiting\n")

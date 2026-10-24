@@ -209,7 +209,7 @@ def refused_all(cake: str, host: Path, planted: list[tuple[str, str, int, str | 
                 stdin: str | None = None) -> None:
     """Each kernel of `planted` (its name, its source, and the status and message it has to be
     refused with) built and run on its own, several at once."""
-    with ThreadPoolExecutor(max_workers=abnf_check.WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=lanes.WORKERS) as pool:
         for done in [pool.submit(refuses, cake, name, source, host, status, message, *args, stdin=stdin)
                      for name, source, status, message in planted]:
             done.result()
@@ -430,7 +430,7 @@ def scan(cake: str) -> dict[str, Any]:
     families, _ = journal_check.case_families(random.Random(journal_check.SEED))  # noqa: S311
     journals = [c.line.split()[1] for family in families.values() for c in family if c.line.startswith("scan ")]
     answers = abnf_check.answer_lines([str(lanes.DN_COMPILER), "journal-model"], [f"scan {j}" for j in journals],
-                                      abnf_check.WORKERS)
+                                      lanes.WORKERS)
     lines = "".join(f"{j} {most} {said}\n" for j, said in zip(journals, answers, strict=True)
                     for most in (16384, 1 if len(j) <= 8192 else 997))
     measured = measured_by(build(cake, "scan", host), stdin=lines)
@@ -481,19 +481,20 @@ def scan(cake: str) -> dict[str, Any]:
 def recover(cake: str) -> dict[str, Any]:
     """Recovery against the model on the store lane's directories — the table and those drawn, each
     with a key of sixteen octets, as the host gives — and on what the actions of those that recover
-    leave."""
+    leave; again with every Message-ID's tag 0, so that each two of one length are compared by their
+    octets, as only a collision of tags makes them otherwise."""
     host = NATIVE / "recover_check.c"
     model = [str(lanes.DN_COMPILER), "recovery-model"]
     # the store lane's fixed seed, so that both recover the same directories
     rng = random.Random(store_check.SEED)  # noqa: S311
     lines = [c.line for c in (*store_check.table(), *store_check.drawn(rng))]
     first = [ln for ln in lines if ln.startswith("recover ") and len(ln.split(" ")[1]) == 32]
-    found = abnf_check.answer_lines(model, first, abnf_check.WORKERS)
+    found = abnf_check.answer_lines(model, first, lanes.WORKERS)
     done = [(ln.split(" "), said.split(" ")) for ln, said in zip(first, found, strict=True) if said.startswith("ok ")]
-    left = abnf_check.answer_lines(model, [f"apply {ln[3]} {said[6]}" for ln, said in done], abnf_check.WORKERS)
+    left = abnf_check.answer_lines(model, [f"apply {ln[3]} {said[6]}" for ln, said in done], lanes.WORKERS)
     again = [f"recover {ln[1]} {ln[2]} {image}" for (ln, _), image in zip(done, left, strict=True)]
     asked = first + again
-    answers = found + abnf_check.answer_lines(model, again, abnf_check.WORKERS)
+    answers = found + abnf_check.answer_lines(model, again, lanes.WORKERS)
     stdin = "".join(f"{ln.split(' ', 1)[1]} {said}\n" for ln, said in zip(asked, answers, strict=True))
     measured = measured_by(build(cake, "recover", host), stdin=stdin)
     text = (OUT / "recover.pnk").read_text()
@@ -503,7 +504,9 @@ def recover(cake: str) -> dict[str, Any]:
         # one article more than the store holds
         "recover-capacity": ("if 4097 <= rcm {", "if 4098 <= rcm {", 1),
         # a sequence number in two commits let be
-        "recover-seq": ("while (rdup == 0) & (ri < rcm) {", "while 0 {", 1),
+        "recover-seq": ("rdup = jz + 1;", "rdup = jz + 0;", 1),
+        # a Message-ID in two commits let be
+        "recover-ids": ("rdup = jz + 2;", "rdup = jz + 0;", 1),
         # an article number equal to the group's last let be
         "recover-numbers": ("if rv <= (lds 1 (rsc + 5248 + (rc * 8))) {",
                             "if rv < (lds 1 (rsc + 5248 + (rc * 8))) {", 1),
@@ -534,12 +537,26 @@ def recover(cake: str) -> dict[str, Any]:
     unfound = [name for name, (old, _, times) in mutants.items() if text.count(old) != times]
     if unfound:
         raise LaneError(f"the recovery mutations {unfound} no longer find the text they change")
+    tagless = lanes.plant(text, "st rsl + 152, r;", "st rsl + 152, 0;", 1, "recovery's tag", exact=True)
+    (OUT / "recover-tagless.pnk").write_text(tagless)
+    measured_by(build(cake, "recover-tagless", host), stdin=stdin)
+    compared = {
+        # two Message-IDs of one length taken for the same
+        "recover-ids-octets": ("if ((ld8 (rsl + 160 + rm)) == (ld8 (rcp + 160 + rm))) == 0 {", "if 0 {"),
+        # their last octet not compared
+        "recover-ids-last": ("while rok & (rm < rl) {", "while rok & ((rm + 1) < rl) {"),
+        # a Message-ID taken for one it begins
+        "recover-ids-lengths": ("if ((lds 1 (rcp + 152)) == rv) & ((((lds 1 (rcp + 16)) >>> 8) & 255) == rl) {",
+                                "if (lds 1 (rcp + 152)) == rv {"),
+    }
+    sources = {name: text.replace(old, new) for name, (old, new, _) in mutants.items()} | {
+        name: lanes.plant(tagless, old, new, 1, name, exact=True) for name, (old, new) in compared.items()}
     # Each finds otherwise than the model, but a group the configuration lacks, let be, which takes
     # the index of no group to the table of highest numbers, where the check of its range stops it.
-    refused_all(cake, host, [(name, text.replace(old, new), 1,
+    refused_all(cake, host, [(name, source, 1,
                               "recovery returned 99" if name == "recover-groups" else "recovery found")
-                             for name, (old, new, _) in mutants.items()], stdin=stdin)
-    measured["recover_mutants_rejected"] = len(mutants)
+                             for name, source in sources.items()], stdin=stdin)
+    measured["recover_mutants_rejected"] = len(sources)
     measured["recover_other_keys"] = sum(ln.startswith("recover ") for ln in lines) - len(first)
     return measured
 

@@ -63,6 +63,13 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_grammar_passes_the_safety_analysis(self) -> None:
+        """The analysis of decision 0004 on the grammar's program, its area above the heap's header:
+        the grammar is to be embedded in the session's program, whose theorem then needs it."""
+        done = subprocess.run([str(DN_COMPILER), "analyze-grammar"], text=True, capture_output=True,
+                              check=False, timeout=600)
+        self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator
         prints for the programs as they are."""
@@ -78,11 +85,16 @@ class Emitted(unittest.TestCase):
             return subprocess.run([str(DN_COMPILER), f"emit-{target}"], text=True, capture_output=True,
                                   check=True, timeout=600).stdout
 
-        for name in ("region", "echo", "render", "crc", "sip", "scan", "recover", "reply", "skeleton",
-                     "frame-line", "frame-line-4", "frame-block-64", "frame-block-4", "session"):
+        for name in ("region", "echo", "render", "crc", "sip", "scan", "reply", "skeleton",
+                     "frame-line", "frame-line-4", "frame-block-64", "frame-block-4"):
             with self.subTest(target=name):
                 self.assertEqual(emit(name), (ROOT / "tests/golden" / f"{name}.pnk").read_text())
-        # The differential fixture is 200 KB of cases; its digest catches a change just as well.
+        # The whole programs, the differential fixture and the reply cases are too long to read in a
+        # diff; their digests catch a change just as well.
+        self.assertEqual(hashlib.sha256(emit("session").encode()).hexdigest(),
+                         "4a642644d0a90c944f55477821496e4a26238bc06ba9a757851d069f14256293")
+        self.assertEqual(hashlib.sha256(emit("recover").encode()).hexdigest(),
+                         "8f562e94aa1ba27b2c0c00f99fed5732470d27594079e46a8778fbf369b24472")
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
                          "b9a5c824739f6d6fe047d99b6a7a7b150b4c71897d30054a7f3aa5abbcbe51e6")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
@@ -331,6 +343,14 @@ class ParserContract(unittest.TestCase):
             names = [p["name"] for p in group]
             self.assertEqual(len(names), len(set(names)))
         self.assertEqual(len(groups), 3)
+
+    def test_parser_contract_batches_keep_within_their_bytes(self) -> None:
+        """A group's sources are at most `BATCH_BYTES` together, unless it is one program larger."""
+        half = parser_contract.BATCH_BYTES // 2
+        programs = [{"name": name, "source": "x" * size}
+                    for name, size in (("a", half), ("b", half), ("c", 1), ("d", 3 * half), ("e", half))]
+        groups = parser_contract.batches(programs)
+        self.assertEqual([[p["name"] for p in g] for g in groups], [["a", "b"], ["c", "e"], ["d"]])
 
 
 class Generated(unittest.TestCase):

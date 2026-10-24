@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +28,8 @@ import time
 from typing import IO, Any
 
 ROOT = Path(__file__).resolve().parents[1]
+# Processes or threads a check runs at once, so many lanes or groups of tests may run side by side.
+WORKERS = max(1, min(4, len(os.sched_getaffinity(0))))
 NATIVE = ROOT / "native"
 DN_COMPILER = ROOT / ".lake/build/bin/dn-compiler"
 RECORD = ROOT / "backend/bootstrap-record.json"
@@ -45,6 +48,10 @@ RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
                    "cml_heap", "cml_main", "cml_stack", "cml_stackend"}
 # Must stay equal to Checked.exportPrefix; a test holds the two together.
 EXPORT_PREFIX = "dn_"
+# The heap, in MiB, of the compiler's runtime when it prints every intermediate program, which it
+# takes whole: at its default and at 1024 the grammar's program alone, 174 KB of source, runs it out,
+# at 2048 not; twice that leaves room for the session's program with the grammar in it.
+EXPLORE_HEAP_MB = 4096
 
 
 class LaneError(Exception):
@@ -84,11 +91,14 @@ def pancake(cake: str, source: Path, *, explore: bool = False, warnings: bool = 
     the exit status at zero, so any diagnostic fails; with `warnings` off, for a source whose
     warnings are beside what is asked of it, only the status does, and nothing is silenced. The
     simple register allocator: the compiler's theorem holds for every allocator, and its default,
-    IRC, takes minutes on a function the size of the session's `main` with recovery embedded."""
+    IRC, takes minutes on a function the size of the session's `main` with recovery embedded. With
+    `explore` the compiler keeps every intermediate program, and takes the heap `EXPLORE_HEAP_MB`
+    gives its own runtime."""
     options = ["--explore"] if explore else []
+    env = {**os.environ, "CML_HEAP_SIZE": str(EXPLORE_HEAP_MB)} if explore else None
     with source.open("rb") as inp:
         done = subprocess.run([cake, "--pancake", "--reg_alg=0", *options, f"--main_return={str(main_return).lower()}"],
-                              stdin=inp, capture_output=True, timeout=timeout, check=False)
+                              stdin=inp, capture_output=True, timeout=timeout, check=False, env=env)
     if done.returncode or (warnings and done.stderr):
         raise Diagnostics(f"{source.name} compiled with diagnostics (status {done.returncode}):\n"
                           f"{done.stderr.decode(errors='replace')}")
@@ -173,10 +183,11 @@ def plant(text: str, pattern: str, becomes: str, times: int, what: str, *, exact
     return planted
 
 
-def whole_program(cake: str, name: str, source: str, out: Path, host: Path, extra: Iterable[Path] = ()) -> Path:
+def whole_program(cake: str, name: str, source: str, out: Path, host: Path, extra: Iterable[Path] = (),
+                  flags: Iterable[str] = ()) -> Path:
     """Compile a whole program without `--main_return`, make its bitmaps label global for the heap
-    header (native/cake_header.c), and link it with `host` and the `extra` sources; `out` holds the
-    layout's header."""
+    header (native/cake_header.c), and link it with `host` and the `extra` sources and `flags`; `out`
+    holds the layout's header."""
     pnk = out / f"{name}.pnk"
     pnk.write_text(source)
     asm = assemble(cake, pnk, main_return=False)
@@ -184,7 +195,8 @@ def whole_program(cake: str, name: str, source: str, out: Path, host: Path, extr
     if text.count("\ncake_bitmaps:\n") != 1:
         raise LaneError(f"{asm.name}: the bitmaps label is not where the host expects it")
     asm.write_text(text.replace("\ncake_bitmaps:\n", "\n     .globl cake_bitmaps\ncake_bitmaps:\n"))
-    return link(out / name, [host, *extra, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm], includes=[out])
+    return link(out / name, [host, *extra, NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", asm], includes=[out],
+                flags=flags)
 
 
 class Lines:
@@ -218,13 +230,17 @@ def pinned_python(requirements: Path) -> Path:
     venv = ROOT / ".deps" / requirements.stem
     stamp = venv / "pins"
     pins = f"{digest(requirements)} {sys.version}"
-    if not (stamp.is_file() and stamp.read_text().strip() == pins):
-        shutil.rmtree(venv, ignore_errors=True)
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
-                        "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
-                       check=True)
-        stamp.write_text(pins + "\n")
+    venv.parent.mkdir(parents=True, exist_ok=True)
+    # Checks running side by side build it once, one waiting for the other.
+    with (venv.parent / f"{venv.name}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (stamp.is_file() and stamp.read_text().strip() == pins):
+            shutil.rmtree(venv, ignore_errors=True)
+            subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+            subprocess.run([str(venv / "bin/pip"), "install", "--quiet", "--disable-pip-version-check",
+                            "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(requirements)],
+                           check=True)
+            stamp.write_text(pins + "\n")
     return venv / "bin/python"
 
 

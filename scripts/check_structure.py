@@ -115,6 +115,11 @@ def static_errors(root: Path, pins: dict[str, str]) -> list[str]:
         path = root / name
         if not path.is_file() or digest(path) != pinned:
             errors.append(f"{name}: changed file with syntax definitions; review it and update its pin")
+            continue
+        # The gate elaborates a reviewed file whole, and writes the declarations of no other module.
+        for module in sorted(imports(path.read_text())):
+            if module.split(".")[0] == "DN" and f"lean/{module.replace('.', '/')}.lean" not in pins:
+                errors.append(f"{name}: a file with syntax definitions imports {module}, which is not one")
     errors += rfc_errors(root)
     patches, problem = recorded(root, "backend/lock.json", "patches", list)
     if problem is not None:

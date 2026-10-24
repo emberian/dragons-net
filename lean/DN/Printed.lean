@@ -10,6 +10,8 @@ import DN.News.CrcProg
 import DN.News.SipProg
 import DN.News.ScanProg
 import DN.News.RecoverProg
+import DN.News.AbnfProg
+import DN.News.ArticleProg
 
 /-!
 # DN.Printed
@@ -49,42 +51,57 @@ def word (f : PFun) : Except String Program := do
 def region : PFun := emitExportFun { regionC0 with name := "dn_region" }
 
 /-- The reply table of the language. -/
-def reply : Except String Program := do
+def reply (_ : Unit) : Except String Program := do
   let source ← Dsl.emit Dsl.Example.name Dsl.Example.replies
   return ⟨source, ← Canon.program (Dsl.respond Dsl.Example.name Dsl.Example.replies) source⟩
 
 /-- The server's loop, a whole program that reaches its host through two external calls. -/
-def skeleton : Except String Program :=
+def skeleton (_ : Unit) : Except String Program :=
   checkedBy (Checked.emitMain [Server.Layout.nextName, Server.Layout.emitName]) Server.Skeleton.main
 
 /-- The NNTP session, a whole program that reaches its host through two external calls. -/
-def session : Except String Program :=
-  checkedBy (Checked.emitMain [Server.SessionLayout.nextName, Server.SessionLayout.emitName])
-    Server.Session.main
+def session (_ : Unit) : Except String Program :=
+  checkedBy (Checked.emitProgram [Server.SessionLayout.nextName, Server.SessionLayout.emitName]
+    Server.Session.functions) Server.Session.main Server.Session.functions
+
+/-- The grammar's functions, a whole program that reaches its host through one external call, or a
+version of it with a defect planted. -/
+def grammar (m : News.AbnfProg.Mutant := .none) : Except String Program :=
+  let (fs, f) := News.AbnfProg.program m
+  checkedBy (Checked.emitProgram ["dn_next"] fs) f fs
+
+/-- The article's check over the grammar's functions, a whole program that reaches its host through
+one external call, or a version of it with a defect planted. -/
+def article (m : News.ArticleProg.Mutant := .none) : Except String Program :=
+  let (fs, f) := News.ArticleProg.program (m := m)
+  checkedBy (Checked.emitProgram ["dn_next"] fs) f fs
 
 /-- The framers: command lines of at most 512 octets, as the session reads them, and of at most
 four, for the lane's exhaustive run; blocks for a buffer of 64 bytes and of four. The buffer the
 store needs is set by the store; the framing is proven for every size below 2^62. -/
-def framers : List (String × Except String Program) :=
-  [("frame-line", checked (News.FramerProg.frameLine "dn_frame_line" 512)),
-   ("frame-line-4", checked (News.FramerProg.frameLine "dn_frame_line_4" 4)),
-   ("frame-block-64", checked (News.FramerProg.frameBlock "dn_frame_block_64" 64)),
-   ("frame-block-4", checked (News.FramerProg.frameBlock "dn_frame_block_4" 4))]
+def framers : List (String × (Unit → Except String Program)) :=
+  [("frame-line", fun _ => checked (News.FramerProg.frameLine "dn_frame_line" 512)),
+   ("frame-line-4", fun _ => checked (News.FramerProg.frameLine "dn_frame_line_4" 4)),
+   ("frame-block-64", fun _ => checked (News.FramerProg.frameBlock "dn_frame_block_64" 64)),
+   ("frame-block-4", fun _ => checked (News.FramerProg.frameBlock "dn_frame_block_4" 4))]
 
-/-- The programs `emit-NAME` prints, by name. -/
-def named : List (String × Except String Program) :=
-  [("region", checked region), ("echo", checked Kernels.echo), ("render", checked Kernels.render),
-   ("reply", reply), ("skeleton", skeleton), ("session", session),
-   ("crc", checked News.CrcProg.crcKernel), ("sip", checked News.SipProg.sipKernel),
-   ("scan", checked News.ScanProg.scanKernel),
-   ("recover", checked News.RecoverProg.recoverKernel)] ++ framers
+/-- The programs `emit-NAME` prints, by name, each made when asked for: a constant would be made as
+the executable starts, whatever its command. -/
+def named : List (String × (Unit → Except String Program)) :=
+  [("region", fun _ => checked region), ("echo", fun _ => checked Kernels.echo),
+   ("render", fun _ => checked Kernels.render), ("reply", reply), ("skeleton", skeleton),
+   ("session", session), ("crc", fun _ => checked News.CrcProg.crcKernel),
+   ("sip", fun _ => checked News.SipProg.sipKernel),
+   ("scan", fun _ => checked News.ScanProg.scanKernel),
+   ("recover", fun _ => checked News.RecoverProg.recoverKernel), ("grammar", fun _ => grammar),
+   ("article", fun _ => article)] ++ framers
 
 /-- Every program the compiler prints: the named ones, one accepted function per rule of the
 gate, and the differential fixtures. -/
-def all : Except String (List Program) := do
+def all (_ : Unit) : Except String (List Program) := do
   let fixtures := Baseline.functions ++ [Baseline.control, Baseline.control2] ++
     Baseline.nestedFunctions
-  return (← named.mapM (·.2)) ++
+  return (← named.mapM (·.2 ())) ++
     (← Checked.catalog.mapM fun (c : Checked.RuleCase) =>
       let fs := c.twinFunctions.getD c.functions
       checkedBy (c.gate fs) c.accepted fs) ++

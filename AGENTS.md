@@ -30,9 +30,10 @@ without it. When a generated test finds nothing, suspect the generator before th
 counts just past a boundary, empty inputs and repeats have to be produced deliberately,
 because a uniform generator almost never reaches them.
 
-The emitted sources are pinned in tests/golden. If a change to the emitter is
-intended, regenerate each `tests/golden/<name>.pnk` with
-`.lake/build/bin/dn-compiler emit-<name>`, and say in the commit why the output changed.
+The emitted sources are pinned in tests/golden, the long ones by their digests in
+tests/test_native.py. If a change to the emitter is intended, regenerate each
+`tests/golden/<name>.pnk` with `.lake/build/bin/dn-compiler emit-<name>`, or its digest,
+and say in the commit why the output changed.
 
 Read docs/baseline.md before modifying the maintained compiler subset.
 Read docs/reviews/README.md before reusing inherited compiler or reactor code;

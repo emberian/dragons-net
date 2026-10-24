@@ -6,12 +6,14 @@ import DN.News.SessionSpec
 
 The session of `DN.News.SessionSpec` with one of its rules broken, for the lane that holds the
 session against an independent reference to show that it sees each (`scripts/session_check.py`).
-With no rule broken it is the specification (`turnM_none`, `settleM_none`, `deadlineM_none`).
+A rule of the store's side is broken by its field of `DN.News.PostSpec.Rules` (`rulesOf`). With no
+rule broken it is the specification (`turnM_none`, `settleM_none`, `deadlineM_none`).
 -/
 
 namespace DN.News.SessionMutant
 
 open DN.News.FrameSpec DN.News.Framer DN.News.CommandSpec DN.News.SessionSpec
+open DN.News.PostSpec (Store Slot Job Done Rules)
 
 inductive Mutant
   | none
@@ -45,6 +47,88 @@ inductive Mutant
   | answerWhileBusy
   /-- lines after a QUIT answered -/
   | quitTail
+  /-- an article's octets start its deadline again -/
+  | articleRenewed
+  /-- no deadline for an article -/
+  | noArticleDeadline
+  /-- the deadlines run while a POST waits for a slot -/
+  | waitDeadlines
+  /-- a connection that may not post greeted with 200 -/
+  | greetAll
+  /-- a POST answered 340 once the store has stopped accepting -/
+  | postAfterStop
+  /-- a POST of a connection greeted with 201 answered 340 -/
+  | postUnpermitted
+  /-- POST listed among the capabilities once the store has stopped accepting -/
+  | capabilitiesStale
+  /-- the host never told to read, or not, with nothing to send -/
+  | noReadControl
+  /-- a fifth POST at once -/
+  | fifthPost
+  /-- an article one octet longer -/
+  | articleLonger
+  /-- no dot put before a line of the file that starts with one -/
+  | unstuffed
+  /-- a Message-ID another slot has reserved taken -/
+  | reservedTaken
+  /-- the file closed without a sync -/
+  | noFileSync
+  /-- the directory not synced after the rename -/
+  | noDirSync
+  /-- the journal not synced after the append -/
+  | noJournalSync
+  /-- two syncs of the directory in flight -/
+  | dirSyncsOverlap
+  /-- two appends of the journal in flight -/
+  | appendsOverlap
+  /-- an article's number not above the group's highest -/
+  | numbersNotAbove
+  /-- a failed sync does not stop the store accepting -/
+  | syncFailureIgnored
+  /-- a failed append of the journal answered 441 -/
+  | unknownAnswered
+  /-- a refused article's names left -/
+  | namesLeft
+  /-- a block that ends before the empty line not refused -/
+  | unseparated
+  /-- one article more than the store holds -/
+  | capacityOver
+  /-- a refused article's Message-ID still reserved -/
+  | refusedReserves
+  /-- the articles in flight not refused once the store stops -/
+  | stopSparesFlight
+  /-- a commit whose sync completes after the store stopped answered 240 -/
+  | commitAfterStop
+  /-- a POST that waits not answered 403 once the store stops -/
+  | waitThroughStop
+  /-- a free slot given to the waiting POST of the lowest index, not the first that came -/
+  | lowestFirst
+  /-- a ninth read at once -/
+  | ninthRead
+  /-- a file's lines not checked as it is read -/
+  | linesUnchecked
+  /-- a file's CRC-32C not checked -/
+  | crcUnchecked
+  /-- a file longer than its commit says read as if it ended there -/
+  | longerServed
+  /-- no Xref in ARTICLE and HEAD -/
+  | noXref
+  /-- the 220, 221 or 222 line given before anything of the file is checked -/
+  | statusEarly
+  /-- a free read given to the waiting connection of the lowest index, not the first that came -/
+  | readLowestFirst
+  /-- inactivity running while a read has nothing to give -/
+  | idleWhileFetching
+  /-- the host told to read while a read answers the connection -/
+  | readWhileFetching
+  /-- a file taken as whole once its commit's size is read, with nothing read past it -/
+  | endUnsought
+  /-- the empty line not looked for where the commit says the header section ends -/
+  | headerUnchecked
+  /-- a job slot a read's job holds given to another job -/
+  | jobsShared
+  /-- a file a failed read or a connection gone leaves open never closed -/
+  | leftOpen
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -55,61 +139,135 @@ def names : List (String × Mutant) :=
    ("read-not-resumed", .readNotResumed), ("no-greeting", .noGreeting),
    ("stale-applied", .staleApplied), ("end-ignored", .endIgnored),
    ("resend-anytime", .resendAnytime), ("wake-early", .wakeEarly),
-   ("answer-while-busy", .answerWhileBusy), ("quit-tail", .quitTail)]
+   ("answer-while-busy", .answerWhileBusy), ("quit-tail", .quitTail),
+   ("article-renewed", .articleRenewed), ("no-article-deadline", .noArticleDeadline),
+   ("wait-deadlines", .waitDeadlines), ("greet-all", .greetAll),
+   ("post-after-stop", .postAfterStop), ("post-unpermitted", .postUnpermitted),
+   ("capabilities-stale", .capabilitiesStale), ("no-read-control", .noReadControl),
+   ("fifth-post", .fifthPost), ("article-longer", .articleLonger), ("unstuffed", .unstuffed),
+   ("reserved-taken", .reservedTaken),
+   ("no-file-sync", .noFileSync), ("no-dir-sync", .noDirSync),
+   ("no-journal-sync", .noJournalSync), ("dir-syncs-overlap", .dirSyncsOverlap),
+   ("appends-overlap", .appendsOverlap), ("numbers-not-above", .numbersNotAbove),
+   ("sync-failure-ignored", .syncFailureIgnored), ("unknown-answered", .unknownAnswered),
+   ("names-left", .namesLeft), ("unseparated", .unseparated), ("capacity-over", .capacityOver),
+   ("refused-reserves", .refusedReserves), ("stop-spares-flight", .stopSparesFlight),
+   ("commit-after-stop", .commitAfterStop), ("wait-through-stop", .waitThroughStop),
+   ("lowest-first", .lowestFirst), ("ninth-read", .ninthRead), ("lines-unchecked", .linesUnchecked),
+   ("crc-unchecked", .crcUnchecked), ("longer-served", .longerServed), ("no-xref", .noXref),
+   ("status-early", .statusEarly), ("read-lowest-first", .readLowestFirst),
+   ("idle-while-fetching", .idleWhileFetching), ("read-while-fetching", .readWhileFetching),
+   ("end-unsought", .endUnsought), ("header-unchecked", .headerUnchecked), ("jobs-shared", .jobsShared),
+   ("left-open", .leftOpen)]
 
-def freshM (m : Mutant) (i : Identity) (gen now : Nat) : Conn :=
-  { Conn.fresh i gen now with out := if m = .noGreeting then [] else greeting i }
+/-- The store's rules with the mutant's broken. -/
+def rulesOf : Mutant → Rules
+  | .fifthPost => { posts := 5 }
+  | .articleLonger => { articleMax := 1000001 }
+  | .unstuffed => { stuffs := false }
+  | .reservedTaken => { reserves := false }
+  | .noFileSync => { syncsFile := false }
+  | .noDirSync => { syncsDir := false }
+  | .noJournalSync => { syncsJournal := false }
+  | .dirSyncsOverlap => { oneDirSync := false }
+  | .appendsOverlap => { oneAppend := false }
+  | .numbersNotAbove => { numbersAbove := false }
+  | .syncFailureIgnored => { stops := false }
+  | .unknownAnswered => { unknown := false }
+  | .namesLeft => { cleans := false }
+  | .unseparated => { separates := false }
+  | .capacityOver => { capacity := Recovery.capacity + 1 }
+  | .refusedReserves => { releases := false }
+  | .stopSparesFlight => { refusesInFlight := false }
+  | .commitAfterStop => { distrusts := false }
+  | .ninthRead => { reads := 9 }
+  | .linesUnchecked => { checksLines := false }
+  | .crcUnchecked => { checksCrc := false }
+  | .longerServed => { checksSize := false }
+  | .noXref => { xref := false }
+  | .statusEarly => { statusLate := false }
+  | .endUnsought => { seeksEnd := false }
+  | .headerUnchecked => { checksHeader := false }
+  | .jobsShared => { readJobsApart := false }
+  | .leftOpen => { closesAfter := false }
+  | _ => {}
+
+def freshM (m : Mutant) (i : Identity) (greeted : Bool) (number gen now : Nat) : Conn :=
+  { Conn.fresh i greeted number gen now with
+    out := if m = .noGreeting then [] else (Conn.fresh i greeted number gen now).out }
 
 def liveM (m : Mutant) (t : Table) (idx gen : Nat) : Option Conn :=
   match t[idx]? with
   | some (some c) => if c.gen = gen || m = .staleApplied then some c else none
   | _ => none
 
-def applyEventM (m : Mutant) (i : Identity) (now : Nat) (t : Table) : Event → Except Breach Table
-  | .opened idx gen => do
+def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
+    Event → Except Breach Server
+  | .opened idx gen mayPost => do
     checkIndex idx
-    match t[idx]? with
+    match s.table[idx]? with
     | some (some _) => throw .reopened
-    | _ => return t.set idx (some (freshM m i gen now))
+    | _ =>
+      let c := freshM m i (greets s.store (mayPost || m = .greetAll)) (s.opened + 1) gen now
+      return { s with table := s.table.set idx (some c), opened := s.opened + 1 }
   | .received idx gen data => do
     checkIndex idx
     if chunk < data.length then throw .tooLong
-    match liveM m t idx gen with
+    match liveM m s.table idx gen with
     | some c =>
       if c.asked then
         let due := if m = .lineRenewed then 0 else c.lineDue
-        return t.set idx (some { c with held := data, lineDue := due })
+        return { s with table := s.table.set idx (some { c with held := data, lineDue := due }) }
       else throw .unasked
-    | none => return t
+    | none => return s
   | .writable idx gen => do
     checkIndex idx
-    match liveM m t idx gen with
-    | some c => return t.set idx (some { c with blocked := false })
-    | none => return t
+    match liveM m s.table idx gen with
+    | some c => return { s with table := s.table.set idx (some { c with blocked := false }) }
+    | none => return s
   | .inputEnded idx gen => do
     checkIndex idx
-    match liveM m t idx gen with
+    match liveM m s.table idx gen with
     | some c =>
       if c.asked then
-        return if m = .endIgnored then t
-          else t.set idx (some { c with phase := .ending, lineDue := 0 })
+        if m = .endIgnored then return s
+        else
+          let c' := { c with phase := .ending, lineDue := 0, post := none, articleDue := 0,
+                             want := none, read := none }
+          return { s with
+            table := s.table.set idx (some c'),
+            store := s.store.map (Store.abandon idx gen) }
       else throw .unasked
-    | none => return t
+    | none => return s
   | .closed idx gen => do
     checkIndex idx
-    match liveM m t idx gen with
-    | some _ => return t.set idx none
-    | none => return t
+    match liveM m s.table idx gen with
+    | some _ =>
+      return { s with table := s.table.set idx none, store := s.store.map (Store.abandon idx gen) }
+    | none => return s
 
-def wantsM (m : Mutant) (c : Conn) : Bool := c.wants && !(m = .readNotResumed && c.first == 0)
+def wantsWithM (m : Mutant) (st : Option Store) (c : Conn) : Bool :=
+  (c.wantsWith st || (m = .readWhileFetching && c.read.isSome && c.wants && !c.waiting)) &&
+    !(m = .readNotResumed && c.first == 0)
 
 def waitLineM (m : Mutant) (now : Nat) (c : Conn) : Conn :=
   if (c.out.isEmpty || m = .lineWhileBusy) && c.phase == .open_ && c.line != .fresh &&
-      m != .noLineDeadline then
+      c.want.isNone && m != .noLineDeadline then
     if c.lineDue == 0 then { c with lineDue := now + lineTime } else c
   else { c with lineDue := 0 }
 
-def serveM (m : Mutant) (i : Identity) (now : Nat) : Nat → Conn → Conn
+def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
+  | .capabilities =>
+    if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
+    else .capabilities
+  | .help => if p.offered then .helpPost else .help
+  | .post =>
+    if !c.greeted && !(m = .postUnpermitted && p.offered) then .notPermitted
+    else if !p.accepting && m != .postAfterStop then .unavailable else .post
+  | .lookup k id => if !p.ids.contains id then .noSuchId else if k = .stat then .stat id else .lookup k id
+  | r => r
+
+def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
   | 0, c => c
   | fuel + 1, c =>
     if c.held.isEmpty then c
@@ -119,44 +277,115 @@ def serveM (m : Mutant) (i : Identity) (now : Nat) : Nat → Conn → Conn
       match v with
       | none => c1
       | some l =>
-        match reply l with
+        match resolveM m p c (replyIn p.offered l) with
         | .ignore =>
-          serveM m i now fuel
+          serveM m i p now fuel
             (if m = .blankCounts then { c1 with first := 0, idle := now + inactivity } else c1)
         | r =>
-          if !c.out.isEmpty && m != .answerWhileBusy then c
+          if (!c.out.isEmpty && m != .answerWhileBusy) || c.want.isSome then c
+          else if r = .post then
+            if m = .waitDeadlines then { c1 with waiting := true }
+            else { c1 with waiting := true, first := 0, idle := 0 }
+          else if let .lookup k id := r then
+            serveM m i p now fuel { c1 with want := some (k, id), first := 0, idle := 0 }
           else
             let first := if m = .firstNotCleared then c1.first else 0
             let c2 := { c1 with out := text i r, first := first, idle := now + inactivity }
             if r = .quit && m != .quitTail then { c2 with phase := .quitting, held := [] }
-            else serveM m i now fuel c2
+            else serveM m i p now fuel c2
 
-def emitM (m : Mutant) (idx : Nat) (c : Conn) : Option Conn × Option Action :=
+/-- `progress`, an article's octets taken renewing its deadline with `articleRenewed`. -/
+def progressM (m : Mutant) (i : Identity) (now wall : Nat) (st : Option Store) (c : Conn) :
+    Conn × Option Store × Bool :=
+  let g := progress i now wall st c
+  if m = .articleRenewed && g.1.held.length < c.held.length && g.1.articleDue != 0 then
+    ({ g.1 with articleDue := now + articleTime }, g.2)
+  else g
+
+/-- `claim`, with the store taken as accepting by `postAfterStop`; a waiting POST kept waiting
+once the store stops by `waitThroughStop`; the connection first among those waiting by
+`lowestFirst`; and no deadline given the article by `noArticleDeadline`. -/
+def claimM (m : Mutant) (i : Identity) (now idx : Nat) (st : Option Store) (c : Conn) :
+    Conn × Option Store :=
+  let first (st : Store) := { st with waiters := (idx, c.gen) :: st.waiters.erase (idx, c.gen) }
+  let k := if m = .postAfterStop then
+      let k := claim i now idx (st.map ({ · with accepting := true })) c
+      (k.1, k.2.map ({ · with accepting := st.any (·.accepting) }))
+    else if m = .waitThroughStop && c.waiting && st.any (!·.accepting) then (c, st)
+    else if m = .lowestFirst then claim i now idx (st.map first) c
+    else claim i now idx st c
+  if m = .noArticleDeadline && c.post.isNone && k.1.post.isSome then
+    ({ k.1 with articleDue := 0 }, k.2)
+  else k
+
+/-- `progressRead`, inactivity left running while the read has nothing to give by
+`idleWhileFetching`. -/
+def progressReadM (m : Mutant) (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
+    Conn × Option Store × Bool :=
+  let g := progressRead i now st c
+  if m = .idleWhileFetching && g.1.read.isSome && g.1.idle == 0 then ({ g.1 with idle := c.idle }, g.2)
+  else g
+
+/-- `claimRead`, the connection first among those waiting by `readLowestFirst`. -/
+def claimReadM (m : Mutant) (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store :=
+  let first (st : Store) := { st with readers := (idx, c.gen) :: st.readers.erase (idx, c.gen) }
+  if m = .readLowestFirst then claimRead idx (st.map first) c else claimRead idx st c
+
+def emitM (m : Mutant) (idx : Nat) (wants : Bool) (c : Conn) : Option Conn × Option Action :=
   if !c.out.isEmpty then
     if c.blocked && m != .resendAnytime then (some c, none)
-    else (some { c with reading := wantsM m c }, some (.send idx c.gen c.out (wantsM m c)))
+    else (some { c with reading := wants }, some (.send idx c.gen c.out wants))
   else if c.phase = .quitting || (c.phase = .ending && c.held.isEmpty) then
     (none, some (.closeGracefully idx c.gen))
+  else if c.phase = .open_ && c.reading != wants && m != .noReadControl then
+    (some { c with reading := wants }, some (.send idx c.gen [] wants))
   else (some c, none)
 
-def actM (m : Mutant) (i : Identity) (now idx : Nat) (c : Conn) : Option Conn × Option Action :=
-  if c.due now then (none, some (.closeNow idx c.gen))
+def actM (m : Mutant) (i : Identity) (now wall idx : Nat) (st : Option Store) (c : Conn) :
+    Option Conn × Option Action × Option Store :=
+  if c.due now then (none, some (.closeNow idx c.gen), st.map (Store.abandon idx c.gen))
   else
-    let r := emitM m idx
-      (if (c.out.isEmpty || m = .answerWhileBusy) && c.phase != .quitting then
-        serveM m i now (c.held.length + 1) c else c)
-    (r.1.map (waitLineM m now), r.2)
+    let g := progressM m i now wall st c
+    if g.2.2 then (none, some (.closeNow idx c.gen), g.2.1)
+    else
+      let h := progressReadM m i now g.2.1 g.1
+      if h.2.2 then (none, some (.closeNow idx c.gen), h.2.1.map (Store.abandon idx c.gen))
+      else
+        let c1 := if (h.1.out.isEmpty || m = .answerWhileBusy) && h.1.phase != .quitting &&
+            h.1.post.isNone && !h.1.waiting && h.1.want.isNone
+          then serveM m i (Posting.of h.2.1) now (h.1.held.length + 1) h.1 else h.1
+        let st1 := if c1.waiting && !h.1.waiting then
+            h.2.1.map fun st => { st with waiters := st.waiters ++ [(idx, c.gen)] }
+          else if c1.want.isSome && h.1.want.isNone then
+            h.2.1.map fun st => { st with readers := st.readers ++ [(idx, c.gen)] }
+          else h.2.1
+        let k := claimM m i now idx st1 c1
+        let k := claimReadM m idx k.2 k.1
+        let r := emitM m idx (wantsWithM m k.2 k.1) k.1
+        (r.1.map (waitLineM m now), r.2, k.2)
 
-def turnM (m : Mutant) (i : Identity) (s : Server) (now : Nat) (events : List Event) :
-    Except Breach (Server × List Action) := do
-  if batch < events.length then throw .tooManyEvents
-  if now < s.clock || clockLimit ≤ now then throw .badClock
-  let t ← events.foldlM (applyEventM m i now) s.table
-  let results := (List.range conns).map fun idx =>
+def actFromM (m : Mutant) (i : Identity) (now wall : Nat) (t : Table) :
+    List Nat → Option Store → List (Option Conn × Option Action) × Option Store
+  | [], st => ([], st)
+  | idx :: rest, st =>
     match t[idx]? with
-    | some (some c) => actM m i now idx c
-    | _ => (none, none)
-  return ({ table := results.map (·.1), clock := now }, results.filterMap (·.2))
+    | some (some c) =>
+      let x := actM m i now wall idx st c
+      let r := actFromM m i now wall t rest x.2.2
+      ((x.1, x.2.1) :: r.1, r.2)
+    | _ =>
+      let r := actFromM m i now wall t rest st
+      ((none, none) :: r.1, r.2)
+
+def turnM (m : Mutant) (i : Identity) (s : Server) (now wall : Nat) (events : List Event)
+    (dones : List Done) : Except Breach (Server × List Action × List Job) := do
+  if batch < events.length then throw .tooManyEvents
+  if now < s.clock || clockLimit ≤ now || wallLimit ≤ wall then throw .badClock
+  let s ← events.foldlM (applyEventM m i now) s
+  let st ← completions s dones
+  let r := actFromM m i now wall s.table (List.range conns) st
+  let j := jobsOf r.2
+  return ({ s with table := r.1.map (·.1), clock := now, store := j.1 }, r.1.filterMap (·.2), j.2)
 
 def settleTableM (m : Mutant) (now : Nat) (t : Table) :
     List Action → List Nat → Except Breach Table
@@ -165,8 +394,10 @@ def settleTableM (m : Mutant) (now : Nat) (t : Table) :
     if data.length < n then throw .overTaken
     let t := match liveM m t idx gen with
       | some c =>
-        let idle := if m = .zeroTakeCounts then now + inactivity
-          else if n = 0 || m = .idleNotRenewed then c.idle else now + inactivity
+        let idle := if c.read.isSome && c.out.length ≤ n && m != .idleWhileFetching then 0
+          else if m = .zeroTakeCounts then now + inactivity
+          else if n = 0 || c.post.isSome || c.waiting || m = .idleNotRenewed then c.idle
+          else now + inactivity
         t.set idx (some (waitLineM m now
           { c with out := c.out.drop n, idle := idle, blocked := decide (n < data.length) }))
       | none => t
@@ -185,8 +416,10 @@ def deadlineM (m : Mutant) (s : Server) : Nat :=
 
 /-! ## With no rule broken, the specification -/
 
+theorem rulesOf_none : rulesOf .none = {} := rfl
+
 theorem freshM_none : freshM .none = Conn.fresh := by
-  funext i gen now
+  funext i g number gen now
   rfl
 
 theorem liveM_none : liveM .none = Table.live := by
@@ -199,47 +432,78 @@ theorem waitLineM_none : waitLineM .none = Conn.waitLine := by
   funext now c
   simp [waitLineM, Conn.waitLine]
 
-theorem wantsM_none : wantsM .none = Conn.wants := by
-  funext c
-  simp [wantsM]
+theorem wantsWithM_none : wantsWithM .none = Conn.wantsWith := by
+  funext st c
+  simp [wantsWithM]
 
-theorem serveM_none (i : Identity) (now : Nat) : serveM .none i now = serve i now := by
+theorem resolveM_none : resolveM .none = resolve := by
+  funext p c r
+  cases r <;> simp [resolveM, resolve]
+
+theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
+    serveM .none i p now = serve i p now := by
   funext fuel c
   induction fuel generalizing c with
   | zero => rfl
   | succ fuel ih =>
     have h1 : (Mutant.none != Mutant.answerWhileBusy) = true := rfl
     have h2 : (Mutant.none != Mutant.quitTail) = true := rfl
-    simp only [serveM, serve, ih, reduceCtorEq, if_false, h1, h2, Bool.and_true,
+    simp only [serveM, serve, ih, resolveM_none, reduceCtorEq, if_false, h1, h2, Bool.and_true,
       decide_eq_true_eq]
     rfl
 
+theorem progressM_none : progressM .none = progress := by
+  funext i now wall st c
+  simp [progressM]
+
+theorem claimM_none : claimM .none = claim := by
+  funext i now idx st c
+  simp [claimM]
+
+theorem progressReadM_none : progressReadM .none = progressRead := by
+  funext i now st c
+  simp [progressReadM]
+
+theorem claimReadM_none : claimReadM .none = claimRead := by
+  funext idx st c
+  simp [claimReadM]
+
 theorem emitM_none : emitM .none = emit := by
-  funext idx c
-  simp [emitM, emit, wantsM_none]
+  funext idx w c
+  simp [emitM, emit]
 
 theorem applyEventM_none : applyEventM .none = applyEvent := by
-  funext i now t e
+  funext i now s e
   cases e <;> simp only [applyEventM, applyEvent, liveM_none, freshM_none, reduceCtorEq,
-    if_false] <;> rfl
+    if_false, Bool.or_false, decide_false] <;> rfl
 
 theorem actM_none : actM .none = act := by
-  funext i now idx c
-  simp [actM, act, emitM_none, serveM_none, waitLineM_none]
+  funext i now wall idx st c
+  simp [actM, act, emitM_none, serveM_none, waitLineM_none, progressM_none, claimM_none,
+    wantsWithM_none, progressReadM_none, claimReadM_none]
+
+theorem actFromM_none (i : Identity) (now wall : Nat) (t : Table) :
+    actFromM .none i now wall t = actFrom i now wall t := by
+  funext l st
+  induction l generalizing st with
+  | nil => rfl
+  | cons idx rest ih =>
+    simp only [actFromM, actFrom, ih, actM_none]
+    rfl
 
 theorem turnM_none : turnM .none = turn := by
-  funext i s now evs
-  simp only [turnM, turn, applyEventM_none, actM_none]
-  rfl
+  funext i s now wall evs ds
+  simp only [turnM, turn, applyEventM_none, actFromM_none]
 
 theorem settleTableM_none (now : Nat) : settleTableM .none now = settleTable now := by
   funext t acts ns
   induction acts generalizing t ns with
   | nil => cases ns <;> rfl
   | cons a rest ih =>
+    have h : (Mutant.none != Mutant.idleWhileFetching) = true := rfl
     cases a <;> cases ns <;>
       simp only [settleTableM, settleTable, ih, liveM_none, waitLineM_none, reduceCtorEq,
-        ↓reduceIte, decide_false, Bool.or_false, decide_eq_true_eq] <;> rfl
+        ↓reduceIte, decide_false, Bool.or_false, h, Bool.and_true] <;> rfl
 
 theorem settleM_none : settleM .none = settle := by
   funext s acts ns

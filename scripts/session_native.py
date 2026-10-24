@@ -6,11 +6,13 @@ The gate prints the program; CakeML compiles it without `--main_return`; `native
 runs it and speaks the line protocol of `dn-compiler session-model`, so the host simulator of
 `scripts/session_check.py` drives the compiled code exactly as it drives the model. Every scenario
 is run on both and the two traces — every batch, every action, what the host took, every next
-turn — have to be the same. So do their whole answers to each host that breaks the contract, to
-scripts at the edges of what it allows, and to hosts drawn at random from a fixed seed. Hosts that
-break the contract in ways the model's protocol cannot say — an identity that does not fit the
-replies, an event of no kind the layout has, a word of the program's own area that the host
-overwrites — have to stop the compiled code with their codes. The
+turn — have to be the same, and with a store every job too: the compiled code recovers its store
+first, from the spool before the start record the model's begins with. So do their whole answers to
+each host that breaks the contract, to scripts at the edges of what it allows, and to hosts drawn at
+random from a fixed seed. Hosts that break the contract in ways the model's protocol cannot say — an
+identity that does not fit the replies, a configuration the store refuses, an event of no kind the
+layout has, a word of the program's own area that the host overwrites — have to stop the compiled
+code with their codes. The
 host checks, on every call and at the end of the run, the heap header, and the heap before the
 program's first area and past its layout, which it fills before the run so that the program cannot
 lean on what it did not write.
@@ -23,19 +25,22 @@ import argparse
 from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+import dataclasses
 import os
 from pathlib import Path
 import random
 import re
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import abnf_check  # the path above is what makes these importable
-import lanes
+import lanes  # the path above is what makes these importable
 from lanes import NATIVE, ROOT, LaneError, Report
 import session_check as sessions
-from session_check import GREETING, IDENTITY, LONGEST, SHORTEST, SOURCE, Identity, Speaker
+from session_check import GREETING, IDENTITY, LONGEST, SHORTEST, SOURCE, WALL, Identity, Speaker
+import session_ref as ref
 from session_ref import Turn
+import store_ref as J
 
 OUT = ROOT / "build/session"
 HOST = NATIVE / "session_host.c"
@@ -48,10 +53,35 @@ RUNS, STEPS, SEED = 200, 60, 20_260_928
 # what the message that catches it says). `{past}`, the first word past the layout, and `{stop}`,
 # the word of the stop's code, are the layout's.
 TRACE = "differs at turn"
+# The defects planted in the store's side, which only the scenarios with a store can see.
+POST_DEFECTS = [
+    ("an article's dots not stuffed", r"if \(lds 1 \(zs \+ 80\)\) & \(b == 46\) \{", "if 0 {", 1, TRACE),
+    ("an article one octet longer taken", r"1000000 < ar", "1000001 < ar", 2, TRACE),
+    ("an article's deadline a millisecond late", r"st cb \+ 128, now \+ 1800000;", "st cb + 128, now + 1800001;", 1,
+     TRACE),
+    ("a commit's number the group's highest", r"(var num = \(lds 1 \(@base \+ \d+ \+ \(gx \* 8\)\)\)) \+ 1;", r"\1;", 1,
+     TRACE),
+    ("a file's CRC-32C begun at zero", r"st zs \+ 152, 4294967295;", "st zs + 152, 0;", 1, TRACE),
+    ("POSTs that wait given slots out of their order", r"(?s)(fun postAdmits\(.*?)\(at < fr\)", r"\1(at <= fr)", 1,
+     TRACE),
+    ("connections that wait given reads out of their order", r"(?s)(fun readAdmits\(.*?)\(at < fr\)",
+     r"\1(at <= fr)", 1, TRACE),
+    ("a file's CRC-32C not compared", r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1,
+     TRACE),
+    ("the empty line after the header section not looked for",
+     r"if 0 < \(\(\(f \+ 1\) == h\) \+ \(f == \(h \+ 1\)\)\) \{", "if 0 {", 1, TRACE),
+    ("a line that starts with one dot read as stuffed", r"if bol & \(x == 46\) \{", "if 0 {", 1, TRACE),
+    ("no Xref given", r"st rs \+ 224, xo;", "st rs + 224, 0;", 1, TRACE),
+    ("an Xref line folded an octet late", r"if 998 < \(wd \+ 1 \+ ll\) \{", "if 999 < (wd + 1 + ll) {", 1, TRACE),
+    ("the header section taken as read an octet early", r"var known = \(h \+ 2\) <= gt;",
+     "var known = (h + 1) <= gt;", 1, TRACE),
+    ("the empty line's CR not given once the buffer starts past it", r"if fp == h \{", "if 0 {", 1,
+     "code 10 on a host that kept the contract"),
+]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(", "(0 * (", 5, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 8, TRACE),
     ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 1, TRACE),
     ("a bare LF ending a command", r"if cr & \(bad == 0\) \{", "if bad == 0 {", 1, TRACE),
     ("an overlong line with no word left unanswered", r"if kind == 3 \{(\s*)r = 6;", r"if kind == 3 {\1r = 0;", 1,
@@ -62,12 +92,12 @@ DEFECTS = [
      1, TRACE),
     ("output sent again before the host reports it ready", r"if \(lds 1 \(cb \+ 32\)\) == 0 \{", "if 1 {", 1, TRACE),
     ("lines after a QUIT answered", r"st cb \+ 16, 1;", "st cb + 16, 0;", 1, TRACE),
-    ("output taken not counted as activity", r"if 0 < tk \{(\s*)st cb \+ 48, now \+ 1800000;",
-     r"if 0 < tk {\1st cb + 48, lds 1 (cb + 48);", 1, TRACE),
-    ("a send of which nothing was taken counted as activity", r"if 0 < tk \{", "if 0 <= tk {", 1, TRACE),
+    ("output taken not counted as activity", r"(if \(0 < tk\) & .*\{\s*)st cb \+ 48, now \+ 1800000;",
+     r"\1st cb + 48, lds 1 (cb + 48);", 1, TRACE),
+    ("a send of which nothing was taken counted as activity", r"if \(0 < tk\) &", "if (0 <= tk) &", 1, TRACE),
     ("reading asked with a line held",
-     r"var wants = \(\(lds 1 \(cb \+ 16\)\) == 0\) & \(\(lds 1 \(cb \+ 80\)\) == \(lds 1 \(cb \+ 72\)\)\);",
-     "var wants = (lds 1 (cb + 16)) == 0;", 1, TRACE),
+     r"var wants = \(\(\(lds 1 \(cb \+ 16\)\) == 0\) & \(\(lds 1 \(cb \+ 80\)\) == \(lds 1 \(cb \+ 72\)\)\)\) &",
+     "var wants = ((lds 1 (cb + 16)) == 0) &", 1, TRACE),
     ("received bytes not held", r"st cb \+ 72, el;", "st cb + 72, 0;", 1, TRACE),
     ("input of a connection gone applied", r"(?s)(if ek == 2 \{.*?)if lv \{", r"\1if lds 1 cb {", 1,
      "code 4 on a host that kept the contract"),
@@ -83,14 +113,15 @@ DEFECTS = [
     ("a clock going back accepted", r"\(now < \(lds 1 \(@base \+ \d+\)\)\)", "(now < 0)", 1, "not stop 7"),
     ("a clock refused just below its limit", r"4611686018427387904 <= now", "4611686018427387903 <= now", 1,
      "at the edge 'a clock just below its limit'"),
-    ("a word to read of two", r"st slot \+ 32, wants;", "st slot + 32, wants * 2;", 1, "word to read is 2"),
+    ("a word to read of two", r"st slot \+ 32, wants;", "st slot + 32, wants * 2;", 2, "word to read is 2"),
     ("a word to listen of two", r"st @base \+ {listen}, 1;", "st @base + {listen}, 2;", 2, "listening 2"),
     ("a store past the program's layout", r"st @base \+ \d+, now;", "st @base + {past}, now;", 1,
      "wrote past its layout"),
-    ("a store before the program's first area", r"(st @base \+ 64, \d+;)", r"\1\n  st @base + 48, 7;", 1,
+    ("a store before the program's first area", r"(st @base \+ {conf}, \d+;)", r"\1\n  st @base + 48, 7;", 1,
      "wrote before its layout"),
     ("a slot not cleared", r"\n\s*st @base \+ \d+ \+ \(c \* 560\), 0;", "", 1, "in the slots"),
-    ("a send not counted", r"(aj = aj \+ 1;\s*\}\s*)m = m \+ 1;", r"\1", 1, "actions counted"),
+    ("a send not counted", r"(aj = aj \+ 1;\s*\}\s*)st @base \+ {acts}, \(lds 1 \(@base \+ {acts}\)\) \+ 1;", r"\1", 1,
+     "actions counted"),
     ("a length read back unchecked", r"\(512 < ol\)", "0", 1, "a send of 1000 bytes"),
     ("a store past the layout as the run stops", r"st @base \+ {stop}, 7;",
      "st @base + {past}, 1;\n      st @base + {stop}, 7;", 1, "the end of the run: the program wrote past its layout"),
@@ -106,6 +137,8 @@ def first_difference(expected: list[Turn], got: list[Turn], broken: str | None) 
     off, else in its length."""
     for k, (e, g) in enumerate(zip(expected, got, strict=False)):
         if e != g:
+            if (g.actions, g.deadline) == (e.actions, e.deadline):
+                return f"{TRACE} {k}, at {e.now}: jobs {g.jobs}, the model {e.jobs}"
             return f"{TRACE} {k}, at {e.now}: {g.actions} then {g.deadline}, the model {e.actions} then {e.deadline}"
     if broken:
         return broken
@@ -131,6 +164,9 @@ def edges() -> Iterator[tuple[str, list[str]]]:
     yield "a clock just below its limit", [f"turn {LIMIT - 1}", "open 0 1", "go", f"took {GREETING}",
                                            f"turn {LIMIT - 1}", "go", "took"]
     yield "a clock of zero", ["turn 0", "open 0 1", "go", "took 0", "turn 0", "go", "took"]
+    below = sessions.WALL_LIMIT - 1
+    yield "a wall clock just below its limit", [f"turn 1 {below}", "open 0 1", "go", f"took {GREETING}",
+                                                f"turn 2 {below}", "go", "took"]
     yield "a batch of sixteen events", ["turn 1", *[f"open {k} 1" for k in range(16)], "go",
                                         "took " + " ".join([str(GREETING)] * 16)]
     yield "a chunk of 512 bytes", [*begin, "turn 2", "recv 0 1 " + (b"HELP\r\n" * 85 + b"ST").hex(), "go", "took 10"]
@@ -179,10 +215,50 @@ def own_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
         yield f"{what} written by the host", IDENTITY, [*script, "go", "took"], 10
 
 
+START = len(J.frame(sessions.KEY, 0, J.START, b""))
+
+
+def native_line(spool: sessions.Spool) -> str:
+    """The store line the compiled session is told: the spool before the start record its
+    recovery appends, which the model's spool already ends with."""
+    image = [(name, octets[:-START] if name == b"journal" else octets) for name, octets in spool.image]
+    return dataclasses.replace(spool, image=image).line()
+
+
+def store_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
+    """Hosts with a store that write into the program's own area a word of the store's side it reads
+    back as a length or a place."""
+    words = layout()
+    spool = sessions.Spool(sessions.GROUPS)
+    slot0, record = words["SLOTS_OFF"], words["TABLE_OFF"]
+    greeted = len(ref.texts(*IDENTITY)["greeting-post"])
+    posting = [native_line(spool), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeted}",
+               f"turn 5 {WALL + 5}", "recv 0 1 " + sessions.ascii_lines("POST").hex(), "go", "took 31",
+               f"turn 6 {WALL + 6}"]
+    article = "recv 0 1 " + sessions.article(*sessions.BASIC).hex()
+    word = 2 ** 63
+    yield "a slot's octets written by the host", IDENTITY, [
+        *posting, f"poke {slot0 + words['Z_PEND']} {word}", article, "go", "took"], 10
+    yield "the slot of a POST written by the host", IDENTITY, [
+        *posting, f"poke {record + words['C_POST']} 9", article, "go", "took"], 10
+    yield "the count of POSTs that wait written by the host", IDENTITY, [
+        native_line(spool), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeted}", f"turn 5 {WALL + 5}",
+        f"poke {words['OWN_OFF'] + words['OWN_WAIT_N']} 65", "recv 0 1 " + sessions.ascii_lines("POST").hex(),
+        "go", "took"], 10
+    yield "the index written by the host", IDENTITY, [
+        *posting, *(f"poke {words['INDEX_OFF'] + 8 * k} {word}" for k in range(words["INDEX_CELLS"])), article,
+        "go", "took"], 10
+    for what, change in (("a path identity that is no domain name", {"identity": b"dn example"}),
+                         ("a group the store may not carry", {"groups": [b"local..test"]})):
+        yield f"{what}", IDENTITY, [native_line(dataclasses.replace(spool, **change)), f"turn 1 {WALL}", "go",
+                                    "took"], 9
+
+
 def program_breaches() -> Iterator[tuple[str, Identity, list[str], int]]:
     """Hosts that break the contract in ways only the program is asked to see, and their codes."""
     first = ["turn 1", "go", "took"]
     yield from own_area_written()
+    yield from store_area_written()
     yield "no identity", (b"", b""), first, 9
     yield "no revision", (b"", SOURCE), first, 9
     yield "no address of the source", (b"r", b""), first, 9
@@ -343,8 +419,42 @@ def scenarios_hold(binary: Path, scenarios: list[sessions.Scenario], expected: d
             raise LaneError(f"scenario {name!r}: {problem}")
 
 
+# Scenarios the compiled session also runs from an empty directory, its recovery making the journal
+# the model's spool begins with.
+FROM_EMPTY = ("a post",)
+
+
+def posts_hold(binary: Path, posts: list[sessions.PostScenario], expected: dict[str, list[Turn]]) -> None:
+    runs = [(name, clients, spool, native_line(spool)) for name, clients, spool in posts]
+    runs += [(f"{name}, from an empty directory", clients, spool, dataclasses.replace(spool, image=[]).line())
+             for name, clients, spool in posts if name in FROM_EMPTY]
+    for name, clients, spool, line in runs:
+        try:
+            native, broken = sessions.run_post(clients, spool, [str(binary)], line), None
+        except sessions.Unfinished as error:
+            native, broken = error.trace, str(error)
+        problem = first_difference(expected[name.removesuffix(", from an empty directory")], native, broken)
+        if problem:
+            raise LaneError(f"scenario {name!r}: {problem}")
+
+
+# Breaches with a store the layout cannot hold: more completions than its slots, results for
+# operations not done, and octets of a read other than its result counts, a job's data always being
+# there; the model's lane has them.
+UNWRITTEN = ("more completions than jobs", "results for operations not done", "octets a read does not count")
+
+
+def post_breaches() -> Iterator[tuple[str, list[str], int]]:
+    """The breaches with a store the layout can hold, told the compiled session's store line."""
+    spools = (sessions.Spool(sessions.GROUPS), sessions.Spool(sessions.GROUPS, image=sessions.TWO))
+    for name, script, code in (*sessions.post_breaches(), *sessions.read_breaches()):
+        if name not in UNWRITTEN:
+            lines = {spool.line(): native_line(spool) for spool in spools}
+            yield name, [lines.get(line, line) for line in script], code
+
+
 def scripts_hold(binary: Path, answers: dict[str, list[str]]) -> None:
-    for name, script, code in sessions.breaches():
+    for name, script, code in (*sessions.breaches(), *post_breaches()):
         out, ended = sessions.breach_output(script, [str(binary)])
         if ended or out != answers[name]:
             raise LaneError(f"breach {name!r}: the compiled session answered {out[-3:]}{ended}, "
@@ -376,50 +486,86 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    binary = lanes.whole_program(cake, "session", source, OUT, HOST)
-    scenarios = list(sessions.scenarios())
-    model = sessions.model_command()
-    expected = {name: sessions.run(clients, model, ghosts, identity) for name, clients, ghosts, identity in scenarios}
-    turns = sum(len(t) for t in expected.values())
-    answers = {name: sessions.check_breach(script, code, model) for name, script, code in sessions.breaches()}
-    answers |= edge_answers(model)
-    scenarios_hold(binary, scenarios, expected)
-    scripts_hold(binary, answers)
-    random_hosts = wander(binary, RUNS)
     words = layout()
     places = {"{past}": str(words["SIZE"]), "{stop}": str(words["OWN_OFF"] + words["OWN_STOP"]),
-              "{listen}": str(words["EMIT_OFF"] + words["EMIT_LISTEN"])}
+              "{listen}": str(words["EMIT_OFF"] + words["EMIT_LISTEN"]), "{conf}": str(words["CONF_OFF"]),
+              "{acts}": str(words["OWN_OFF"] + words["OWN_ACTS"])}
 
     def placed(text: str) -> str:
         for place, offset in places.items():
             text = text.replace(place, offset)
         return text
 
-    def judged(index: int, name: str, pattern: str, becomes: str, times: int, sign: str) -> tuple[str, str]:
-        """The program with the defect built and run as the program is; how it was caught."""
-        planted = lanes.whole_program(cake, f"defect-{index}", plant(source, placed(pattern), placed(becomes), times),
-                                      OUT, HOST)
-        try:
-            scenarios_hold(planted, scenarios, expected)
-            scripts_hold(planted, answers)
-            wander(planted, RUNS)
-        except LaneError as error:
-            if sign not in str(error):
-                raise LaneError(f"the program with {name} was caught, but not as {sign!r}: {error}") from None
-            return name, str(error)[:400]
-        raise LaneError(f"the program with {name} answered every host as the model")
+    defects = DEFECTS + POST_DEFECTS
+    clock = time.monotonic()
+    seconds: dict[str, float] = {}
+    # The program and each defect are built at once, while the model answers the hosts.
+    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+        built = pool.submit(lanes.whole_program, cake, "session", source, OUT, HOST)
+        builds = [pool.submit(lanes.whole_program, cake, f"defect-{index}",
+                              plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
+                  for index, (_, pattern, becomes, times, _) in enumerate(defects)]
+        scenarios = list(sessions.scenarios())
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios()]
+        model = sessions.model_command()
+        scripts = [(name, script, code) for name, script, code in
+                   (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())
+                   if name not in UNWRITTEN]
+        # The model runs as a process for each scenario, in parallel; then the program on each kind of
+        # host at once. Each is taken in this order, and a difference told in it.
+        with sessions.runs() as runs:
+            plain = [runs.submit(sessions.run, clients, model, ghosts, identity)
+                     for _, clients, ghosts, identity in scenarios]
+            with_store = [runs.submit(sessions.run_post, clients, spool, model) for _, clients, spool in posts]
+            answered = [runs.submit(sessions.check_breach, script, code, model) for _, script, code in scripts]
+            edged = runs.submit(edge_answers, model)
+            expected = {name: played.result() for (name, *_), played in zip(scenarios, plain, strict=True)}
+            stored = {name: played.result() for (name, *_), played in zip(posts, with_store, strict=True)}
+            answers = {name: answer.result() for (name, *_), answer in zip(scripts, answered, strict=True)}
+            answers |= edged.result()
+            seconds["model"] = round(time.monotonic() - clock, 1)
+            binary = built.result()
+            held = [runs.submit(scenarios_hold, binary, scenarios, expected),
+                    runs.submit(posts_hold, binary, posts, stored), runs.submit(scripts_hold, binary, answers)]
+            wandered = runs.submit(wander, binary, RUNS)
+            for each in held:
+                each.result()
+            random_hosts = wandered.result()
+        seconds["program"] = round(time.monotonic() - clock - seconds["model"], 1)
 
-    # Several at once: each is built and run apart from the others, judged by no clock.
-    with ThreadPoolExecutor(abnf_check.WORKERS) as pool:
-        caught = dict(pool.map(lambda d: judged(d[0], *d[1]), enumerate(DEFECTS)))
+        def judged(index: int, name: str, sign: str) -> tuple[str, str]:
+            """The program with the defect run as the program is, a defect of the store's side on the
+            scenarios with a store first; how it was caught."""
+            planted = builds[index].result()
+            try:
+                if index >= len(DEFECTS):
+                    posts_hold(planted, posts, stored)
+                scenarios_hold(planted, scenarios, expected)
+                scripts_hold(planted, answers)
+                posts_hold(planted, posts, stored)
+                wander(planted, RUNS)
+            except LaneError as error:
+                if sign not in str(error):
+                    raise LaneError(f"the program with {name} was caught, but not as {sign!r}: {error}") from None
+                return name, str(error)[:400]
+            raise LaneError(f"the program with {name} answered every host as the model")
+
+        # Each defect is built and run apart from the others, judged by no clock.
+        caught = dict(pool.map(lambda d: judged(d[0], d[1][0], d[1][4]), enumerate(defects)))
+    seconds["defects"] = round(time.monotonic() - clock - seconds["model"] - seconds["program"], 1)
+    turns = sum(len(t) for t in expected.values())
+    store_turns = sum(len(t) for t in stored.values())
     lanes.require_quoted({"docs/baseline.md": [f"on the model's {len(scenarios)} scenarios and {turns:,} turns",
+                                               f"{len(posts)} with a store and {store_turns:,} turns",
                                                f"{RUNS} hosts drawn at random"]})
     return Report("checked", cake, HOSTS, {
         "source_sha256": lanes.digest(OUT / "session.pnk"), "executable_sha256": lanes.digest(binary),
         "layout_sha256": lanes.digest(OUT / "dn_session_layout.h"), "scenarios": len(scenarios), "turns": turns,
-        "breaches": sum(1 for _ in sessions.breaches()), "program_breaches": sum(1 for _ in program_breaches()),
+        "store_scenarios": len(posts), "store_turns": store_turns,
+        "breaches": sum(1 for _ in sessions.breaches()) + sum(1 for _ in post_breaches()),
+        "program_breaches": sum(1 for _ in program_breaches()),
         "edges": sum(1 for _ in edges()), "random_hosts": random_hosts, "random_seed": SEED,
-        "planted_defects_caught": caught})
+        "planted_defects_caught": caught, "seconds_by_step": seconds})
 
 
 def main() -> None:

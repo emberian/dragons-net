@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/file.h>
 #include <sys/random.h>
@@ -196,6 +197,10 @@ void dn_store_recovery_stopped(uint64_t stop, const unsigned char *rec, uint64_t
     case 8: fprintf(stderr, "wrong-size %" PRIu64, x); break;
     case 9: fprintf(stderr, "exhausted"); break;
     case 11: fprintf(stderr, "too-many %" PRIu64, x); break;
+    case 12:
+        fprintf(stderr, "id-twice ");
+        print_hex(rec, at, len);
+        break;
     default: dn_violation("recovery refused the store for reason %" PRIu64, dn_word(rec + DN_SESSION_REC_FAULT));
     }
     fprintf(stderr, "\n");
@@ -238,4 +243,30 @@ int dn_store_may_post(const struct sockaddr_storage *peer) {
         return 1;
     }
     return 0;
+}
+
+void dn_store_log_opened(const struct sockaddr_storage *peer) {
+    static uint64_t opened, unlogged;
+    if (spool < 0) return;
+    ++opened;
+    uint64_t value = 0;
+    for (size_t k = 0; k < DN_SESSION_RUN_VALUE_LEN; ++k) value = value << 8 | random_octets[k];
+    int v4 = peer->ss_family == AF_INET;
+    const struct sockaddr_in *a4 = (const struct sockaddr_in *)peer;
+    const struct sockaddr_in6 *a6 = (const struct sockaddr_in6 *)peer;
+    char text[INET6_ADDRSTRLEN];
+    if (!inet_ntop(peer->ss_family, v4 ? (const void *)&a4->sin_addr : (const void *)&a6->sin6_addr, text,
+                   sizeof text))
+        strcpy(text, "?");
+    char line[192];
+    int n = unlogged ? snprintf(line, sizeof line, "connections not logged: %" PRIu64 "\n", unlogged) : 0;
+    n += snprintf(line + n, sizeof line - (size_t)n, "connection %" PRIu64 ".%" PRIu64 " from %s port %u\n", value,
+                  opened, text, (unsigned)ntohs(v4 ? a4->sin_port : a6->sin6_port));
+    /* Only when stderr has room now, so that a reader that stalls never stops the server: a write
+     * under PIPE_BUF then goes whole. */
+    struct pollfd err = {.fd = STDERR_FILENO, .events = POLLOUT};
+    if (poll(&err, 1, 0) == 1 && err.revents == POLLOUT && write(STDERR_FILENO, line, (size_t)n) == n)
+        unlogged = 0;
+    else
+        ++unlogged;
 }

@@ -3,6 +3,7 @@
 process cannot trace another."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 import tempfile
 from typing import Any
 import unittest
+from unittest import mock
 
 from gatekit import ROOT, script
 
@@ -62,6 +64,16 @@ class Trace(unittest.TestCase):
         self.assertEqual(t.written, {"/r/log"})
         self.assertEqual(t.named, {"/r/log", "/r/lnk"})
         self.assertEqual(t.absent, {"/r/nodir/x"})
+
+    def test_the_empty_path_names_only_a_descriptor(self) -> None:
+        """A lookup of the empty path names the descriptor it is given, with AT_EMPTY_PATH, and nothing
+        without: Python asks for it of a path entry that does not exist."""
+        log = """\
+7 newfstatat(3</r/f>, "", {st_mode=S_IFREG|0644, st_size=1, ...}, AT_EMPTY_PATH) = 0
+7 newfstatat(AT_FDCWD</r>, "", 0x7f, 0) = -1 ENOENT (No such file or directory)
+"""
+        t = parsed(log)
+        self.assertEqual((t.read, t.absent), ({"/r/f"}, set()))
 
     def test_a_relative_path_is_resolved_where_its_process_runs(self) -> None:
         """A path without a directory is resolved by the process's own directory: as its last
@@ -133,7 +145,7 @@ class Git(unittest.TestCase):
     def test_only_a_run_of_git_that_reads_here_is_run_again(self) -> None:
         def replayable(argv: list[str], env: dict[str, str] | None = None, cwd: str = str(ROOT),
                        wrote: str | None = None) -> bool:
-            call = once.GitCall(cwd, argv, dict(os.environ) if env is None else env)
+            call = once.GitCall(cwd, argv, once.checked_env() if env is None else env)
             if wrote:
                 call.written.add(wrote)
             return bool(once.replayable(call))
@@ -192,9 +204,10 @@ class Live(unittest.TestCase):
             "    open(os.environ['DN_DOCUMENTED'], 'a').write(json.dumps({'quoted': {'a': ['b']}}) + '\\n')\n")
         subprocess.run(["git", "init", "-q", str(self.tree)], check=True)
 
-    def run_check(self, *log: str) -> str:
+    def run_check(self, *log: str, env: dict[str, str] | None = None) -> str:
         done = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", *log, "--", sys.executable,
-                               "check.py"], cwd=self.tree, capture_output=True, text=True, check=True, timeout=120)
+                               "check.py"], cwd=self.tree, env=env, capture_output=True, text=True, check=True,
+                              timeout=120)
         return done.stdout + done.stderr
 
     def check(self, body: str) -> None:
@@ -204,12 +217,48 @@ class Live(unittest.TestCase):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.example", "-c", "commit.gpgsign=false",
                         *args], cwd=self.tree, check=True, capture_output=True, timeout=60)
 
+    def test_a_module_beside_those_imported_is_no_input(self) -> None:
+        """Imports look up the names they search for: a module put beside the one imported leaves
+        the stamp standing; one found first runs the check again."""
+        shutil.copytree(ROOT / "scripts/once_site", self.tree / "scripts/once_site")
+        for name in ("first", "second"):
+            (self.tree / name).mkdir()
+        (self.tree / "second/helper.py").write_text("VALUE = 1\n")
+        self.check("import sys\nsys.path[:0] = ['first', 'second']\nimport helper\nprint(helper.VALUE)\n")
+        self.assertIn("1", self.run_check())
+        (self.tree / "second/other.py").write_text("")
+        (self.tree / "first/unrelated.py").write_text("")
+        self.assertIn("DN SKIP", self.run_check())
+        (self.tree / "first/helper.py").write_text("VALUE = 2\n")
+        self.assertIn("2", self.run_check())
+        (self.tree / "first/helper.py").unlink()
+        (self.tree / "first/helper").mkdir()
+        (self.tree / "first/helper/__init__.py").write_text("VALUE = 3\n")
+        self.assertIn("3", self.run_check())
+
+    def test_a_directory_listed_whole_is_an_input_still(self) -> None:
+        """A check that lists a directory itself, or a Python that ignores the environment and so
+        lists the directories it imports from, runs again when a name is added there."""
+        shutil.copytree(ROOT / "scripts/once_site", self.tree / "scripts/once_site")
+        (self.tree / "second").mkdir()
+        (self.tree / "second/helper.py").write_text("VALUE = 1\n")
+        bodies = ["import os\nprint(sorted(os.listdir('second')))\n",
+                  ("import subprocess, sys\nsubprocess.run([sys.executable, '-I', '-c', "
+                   "\"import sys; sys.path[:0] = ['second']; import helper\"], check=True)\n")]
+        for k, body in enumerate(bodies):
+            with self.subTest(body=body):
+                self.check(body)
+                self.run_check()
+                self.assertIn("DN SKIP", self.run_check())
+                (self.tree / f"second/new{k}.py").write_text("")
+                self.assertNotIn("DN SKIP", self.run_check())
+
     def test_a_check_on_what_git_answers_runs_again_only_when_the_answer_changes(self) -> None:
         self.check("import subprocess\nprint(subprocess.run(['git', 'ls-files', '--cached', '--others', "
                    "'--exclude-standard'], capture_output=True, text=True, check=True).stdout.split())\n")
         self.git("add", "-A")
         self.assertIn("check.py", self.run_check())
-        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        inputs = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]["inputs"]
         self.assertIsNone(inputs["git"])
         self.assertEqual([c[1] for c in inputs["commands"]],
                          [["git", "ls-files", "--cached", "--others", "--exclude-standard"]])
@@ -251,13 +300,16 @@ class Live(unittest.TestCase):
 
     def test_a_check_runs_again_only_when_what_it_read_changes(self) -> None:
         self.assertIn("one", self.run_check())
-        stamp = json.loads((self.tree / "build/stamps/probe.json").read_text())
+        stamp = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]
         self.assertIn("input.txt", stamp["inputs"]["files"])
         self.assertIn("check.py", stamp["inputs"]["files"])
         self.assertNotIn("build-output.txt", stamp["inputs"]["files"])
         self.assertIn("maybe.txt", stamp["inputs"]["absent"])
         self.assertEqual(stamp["documented"], [{"quoted": {"a": ["b"]}}])
         self.assertIn("DN SKIP probe", self.run_check())
+        # A variable naming only the service it runs under changes nothing.
+        other = os.environ.get("SYSTEMD_EXEC_PID", "") + "1"
+        self.assertIn("DN SKIP probe", self.run_check(env={**os.environ, "SYSTEMD_EXEC_PID": other}))
         # What it writes, and a file it never reads, change nothing; a new name where it looked for
         # modules would.
         (self.tree / "build-output.txt").write_text("other")
@@ -313,6 +365,60 @@ class Live(unittest.TestCase):
         self.assertIn("DN SKIP", self.run_check("--log", str(log)))
         self.assertIn("read ''", log.read_text())
 
+    def test_a_stamp_keeps_a_pass_in_each_environment(self) -> None:
+        """A pass in one environment leaves the passes in others standing, the newest `PASSES` of them;
+        a run that fails drops its own environment's alone, and a stamp of one pass, as stamps were
+        made before, is that pass."""
+        def env(name: str) -> dict[str, str]:
+            return {**os.environ, "DN_PROBE_RUNNER": name}
+
+        def kept() -> list[str]:
+            stamp = json.loads((self.tree / "build/stamps/probe.json").read_text())
+            return [p["environment"]["DN_PROBE_RUNNER"] for p in once.passes(stamp)]
+
+        self.assertIn("one", self.run_check(env=env("a")))
+        self.assertIn("one", self.run_check(env=env("b")))
+        self.assertIn("DN SKIP probe", self.run_check(env=env("a")))
+        self.assertEqual(kept(), ["b", "a"])
+        for name in ("c", "d"):
+            self.run_check(env=env(name))
+        self.assertEqual(kept(), ["d", "c", "b"])
+        self.check("raise SystemExit(3)\n")
+        failed = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", "--", sys.executable, "check.py"],
+                                cwd=self.tree, env=env("c"), capture_output=True, text=True, check=False, timeout=120)
+        self.assertEqual(failed.returncode, 3)
+        self.assertEqual(kept(), ["d", "b"])
+        stamp = self.tree / "build/stamps/probe.json"
+        stamp.write_text(json.dumps(once.passes(json.loads(stamp.read_text()))[0]))
+        self.assertEqual(kept(), ["d"])
+        # A stamp that does not read as one records nothing: the check runs.
+        self.check("print('ran')\n")
+        for broken in ('{"passes": 5}', "[1]", "not json"):
+            stamp.write_text(broken)
+            self.assertIn("ran", self.run_check(env=env("d")))
+
+    def test_stamps_made_elsewhere_are_merged_pass_by_pass(self) -> None:
+        """Merging lays each stamp's passes over those of the same name, the newest in each
+        environment kept, and leaves the lanes' stamps and the hashes alone."""
+        def stamp(*passes: tuple[str, str]) -> str:
+            return json.dumps({"passes": [{"command": ["c"], "environment": {"E": e}, "tracer": "t", "inputs": None,
+                                           "passed": at} for e, at in passes]})
+
+        dest, made = self.tree / "dest", self.tree / "made"
+        for d in (dest, made):
+            d.mkdir()
+        (dest / "x.json").write_text(stamp(("a", "2026-01-01T00:00:00Z"), ("b", "2026-01-01T00:00:00Z")))
+        (made / "x.json").write_text(stamp(("b", "2026-02-01T00:00:00Z"), ("c", "2026-02-01T00:00:00Z")))
+        (made / "y.json").write_text(stamp(("a", "2026-02-01T00:00:00Z")))
+        for name in ("lane-z.json", "hashes.json"):
+            (made / name).write_text("{}")
+        subprocess.run([sys.executable, "scripts/once.py", "merge", str(dest), str(made)], cwd=self.tree, check=True)
+        x = once.passes(json.loads((dest / "x.json").read_text()))
+        self.assertEqual([(p["environment"]["E"], p["passed"][5:7]) for p in x],
+                         [("b", "02"), ("c", "02"), ("a", "01")])
+        self.assertTrue((dest / "y.json").is_file())
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ["x.json", "y.json"])
+
     def test_a_failing_check_records_nothing(self) -> None:
         (self.tree / "check.py").write_text("raise SystemExit(3)\n")
         done = subprocess.run([sys.executable, "scripts/once.py", "run", "probe", "--", sys.executable, "check.py"],
@@ -330,14 +436,21 @@ class Stages(unittest.TestCase):
             (tree / "scripts").mkdir(parents=True)
             (tree / "tests").mkdir()
             stubs.mkdir()
-            for name in ("check.sh", "once.py"):
+            for name in ("check.sh", "check_tests.sh", "once.py", "unit.py"):
                 shutil.copy(ROOT / "scripts" / name, tree / "scripts" / name)
-            body = (ROOT / "scripts/check.sh").read_text().partition("\ntests() {")[2].partition("\n}\n")[0]
-            ran = re.findall(r"^\s*once [\w-]+ python3 (scripts/\w+\.py)", body, re.MULTILINE)
+            text = (ROOT / "scripts/check_tests.sh").read_text()
+            body = text.partition("\ngroup() {")[2].partition("\n}\n")[0]
+            ran = re.findall(r"^\s*once [\w-]+ python3 (scripts/(?!unit\.py)\w+\.py)", body, re.MULTILINE)
+            # Modules of tests a group of their own runs.
+            apart = re.findall(r"^\s*once [\w-]+ python3 scripts/unit\.py (\w+)$", body, re.MULTILINE)
             for name in ran:
                 (tree / name).write_text("print('checked')\n")
-            for module in ("test_a.py", "test_once.py"):
-                (tree / "tests" / module).write_text("import unittest\n\n\nclass A(unittest.TestCase):\n"
+            # What puts a group's tools in place, which here puts none.
+            tools = text.partition("\ntools() {")[2].partition("\n}\n")[0]
+            for name in set(re.findall(r"python3 (scripts/\w+\.py)", tools)):
+                (tree / name).write_text("")
+            for module in ("test_a", "test_once", *apart):
+                (tree / "tests" / f"{module}.py").write_text("import unittest\n\n\nclass A(unittest.TestCase):\n"
                                                      "    def test_a(self) -> None:\n        pass\n")
             (stubs / "cargo").write_text("#!/bin/sh\necho cargo \"$@\"\n")
             (stubs / "cargo").chmod(0o755)
@@ -356,11 +469,13 @@ class Stages(unittest.TestCase):
             self.assertNotIn("DN SKIP", first)
             self.assertEqual(first.count("checked"), len(ran))
             second = stage()
-            # The unit module, the five runs of cargo and the scripts; the tracer's own test runs always.
-            self.assertEqual(second.count("DN SKIP"), 1 + 5 + len(ran))
+            # The modules of tests, the five runs of cargo and the scripts; the tracer's own test runs
+            # always.
+            skipped = 1 + len(apart) + 5 + len(ran)
+            self.assertEqual(second.count("DN SKIP"), skipped)
             self.assertNotIn("checked", second)
             (tree / ran[0]).write_text("print('checked again')\n")
-            self.assertEqual(stage().count("DN SKIP"), 5 + len(ran))
+            self.assertEqual(stage().count("DN SKIP"), skipped - 1)
 
 
 class Documents(unittest.TestCase):
@@ -387,12 +502,18 @@ class Documents(unittest.TestCase):
 
     def test_every_check_that_holds_the_documents_is_named_and_stamped(self) -> None:
         """A script that leaves requirements on the documents is listed, and a run without its stamp
-        does not pass, for its requirements would go unheld."""
+        does not pass, for its requirements would go unheld; or it is a FUSE lane, run again on any
+        change of the tree, which holds them as it runs."""
         documents = script("check_documents")
         calling = {p.name for p in (ROOT / "scripts").glob("*.py")
                    if p.name not in {"lanes.py", "check_documents.py", "once.py"}
                    and re.search(r"lanes\.require(_quoted|_stated)?\(", p.read_text())}
-        self.assertEqual(calling, set(documents.CHECKS))
+        self.assertEqual(calling, set(documents.CHECKS) | documents.AS_THEY_RUN)
+        lanes = (ROOT / "scripts/native_lanes.sh").read_text()
+        [fuse] = re.findall(r"^fuse=\(([a-z ]+)\)$", lanes, re.MULTILINE)
+        self.assertEqual({f"{name}_check.py" for name in fuse.split()}, documents.AS_THEY_RUN)
+        for name in fuse.split():
+            self.assertIn(f"    {name}) script=(scripts/{name}_check.py) ;;\n", lanes)
         with tempfile.TemporaryDirectory() as temp:
             done = subprocess.run([sys.executable, "scripts/check_documents.py"], cwd=ROOT, text=True,
                                   env={**os.environ, "DN_STAMPS": temp}, capture_output=True, check=False)
@@ -503,7 +624,7 @@ class Compiled(unittest.TestCase):
 
     def test_dn_compiler_counts_by_what_its_commands_run_and_how_it_starts(self) -> None:
         self.assertIn("ran a", self.run_check())
-        inputs = json.loads((self.tree / "build/stamps/probe.json").read_text())["inputs"]
+        inputs = once.passes(json.loads((self.tree / "build/stamps/probe.json").read_text()))[0]["inputs"]
         self.assertEqual(list(inputs["compiler"]), ["a"])
         self.assertNotIn(".lake/build/bin/dn-compiler", inputs["files"])
         self.assertIn("lakefile.lean", inputs["files"])
@@ -525,6 +646,40 @@ class Compiled(unittest.TestCase):
         self.rebuild(b"four", "two")
         (self.tree / "lakefile.lean").write_text("-- two\n")
         self.assertIn("ran a", self.run_check())
+
+
+class Schema(unittest.TestCase):
+    """What a stamp records and how a trace is read are pinned to `SCHEMA`: a change of either fails
+    here until `SCHEMA` is raised with the pin, and the stamps made before it then count for nothing."""
+
+    LOG = """\
+7 execve("/r/s.py", ["python3", "s.py"], 0x1 /* 3 vars */) = 0
+7 openat(AT_FDCWD</r>, "a.txt", O_RDONLY|O_CLOEXEC) = 3</r/a.txt>
+7 openat(AT_FDCWD</r>, "out", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4</r/out>
+7 openat(AT_FDCWD</r>, "log", O_RDWR|O_APPEND) = 5</r/log>
+7 newfstatat(AT_FDCWD</r>, "/r/missing", 0x7f, 0) = -1 ENOENT (No such file or directory)
+7 newfstatat(AT_FDCWD</r>, "lnk", {st_mode=S_IFLNK|0777, st_size=3, ...}, AT_SYMLINK_NOFOLLOW) = 0
+7 newfstatat(3</r/a.txt>, "", {st_mode=S_IFREG|0644, st_size=1, ...}, AT_EMPTY_PATH) = 0
+7 newfstatat(AT_FDCWD</r>, "", 0x7f, 0) = -1 ENOENT (No such file or directory)
+7 openat(AT_FDCWD</r>, "/r/d", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 6</r/d>
+7 renameat2(AT_FDCWD</r>, "out", AT_FDCWD</r>, "final", RENAME_NOREPLACE) = 0
+7 unlink("/r/locked") = -1 EACCES (Permission denied)
+7 readlink("/r/lnk", "a.txt", 4096) = 5
+"""
+
+    def test_what_a_stamp_records_is_pinned_to_its_schema(self) -> None:
+        rules = [sorted(once.ASIDE), sorted(once.WHERE), sorted(once.OPENS), sorted(once.WRITES), sorted(once.LOOKUPS),
+                 sorted(once.WITH_DIRFD), sorted(once.READING), sorted(once.VALUED), sorted(once.ELSEWHERE),
+                 once.VOLATILE.pattern, once.SECRET.pattern, once.SECRET_ARG.pattern]
+        t = parsed(self.LOG)
+        seen = [sorted(getattr(t, n)) for n in ("read", "named", "listed", "absent", "written", "updated")]
+        pin = hashlib.sha256(json.dumps([rules, seen]).encode()).hexdigest()[:16]
+        self.assertEqual((once.SCHEMA, pin), (2, "5bd1c78cade1fddc"))
+
+    def test_the_schema_is_in_every_key(self) -> None:
+        keys = once.tracer(), once.tree_key("lane", ["run"])
+        with mock.patch.object(once, "SCHEMA", once.SCHEMA + 1):
+            self.assertNotEqual((once.tracer(), once.tree_key("lane", ["run"])), keys)
 
 
 class TreeKey(unittest.TestCase):

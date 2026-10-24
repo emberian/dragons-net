@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 # same for tests/, which this flag does not cover, so a gate test forbids the
 # names there instead.
 export PYTHONSAFEPATH=1
+# Groups of tests and native lanes that need nothing of each other run this many at a time.
+export DN_PARALLEL="${DN_PARALLEL:-3}"
 # shellcheck disable=SC2312 # a failed uname compares unequal, which refuses to run
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo 'The checks require Linux x86-64; elsewhere, scripts/check.sh build runs the source gate and the build.' >&2
@@ -22,4 +24,4 @@ bash scripts/check.sh
 python3 scripts/once.py run loom -- python3 scripts/check_models.py --loom
 bash scripts/native_lanes.sh
 python3 scripts/check_documents.py
-echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the server loop, the framers, the session program, the NNTP server over sockets, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'
+echo 'DN BASELINE: PASS (models, differential native code, generated programs, both entry designs, the server loop, the framers, the session program, the NNTP server over sockets, killed and failed at each file operation, the printed source against the parser, concurrency, and TCP echo; see docs/baseline.md for scope)'

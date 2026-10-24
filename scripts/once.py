@@ -5,8 +5,9 @@
 `once.py run NAME [--log FILE] -- COMMAND...` runs COMMAND under strace, its standard input empty,
 and when it passes records what it read: each file by content, each directory it listed by its
 names, each path it looked for and did not find, each symbolic link on the way by its target, in
-the repository and outside it (`/proc`, `/sys`, `/dev`, `/run` and temporary files aside). Next
-time, if the command, the environment, this script and every one of those are the same, it says
+the repository and outside it (`/proc`, `/sys`, `/dev`, `/run` and temporary files aside); Python's
+imports look up the names they search for rather than list a directory (`SITE`). Next time, if the
+command, the environment, this script's `SCHEMA` and every one of those are the same, it says
 `DN SKIP` instead of running, and leaves FILE as it was; otherwise it runs, a copy of its output
 going to FILE. A path the check writes and does not read is its output. A file of the sources the
 check both read and wrote, an input that changed while the check ran, or a path the trace leaves
@@ -17,8 +18,10 @@ which may not change while the check runs. `dn-compiler` stands for the declarat
 reach and the code the compiler made of them (`scripts/Fingerprint.lean`), what it does when it
 starts, the toolchain and the build's options, when the executable is newer than the compiled
 library. What the run requires of the documents (`lanes.require`) is kept
-with its stamp, for `scripts/check_documents.py`. The stamps lie in `build/stamps`, or where
-`DN_STAMPS` says; `DN_ONCE=off` runs everything again and records it.
+with its stamp, for `scripts/check_documents.py`. A stamp keeps the last passes of the check in
+`PASSES` environments, CI's runners changing their image and kernel from run to run; `once.py merge
+DEST SRC...` lays the passes of stamps made elsewhere over those in DEST. The stamps lie in
+`build/stamps`, or where `DN_STAMPS` says; `DN_ONCE=off` runs everything again and records it.
 
 `once.py check NAME -- COMMAND...` and `once.py stamp NAME KEY` do the same by every file of the
 tree, for a check that cannot be traced; `once.py key NAME` prints the key of NAME's inputs alone,
@@ -41,19 +44,27 @@ import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+# The version of what a stamp records and how it is judged, raised whenever either changes: a change
+# of this script that keeps both leaves every stamp standing.
+SCHEMA = 2
+# The environments a stamp keeps a pass of, the newest.
+PASSES = 3
+# Where each Python a check runs finds sitecustomize.py, which looks up the names an import asks for
+# instead of listing the directory.
+SITE = ROOT / "scripts/once_site"
 # What the source gate and the build of the Lean library read, and the proofs over what it built.
 BUILD = ["lean", "lakefile.lean", "lake-manifest.json", "lean-toolchain", "tools.lock.json", "backend/lock.json",
          "backend/patches", "rfcs", "migration", "docs/provenance.json", "scripts/check.sh",
          "scripts/check_structure.py", "scripts/SourceGate.lean", "scripts/measured.py", "scripts/build_archive.py",
-         "scripts/bootstrap_tool.py", "scripts/once.py"]
+         "scripts/bootstrap_tool.py"]
 INPUTS = {"check-gate": BUILD, "check-build": BUILD,
           "check-proofs": [*BUILD, "scripts/Audit.lean", "scripts/nanoda.json"]}
 NAME = re.compile(r"[a-z0-9-]+")
 # Variables a check is keyed by: all but those that change from run to run without changing what a
 # check does, and secrets, of which only the presence counts.
 VOLATILE = re.compile(r"(HOSTNAME|PWD|OLDPWD|SHLVL|_|TERM|COLUMNS|LINES|INVOCATION_ID|JOURNAL_STREAM|DISPLAY"
-                      r"|SSH_[A-Z_]+|XDG_[A-Z_]+|GITHUB_[A-Z_]+|RUNNER_[A-Z_]+|ACTIONS_[A-Z_]+"
-                      r"|DN_ONCE|DN_STAMPS|DN_DOCUMENTED)")
+                      r"|SYSTEMD_EXEC_PID|SSH_[A-Z_]+|XDG_[A-Z_]+|GITHUB_[A-Z_]+|RUNNER_[A-Z_]+|ACTIONS_[A-Z_]+"
+                      r"|DN_ONCE|DN_STAMPS|DN_DOCUMENTED|DN_PARALLEL)")
 SECRET = re.compile(r"[A-Z_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z_]*")
 # What no check's outcome rests on.
 ASIDE = ("/proc/", "/sys/", "/dev/", "/run/", "/tmp/", "/var/tmp/")  # noqa: S108 # left out, not used
@@ -94,13 +105,22 @@ def environment() -> dict[str, str]:
 
 
 def tracer() -> str:
-    """This script and the one that names what `dn-compiler` runs: a stamp another made counts for
-    nothing."""
-    whole = hashlib.sha256()
-    for name in ("scripts/once.py", "scripts/Fingerprint.lean"):
-        file = ROOT / name
-        whole.update(file.read_bytes() if file.is_file() else b"none")
+    """What a stamp records, by `SCHEMA`, and the script that names what `dn-compiler` runs: a stamp
+    another made counts for nothing."""
+    whole = hashlib.sha256(f"schema {SCHEMA}\0".encode())
+    file = ROOT / "scripts/Fingerprint.lean"
+    whole.update(file.read_bytes() if file.is_file() else b"none")
     return whole.hexdigest()
+
+
+def replaced(path: Path, text: str) -> None:
+    """`path` holding `text`, written whole under a name of its own and put in place at once, as
+    checks running side by side may write it too."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    with os.fdopen(fd, "w") as out:
+        out.write(text)
+    Path(part).replace(path)
 
 
 def unescape(text: str) -> str:
@@ -196,6 +216,8 @@ class Trace(Seen):
             count = 2 if call in {"rename", "link", "symlink"} else 1
         out = []
         for s in strings[:count]:
+            if not s and "AT_EMPTY_PATH" not in args:
+                continue  # the empty path names nothing but the descriptor a call is given
             if s.startswith("/"):
                 out.append(os.path.normpath(s))
             elif base is not None and base.startswith("/"):
@@ -349,8 +371,7 @@ class Hashes:
         return digest
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.known))
+        replaced(self.path, json.dumps(self.known))
 
 
 @functools.cache
@@ -462,14 +483,16 @@ def compiled(commands: set[str], hashes: Hashes) -> dict[str, str] | None:
             cache["commands"].update(digests(done.stdout))
         except (ValueError, IndexError):
             return None
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        part = cache_file.with_suffix(".part")
-        part.write_text(json.dumps(cache))
-        part.replace(cache_file)
+        replaced(cache_file, json.dumps(cache))
     if not commands <= set(cache["commands"]):
         return None
     return {c: hashlib.sha256(f"{cache['start']} {cache['commands'][c]}".encode()).hexdigest()
             for c in sorted(commands)}
+
+
+def checked_env() -> dict[str, str]:
+    """The environment a check runs in: this one, with `SITE` first on Python's path."""
+    return {**os.environ, "PYTHONPATH": os.pathsep.join([str(SITE), *filter(None, [os.environ.get("PYTHONPATH")])])}
 
 
 def steady(env: dict[str, str] | os._Environ[str]) -> dict[str, str]:
@@ -489,7 +512,7 @@ def replayable(call: GitCall) -> bool:
     cwd = key_of(call.cwd) if call.cwd else None
     return (call.whole and bool(rest) and rest[0] in READING and cwd is not None and not cwd.startswith("/") and
             not any(a == "--stdin" or a.startswith("--batch") or SECRET_ARG.search(a) for a in call.argv) and
-            not any(key_of(w) is not None for w in call.written) and steady(call.env) == steady(os.environ))
+            not any(key_of(w) is not None for w in call.written) and steady(call.env) == steady(checked_env()))
 
 
 def answer(cwd: str, argv: list[str]) -> str | None:
@@ -593,7 +616,7 @@ def traced(command: list[str], log: Path, documented: Path, copy: Path | None) -
     # The environment of each program run is printed whole, for the runs of git.
     strace = ["strace", "-f", "-y", "-qq", "--seccomp-bpf", "-s", "65535", "-e", "trace=%file,%process",
               "-e", "signal=none", "-e", "abbrev=!execve,execveat", "-o", str(log), *command]
-    env = {**os.environ, "DN_DOCUMENTED": str(documented)}
+    env = {**checked_env(), "DN_DOCUMENTED": str(documented)}
     if copy is None:
         return subprocess.run(strace, env=env, stdin=subprocess.DEVNULL, check=False).returncode
     copy.parent.mkdir(parents=True, exist_ok=True)
@@ -607,23 +630,57 @@ def traced(command: list[str], log: Path, documented: Path, copy: Path | None) -
         return proc.wait()
 
 
+def passes(stamp: Any) -> list[dict[str, Any]]:
+    """The passes a stamp keeps, newest first; a stamp of one pass, as they were made before they kept
+    several, is that pass."""
+    if not isinstance(stamp, dict):
+        return []
+    kept = stamp.get("passes", [stamp] if "command" in stamp else [])
+    if not isinstance(kept, list):
+        return []
+    return sorted((p for p in kept if isinstance(p, dict)), key=lambda p: str(p.get("passed", "")), reverse=True)
+
+
+def where_passed(record: dict[str, Any]) -> list[Any]:
+    """What makes a pass one environment's: the command, the environment and the tracer."""
+    return [record.get(k) for k in ("command", "environment", "tracer")]
+
+
+def stamped(path: Path, kept: list[dict[str, Any]]) -> None:
+    """The stamp at `path`, of the newest of `kept` in each environment, `PASSES` at most; none of none."""
+    newest: dict[str, dict[str, Any]] = {}
+    for record in passes({"passes": kept}):
+        newest.setdefault(json.dumps(where_passed(record), sort_keys=True), record)
+    if newest:
+        path.write_text(json.dumps({"passes": list(newest.values())[:PASSES]}, indent=1))
+    else:
+        path.unlink(missing_ok=True)
+
+
 def run(name: str, command: list[str], copy: Path | None) -> int:
     stamps = stamps_dir()
     stamp = stamps / f"{name}.json"
     hashes = Hashes(stamps / "hashes.json")
     want = {"command": command, "environment": environment(), "tracer": tracer()}
-    if os.environ.get("DN_ONCE") != "off" and stamp.is_file():
-        old: dict[str, Any] = {}
+    kept: list[dict[str, Any]] = []
+    if stamp.is_file():
         try:
-            old = json.loads(stamp.read_text())
-            fresh = all(old.get(k) == v for k, v in want.items()) and old["inputs"] is not None and \
-                current(old["inputs"], hashes)
-        except (ValueError, KeyError, TypeError):
-            fresh = False
-        if fresh:
-            hashes.save()
-            print(f"DN SKIP {name}: passed on these inputs at {old['passed']}", file=sys.stderr, flush=True)
-            return 0
+            kept = passes(json.loads(stamp.read_text()))
+        except ValueError:
+            kept = []
+    here = where_passed(want)
+    if os.environ.get("DN_ONCE") != "off":
+        for old in kept:
+            try:
+                fresh = where_passed(old) == here and old["inputs"] is not None and current(old["inputs"], hashes)
+            except (KeyError, TypeError, AttributeError):
+                fresh = False
+            if fresh:
+                hashes.save()
+                print(f"DN SKIP {name}: passed on these inputs at {old['passed']}", file=sys.stderr, flush=True)
+                return 0
+    # Another environment's passes stay; this one's goes, and comes back only if the check passes.
+    others = [old for old in kept if where_passed(old) != here]
     stamp.unlink(missing_ok=True)
     # Made before the check runs, so that a listing it takes holds the stamps' directory, as later.
     stamps.mkdir(parents=True, exist_ok=True)
@@ -633,6 +690,7 @@ def run(name: str, command: list[str], copy: Path | None) -> int:
         log, documented = Path(temp) / "trace", Path(temp) / "documented"
         status = traced(command, log, documented, copy)
         if status != 0:
+            stamped(stamp, others)
             return status
         trace = Trace(str(Path.cwd())).parse(log.read_text(errors="surrogateescape"))
         required = [json.loads(line) for line in documented.read_text().splitlines()] if documented.exists() else []
@@ -644,9 +702,31 @@ def run(name: str, command: list[str], copy: Path | None) -> int:
     record = {**want, "inputs": deps, "documented": required,
               "passed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     stamps.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(json.dumps(record, indent=1))
+    stamped(stamp, [record, *others])
     hashes.save()
     return 0
+
+
+def merge(dest: Path, sources: list[Path]) -> None:
+    """The passes of the stamps of the traced checks in `sources` laid over those of the same names in
+    `dest`, the newest `PASSES` in each environment kept."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for source in sources:
+        for path in sorted(source.glob("*.json")):
+            if path.name == "hashes.json" or path.name.startswith("lane-"):
+                continue
+            mine = dest / path.name
+            try:
+                made = passes(json.loads(path.read_text()))
+            except ValueError:
+                # A stamp that does not read records nothing: its check runs again.
+                print(f"once.py merge: {path} does not read as a stamp", file=sys.stderr)
+                continue
+            try:
+                kept = passes(json.loads(mine.read_text())) if mine.is_file() else []
+            except ValueError:
+                kept = []
+            stamped(mine, [*made, *kept])
 
 
 def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) -> str:
@@ -655,7 +735,7 @@ def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) 
     listed = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
                              *(pathspecs or [])], cwd=ROOT, capture_output=True, check=True).stdout
     whole = hashlib.sha256()
-    for part in (name, "\0".join(command), os.environ.get("CAKE", "")):
+    for part in (name, "\0".join(command), os.environ.get("CAKE", ""), f"schema {SCHEMA}"):
         whole.update(part.encode() + b"\0")
     for path in sorted(p for p in listed.decode().split("\0") if p):
         file = ROOT / path
@@ -666,7 +746,7 @@ def tree_key(name: str, command: list[str], pathspecs: list[str] | None = None) 
 
 def main() -> None:
     usage = ("usage: once.py run NAME [--log FILE] -- COMMAND... | check NAME -- COMMAND... | stamp NAME KEY"
-             " | key NAME")
+             " | key NAME | merge DEST SRC...")
     args = sys.argv[1:]
     stamps = stamps_dir()
     if len(args) >= 4 and args[0] == "run" and NAME.fullmatch(args[1]):
@@ -679,6 +759,9 @@ def main() -> None:
     if len(args) == 3 and args[0] == "stamp" and NAME.fullmatch(args[1]) and re.fullmatch(r"[0-9a-f]{64}", args[2]):
         stamps.mkdir(parents=True, exist_ok=True)
         (stamps / f"{args[1]}-{args[2]}").write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ\n", time.gmtime()))
+        return
+    if len(args) >= 3 and args[0] == "merge":
+        merge(Path(args[1]), [Path(a) for a in args[2:]])
         return
     if len(args) == 2 and args[0] == "key" and args[1] in INPUTS:
         print(f"{args[1]}-{tree_key(args[1], [], INPUTS[args[1]])}")

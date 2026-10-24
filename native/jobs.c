@@ -6,10 +6,15 @@
  * directory's names are read when it is opened and listed from that reading, whatever jobs do to the
  * directory after: POSIX leaves a name added or removed during a reading unspecified. A signal's
  * interruption is retried and never reported; a short write is written on, and one that makes no
- * progress fails as no space; a short read is reported as it is. A failed sync, or close,
- * leaves the mark of store.c before the program learns of it. The test build fails each operation
- * at a point of its name (faults.h); `dn/write-short` shortens a write to the number given, and
- * `dn/sync-slow` delays a sync by that many milliseconds. */
+ * progress fails as no space; a short read is reported as it is. A failed sync, or close of a file
+ * written through its place, leaves the mark of store.c before the program learns of it. The test
+ * build fails each operation at a point of its name (faults.h); `dn/write-short` shortens a write to
+ * the number given, `dn/sync-slow` delays a sync by that many milliseconds, and `dn/stop` holds the
+ * workers before the operation it numbers, counted from one over the run, and each after it: once
+ * every operation before has ended, the loop stops the process at the end of its turn, for a test to
+ * kill it with those operations and everything the program did in place. `dn/fail`, given the number
+ * of an operation, so counted, times 256 and an error number, fails that operation at its first point
+ * with the error, once, and names the point on stderr. */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -21,10 +26,14 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef FIU_ENABLE
+#include <fiu-control.h>
+#endif
 
 enum { JOBS = DN_SESSION_JOBS, OPS = DN_SESSION_JOB_OPS, DATA = DN_SESSION_JOB_DATA, PLACES = DN_SESSION_HANDLES,
        WORKERS = 2, NAME = 32 };
@@ -37,11 +46,12 @@ struct job {
     uint64_t gen, count, done, class, results[OPS][2];
     struct op ops[OPS];
     int place[OPS];   /* the place an operation that opens a file takes, reserved when the job is */
+    int wrote[OPS];   /* whether the file a close closes was written through its place */
     unsigned char data[DATA];
 };
 
 struct file {
-    int fd, open, busy, reserved, listing;
+    int fd, open, busy, reserved, listing, written;
     unsigned char *names;   /* a listing's names, each a length octet and its bytes */
     uint64_t size, count, gen;
 };
@@ -51,6 +61,32 @@ static struct file files[PLACES];
 static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t work = PTHREAD_COND_INITIALIZER;
+static atomic_uint_fast64_t begun, ended, held;
+#ifdef FIU_ENABLE
+static uint64_t failing;
+static _Thread_local uint64_t running;
+static const char *const POINTS[] = {"dn/create", "dn/open", "dn/open-dir", "dn/read-dir", "dn/list", "dn/write",
+                                     "dn/read", "dn/size", "dn/data-sync", "dn/sync", "dn/sync-dir", "dn/truncate",
+                                     "dn/rename", "dn/remove", "dn/close"};
+
+/* Whether a point fails now: in the worker running the operation `dn/fail` numbers, once, said. */
+static int fails_now(const char *name, int *failnum, void **failinfo, unsigned *flags) {
+    (void)failnum, (void)failinfo, (void)flags;
+    if (!running || running != failing / 256) return 0;
+    running = 0;
+    dprintf(STDERR_FILENO, "dn/fail %s\n", name);
+    return 1;
+}
+#endif
+
+/* The operation a worker runs, by its number, for `dn/fail`. */
+static void numbered(uint64_t number) {
+#ifdef FIU_ENABLE
+    running = number;
+#else
+    (void)number;
+#endif
+}
 
 /* Whether a failure of the operation is a failed sync: a close is, as decision 0005 has it. */
 static int syncs(uint64_t code) {
@@ -291,7 +327,9 @@ static int run(struct job *j, uint64_t i) {
         j->place[i] = -1;
         return 0;
     }
-    case DN_SESSION_OP_WRITE: return write_all(f->fd, j->data + op->at, op->length, op->offset);
+    case DN_SESSION_OP_WRITE:
+        f->written = 1;
+        return write_all(f->fd, j->data + op->at, op->length, op->offset);
     case DN_SESSION_OP_READ: {
         ssize_t n = RETRIED(DN_FAULT("dn/read") ? -1 : pread(f->fd, j->data + op->at, op->length, (off_t)op->offset));
         if (n < 0) return -1;
@@ -306,7 +344,9 @@ static int run(struct job *j, uint64_t i) {
     }
     case DN_SESSION_OP_DATA_SYNC: return synced("dn/data-sync", f->fd, fdatasync);
     case DN_SESSION_OP_SYNC: return synced("dn/sync", f->fd, fsync);
-    case DN_SESSION_OP_TRUNCATE: return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
+    case DN_SESSION_OP_TRUNCATE:
+        f->written = 1;
+        return RETRIED(DN_FAULT("dn/truncate") ? -1 : ftruncate(f->fd, (off_t)op->length));
     case DN_SESSION_OP_SYNC_DIR: return synced("dn/sync-dir", spool, fsync);
     case DN_SESSION_OP_LIST: return list(f, op->offset, j->data + op->at, op->length, result);
     case DN_SESSION_OP_RENAME:
@@ -318,6 +358,7 @@ static int run(struct job *j, uint64_t i) {
         return RETRIED(DN_FAULT("dn/remove") ? -1 : unlinkat(spool, name, 0));
     case DN_SESSION_OP_CLOSE: {
         /* Never retried: the descriptor is gone whatever close says. A listing holds none. */
+        j->wrote[i] = f->written;
         int r = f->listing ? 0 : close(f->fd);
         free(f->names);
         if (!f->listing && DN_FAULT("dn/close")) r = -1;
@@ -328,6 +369,17 @@ static int run(struct job *j, uint64_t i) {
     }
     default: return -1;
     }
+}
+
+/* The test build's stop from operation `at` on: the worker holds, and once the operations before
+ * have ended wakes the loop to stop. */
+static void hold(uint64_t at) {
+    struct timespec t = {0, 100000};
+    while (atomic_load(&ended) + 1 < at) nanosleep(&t, NULL);
+    atomic_store(&held, at);
+    uint64_t one = 1;
+    if (write(wake, &one, sizeof one) != sizeof one) dn_harness_now("eventfd: %s", strerror(errno));
+    for (;;) pause();
 }
 
 static void *worker(void *unused) {
@@ -342,13 +394,23 @@ static void *worker(void *unused) {
         memset(j->results, 0, sizeof j->results);
         j->done = j->count;
         j->class = 0;
-        for (uint64_t i = 0; i < j->count; ++i)
-            if (run(j, i)) {
+        for (uint64_t i = 0; i < j->count; ++i) {
+            uint64_t stop, number = 0;
+            int stopping = DN_FAULT_INFO("dn/stop", stop);
+            if (stopping || fiu_fail("dn/fail")) number = atomic_fetch_add(&begun, 1) + 1;
+            if (stopping && number >= stop) hold(stop);
+            numbered(number);
+            int failed = run(j, i);
+            if (stopping) atomic_fetch_add(&ended, 1);
+            if (failed) {
                 j->done = i;
                 j->class = class_of(errno);
-                if (syncs(j->ops[i].code)) dn_store_mark_failed();
+                /* A file only read has nothing a failed close may lose. */
+                if (syncs(j->ops[i].code) && (j->ops[i].code != DN_SESSION_OP_CLOSE || j->wrote[i]))
+                    dn_store_mark_failed();
                 break;
             }
+        }
         pthread_mutex_lock(&lock);
         j->state = DONE;
         pthread_mutex_unlock(&lock);
@@ -364,6 +426,12 @@ int dn_jobs_start(int dir) {
     for (int p = 0; p < PLACES; ++p) files[p].fd = -1;
     wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (wake < 0) dn_harness("eventfd: %s", strerror(errno));
+#ifdef FIU_ENABLE
+    if (DN_FAULT_INFO("dn/fail", failing))
+        for (size_t k = 0; k < sizeof POINTS / sizeof *POINTS; ++k)
+            if (fiu_enable_external(POINTS[k], 1, (void *)(uintptr_t)(failing % 256), 0, fails_now))
+                dn_harness("fiu_enable_external %s", POINTS[k]);
+#endif
     /* Workers take no signal: the loop takes SIGTERM and SIGINT through its signalfd, which a worker
        taking one would bypass, ending the process at once. */
     sigset_t all, old;
@@ -393,9 +461,10 @@ void dn_jobs_take(const unsigned char *a) {
 int dn_jobs_ready(void) {
     /* Emptied first: a worker marks its job done before it writes, so a completion after the check
      * below wakes the loop again, and one before it leaves at most one wake for nothing. */
-    uint64_t drained;
+    uint64_t drained, at;
     if (wake >= 0 && read(wake, &drained, sizeof drained) < 0 && errno != EAGAIN)
         dn_harness("eventfd: %s", strerror(errno));
+    if (DN_FAULT_INFO("dn/stop", at) && atomic_load(&held) == at) raise(SIGSTOP);
     pthread_mutex_lock(&lock);
     int ready = 0;
     for (int k = 0; k < JOBS; ++k) ready |= jobs[k].state == DONE;

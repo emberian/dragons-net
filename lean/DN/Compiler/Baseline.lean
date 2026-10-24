@@ -89,7 +89,9 @@ def nestedState : PancakeState Unit :=
     memaddrs := fun p => p == 0 || p == 8 || p == 16,
     be := false, clock := 0, ffi := (), baseAddr := 0 }
 
-def fixture : Except String Json := do
+/-- The fixtures, made when asked for: a constant would be made as the executable starts, whatever
+its command. -/
+def fixture (_ : Unit) : Except String Json := do
   let wrapped := (functions ++ [control, control2]).map Abi.wordResult
   let sources ← ((functions ++ [control, control2]).mapM Abi.emitWord).mapError
     Checked.Reason.message

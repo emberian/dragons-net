@@ -96,7 +96,9 @@ def slotSeq : Nat := 0
 def slotSizes : Nat := 8
 def slotMisc : Nat := 16
 def slotGroups : Nat := 24
-def slotId : Nat := slotGroups + ScanProg.groupsMax * 8
+/-- The Message-ID's tag: recovery's rules alone read it, and a commit the session adds has none. -/
+def slotTag : Nat := slotGroups + ScanProg.groupsMax * 8
+def slotId : Nat := slotTag + 8
 def slotSize : Nat := (slotId + 250 + 7) / 8 * 8
 def size : Nat := rSlots + Recovery.capacity * slotSize
 
@@ -125,7 +127,7 @@ def nameTemp : Nat := 3
 def faultCode : Recovery.Fault → Nat
   | .badName _ => 1 | .noJournal => 2 | .journal _ _ => 3 | .seqTwice _ => 4
   | .numberNotAbove _ _ => 5 | .unknownGroup _ => 6 | .missingFile _ => 7 | .wrongSize _ => 8
-  | .exhausted => 9 | .badKey => 10 | .tooMany _ => 11
+  | .exhausted => 9 | .badKey => 10 | .tooMany _ => 11 | .idTwice _ => 12
 
 /-! ## Statements -/
 
@@ -192,10 +194,14 @@ def begin : List PStmt :=
    rset rTorn (n 0), rset rFresh (n 0), rset rTidied (n 0), rset rWait (n 0), rset rFirst (n 1),
    next 1] ++ stop asksName
 
-/-- A new journal, and the directory synced when it held no file at all. -/
+/-- A new journal, and the directory synced when it held no file at all; no group has a number
+yet. -/
 def fresh (synced : Bool) : List PStmt :=
   [rset rFresh (n 1), rset rNext (n 1), rset rJournalEnd (n firstFrame), rset rI (n 0),
-   rset rWait (n (if synced then 1 else 0)), next 10]
+   rset rWait (n (if synced then 1 else 0)), .assign "rc" (lit 0),
+   .while (eLt (v "rc") (n groupsMax))
+     [.store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (n 0), inc "rc"],
+   next 10]
 
 /-- Phase 1: a name of the first pass, or none left. -/
 def firstPass : List PStmt :=
@@ -220,8 +226,9 @@ def journalGiven : List PStmt :=
 section
 variable (fail : List PStmt)
 
-/-- A commit read: into its slot while there is one, its groups by their index in the
-configuration, and the first group the configuration lacks noted. -/
+/-- A commit read: into its slot while there is one, its Message-ID's tag under the key, so that
+two are compared by a word, its groups by their index in the configuration, and the first group
+the configuration lacks noted. -/
 def commitRead : List PStmt :=
   [.assign "rcm" (eAdd (rw rCommits) (n 1)), rset rCommits (v "rcm"),
    .ite (eAnd (eLt (n 0) (v "rcm")) (eLe (v "rcm") (n Recovery.capacity)))
@@ -238,7 +245,9 @@ def commitRead : List PStmt :=
        .while (eLt (v "rj") (v "ril"))
          [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
             (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
-       .assign "rg" (lit 0),
+       .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
+       .assign "n" (v "ril")] ++ SipProg.sipSrc ++
+      [.store (atOff (v "rsl") slotTag) (v "r"), .assign "rg" (lit 0),
        .while (eLt (v "rg") (v "rgc"))
          [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
             (eMul (v "rg") (n ScanProg.groupSlot))),
@@ -298,7 +307,27 @@ def rules : List PStmt :=
            [slotOf (v "rj"), .ite (eEq (slotW slotSeq) (v "rv")) [.assign "rdup" (lit 1)] [],
             inc "rj"],
          .ite (v "rdup") [] [inc "ri"]],
-      .ite (v "rdup") (refuse (.seqTwice 0) [rset rFaultA (v "rv")])
+      .ite (v "rdup") [] [.assign "ri" (lit 0),
+        .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "ri") (v "rcm")))
+          [slotOf (v "ri"), .assign "rl" (eAnd (.shr (slotW slotMisc) (n 8)) (n 255)),
+           kept fail "rl" 250, .assign "rv" (slotW slotTag), .assign "rj" (eAdd (v "ri") (n 1)),
+           .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "rj") (v "rcm")))
+             [.assign "rcp" (eAdd (atOff rp rSlots) (eMul (v "rj") (n slotSize))),
+              .ite (eAnd (eEq (.loadw 1 (atOff (v "rcp") slotTag)) (v "rv"))
+                  (eEq (eAnd (.shr (.loadw 1 (atOff (v "rcp") slotMisc)) (n 8)) (n 255)) (v "rl")))
+                [.assign "rok" (lit 1), .assign "rm" (lit 0),
+                 .while (eAnd (v "rok") (eLt (v "rm") (v "rl")))
+                   [.ite (ne (.loadb (eAdd (atOff (v "rsl") slotId) (v "rm")))
+                       (.loadb (eAdd (atOff (v "rcp") slotId) (v "rm"))))
+                     [.assign "rok" (lit 0)] [inc "rm"]],
+                 .ite (v "rok") [.assign "rdup" (lit 2)] []] [],
+              inc "rj"],
+           .ite (v "rdup") [] [inc "ri"]]],
+      .ite (v "rdup")
+        [.ite (eEq (v "rdup") (n 1)) (refuse (.seqTwice 0) [rset rFaultA (v "rv")])
+          (refuse (.idTwice [])
+            [rset rFaultAt (eAdd (n (rSlots + slotId)) (eMul (v "ri") (n slotSize))),
+             rset rFaultLen (v "rl")])]
         [.ite (eEq (rw rUnknown) (n 1))
           (refuse (.unknownGroup []) [rset rFaultAt (n rUnknownName),
             rset rFaultLen (rw rUnknownLen)])
