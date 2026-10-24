@@ -508,13 +508,17 @@ def phases(binary: Path, bases: list[dict[bytes, bytes]] | None = None) -> tuple
 @dataclass
 class Defect:
     """A defect planted in the program (a pattern) or in native/jobs.c (exact text), with how many
-    times the text occurs, and a part of what the lane has to say of it."""
+    times the text occurs, and a part of what the lane has to say of it: one of several, where what
+    it breaks first depends on the order the workers take the operations in."""
     name: str
     pattern: str
     becomes: str
     times: int
-    sign: str
+    sign: str | tuple[str, ...]
     program: bool = True
+
+    def said(self, error: str) -> bool:
+        return any(sign in error for sign in ((self.sign,) if isinstance(self.sign, str) else self.sign))
 
 
 DEFECTS = [
@@ -582,7 +586,7 @@ def check(cake: str) -> Report:
             try:
                 phases(binary, bases)
             except LaneError as error:
-                if defect.sign not in str(error):
+                if not defect.said(str(error)):
                     raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error}") from None
                 found[defect.name] = str(error)[:300]
                 continue
