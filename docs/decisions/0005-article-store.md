@@ -419,8 +419,8 @@ from them are done; what needs the program or the host comes with them, as marke
 - An article's file changed after the start as the table `fn` keeps for its own store: never sent
   whole, STAT answered, POST taken, the next start refused where recovery finds the store corrupt; the store corrupt
   at start (`scripts/nntp_check.py`); done.
-- To be tested with the program and the host: that the program is the specification, as for the
-  session: the compiled program against the model.
+- The compiled program held to the model, as for the session: its trace, jobs included, on the
+  scenarios with a store (`scripts/session_native.py`); done.
 - Not claimed: that the kernel and the file system keep the guarantees of the model; anything about
   the host's workers beyond the tests; that the program is its specification on every run.
 

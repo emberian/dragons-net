@@ -2,7 +2,7 @@
 
 The first slice answers over sockets on loopback: [decision 0003](decisions/0003-nntp-slice.md) fixes what it answers, how it frames input, its limits and what of it is proved. The baseline says what of its [framing](baseline.md#framers), [session](baseline.md#session-model), [program](baseline.md#session-program) and [server](baseline.md#nntp-server) is proved and what is only tested.
 
-Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)) is under way. [Decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. Its specifications are written, the store's proven, and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)).
+Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)): [decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. The store is proven in the model and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)); the server is tested under [crashes](baseline.md#crashes), [power loss](baseline.md#power-loss) and [faults](baseline.md#faults).
 
 Reading by message-id — ARTICLE, HEAD, BODY and STAT — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
 
@@ -18,10 +18,10 @@ The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). 
 
 | Capability | Commands | Intended stage |
 | --- | --- | --- |
-| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | First slice: answered; the store is recovered at start, not yet read (#17) |
-| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Reader completeness |
+| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | Answered; HEAD and STAT by message-id from the store (#17), by number with the reader commands (#18) |
+| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | ARTICLE and BODY by message-id (#17); the rest, reader completeness (#18) |
 | LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Reader completeness |
-| POST | POST | Durable posting |
+| POST | POST | Done (#17) |
 | OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility |
 | HDR | HDR, LIST HEADERS | Practical reader compatibility |
 | IHAVE | IHAVE | Peer ingestion |
