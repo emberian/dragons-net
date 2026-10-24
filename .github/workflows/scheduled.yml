@@ -30,7 +30,9 @@ defaults:
 env:
   PYTHONSAFEPATH: "1"
   LEAN_NUM_THREADS: "4"
-  # Every check runs here, untraced: nothing it passed on before is taken up.
+  # The checks here run untraced. A job whose inputs are the repository's alone records its pass by
+  # their key and is not run again on the same ones (scripts/prior_pass.py); a job is run every night
+  # only where its inputs change without the repository: advisories, the network's answers, new seeds.
   DN_ONCE: none
 
 jobs:
@@ -49,6 +51,87 @@ jobs:
           deny=$(python3 -P scripts/bootstrap_tool.py cargo-deny)
           "$deny" --locked check advisories
           "$deny" --locked --manifest-path models/Cargo.toml check advisories
+      # Lint asks them once per workflow; their answers change with nothing here changed.
+      - name: Audits of the workflows that ask the network
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zizmor=$(python3 -P scripts/bootstrap_tool.py zizmor)
+          "$zizmor" .github/workflows
+
+  # The build CodeQL and the generated programs run on, once: taken from the run that built the same
+  # inputs, the nightly `checks` among them, else built as that run builds it, and recorded for the next.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      archive: ${{ steps.archive.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The build's inputs
+        id: inputs
+        run: echo "key=$(python3 scripts/once.py key check-build)" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id != ''
+        with:
+          name: lean-build
+          path: build
+          run-id: ${{ steps.passed.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          python3 scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/bootstrap_tool.py lean
+      - name: Source gate and build without network
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          # No network, no supplementary groups (docker) and no way back to root through sudo.
+          sudo --preserve-env unshare --net -- \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs -- \
+            env PATH="$PATH" HOME="$HOME" bash -c \
+            'if curl --silent --max-time 5 https://github.com >/dev/null || sudo -n true 2>/dev/null; then exit 99; fi
+             bash scripts/check.sh build'
+      - name: Pack the build
+        if: steps.passed.outputs.run-id == ''
+        run: python3 scripts/build_archive.py pack build/lean-build.tar
+      - name: The archive's digest
+        id: archive
+        run: echo "sha256=$(sha256sum build/lean-build.tar | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lean-build
+          path: build/lean-build.tar
+          if-no-files-found: error
+          retention-days: 7
+      # Kept for less time than the archive, so that a record found always has one.
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 6
 
   # The concurrency tests are only evidence while they can fail. This replays the
   # recorded defects against a copy of the tree and requires each one to go red.
@@ -58,12 +141,40 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # What scripts/mutate_rust.py copies, the script and this workflow.
+      - name: The job's inputs
+        id: inputs
+        run: |
+          key=$(git rev-parse HEAD:models HEAD:crates HEAD:Cargo.toml HEAD:Cargo.lock HEAD:rust-toolchain.toml HEAD:scripts/mutate_rust.py \
+            HEAD:.github/workflows/scheduled.yml | sha256sum | cut -d' ' -f1)
+          echo "key=rust-mutations-$key" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
       - name: Mutations the concurrency tests must catch
+        if: steps.passed.outputs.run-id == ''
         run: python3 -P scripts/mutate_rust.py
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
 
   # Miri interprets the unsafe code of the ring model (slot writes through
   # `UnsafeCell` and `MaybeUninit`) and reports undefined behaviour the ordinary
@@ -77,11 +188,26 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The Rust tree and this workflow, which names the toolchain and the seeds.
+      - name: The job's inputs
+        id: inputs
+        run: |
+          key=$(git rev-parse HEAD:models HEAD:crates HEAD:Cargo.toml HEAD:Cargo.lock HEAD:rust-toolchain.toml \
+            HEAD:.github/workflows/scheduled.yml | sha256sum | cut -d' ' -f1)
+          echo "key=miri-$key" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
       - name: Install Miri
+        if: steps.passed.outputs.run-id == ''
         run: |
           rustup toolchain install nightly-2026-09-01 --profile minimal --component miri
           rustup run nightly-2026-09-01 cargo miri setup
@@ -89,11 +215,25 @@ jobs:
       # schedule. Each seed costs a whole run, so the stress tests carry a smaller item count
       # under Miri; the symbolic alignment check refuses a pointer that is aligned by luck.
       - name: Undefined behaviour in the ring model
+        if: steps.passed.outputs.run-id == ''
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-many-seeds=0..32"
         run: |
           rustup run nightly-2026-09-01 cargo miri test --locked \
             --manifest-path models/Cargo.toml -p dn-ring-model
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
 
   # The host C is the part of the running program no theorem covers: the proofs are about the
   # generated code, not about the loop that calls it. This reads it for the defects that code
@@ -101,6 +241,7 @@ jobs:
   # string from data. It runs here rather than on a pull request because it needs write access
   # to the security results, and the per-commit chain runs code from the change.
   codeql-c:
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -111,19 +252,43 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The host includes layouts dn-compiler prints. It is built and prints them before the tracer
+      # A tree it read before is not read again: its queries are pinned below.
+      - name: The job's inputs
+        id: inputs
+        run: echo "key=codeql-c-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      # The host includes layouts dn-compiler prints. It is unpacked and prints them before the tracer
       # starts: the C Lean compiles to is not what is read here.
       - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
         run: |
           python3 scripts/bootstrap_tool.py elan
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/bootstrap_tool.py lean
-      - name: Source gate and build
-        run: bash scripts/check.sh build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        if: steps.passed.outputs.run-id == ''
+        env:
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+        run: |
+          echo "$ARCHIVE  build/lean-build.tar" | sha256sum --check --strict
+          python3 scripts/build_archive.py unpack build/lean-build.tar
       - name: Print the layouts
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/compile_sources.py --print-to "${RUNNER_TEMP}/layouts"
       - uses: github/codeql-action/init@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
+        if: steps.passed.outputs.run-id == ''
         with:
           languages: c-cpp
           build-mode: manual
@@ -132,8 +297,23 @@ jobs:
       # linking: a database built from different flags describes a program nobody runs. check.sh
       # compiles the same way on every commit.
       - name: Compile the host
+        if: steps.passed.outputs.run-id == ''
         run: python3 scripts/compile_sources.py --layouts "${RUNNER_TEMP}/layouts"
       - uses: github/codeql-action/analyze@416ff0dea110f80f0f56f0046500dbf7420e4bb0 # codeql-bundle-v2.27.1
+        if: steps.passed.outputs.run-id == ''
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
 
   # The per-commit lane runs each property over proptest's default number of cases, which is
   # about finding a defect quickly rather than deeply. This runs the same properties far longer.
@@ -162,39 +342,11 @@ jobs:
           path: "**/*.proptest-regressions"
           if-no-files-found: ignore
 
-  # CI runs the native lanes one after another in one checkout, so a lane that leans on what an
-  # earlier one left in build/ passes there and fails alone. Here each runs on a machine of its
-  # own, the generated lane at its standard size.
-  lanes-alone:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: [native, baseline, entry, server, framing, grammar, accept, session, nntp, crash, faults, parser, fuzz]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install the pinned Lean manager
-        run: |
-          python3 scripts/bootstrap_tool.py elan
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: Link the digest-pinned Lean toolchain
-        run: python3 scripts/bootstrap_tool.py lean
-      - name: Source gate and build
-        run: bash scripts/check.sh build
-      - name: The lane alone
-        env:
-          LANE: ${{ matrix.lane }}
-        run: bash scripts/native_lanes.sh "${LANE}"
-
   # The per-commit lane draws generated programs from one fixed seed. This draws many more, from
   # a seed taken from the date, so each night looks somewhere new; the run's summary gives the
   # seed and how to repeat it, and a disagreement it finds is reduced and kept.
   generated-programs:
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -209,8 +361,16 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Link the digest-pinned Lean toolchain
         run: python3 scripts/bootstrap_tool.py lean
-      - name: Source gate and build
-        run: bash scripts/check.sh build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lean-build
+          path: build
+      - name: Unpack the build
+        env:
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+        run: |
+          echo "$ARCHIVE  build/lean-build.tar" | sha256sum --check --strict
+          python3 scripts/build_archive.py unpack build/lean-build.tar
       - name: Programs from a new seed
         env:
           SEED: ${{ inputs.seed }}

@@ -15,7 +15,7 @@ Each spool left is held to what the crash lane holds it to. Where an operation f
 tore, and only there, a start may end with status 4, a post be refused, one connection be closed
 unanswered after its 340, and a read be answered 403 where a read failed; a refused article is not
 found. Started again, on a mark of another boot where a sync failed, the server removes it. Each
-defect of `DEFECTS`, planted in the program or the host, has to be caught by its pass, for the
+defect of `DEFECTS`, planted in the program or the host, has to be caught by its pass, for a
 reason named.
 
 It needs /dev/fuse and the right to mount it, as the LazyFS lane does.
@@ -214,8 +214,10 @@ DEFECTS = [
               r"st jb + \1, 5;\2", 2, "corrupt wrong-size"), "stopped"),
     (C.Defect("a commit not synced before its 240", r"(st jb \+ 88, flen;\n\s+st jb \+ 96, 0;\n\s+st jb \+ 104, )6;",
               r"\g<1>5;", 1, "answered 240, is not found"), "stopped"),
+    # An article's sync, the directory's after its rename, or the journal's, whichever fails first.
     (C.Defect("a failed sync taken for done", "return RETRIED(DN_FAULT(point) ? -1 : sync(fd));",
-              "return RETRIED(DN_FAULT(point) ? 0 : sync(fd));", 1, "corrupt wrong-size", program=False),
+              "return RETRIED(DN_FAULT(point) ? 0 : sync(fd));", 1,
+              ("corrupt wrong-size", "corrupt missing-file", "answered 240, is not found"), program=False),
      "failed"),
     (C.Defect("a frame taken without its tag checked", r"if \(r == jtag\) == 0 \{", "if 0 {", 2,
               "not what recovery_ref's actions leave"), "torn"),
@@ -243,7 +245,7 @@ def check(cake: str) -> Report:
             try:
                 passes(built, bases, caught_by, counts["stopped"])
             except LaneError as error:
-                if defect.sign not in str(error):
+                if not defect.said(str(error)):
                     raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error}") from None
                 found[defect.name] = str(error)[:300]
                 continue

@@ -6,7 +6,7 @@
 
 The path is **Lean specifications and proofs → Pancake → CakeML → native code**, with a narrow host for sockets, buffers and durable storage, built on the inherited `orb-compiler`, `orb`, `drorb` and datacake work.
 
-**Today: compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server answering RFC 3977's mandatory commands on loopback, recovering its store at start; not yet a usable news server or an end-to-end verified executable.**
+**Today: compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server on loopback that takes articles by POST into a durable store and serves them by message-id; not yet a usable news server or an end-to-end verified executable.**
 
 Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](docs/assurance.md); the [inherited-code review](docs/reviews/README.md) records the defects found in what was inherited.
 

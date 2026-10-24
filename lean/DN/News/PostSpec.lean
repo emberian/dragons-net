@@ -232,12 +232,14 @@ inductive ReadFile
   deriving DecidableEq
 
 /-- A read of ARTICLE, HEAD or BODY: the connection it answers, until it is answered or gone; the
-command and the commit of the article; its file; the octets read and checked; what it gives, as
-`Read.output` makes it whenever the read changes (`Read.refresh`), and how many of those octets were
-given; whether a read or a check failed; its job in flight. -/
+command, the number its first line gives and the commit of the article; its file; the octets read
+and checked; what it gives, as `Read.output` makes it whenever the read changes (`Read.refresh`),
+and how many of those octets were given; whether a read or a check failed; its job in flight. -/
 structure Read where
   owner : Option (Nat × Nat)
   cmd : CommandSpec.Cmd
+  /-- the number its first line gives: the article's in the selected group, or 0 -/
+  number : Nat := 0
   commit : Commit
   file : ReadFile := .none
   got : Array Byte := #[]
@@ -527,7 +529,7 @@ def Read.stream (rules : Rules) (identity : List Byte) (r : Read) : Array Byte :
 stream, and once all of the file is checked the terminating dot. -/
 def Read.output (rules : Rules) (identity : List Byte) (r : Read) : Array Byte :=
   if r.got.isEmpty && rules.statusLate then #[]
-  else (CommandSpec.found r.cmd r.commit.messageId).toArray ++ r.stream rules identity ++
+  else (CommandSpec.found r.cmd r.number r.commit.messageId).toArray ++ r.stream rules identity ++
     (if r.whole rules then (ascii ".\r\n").toArray else #[])
 
 /-- The read with what it gives made again. -/

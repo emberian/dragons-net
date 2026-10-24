@@ -42,6 +42,18 @@ some of them are untaken. A read that fails before giving anything is answered 4
 connection is closed. STAT of an article the store holds is answered 223, and any of the four of
 one it does not hold 430. Each turn, after the events, the completions of file jobs, then the
 connections in order, then the slots' and the reads' next jobs.
+
+A connection has a selected group and a current article number, both invalid at first (RFC 3977
+§6.1). GROUP of a group the store carries selects it and makes its first article current, none in
+an empty group, and answers 211 with the count of its articles and their lowest and highest
+numbers, an empty group's highest one below its lowest; of another, 411, changing nothing. By
+number, ARTICLE, HEAD, BODY and STAT find the article of that number in the selected group and make
+it current, or answer 423; with no argument they take the current article, or answer 420; NEXT and
+LAST move to the article of the lowest number above the current one or the highest below, answer
+223 with it, or 421 and 422 when there is none. Without a group selected each of these is answered
+412. An article read is made current with the first line of its reply, not after a 403 (§6.2.1.2).
+By message-id nothing changes, and the number given is 0. What a group holds is what the store
+holds as the line is answered.
 -/
 
 namespace DN.News.SessionSpec
@@ -104,10 +116,14 @@ structure Conn where
   post : Option Nat := none
   /-- the article's deadline, zero when not running -/
   articleDue : Nat := 0
-  /-- the ARTICLE, HEAD or BODY it waits for a read for or is answered by one, with the message-id -/
-  want : Option (Cmd × List Byte) := none
+  /-- the ARTICLE, HEAD or BODY it waits for a read for or is answered by one, with the number its
+  first line gives and the message-id -/
+  want : Option (Cmd × Nat × List Byte) := none
   /-- the read that answers it -/
   read : Option Nat := none
+  /-- the selected group and the current article number, `none` and zero while invalid -/
+  group : Option (List Byte) := none
+  current : Nat := 0
   deriving DecidableEq, Repr
 
 def Conn.fresh (i : Identity) (greeted : Bool) (number gen now : Nat) : Conn :=
@@ -253,26 +269,71 @@ def Conn.waitLine (now : Nat) (c : Conn) : Conn :=
     if c.lineDue == 0 then { c with lineDue := now + lineTime } else c
   else { c with lineDue := 0 }
 
-/-- What a store makes of a reply: whether POST is offered, whether the store accepts, and the
-message-ids of the articles it holds. -/
+/-- What a store makes of a reply: whether POST is offered, whether the store accepts, the groups it
+carries and the commits of the articles it holds. -/
 structure Posting where
   offered : Bool
   accepting : Bool
-  ids : List (List Byte)
+  groups : List (List Byte)
+  held : List Journal.Commit
 
 /-- What a store makes of a reply, if there is one. -/
 def Posting.of : Option Store → Posting
-  | some st => ⟨true, st.accepting, st.articles.map (·.messageId)⟩
-  | none => ⟨false, false, []⟩
+  | some st => ⟨true, st.accepting, st.cfg.groups, st.articles⟩
+  | none => ⟨false, false, [], []⟩
+
+/-- The articles held in group `g`: each one's number there and its message-id. -/
+def numbered (held : List Journal.Commit) (g : List Byte) : List (Nat × List Byte) :=
+  held.filterMap fun c => (c.groups.find? (·.name == g)).map fun x => (x.number, c.messageId)
+
+/-- Of the articles held in group `g`, the one numbered `n`. -/
+def atNumber (held : List Journal.Commit) (g : List Byte) (n : Nat) : Option (Nat × List Byte) :=
+  (numbered held g).find? (·.1 == n)
+
+/-- Of the articles held in group `g`, the one of the lowest number above `n`, and the one of the
+highest below. -/
+def nextAfter (held : List Journal.Commit) (g : List Byte) (n : Nat) : Option (Nat × List Byte) :=
+  (numbered held g).foldl (fun best x => if n < x.1 && best.all (x.1 < ·.1) then some x else best) none
+def prevBefore (held : List Journal.Commit) (g : List Byte) (n : Nat) : Option (Nat × List Byte) :=
+  (numbered held g).foldl (fun best x => if x.1 < n && best.all (·.1 < x.1) then some x else best) none
+
+/-- The 211 of group `g`: how many articles it holds and their lowest and highest numbers; of an
+empty group, the highest one below the lowest, as RFC 3977 §6.1.1.2 prefers. -/
+def summary (held : List Journal.Commit) (g : List Byte) : Reply :=
+  match (numbered held g).map (·.1) with
+  | [] => .selected 0 1 0 g
+  | x :: rest => .selected (rest.length + 1) (rest.foldl min x) (rest.foldl max x) g
+
+/-- What an article of group `g` found gives: 223 for STAT, else a read. -/
+def foundAs (k : Cmd) : Nat × List Byte → Reply
+  | (n, id) => if k = .stat then .stat n id else .lookup k n id
 
 /-- The reply a connection gets with a store: the capabilities with POST while it may post, the
 help with POST, for a well-formed POST 340, 440 or 403, and for a message-id the store does not
-hold 430, for one it holds with STAT 223. -/
+hold 430, for one it holds with STAT 223; the replies of the selected group and the current
+article. -/
 def resolve (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities => if c.greeted && p.accepting then .capabilitiesPost else .capabilities
   | .help => if p.offered then .helpPost else .help
   | .post => if !c.greeted then .notPermitted else if !p.accepting then .unavailable else .post
-  | .lookup k id => if !p.ids.contains id then .noSuchId else if k = .stat then .stat id else .lookup k id
+  | .lookup k n id =>
+    if !p.held.any (·.messageId == id) then .noSuchId else if k = .stat then .stat n id else .lookup k n id
+  | .select g => if p.groups.contains g then summary p.held g else .noSuchGroup
+  | .byNumber k n =>
+    match c.group with
+    | none => .noGroup
+    | some g => ((atNumber p.held g n).map (foundAs k)).getD .noNumber
+  | .current k =>
+    match c.group with
+    | none => .noGroup
+    | some g => if c.current = 0 then .noCurrent else ((atNumber p.held g c.current).map (foundAs k)).getD .noCurrent
+  | .move fwd =>
+    match c.group with
+    | none => .noGroup
+    | some g =>
+      if c.current = 0 then .noCurrent
+      else (((if fwd then nextAfter else prevBefore) p.held g c.current).map fun (n, id) => .stat n id).getD
+        (if fwd then .noNext else .noPrevious)
   | r => r
 
 /-- Answer the first held line that gets a reply, putting it in `out`, and frame on past the lines
@@ -297,10 +358,11 @@ def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
         | r =>
           if !c.out.isEmpty || c.want.isSome then c
           else if r = .post then { c1 with waiting := true, first := 0, idle := 0 }
-          else if let .lookup k id := r then
-            serve i p now fuel { c1 with want := some (k, id), first := 0, idle := 0 }
+          else if let .lookup k n id := r then
+            serve i p now fuel { c1 with want := some (k, n, id), first := 0, idle := 0 }
           else
-            let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity }
+            let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity,
+                                group := r.groupAfter c1.group, current := r.currentAfter c1.current }
             if r = .quit then { c2 with phase := .quitting, held := [] } else serve i p now fuel c2
 
 /-- The reply an outcome gives. -/
@@ -356,8 +418,9 @@ def claim (i : Identity) (now idx : Nat) (st : Option Store) (c : Conn) : Conn �
   | none => (c, none)
 
 /-- A connection answered by a read, with nothing untaken: the read's next octets put to send, the
-inactivity deadline then started, or stopped while there are none; once all of them are put, the
-read ended; a read that failed answered 403 when it gave nothing, or the connection to close. -/
+inactivity deadline then started, or stopped while there are none, the article made current with
+the first of them when it was named by its number; once all of them are put, the read ended; a read
+that failed answered 403 when it gave nothing, or the connection to close. -/
 def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
     Conn × Option Store × Bool :=
   match c.read, st with
@@ -377,7 +440,8 @@ def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
           else
             let given := r.given + piece.length
             let ends := r.whole st.rules && given == r.out.size
-            let c' := { c with out := piece, idle := now + inactivity }
+            let c' := { c with out := piece, idle := now + inactivity,
+                               current := if r.given = 0 && r.number != 0 then r.number else c.current }
             let r' := { r with given, owner := if ends then none else r.owner }
             (if ends then { c' with read := none, want := none } else c',
              some (st.setRead k (some r')).tidy, false)
@@ -388,12 +452,12 @@ def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
 free. -/
 def claimRead (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store :=
   match st, c.want with
-  | some st, some (k, id) =>
+  | some st, some (k, n, id) =>
     if c.read.isNone && c.out.isEmpty && c.phase = .open_ && st.admitsRead (idx, c.gen) then
       match (List.range st.rules.reads).find? st.readFree, st.find id with
       | some j, some cm =>
         let st' := { st with readers := st.readers.erase (idx, c.gen) }
-        let r : Read := { owner := some (idx, c.gen), cmd := k, commit := cm }
+        let r : Read := { owner := some (idx, c.gen), cmd := k, number := n, commit := cm }
         ({ c with read := some j }, some (st'.setRead j (some (r.refresh st.rules st.cfg.identity))))
       | _, _ => (c, some st)
     else (c, some st)
@@ -527,15 +591,141 @@ def deadline (s : Server) : Nat :=
 
 /-! ## What the session guarantees by construction -/
 
-/-- A store's answer keeps a reply's message-id one a store may hold. -/
-theorem resolve_idOk (p : Posting) (c : Conn) (r : Reply) (h : r.idOk = true) :
-    (resolve p c r).idOk = true := by
-  cases r <;> simp only [resolve] <;> (repeat' split) <;> simp_all [Reply.idOk]
+/-- A store whose articles have article numbers and message-ids, and no more of them than an article
+number counts. -/
+def Posting.Fits (p : Posting) : Prop :=
+  p.held.length ≤ numberMax ∧ ∀ c ∈ p.held, c.messageId.length ≤ 250 ∧ ∀ x ∈ c.groups, x.number ≤ numberMax
 
-/-- **Every reply a connection gets fits one action**, with a store or without. -/
-theorem reply_fits (i : Identity) (hi : i.ok = true) (p : Posting) (c : Conn) (l : Line) :
+theorem numbered_bounded {p : Posting} (hp : p.Fits) (g : List Byte) :
+    ∀ x ∈ numbered p.held g, x.1 ≤ numberMax ∧ x.2.length ≤ 250 := by
+  intro x hx
+  simp only [numbered, List.mem_filterMap, Option.map_eq_some_iff] at hx
+  obtain ⟨c, hc, y, hy, rfl⟩ := hx
+  exact ⟨(hp.2 c hc).2 y (List.mem_of_find?_eq_some hy), (hp.2 c hc).1⟩
+
+/-- A fold that keeps what it has or takes the element in hand ends with what it began with or an
+element. -/
+theorem foldl_pick {α : Type} (f : Option α → α → Option α) (hf : ∀ b x, f b x = b ∨ f b x = some x) :
+    ∀ (l : List α) (b : Option α) (y : α), l.foldl f b = some y → b = some y ∨ y ∈ l
+  | [], _, _, h => .inl h
+  | x :: rest, b, y, h => by
+    rcases foldl_pick f hf rest (f b x) y h with h1 | h1
+    · rcases hf b x with h2 | h2
+      · exact .inl (h2 ▸ h1)
+      · rw [h2] at h1; cases h1; exact .inr (List.mem_cons_self ..)
+    · exact .inr (List.mem_cons_of_mem _ h1)
+
+theorem pick_mem {held : List Journal.Commit} {g : List Byte} {n : Nat} {x : Nat × List Byte}
+    (h : atNumber held g n = some x ∨ nextAfter held g n = some x ∨ prevBefore held g n = some x) :
+    x ∈ numbered held g := by
+  rcases h with h | h | h
+  · exact List.mem_of_find?_eq_some h
+  · rcases foldl_pick _ (fun _ _ => by split <;> simp) _ none x h with h1 | h1
+    · cases h1
+    · exact h1
+  · rcases foldl_pick _ (fun _ _ => by split <;> simp) _ none x h with h1 | h1
+    · cases h1
+    · exact h1
+
+theorem foldl_min_le (x : Nat) : ∀ l : List Nat, l.foldl min x ≤ x
+  | [] => Nat.le_refl _
+  | y :: rest => Nat.le_trans (foldl_min_le (min x y) rest) (Nat.min_le_left _ _)
+
+theorem foldl_max_le (m : Nat) : ∀ (l : List Nat) (x : Nat), x ≤ m → (∀ y ∈ l, y ≤ m) → l.foldl max x ≤ m
+  | [], _, hx, _ => hx
+  | y :: rest, x, hx, hl =>
+    foldl_max_le m rest (max x y) (Nat.max_le.mpr ⟨hx, hl y (List.mem_cons_self ..)⟩)
+      fun z hz => hl z (List.mem_cons_of_mem _ hz)
+
+theorem summary_bounded {p : Posting} (hp : p.Fits) (g : List Byte) (hg : g.length ≤ groupNameMax) :
+    (summary p.held g).bounded = true := by
+  have hb := numbered_bounded hp g
+  have hlen : ((numbered p.held g).map (·.1)).length ≤ numberMax :=
+    Nat.le_trans (by simp only [List.length_map, numbered]; exact List.length_filterMap_le _ _) hp.1
+  unfold summary
+  split
+  · simp [Reply.bounded, numberMax, hg]
+  · rename_i x rest he
+    have hall : ∀ y ∈ x :: rest, y ≤ numberMax := by
+      intro y hy
+      rw [← he] at hy
+      obtain ⟨z, hz, rfl⟩ := List.mem_map.mp hy
+      exact (hb z hz).1
+    have hx := hall x (List.mem_cons_self ..)
+    rw [he] at hlen
+    simp only [List.length_cons] at hlen
+    simp only [Reply.bounded, Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨⟨⟨hlen, Nat.le_trans (foldl_min_le x rest) hx⟩,
+      foldl_max_le _ rest x hx fun y hy => hall y (List.mem_cons_of_mem _ hy)⟩, hg⟩
+
+theorem foundAs_bounded {p : Posting} (hp : p.Fits) {g : List Byte} (k : Cmd) {x : Nat × List Byte}
+    (hx : x ∈ numbered p.held g) : (foundAs k x).bounded = true := by
+  obtain ⟨n, id⟩ := x
+  obtain ⟨h1, h2⟩ := numbered_bounded hp g _ hx
+  by_cases hk : k = .stat <;> simp_all [foundAs, Reply.bounded]
+
+/-- A store's answer keeps a reply's message-id one a store may hold, and its numbers article
+numbers. -/
+theorem resolve_bounded (p : Posting) (hp : p.Fits) (c : Conn) (r : Reply) (h : r.bounded = true) :
+    (resolve p c r).bounded = true := by
+  cases r
+  case select g =>
+    simp only [resolve]
+    split
+    · exact summary_bounded hp g (by simpa [Reply.bounded] using h)
+    · rfl
+  case byNumber k n =>
+    simp only [resolve]
+    split
+    · rfl
+    · rename_i g _
+      cases ha : atNumber p.held g n with
+      | none => rfl
+      | some x => exact foundAs_bounded hp k (pick_mem (.inl ha))
+  case current k =>
+    simp only [resolve]
+    split
+    · rfl
+    · rename_i g _
+      split
+      · rfl
+      · cases ha : atNumber p.held g c.current with
+        | none => rfl
+        | some x => exact foundAs_bounded hp k (pick_mem (.inl ha))
+  case move fwd =>
+    simp only [resolve]
+    split
+    · rfl
+    · rename_i g _
+      split
+      · rfl
+      · have key : ∀ o : Option (Nat × List Byte), (∀ x, o = some x → x ∈ numbered p.held g) →
+            ∀ d : Reply, d.bounded = true → ((o.map fun x => Reply.stat x.1 x.2).getD d).bounded = true := by
+          intro o ho d hd
+          cases o with
+          | none => exact hd
+          | some x =>
+            obtain ⟨h1, h2⟩ := numbered_bounded hp g x (ho x rfl)
+            simp [Reply.bounded, h1, h2]
+        apply key
+        · intro x hx
+          cases fwd
+          · exact pick_mem (.inr (.inr (by simpa using hx)))
+          · exact pick_mem (.inr (.inl (by simpa using hx)))
+        · cases fwd <;> rfl
+  all_goals simp only [resolve] <;> (repeat' split) <;> simp_all [Reply.bounded]
+
+/-- **Every reply a connection gets fits one action**, with a store whose articles have article
+numbers and message-ids, or without one. -/
+theorem reply_fits (i : Identity) (hi : i.ok = true) (p : Posting) (hp : p.Fits) (c : Conn) (l : Line) :
     (text i (resolve p c (replyIn p.offered l))).length ≤ CommandSpec.actionData :=
-  text_fits i hi _ (resolve_idOk p c _ (replyIn_idOk _ l))
+  text_fits i hi _ (resolve_bounded p hp c _ (replyIn_bounded _ l))
+
+/-- The premise holds without a store, and of a store holding an article. -/
+theorem fits_witness : (Posting.of none).Fits ∧
+    (⟨true, true, [ascii "local.test"],
+      [⟨1, ascii "<a@b>", [⟨ascii "local.test", 1⟩], 19, 24, 0⟩]⟩ : Posting).Fits :=
+  ⟨⟨Nat.zero_le _, fun _ h => absurd h List.not_mem_nil⟩, by unfold Posting.Fits; decide +kernel⟩
 
 def Action.idx : Action → Nat
   | .send idx .. | .closeGracefully idx _ | .closeNow idx _ => idx
@@ -684,10 +874,16 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .help, _ | .helpPost, _ => fun e =>
     absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp
       (List.append_eq_nil_iff.mp e).1).1).1).1 (by decide +kernel)
-  | .stat _, _ => fun e => absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp e).1).1
-    (by decide +kernel)
+  | .stat _ _, _ => fun e =>
+    absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp e).1).1).1
+      (by decide +kernel)
+  | .selected .., _ => fun e => by
+    simp only [text, List.append_assoc, List.append_eq_nil_iff] at e
+    exact absurd e.1 (by decide +kernel)
   | .quit, _ | .noGroup, _ | .noSuchId, _ | .unknown, _ | .syntax, _ | .post, _ | .posted, _
-  | .failed, _ | .notPermitted, _ | .unavailable, _ | .lookup _ _, _ | .unreadable, _ => by
+  | .failed, _ | .notPermitted, _ | .unavailable, _ | .lookup _ _ _, _ | .unreadable, _
+  | .select _, _ | .byNumber _ _, _ | .current _, _ | .move _, _ | .noSuchGroup, _ | .noCurrent, _
+  | .noNext, _ | .noPrevious, _ | .noNumber, _ => by
     simp only [text]; decide +kernel
 
 /-- `serve` leaves output that is already there as it is. -/

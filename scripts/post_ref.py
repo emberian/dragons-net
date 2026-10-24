@@ -144,7 +144,7 @@ class Fetch:
     """A read for ARTICLE, HEAD or BODY: its connection while it is to be answered; the command, the
     commit of its article and its place among the reads; its file — `none`, `open` at a place, or
     `gone` — the octets read and checked, how many octets it has given; whether it failed; its job in
-    flight; how its connection was answered."""
+    flight; how its connection was answered; the number its first line gives."""
     owner: tuple[int, int] | None
     cmd: str
     commit: J.Commit
@@ -156,6 +156,7 @@ class Fetch:
     bad: bool = False
     busy: tuple[int, int] | None = None
     answered: str | None = None
+    number: int = 0
     # what `out` last made, for as many octets read and whether they were whole
     made: tuple[tuple[int, bool], bytes] = field(default=((-1, False), b""), repr=False, compare=False)
 
@@ -182,7 +183,8 @@ class Fetch:
             stream = self.got[header + 2:]
         else:
             stream = self.got[:header] + (x + self.got[header:] if known else b"")
-        return STATUS[self.cmd] + b" 0 " + self.commit[1] + CRLF + stream + (DOT + CRLF if self.whole() else b"")
+        return STATUS[self.cmd] + b" %d " % self.number + self.commit[1] + CRLF + stream + \
+            (DOT + CRLF if self.whole() else b"")
 
     def held(self) -> bool:
         """Whether it still holds its place: its connection to answer, a job in flight or its file
@@ -429,10 +431,10 @@ class Store:
     def free_reads(self) -> list[int]:
         return [k for k, f in enumerate(self.reads) if f is None or not f.held()]
 
-    def grant(self, owner: tuple[int, int], cmd: str, commit: J.Commit) -> Fetch:
-        """The lowest free read, given to a connection."""
+    def grant(self, owner: tuple[int, int], cmd: str, commit: J.Commit, number: int = 0) -> Fetch:
+        """The lowest free read, given to a connection, its first line giving `number`."""
         k = self.free_reads()[0]
-        f = Fetch(owner, cmd, commit, k)
+        f = Fetch(owner, cmd, commit, k, number=number)
         self.reads[k] = f
         return f
 

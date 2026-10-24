@@ -154,8 +154,9 @@ static void take(int k, const unsigned char *slot) {
             dn_violation("dn_emit: job %d truncates to %" PRIu64, k, op->length);
         if (op->code == DN_SESSION_OP_SYNC_DIR) j->dir_sync = 1;
         if (opens(op->code)) {
+            /* A place closed by a job in flight is the program's until it learns of the close. */
             int p = 0;
-            while (p < PLACES && (files[p].open || files[p].reserved)) ++p;
+            while (p < PLACES && (files[p].open || files[p].reserved || files[p].busy)) ++p;
             if (p == PLACES) dn_violation("dn_emit: job %d opens a file with all %d places taken", k, PLACES);
             files[p].reserved = 1;
             j->place[i] = p;
@@ -363,7 +364,7 @@ static int run(struct job *j, uint64_t i) {
         free(f->names);
         if (!f->listing && DN_FAULT("dn/close")) r = -1;
         pthread_mutex_lock(&lock);
-        *f = (struct file){.fd = -1, .gen = f->gen + 1};
+        *f = (struct file){.fd = -1, .busy = f->busy, .gen = f->gen + 1};
         pthread_mutex_unlock(&lock);
         return r;
     }

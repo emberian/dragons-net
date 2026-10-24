@@ -339,6 +339,9 @@ class Backend(unittest.TestCase):
                 self.assertTrue(list(ROOT.glob(path)), f"{path} matches nothing in the tree")
         self.assertIn("bash scripts/check_backend.sh", workflow)
         self.assertIn("scripts/backend.py build hol", workflow)
+        # A target that passed on the same inputs is not built again: its key reads what the paths name.
+        keyed = re.findall(r"HEAD:(\S+)", workflow)
+        self.assertEqual(sorted(keyed), sorted(p.removesuffix("/**") for p in listed[0]))
         # The compiler is verified against its pin on every run, not restored with the prover.
         self.assertNotIn(".deps/tools", workflow)
         cached = re.search(r"path: (\S+)\n\s+key: \$\{\{ steps\.pins\.outputs\.key \}\}", workflow)

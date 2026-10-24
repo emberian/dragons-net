@@ -912,6 +912,27 @@ def in_flight(b: Builds) -> str:
     return "refused"
 
 
+def closed_in_flight(b: Builds) -> str:
+    """A place closed by a job in flight, held there by a slow sync after the close, is not given to a
+    file opened meanwhile: until its completion the program holds the place open."""
+    with tempfile.TemporaryDirectory() as temp, \
+            Jobs(b.fiu, Store(temp).options(), [enabled("dn/sync-slow", 2000)]) as h:
+        p, g = opened(h, 0, 1, "temp", 1)
+        h.hand(0, 2, [Op("close", p, g), Op("sync-dir")], fetch=False)
+        time.sleep(0.2)
+        h.send("wake 1")
+        h.fetch()
+        if 0 in h.done:
+            raise LaneError("a sync slowed down by 2 s completed before a batch that did not wait")
+        h.hand(1, 1, [Op("create", name="temp", number=2)])
+        q = ok(h.wait(1), 1, "a file opened while another's close is in flight")[0]
+        ok(h.wait(0), 2, "a close and a slow sync")
+        h.stop()
+    if q == p:
+        raise LaneError(f"place {p}, closed by a job in flight, was given to another file")
+    return "kept"
+
+
 # Helgrind sees a race only in a schedule that shows it, so each scenario runs this many times.
 RACE_RUNS = 5
 HELGRIND = ("valgrind", "--tool=helgrind", "--error-exitcode=9", "-q")
@@ -976,7 +997,8 @@ CHECKS: dict[str, Callable[[Builds], object]] = {
     "posting": on_plain(posting), "held": on_plain(held), "marks": on_plain(marks_at_start),
     "options": on_plain(options), "files": on_plain(files), "truncated": on_plain(truncated),
     "errors": on_plain(errors), "listing": on_plain(listing), "at once": on_plain(at_once),
-    "breaches": on_plain(breaches), "a signal": signalled, "faults": faults, "in flight": in_flight, "races": races}
+    "breaches": on_plain(breaches), "a signal": signalled, "faults": faults, "in flight": in_flight,
+    "closed in flight": closed_in_flight, "races": races}
 
 # Defects planted: (the file, the name, the text, what it becomes).
 DEFECTS = [
@@ -1032,8 +1054,10 @@ DEFECTS = [
      "        return RETRIED"),
     (JOBS, "a name not found taken for another error", "    case ENOENT: return DN_SESSION_CLASS_NOT_FOUND;\n", ""),
     (JOBS, "a short read reported whole", "        result[0] = (uint64_t)n;\n", "        result[0] = op->length;\n"),
-    (JOBS, "a closed file's place kept", "        *f = (struct file){.fd = -1, .gen = f->gen + 1};",
+    (JOBS, "a closed file's place kept", "        *f = (struct file){.fd = -1, .busy = f->busy, .gen = f->gen + 1};",
      "        f->gen++;"),
+    (JOBS, "a closed place given back before its job completes", ".fd = -1, .busy = f->busy, .gen", ".fd = -1, .gen"),
+    (JOBS, "a place in flight taken", "files[p].reserved || files[p].busy)", "files[p].reserved)"),
     (JOBS, "a signal's interruption reported", "while (result_ < 0 && errno == EINTR);", "while (result_ < 0 && 0);"),
     (JOBS, "a short write left short", "        n -= (uint64_t)w;\n", "        n = 0;\n"),
     (JOBS, "a write of no progress taken as done", "        if (w == 0) {", "        if (0 && w == 0) {"),

@@ -86,6 +86,16 @@ jobs:
           # fallback, and either way the tree is data, never something to run.
           gh api "repos/$GITHUB_REPOSITORY/git/trees/$HEAD_SHA?recursive=1" > build/verify/head.json ||
             gh api "repos/$HEAD_REPO/git/trees/$HEAD_SHA?recursive=1" > build/verify/head.json
+          # The note a writer left on the commit once its tree passed every check, which only a writer
+          # can push, and the tree it has to name: data, read with git, never run.
+          gh api "repos/$GITHUB_REPOSITORY/git/commits/$HEAD_SHA" --jq .tree.sha > build/verify/head-tree-sha ||
+            echo > build/verify/head-tree-sha
+          : > build/verify/checked
+          if git fetch --quiet --depth=1 origin refs/notes/checked:refs/notes/checked 2>/dev/null; then
+            path=$(git ls-tree -r --name-only refs/notes/checked |
+              awk -v sha="$HEAD_SHA" '{ p = $0; gsub("/", "", p); if (p == sha) print }')
+            [[ -z "$path" ]] || git cat-file blob "refs/notes/checked:$path" > build/verify/checked
+          fi
       - name: Judge the run
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -100,6 +110,7 @@ jobs:
             --head-sha "$HEAD_SHA" --run-url "$RUN_URL" --details-url "$DETAILS_URL" \
             --conclusion "$CONCLUSION" --default-branch "$DEFAULT_BRANCH" \
             --base-refs "$(cat build/verify/base-refs)" \
+            --head-tree-sha "$(cat build/verify/head-tree-sha)" --checked-note build/verify/checked \
             --summary "$GITHUB_STEP_SUMMARY" > build/verify/check-run.json
       - name: Publish the result on the commit
         env:

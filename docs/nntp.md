@@ -4,7 +4,7 @@ The first slice answers over sockets on loopback: [decision 0003](decisions/0003
 
 Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)): [decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. The store is proven in the model and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)); the server is tested under [crashes](baseline.md#crashes), [power loss](baseline.md#power-loss) and [faults](baseline.md#faults).
 
-Reading by message-id — ARTICLE, HEAD, BODY and STAT — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
+Reading — ARTICLE, HEAD, BODY and STAT by message-id, and by number in the group GROUP selects, with NEXT and LAST — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
 
 POST is in the program ([session program](baseline.md#session-program)), and the server takes it from the networks `--post-from` names, loopback by default ([NNTP server](baseline.md#nntp-server)). With a spool the host logs each connection on stderr as `connection RUN.N from ADDRESS port PORT`, `RUN.N` being the `logging-data` its articles carry; a line stderr cannot take at once is counted, not waited for.
 
@@ -18,8 +18,8 @@ The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). 
 
 | Capability | Commands | Intended stage |
 | --- | --- | --- |
-| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | Answered; HEAD and STAT by message-id from the store (#17), by number with the reader commands (#18) |
-| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | ARTICLE and BODY by message-id (#17); the rest, reader completeness (#18) |
+| Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | Answered; HEAD and STAT from the store by message-id and by number (#17, #18) |
+| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | ARTICLE, BODY, GROUP, LAST and NEXT (#17, #18); DATE, LISTGROUP and NEWGROUPS to come (#18) |
 | LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Reader completeness |
 | POST | POST | Done (#17) |
 | OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility |

@@ -77,11 +77,25 @@ POST_DEFECTS = [
      "var known = (h + 1) <= gt;", 1, TRACE),
     ("the empty line's CR not given once the buffer starts past it", r"if fp == h \{", "if 0 {", 1,
      "code 10 on a host that kept the contract"),
+    ("NEXT taken at the current article", r"\(mode == 2\) & \(x < num\)", "(mode == 2) & (x <= num)", 1,
+     "scenario \"a group's articles walked\""),
+    ("LAST taken at the current article", r"\(mode == 3\) & \(num < x\)", "(mode == 3) & (num <= x)", 1,
+     "scenario \"a group's articles walked\""),
+    ("an empty group's lowest number 0", r"(if gk == 0 \{\s*st @base \+ \d+, )1;", r"\g<1>0;", 1,
+     "scenario 'an empty group'"),
+    ("an article read by its number not made current", r"st cb \+ 168, rn;", "st cb + 168, lds 1 (cb + 168);", 1,
+     "scenario \"a group's articles walked\""),
+    ("a UTF-8 continuation octet unchecked", r"if 0 < \(\(cz < clo\) \+ \(chi < cz\)\) \{", "if 0 {", 1,
+     "scenario 'group names and arguments'"),
+    ("a ? taken in a group's name", r"\(64 <= cz\) & \(cz <= 90\)", "(63 <= cz) & (cz <= 90)", 1,
+     "scenario \"every octet in a group's name\""),
+    ("a lead octet past F4 taken", r"if \(241 <= cz\) & \(cz <= 243\) \{", "if (241 <= cz) & (cz <= 245) {", 1,
+     "scenario \"every octet in a group's name\""),
 ]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 8, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 11, TRACE),
     ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 1, TRACE),
     ("a bare LF ending a command", r"if cr & \(bad == 0\) \{", "if bad == 0 {", 1, TRACE),
     ("an overlong line with no word left unanswered", r"if kind == 3 \{(\s*)r = 6;", r"if kind == 3 {\1r = 0;", 1,
@@ -241,6 +255,15 @@ def store_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
         *posting, f"poke {slot0 + words['Z_PEND']} {word}", article, "go", "took"], 10
     yield "the slot of a POST written by the host", IDENTITY, [
         *posting, f"poke {record + words['C_POST']} 9", article, "go", "took"], 10
+    asking = [native_line(spool), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeted}", f"turn 5 {WALL + 5}"]
+    for what, pokes, line in (
+            ("the selected group", [(words["C_GROUP"], 65)], "STAT"),
+            ("the current article", [(words["C_GROUP"], 1), (words["C_CURRENT"], word)], "NEXT"),
+            ("the count of the store's groups", [(None, 65)], "GROUP local.test")):
+        written = [f"poke {record + at if at is not None else words['REC_OFF'] + words['REC_GROUP_COUNT']} {value}"
+                   for at, value in pokes]
+        yield f"{what} written by the host", IDENTITY, [
+            *asking, *written, "recv 0 1 " + sessions.ascii_lines(line).hex(), "go", "took"], 10
     yield "the count of POSTs that wait written by the host", IDENTITY, [
         native_line(spool), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeted}", f"turn 5 {WALL + 5}",
         f"poke {words['OWN_OFF'] + words['OWN_WAIT_N']} 65", "recv 0 1 " + sessions.ascii_lines("POST").hex(),
@@ -506,7 +529,7 @@ def check(cake: str) -> Report:
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
-        posts = [*sessions.post_scenarios(), *sessions.read_scenarios()]
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios()]
         model = sessions.model_command()
         scripts = [(name, script, code) for name, script, code in
                    (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())

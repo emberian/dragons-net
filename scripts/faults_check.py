@@ -532,7 +532,7 @@ def check(cake: str) -> Report:
             try:
                 passes(binary, b, w)
             except LaneError as error:
-                if defect.sign not in str(error):
+                if not defect.said(str(error)):
                     raise LaneError(f"{defect.name} was caught, but not as {defect.sign!r}: {error}") from None
                 found[defect.name] = str(error)[:300]
                 continue

@@ -632,7 +632,7 @@ def postPlan : PFun :=
 /-! ## Reads -/
 
 /-- The fixed texts of reads, by their place in `SessionLayout.texts`: the 220, 221 and 222 lines'
-starts, six octets each, the 223 line's, the 403, Xref's name and the terminating dot. -/
+starts, four octets each, the 223 line's, the 403, Xref's name and the terminating dot. -/
 def textOf (k : Nat) : PExpr := at_ (ownOff + ownTexts + textAt k)
 def tStatus : Nat := 29
 def tStat : Nat := 32
@@ -654,17 +654,72 @@ def placeTaken : PFun :=
 /-- `x`, below 2^32, divided by ten. -/
 def div10 (x : PExpr) : PExpr := .shr (eMul x (n 3435973837)) (n 35)
 
+/-- The decimal digits of `x`, below 2^32, at `dst + off`, `off` checked first to leave room for ten
+below `room`, then moved past them and checked to lie below it; the locals named from `p` count. -/
+def digits (p : String) (dst : PExpr) (off : String) (x : PExpr) (room : Nat) : List PStmt :=
+  [.dec (p ++ "n") (n 1), .dec (p ++ "t") x,
+   .while (eLt (n 9) (v (p ++ "t"))) [.assign (p ++ "t") (div10 (v (p ++ "t"))), inc (p ++ "n")],
+   keptIn (v off) (room - 10), .assign (p ++ "t") x, .dec (p ++ "q") (v (p ++ "n")),
+   .while (eLt (n 0) (v (p ++ "q")))
+     [.assign (p ++ "q") (eSub (v (p ++ "q")) (n 1)), keptIn (v (p ++ "q")) 9,
+      .storeb (eAdd (eAdd dst (v off)) (v (p ++ "q")))
+        (eAdd (n 48) (eSub (v (p ++ "t")) (eMul (div10 (v (p ++ "t"))) (n 10)))),
+      .assign (p ++ "t") (div10 (v (p ++ "t")))],
+   .assign off (eAdd (v off) (v (p ++ "n"))), keptIn (v off) room]
+
+/-- Of the commits the store holds in the `gi`-th of its groups, by `mode`: zero, how many and their
+lowest and highest numbers, into `ownCount`, `ownLow` and `ownHigh`; one, the one numbered `x`;
+two, the one of the lowest number above `x`; three, of the highest below. It finds one more than
+the commit's place in recovery's area, or zero, and leaves its number in `ownNum`. -/
+def groupScan : PFun :=
+  let take : List PStmt := [.assign "best" (eAdd (v "ci") (n 1)), .assign "bn" (v "num")]
+  { name := "groupScan", params := [(1, "gi"), (1, "mode"), (1, "x")], body :=
+    [.dec "cm" (rw News.RecoverProg.rCommits), keptIn (v "cm") capacity,
+     .dec "cnt" (n 0), .dec "lo" (n 0), .dec "hi" (n 0), .dec "best" (n 0), .dec "bn" (n 0),
+     .dec "ci" (n 0),
+     .while (eLt (v "ci") (v "cm"))
+       (commitAt "ci" ++
+        [.dec "gn" (eAnd (fld "sl" News.RecoverProg.slotMisc) (n 255)), keptIn (v "gn") 16,
+         .dec "g" (n 0),
+         .while (eLt (v "g") (v "gn"))
+           [.dec "gw" (ld (eAdd (atOff (v "sl") News.RecoverProg.slotGroups) (eMul (v "g") (n 8)))),
+            .dec "num" (eAnd (v "gw") (n 0xFFFFFFFF)),
+            ifs (eEq (.shr (v "gw") (n 32)) (v "gi"))
+              [ifs (eEq (v "mode") (n 0))
+                 [.ite (eEq (v "cnt") (n 0)) [.assign "lo" (v "num"), .assign "hi" (v "num")]
+                    [ifs (eLt (v "num") (v "lo")) [.assign "lo" (v "num")],
+                     ifs (eLt (v "hi") (v "num")) [.assign "hi" (v "num")]],
+                  inc "cnt"],
+               ifs (eAnd (eEq (v "mode") (n 1)) (eEq (v "num") (v "x"))) take,
+               ifs (eAnd (eAnd (eEq (v "mode") (n 2)) (eLt (v "x") (v "num")))
+                   (or2 (eEq (v "best") (n 0)) (eLt (v "num") (v "bn")))) take,
+               ifs (eAnd (eAnd (eEq (v "mode") (n 3)) (eLt (v "num") (v "x")))
+                   (or2 (eEq (v "best") (n 0)) (eLt (v "bn") (v "num")))) take],
+            inc "g"],
+         inc "ci"]),
+     sset ownCount (v "cnt"), sset ownLow (v "lo"), sset ownHigh (v "hi"), sset ownNum (v "bn")] ++
+    give (v "best") }
+
+/-- The Message-ID of the commit at the local `ci` into `ownId`, to be given by a reply. -/
+def idOf : PFun :=
+  { name := "idOf", params := [(1, "ci")], body := commitAt "ci" ++
+    [keptIn (v "sn") 250, .store (at_ (ownOff + ownIdLen)) (v "sn")] ++
+    copyNew "j" (at_ (ownOff + ownId)) (atOff (v "sl") News.RecoverProg.slotId) (v "sn") ++
+    [done0] }
+
 /-- An octet into the read's Xref at `xo`, checked to lie in it. -/
 def putX (e : PExpr) : List PStmt :=
   [keptIn (v "xo") (xrefMax - 1), .storeb (eAdd (atOff (v "rs") rXref) (v "xo")) e, inc "xo"]
 
 /-- Read `k` given to the connection `x` of generation `g`, for command `cmd`, of the commit at
-`ci`: its numbers from the commit; its 220, 221 or 222 line, the number 0 and the Message-ID; its
-Xref field (`PostSpec.xref`): the path identity, then each group and its number, a line folded before
-one that would take it past 998 octets. -/
+`ci`: its numbers from the commit; its 220, 221 or 222 line, the number `no` and the Message-ID;
+its Xref field (`PostSpec.xref`): the path identity, then each group and its number, a line folded
+before one that would take it past 998 octets. -/
 def readClaim : PFun :=
-  { name := "readClaim", params := [(1, "k"), (1, "x"), (1, "g"), (1, "cmd"), (1, "ci")], body :=
-    readOf "k" ++ [keptIn (v "cmd") 3, ifs (eEq (v "cmd") (n 0)) (stop brokenState)] ++
+  { name := "readClaim", params := [(1, "k"), (1, "x"), (1, "g"), (1, "cmd"), (1, "ci"), (1, "no")],
+    body :=
+    readOf "k" ++ [keptIn (v "cmd") 3, ifs (eEq (v "cmd") (n 0)) (stop brokenState),
+      keptIn (v "no") 2147483647] ++
     commitAt "ci" ++
     [keptIn (v "sn") 250,
      .dec "sz" (fld "sl" News.RecoverProg.slotSizes),
@@ -673,13 +728,18 @@ def readClaim : PFun :=
       (rCi, v "ci"), (rFile, n readNone), (rPlace, n 0), (rPGen, n 0), (rGot, n 0), (rGiven, n 0),
       (rBad, n 0), (rBusy, n 0), (rHead, .shr (v "sz") (n 32)), (rSize, eAnd (v "sz") (n 0xFFFFFFFF)),
       (rCrcWant, eAnd (.shr (v "ms") (n 16)) (n 0xFFFFFFFF)), (rAcc, n 0xFFFFFFFF), (rBol, n 1),
-      (rCr, n 0), (rDot, n 0), (rBufAt, n 0), (rBufLen, n 0)].map fun (f, e) => rdset f e) ++
+      (rCr, n 0), (rDot, n 0), (rBufAt, n 0), (rBufLen, n 0), (rNumber, v "no")].map
+        fun (f, e) => rdset f e) ++
     copyNew "sj" (atOff (v "rs") rLine)
-      (eAdd (textOf tStatus) (eMul (eSub (v "cmd") (n 1)) (n 6))) (n 6) ++
-    copyNew "si" (atOff (v "rs") (rLine + 6)) (atOff (v "sl") News.RecoverProg.slotId) (v "sn") ++
-    [.storeb (eAdd (atOff (v "rs") (rLine + 6)) (v "sn")) (n 13),
-     .storeb (eAdd (atOff (v "rs") (rLine + 7)) (v "sn")) (n 10),
-     rdset rLineLen (eAdd (v "sn") (n 8)),
+      (eAdd (textOf tStatus) (eMul (eSub (v "cmd") (n 1)) (n 4))) (n 4) ++
+    [.dec "lo" (n 4)] ++ digits "ld" (atOff (v "rs") rLine) "lo" (v "no") 16 ++
+    [.storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 32), inc "lo"] ++
+    copyNew "si" (eAdd (atOff (v "rs") rLine) (v "lo")) (atOff (v "sl") News.RecoverProg.slotId)
+      (v "sn") ++
+    [.assign "lo" (eAdd (v "lo") (v "sn")), keptIn (v "lo") (statusMax - 2),
+     .storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 13),
+     .storeb (eAdd (atOff (v "rs") (rLine + 1)) (v "lo")) (n 10),
+     rdset rLineLen (eAdd (v "lo") (n 2)),
      .dec "xo" (n 0), .dec "xj" (n 0),
      .while (eLt (v "xj") (n 6)) (putX (.loadb (eAdd (textOf tXref) (v "xj"))) ++ [inc "xj"]),
      .dec "il" (aw News.ArticleProg.xIdLen), keptIn (v "il") identityMax, .assign "xj" (n 0),
@@ -883,8 +943,9 @@ def readDone : PFun :=
 /-- The next octets read `k` gives, at most an action's, into the output of connection `c`, made an
 octet at a time from where the read has given to: its 220, 221 or 222 line, the file's octets from
 the buffer — or, for ARTICLE, the empty line's CRLF when the buffer starts past it — Xref, and the
-dot. Once it has given everything and is whole, the read ends: it has no owner, and the connection no
-read. How many it gave. -/
+dot; with its first octets, the article made current when it was named by its number. Once it has
+given everything and is whole, the read ends: it has no owner, and the connection no read. How many
+it gave. -/
 def readPiece : PFun :=
   { name := "readPiece", params := [(1, "c"), (1, "k")], body := readOf "k" ++
     [keptIn (v "c") (conns - 1), .dec "cb" (eAdd (at_ tableOff) (eMul (v "c") (n connSlot)))] ++
@@ -925,6 +986,8 @@ def readPiece : PFun :=
             [.ite (eEq (v "fp") (v "h")) [.assign "b" (n 13)]
               [.ite (eEq (v "fp") (eAdd (v "h") (n 1))) [.assign "b" (n 10)] (stop brokenState)]]],
         .storeb (eAdd (atOff (v "cb") cOut) (v "i")) (v "b"), inc "i"],
+     ifs (eAnd (eEq (v "gv") (n 0)) (eLt (n 0) (v "m")))
+       [.dec "rn" (rdw rNumber), ifs (ne (v "rn") (n 0)) [setf "cb" cCurrent (v "rn")]],
      setf "cb" cOutLen (v "m"), rdset rGiven (eAdd (v "gv") (v "m")),
      ifs (eAnd readWhole (eEq (eAdd (v "gv") (v "m")) (v "os")))
        [rdset rOwner (n 0), setf "cb" cRead (n 0), setf "cb" cWant (n 0)]] ++
@@ -995,7 +1058,7 @@ def postDone : PFun :=
 def functions : List PFun :=
   [crcTable, postTakes, postTidy, postTidyAll, queueAdd, queueDrop, postAdmits, readAdmits,
    postAbandon, postClaim, idHash, idFind, idAdd, idBuild, postReserved, postReserving, postAccept,
-   postFeed, postFreeJob, postFrame, postPlan, placeTaken, readClaim, readOutSize, readPlan,
-   readDone, readPiece, postDone]
+   postFeed, postFreeJob, postFrame, postPlan, placeTaken, groupScan, idOf, readClaim, readOutSize,
+   readPlan, readDone, readPiece, postDone]
 
 end DN.Server.SessionStore
