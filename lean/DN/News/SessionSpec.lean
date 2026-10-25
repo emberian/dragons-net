@@ -54,6 +54,18 @@ LAST move to the article of the lowest number above the current one or the highe
 412. An article read is made current with the first line of its reply, not after a 403 (§6.2.1.2).
 By message-id nothing changes, and the number given is 0. What a group holds is what the store
 holds as the line is answered.
+
+LISTGROUP selects a group as GROUP does, the named one or the selected one, and answers 211 as GROUP
+does, then the numbers of the group's articles in its range, all from 1 without one (§6.1.2): those
+up to the group's highest number as it is selected, which an article the store takes later passes.
+LIST ACTIVE, and LIST, answers 215, then a line for each group the store carries that its wildmat
+matches, all without one, in the order the host gave them: its name, its highest and lowest numbers
+as GROUP gives them, and `y` while the store accepts, else `n` (§7.6.3), as the store is when the line
+is sent. Such a reply goes out a part at a time: its next lines, as many as one action carries, its
+terminating line once that fits too, each when the last was taken; the host is not told to read and
+no line is answered until it ends. LIST NEWSGROUPS answers 215 and an empty list, as no group has a
+description, and NEWGROUPS 231 and an empty list, as no group has a time it was created (§7.6.6,
+§7.3.2). DATE answers 111 with the host's wall clock in UTC (§7.1).
 -/
 
 namespace DN.News.SessionSpec
@@ -87,6 +99,14 @@ inductive Phase
   | quitting
   /-- the input has ended; what was received is answered, then the connection closes -/
   | ending
+  deriving DecidableEq, Repr
+
+/-- What is left of a reply that goes out a part at a time (`Listing.part`): the numbers of the
+articles of group `g` from `from_` up to `upto`; or the groups from the `next`th the store carries, of
+those the wildmat matches, all with none. -/
+inductive Listing
+  | numbers (g : List Byte) (from_ upto : Nat)
+  | groups (w : Option Wildmat) (next : Nat)
   deriving DecidableEq, Repr
 
 structure Conn where
@@ -124,6 +144,8 @@ structure Conn where
   /-- the selected group and the current article number, `none` and zero while invalid -/
   group : Option (List Byte) := none
   current : Nat := 0
+  /-- what is left of a reply that goes out a part at a time -/
+  listing : Option Listing := none
   deriving DecidableEq, Repr
 
 def Conn.fresh (i : Identity) (greeted : Bool) (number gen now : Nat) : Conn :=
@@ -255,32 +277,35 @@ def Conn.due (c : Conn) (now : Nat) : Bool :=
 /-- Whether the host should read from the connection: it takes commands and holds none. -/
 def Conn.wants (c : Conn) : Bool := c.phase == .open_ && c.held.isEmpty
 
-/-- …and no POST or read waits or is answered, and the slot of its POST takes octets. -/
+/-- …and no POST or read waits or is answered, no reply goes out a part at a time, and the slot of its
+POST takes octets. -/
 def Conn.wantsWith (st : Option Store) (c : Conn) : Bool :=
-  c.wants && !c.waiting && c.want.isNone && match c.post with
+  c.wants && !c.waiting && c.want.isNone && c.listing.isNone && match c.post with
     | none => true
     | some k => st.any fun st => (st.slot k).any Slot.takes
 
 /-- The line's deadline runs while the program waits for the rest of a line: everything sent was
-taken, the connection takes commands and is not answered by a read, and a line is begun. It starts when the waiting starts,
-and nothing but the end of the waiting moves it. -/
+taken, the connection takes commands, is not answered by a read and has no reply going out a part at
+a time, and a line is begun. It starts when the waiting starts, and nothing but the end of the
+waiting moves it. -/
 def Conn.waitLine (now : Nat) (c : Conn) : Conn :=
-  if c.out.isEmpty && c.phase == .open_ && c.line != .fresh && c.want.isNone then
+  if c.out.isEmpty && c.phase == .open_ && c.line != .fresh && c.want.isNone && c.listing.isNone then
     if c.lineDue == 0 then { c with lineDue := now + lineTime } else c
   else { c with lineDue := 0 }
 
 /-- What a store makes of a reply: whether POST is offered, whether the store accepts, the groups it
-carries and the commits of the articles it holds. -/
+carries and the commits of the articles it holds; and the wall clock, which DATE gives. -/
 structure Posting where
   offered : Bool
   accepting : Bool
   groups : List (List Byte)
   held : List Journal.Commit
+  wall : Nat
 
-/-- What a store makes of a reply, if there is one. -/
-def Posting.of : Option Store → Posting
-  | some st => ⟨true, st.accepting, st.cfg.groups, st.articles⟩
-  | none => ⟨false, false, [], []⟩
+/-- What a store makes of a reply, if there is one, at the wall clock `wall`. -/
+def Posting.of (wall : Nat) : Option Store → Posting
+  | some st => ⟨true, st.accepting, st.cfg.groups, st.articles, wall⟩
+  | none => ⟨false, false, [], [], wall⟩
 
 /-- The articles held in group `g`: each one's number there and its message-id. -/
 def numbered (held : List Journal.Commit) (g : List Byte) : List (Nat × List Byte) :=
@@ -303,6 +328,18 @@ def summary (held : List Journal.Commit) (g : List Byte) : Reply :=
   match (numbered held g).map (·.1) with
   | [] => .selected 0 1 0 g
   | x :: rest => .selected (rest.length + 1) (rest.foldl min x) (rest.foldl max x) g
+
+/-- `n` in decimal digits, at least `k` of them, zeros before it. -/
+def padded (k n : Nat) : List Byte := List.replicate (k - (decimal n).length) 48#8 ++ decimal n
+
+/-- The wall clock, in milliseconds, as DATE gives it (§7.1): `yyyymmddhhmmss` in UTC, the year in
+four digits, or as many as it has past the year 9999. -/
+def dateDigits (wall : Nat) : List Byte :=
+  let secs := wall / 1000
+  let date := ArticleSpec.civilFromDays (secs / 86400)
+  let t := secs % 86400
+  padded 4 date.1 ++ padded 2 date.2.1 ++ padded 2 date.2.2 ++ padded 2 (t / 3600) ++
+    padded 2 (t % 3600 / 60) ++ padded 2 (t % 60)
 
 /-- What an article of group `g` found gives: 223 for STAT, else a read. -/
 def foundAs (k : Cmd) : Nat × List Byte → Reply
@@ -334,13 +371,70 @@ def resolve (p : Posting) (c : Conn) : Reply → Reply
       if c.current = 0 then .noCurrent
       else (((if fwd then nextAfter else prevBefore) p.held g c.current).map fun (n, id) => .stat n id).getD
         (if fwd then .noNext else .noPrevious)
+  | .listGroup g lo hi =>
+    match g.orElse fun _ => c.group with
+    | none => .noGroup
+    | some g =>
+      if p.groups.contains g then
+        match summary p.held g with
+        | .selected count low high g => .listed count low high g lo hi
+        | r => r
+      else .noSuchGroup
+  | .date => .time (dateDigits p.wall)
   | r => r
+
+/-- The line of LIST ACTIVE for group `g`: its name, its highest and lowest numbers as GROUP gives
+them, and `y` while the store accepts, else `n` (§7.6.3). No name the store carries starts with a
+dot (`ArticleSpec.Context.ok`), so no line needs one put before it. -/
+def activeLine (p : Posting) (g : List Byte) : List Byte :=
+  match summary p.held g with
+  | .selected _ low high _ =>
+    g ++ SP :: decimal high ++ SP :: decimal low ++ SP :: ascii (if p.accepting then "y" else "n") ++ crlf
+  | _ => []
+
+/-- What is left to go out of a reply after its first line: LISTGROUP's numbers up to the group's
+highest as it is selected, LIST ACTIVE's groups from the first. -/
+def listingOf : Reply → Option Listing
+  | .listed _ _ high g lo hi => some (.numbers g lo (min hi high))
+  | .active w => some (.groups w 0)
+  | _ => none
+
+/-- A listing's next line, and the listing after it, none once it has no line left: of the groups
+`takes` takes, each's line as `line` writes it. -/
+def nextWith (takes : Wildmat → List Byte → Bool) (line : List Byte → List Byte) (p : Posting) :
+    Listing → Option (List Byte × Listing)
+  | .numbers g from_ upto =>
+    match (((numbered p.held g).map (·.1)).filter fun n => from_ ≤ n && n ≤ upto).min? with
+    | some n => some (decimal n ++ crlf, .numbers g (n + 1) upto)
+    | none => none
+  | .groups w next =>
+    match ((p.groups.drop next).zipIdx next).find? (fun (g, _) => w.all (takes · g)) with
+    | some (g, k) => some (line g, .groups w (k + 1))
+    | none => none
+
+def Listing.next (p : Posting) : Listing → Option (List Byte × Listing) := nextWith wildmatch (activeLine p) p
+
+/-- After `acc`, a listing's next lines as long as they fit `most` octets, then its terminating line
+once that fits too; with what is left, none once the terminating line is given. -/
+def partWith (next : Listing → Option (List Byte × Listing)) (most : Nat) :
+    Nat → List Byte → Listing → List Byte × Option Listing
+  | 0, acc, l => (acc, some l)
+  | fuel + 1, acc, l =>
+    match next l with
+    | some (line, l') => if acc.length + line.length ≤ most then partWith next most fuel (acc ++ line) l' else (acc, some l)
+    | none => if acc.length + 3 ≤ most then (acc ++ ascii ".\r\n", none) else (acc, some l)
+
+/-- **A listing's next part**, of one action at most. A line has at least three octets, so `fuel` of
+one more than an action's is enough; each part holds a line or the terminating one, and leaves less
+of the listing (`part_progress`). -/
+def Listing.part (p : Posting) : Nat → List Byte → Listing → List Byte × Option Listing :=
+  partWith (Listing.next p) chunk
 
 /-- Answer the first held line that gets a reply, putting it in `out`, and frame on past the lines
 that get none and into an unfinished last line, stopping before the next line that gets a reply: a
-connection holds input only while such a line waits. A connection with output untaken, or an
-ARTICLE, HEAD or BODY to be answered by a read, answers nothing; a POST that may have a slot waits
-for one. Each round frames at least one byte, so `fuel`
+connection holds input only while such a line waits. A connection with output untaken, an ARTICLE,
+HEAD or BODY to be answered by a read, or a reply going out a part at a time, answers nothing; a POST
+that may have a slot waits for one. Each round frames at least one byte, so `fuel`
 of one more than the held bytes is enough; a line left unanswered was framed from the start of a
 line, so the framer's state is left as it was. -/
 def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
@@ -356,13 +450,14 @@ def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
         match resolve p c (replyIn p.offered l) with
         | .ignore => serve i p now fuel c1
         | r =>
-          if !c.out.isEmpty || c.want.isSome then c
+          if !c.out.isEmpty || c.want.isSome || c.listing.isSome then c
           else if r = .post then { c1 with waiting := true, first := 0, idle := 0 }
           else if let .lookup k n id := r then
             serve i p now fuel { c1 with want := some (k, n, id), first := 0, idle := 0 }
           else
             let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity,
-                                group := r.groupAfter c1.group, current := r.currentAfter c1.current }
+                                group := r.groupAfter c1.group, current := r.currentAfter c1.current,
+                                listing := listingOf r }
             if r = .quit then { c2 with phase := .quitting, held := [] } else serve i p now fuel c2
 
 /-- The reply an outcome gives. -/
@@ -392,7 +487,7 @@ def progress (i : Identity) (now wall : Nat) (st : Option Store) (c : Conn) :
           let c' := { c with
             held := f.2, articleDue := due, out := text i (outcomeReply o), post := none,
             idle := now + inactivity }
-          (serve i (Posting.of (some freed)) now (f.2.length + 1) c', some freed, false)
+          (serve i (Posting.of wall (some freed)) now (f.2.length + 1) c', some freed, false)
         | none => ({ c with held := f.2, articleDue := due }, some st1, false)
       | none => ({ c with held := f.2, post := none }, some st1, false)
   | _, st => (c, st, false)
@@ -448,6 +543,17 @@ def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
       | none => ({ c with read := none, want := none }, some st, false)
   | _, st => (c, st, false)
 
+/-- A connection with a reply going out a part at a time and nothing untaken: its next part put to
+send, the inactivity deadline started again. -/
+def progressList (now wall : Nat) (st : Option Store) (c : Conn) : Conn :=
+  match c.listing with
+  | some l =>
+    if !c.out.isEmpty || c.phase = .quitting then c
+    else
+      let (part, rest) := l.part (Posting.of wall st) (chunk + 1) []
+      { c with out := part, listing := rest, idle := now + inactivity }
+  | none => c
+
 /-- An ARTICLE, HEAD or BODY that waits gets a free read, when fewer came before it than reads are
 free. -/
 def claimRead (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store :=
@@ -489,9 +595,10 @@ def act (i : Identity) (now wall idx : Nat) (st : Option Store) (c : Conn) :
       let h := progressRead i now g.2.1 g.1
       if h.2.2 then (none, some (.closeNow idx c.gen), h.2.1.map (Store.abandon idx c.gen))
       else
-        let c1 := if h.1.out.isEmpty && h.1.phase != .quitting && h.1.post.isNone && !h.1.waiting &&
-            h.1.want.isNone
-          then serve i (Posting.of h.2.1) now (h.1.held.length + 1) h.1 else h.1
+        let l := progressList now wall h.2.1 h.1
+        let c1 := if l.out.isEmpty && l.phase != .quitting && l.post.isNone && !l.waiting &&
+            l.want.isNone && l.listing.isNone
+          then serve i (Posting.of wall h.2.1) now (l.held.length + 1) l else l
         let st1 := if c1.waiting && !h.1.waiting then
             h.2.1.map fun st => { st with waiters := st.waiters ++ [(idx, c.gen)] }
           else if c1.want.isSome && h.1.want.isNone then
@@ -563,10 +670,10 @@ def settle (s : Server) (actions : List Action) (taken : List Nat) : Except Brea
 
 /-- Whether the connection at `idx` can go on without waiting for the host: nothing of its output is
 untaken, and it holds input to answer or to frame, has to close, waits for a slot it gets now or
-for its 403, waits for a read it gets now, or is answered by a read that has octets to give or
-failed. -/
+for its 403, waits for a read it gets now, is answered by a read that has octets to give or
+failed, or has a reply going out a part at a time. -/
 def Conn.ready (st : Option Store) (idx : Nat) (c : Conn) : Bool :=
-  c.out.isEmpty && (c.phase != .open_ ||
+  c.out.isEmpty && (c.phase != .open_ || c.listing.isSome ||
     (c.waiting && st.any fun st => !st.accepting || st.admits (idx, c.gen)) ||
     (c.want.isSome && st.any fun st => match c.read with
       | none => st.admitsRead (idx, c.gen)
@@ -592,16 +699,18 @@ def deadline (s : Server) : Nat :=
 /-! ## What the session guarantees by construction -/
 
 /-- A store whose articles have article numbers and message-ids, and no more of them than an article
-number counts. -/
+number counts; whose groups' names are no longer than a group's may be; and a wall clock below the
+host's limit. -/
 def Posting.Fits (p : Posting) : Prop :=
-  p.held.length ≤ numberMax ∧ ∀ c ∈ p.held, c.messageId.length ≤ 250 ∧ ∀ x ∈ c.groups, x.number ≤ numberMax
+  p.held.length ≤ numberMax ∧ (∀ c ∈ p.held, c.messageId.length ≤ 250 ∧ ∀ x ∈ c.groups, x.number ≤ numberMax) ∧
+    (∀ g ∈ p.groups, g.length ≤ groupNameMax) ∧ p.wall < wallLimit
 
 theorem numbered_bounded {p : Posting} (hp : p.Fits) (g : List Byte) :
     ∀ x ∈ numbered p.held g, x.1 ≤ numberMax ∧ x.2.length ≤ 250 := by
   intro x hx
   simp only [numbered, List.mem_filterMap, Option.map_eq_some_iff] at hx
   obtain ⟨c, hc, y, hy, rfl⟩ := hx
-  exact ⟨(hp.2 c hc).2 y (List.mem_of_find?_eq_some hy), (hp.2 c hc).1⟩
+  exact ⟨(hp.2.1 c hc).2 y (List.mem_of_find?_eq_some hy), (hp.2.1 c hc).1⟩
 
 /-- A fold that keeps what it has or takes the element in hand ends with what it began with or an
 element. -/
@@ -637,6 +746,13 @@ theorem foldl_max_le (m : Nat) : ∀ (l : List Nat) (x : Nat), x ≤ m → (∀ 
     foldl_max_le m rest (max x y) (Nat.max_le.mpr ⟨hx, hl y (List.mem_cons_self ..)⟩)
       fun z hz => hl z (List.mem_cons_of_mem _ hz)
 
+theorem summary_selected (held : List Journal.Commit) (g : List Byte) :
+    ∃ count low high, summary held g = .selected count low high g := by
+  unfold summary
+  split
+  · exact ⟨_, _, _, rfl⟩
+  · exact ⟨_, _, _, rfl⟩
+
 theorem summary_bounded {p : Posting} (hp : p.Fits) (g : List Byte) (hg : g.length ≤ groupNameMax) :
     (summary p.held g).bounded = true := by
   have hb := numbered_bounded hp g
@@ -663,6 +779,65 @@ theorem foundAs_bounded {p : Posting} (hp : p.Fits) {g : List Byte} (k : Cmd) {x
   obtain ⟨n, id⟩ := x
   obtain ⟨h1, h2⟩ := numbered_bounded hp g _ hx
   by_cases hk : k = .stat <;> simp_all [foundAs, Reply.bounded]
+
+theorem padded_length (k n : Nat) (hk : k ≤ 10) (hn : n < 10 ^ 10) : (padded k n).length ≤ 10 := by
+  have := decimal_length n hn
+  simp only [padded, List.length_append, List.length_replicate]
+  omega
+
+theorem civil_small (z : Nat) (h : z < 2 ^ 30) :
+    (ArticleSpec.civilFromDays z).1 < 10 ^ 10 ∧ (ArticleSpec.civilFromDays z).2.1 < 10 ^ 10 ∧
+      (ArticleSpec.civilFromDays z).2.2 < 10 ^ 10 := by
+  simp only [ArticleSpec.civilFromDays]
+  split <;> split <;> omega
+
+/-- DATE's digits, of a wall clock below the host's limit, are at most sixty. -/
+theorem dateDigits_length (wall : Nat) (h : wall < wallLimit) : (dateDigits wall).length ≤ 60 := by
+  have hz : wall / 1000 / 86400 < 2 ^ 30 := by simp only [wallLimit] at h; omega
+  obtain ⟨h1, h2, h3⟩ := civil_small _ hz
+  have t1 : wall / 1000 % 86400 / 3600 < 10 ^ 10 := by omega
+  have t2 : wall / 1000 % 86400 % 3600 / 60 < 10 ^ 10 := by omega
+  have t3 : wall / 1000 % 86400 % 60 < 10 ^ 10 := by omega
+  simp only [dateDigits, List.length_append]
+  have := padded_length 4 _ (by decide) h1
+  have := padded_length 2 _ (by decide) h2
+  have := padded_length 2 _ (by decide) h3
+  have := padded_length 2 _ (by decide) t1
+  have := padded_length 2 _ (by decide) t2
+  have := padded_length 2 _ (by decide) t3
+  omega
+
+/-- RFC 3977 §7.1.3's example, the epoch, a leap day, and the last wall clock the host may give. -/
+theorem date_examples :
+    dateDigits 930146184000 = ascii "19990623135624" ∧ dateDigits 999 = ascii "19700101000000" ∧
+    dateDigits 951782400000 = ascii "20000229000000" ∧ dateDigits (wallLimit - 1) = ascii "368120220003615" := by
+  decide +kernel
+
+/-- A store of two groups, the first holding articles 3 and 5, the second article 1. -/
+def listedPosting : Posting :=
+  ⟨true, true, [ascii "a.b", ascii "c"],
+    [⟨1, ascii "<1@x>", [⟨ascii "a.b", 3⟩], 1, 1, 0⟩, ⟨2, ascii "<2@x>", [⟨ascii "a.b", 5⟩, ⟨ascii "c", 1⟩], 1, 1, 0⟩], 0⟩
+
+/-- A group of articles 1 to 200. -/
+def longPosting : Posting :=
+  ⟨true, false, [ascii "g"], (List.range 200).map fun k => ⟨k + 1, ascii "<x>", [⟨ascii "g", k + 1⟩], 1, 1, 0⟩, 0⟩
+
+/-- Listings in parts: the numbers in a range, the groups a wildmat matches, and a part that ends as
+an action is full, the next with the terminating line. -/
+theorem listing_examples :
+    (Listing.numbers (ascii "a.b") 1 numberMax).part listedPosting (chunk + 1) [] = (ascii "3\r\n5\r\n.\r\n", none) ∧
+    (Listing.numbers (ascii "a.b") 4 5).part listedPosting (chunk + 1) [] = (ascii "5\r\n.\r\n", none) ∧
+    (Listing.numbers (ascii "a.b") 1 4).part listedPosting (chunk + 1) [] = (ascii "3\r\n.\r\n", none) ∧
+    (Listing.groups none 0).part listedPosting (chunk + 1) [] = (ascii "a.b 5 3 y\r\nc 1 1 y\r\n.\r\n", none) ∧
+    (Listing.groups (some (wm "c*,x")) 0).part listedPosting (chunk + 1) [] = (ascii "c 1 1 y\r\n.\r\n", none) ∧
+    (Listing.groups (some (wm "x")) 0).part listedPosting (chunk + 1) [] = (ascii ".\r\n", none) ∧
+    (Listing.groups none 0).part longPosting (chunk + 1) [] = (ascii "g 200 1 n\r\n.\r\n", none) ∧
+    ((Listing.numbers (ascii "g") 1 numberMax).part longPosting (chunk + 1) []).1.length = 512 ∧
+    ((Listing.numbers (ascii "g") 1 numberMax).part longPosting (chunk + 1) []).2 =
+      some (.numbers (ascii "g") 125 numberMax) ∧
+    (Listing.numbers (ascii "g") 125 numberMax).part longPosting (chunk + 1) [] =
+      (((List.range 76).map fun k => decimal (k + 125) ++ crlf).flatten ++ ascii ".\r\n", none) := by
+  decide +kernel
 
 /-- A store's answer keeps a reply's message-id one a store may hold, and its numbers article
 numbers. -/
@@ -713,7 +888,179 @@ theorem resolve_bounded (p : Posting) (hp : p.Fits) (c : Conn) (r : Reply) (h : 
           · exact pick_mem (.inr (.inr (by simpa using hx)))
           · exact pick_mem (.inr (.inl (by simpa using hx)))
         · cases fwd <;> rfl
+  case listGroup g lo hi =>
+    simp only [resolve]
+    split
+    · rfl
+    · rename_i g' _
+      split
+      · rename_i hc
+        have hg := hp.2.2.1 g' (List.contains_iff_mem.mp hc)
+        have hs := summary_bounded hp g' hg
+        split
+        · rename_i e; rw [e] at hs; simpa [Reply.bounded] using hs
+        · exact hs
+      · rfl
+  case date =>
+    simp only [resolve, Reply.bounded, decide_eq_true_eq]
+    exact Nat.le_trans (dateDigits_length _ hp.2.2.2) (by decide)
   all_goals simp only [resolve] <;> (repeat' split) <;> simp_all [Reply.bounded]
+
+/-! ## A listing's parts -/
+
+/-- What is left of a listing: of numbers, how many from where it is to its end; of groups, how many
+the store carries from where it is. -/
+def Listing.left (p : Posting) : Listing → Nat
+  | .numbers _ from_ upto => upto + 1 - from_
+  | .groups _ next => p.groups.length - next
+
+theorem partWith_length (next : Listing → Option (List Byte × Listing)) (most : Nat) :
+    ∀ fuel (acc : List Byte) (l : Listing), acc.length ≤ most → (partWith next most fuel acc l).1.length ≤ most := by
+  intro fuel
+  induction fuel with
+  | zero => intro acc l h; exact h
+  | succ fuel ih =>
+    intro acc l h
+    unfold partWith
+    split
+    · split
+      · rename_i hl; exact ih _ _ (by simpa using hl)
+      · exact h
+    · split
+      · rename_i hl
+        have : (ascii ".\r\n").length = 3 := by decide
+        simp only [List.length_append]; omega
+      · exact h
+
+theorem partWith_prefix (next : Listing → Option (List Byte × Listing)) (most : Nat) :
+    ∀ fuel (acc : List Byte) (l : Listing), acc <+: (partWith next most fuel acc l).1 := by
+  intro fuel
+  induction fuel with
+  | zero => intro acc l; exact List.prefix_refl _
+  | succ fuel ih =>
+    intro acc l
+    unfold partWith
+    split
+    · split
+      · exact (List.prefix_append _ _).trans (ih _ _)
+      · exact List.prefix_refl _
+    · split
+      · exact List.prefix_append _ _
+      · exact List.prefix_refl _
+
+/-- **Each line a listing gives leaves less of it.** -/
+theorem next_left (p : Posting) (l l' : Listing) (line : List Byte) (h : l.next p = some (line, l')) :
+    l'.left p < l.left p := by
+  cases l with
+  | numbers g from_ upto =>
+    simp only [Listing.next, nextWith] at h
+    split at h
+    · rename_i n hn
+      cases h
+      have hm := List.min?_mem hn
+      simp only [List.mem_filter, Bool.and_eq_true, decide_eq_true_eq] at hm
+      simp only [Listing.left]
+      omega
+    · cases h
+  | groups w next =>
+    simp only [Listing.next, nextWith] at h
+    split at h
+    · rename_i g k hk
+      cases h
+      have hm := List.mem_zipIdx (List.mem_of_find?_eq_some hk)
+      simp only [List.length_drop] at hm
+      simp only [Listing.left]
+      omega
+    · cases h
+
+theorem all_mono {α : Type} {o : Option α} {P Q : α → Bool} (h : o.all P = true)
+    (hq : ∀ x, P x = true → Q x = true) : o.all Q = true := by
+  cases o with
+  | none => rfl
+  | some x => simpa using hq x (by simpa using h)
+
+theorem partWith_left (p : Posting) (most : Nat) :
+    ∀ fuel (acc : List Byte) (l : Listing),
+      (partWith (Listing.next p) most fuel acc l).2.all (·.left p ≤ l.left p) := by
+  intro fuel
+  induction fuel with
+  | zero => intro acc l; simp [partWith]
+  | succ fuel ih =>
+    intro acc l
+    unfold partWith
+    split
+    · rename_i line l' h
+      split
+      · have hd := next_left p l l' line h
+        exact all_mono (ih _ _) fun x hx => by simp only [decide_eq_true_eq] at hx ⊢; omega
+      · simp
+    · split <;> simp
+
+/-- A line of a listing, of a store that fits, is not empty and fits one action. -/
+theorem next_fits (p : Posting) (hp : p.Fits) (l l' : Listing) (line : List Byte) (h : l.next p = some (line, l')) :
+    line ≠ [] ∧ line.length ≤ chunk := by
+  cases l with
+  | numbers g from_ upto =>
+    simp only [Listing.next, nextWith] at h
+    split at h
+    · rename_i n hn
+      cases h
+      have hm := List.min?_mem hn
+      simp only [List.mem_filter, List.mem_map] at hm
+      obtain ⟨⟨x, hx, rfl⟩, _⟩ := hm
+      have := decimal_length x.1 (by have := (numbered_bounded hp g x hx).1; simp only [numberMax] at this; omega)
+      simp only [crlf, ne_eq, List.append_eq_nil_iff, reduceCtorEq, and_false, not_false_eq_true,
+        List.length_append, List.length_cons, List.length_nil, chunk, true_and]
+      omega
+    · cases h
+  | groups w next =>
+    simp only [Listing.next, nextWith] at h
+    split at h
+    · rename_i g k hk
+      cases h
+      have hm := (List.mem_zipIdx (List.mem_of_find?_eq_some hk)).2.2
+      have hg : g ∈ p.groups := by
+        rw [hm]; exact List.mem_of_mem_drop (List.getElem_mem _)
+      have hl := hp.2.2.1 g hg
+      have hs := summary_bounded hp g hl
+      unfold activeLine
+      split
+      · rename_i cnt low high g' e
+        rw [e] at hs
+        simp only [Reply.bounded, Bool.and_eq_true, decide_eq_true_eq] at hs
+        have := decimal_length low (by simp only [numberMax] at hs; omega)
+        have := decimal_length high (by simp only [numberMax] at hs; omega)
+        have : (ascii (if p.accepting then "y" else "n")).length = 1 := by split <;> decide
+        simp only [groupNameMax] at hl
+        have hlen : (g ++ SP :: decimal high ++ SP :: decimal low ++ SP ::
+            ascii (if p.accepting then "y" else "n") ++ crlf).length =
+            g.length + (decimal high).length + (decimal low).length +
+              (ascii (if p.accepting then "y" else "n")).length + 5 := by
+          simp only [crlf, List.length_append, List.length_cons, List.length_nil]; omega
+        exact ⟨List.ne_nil_of_length_pos (by omega), by rw [hlen]; simp only [chunk]; omega⟩
+      · rename_i e
+        obtain ⟨c, lo, hi, hs'⟩ := summary_selected p.held g
+        exact absurd hs' (e c lo hi g)
+    · cases h
+
+/-- **A listing's part fits one action, and either ends the listing or leaves less of it**, of a
+store that fits; it is never empty. -/
+theorem part_progress (p : Posting) (hp : p.Fits) (l : Listing) :
+    (l.part p (chunk + 1) []).1.length ≤ chunk ∧ (l.part p (chunk + 1) []).1 ≠ [] ∧
+      (l.part p (chunk + 1) []).2.all (·.left p < l.left p) := by
+  refine ⟨partWith_length _ _ _ _ _ (Nat.zero_le _), ?_⟩
+  simp only [Listing.part, partWith]
+  split
+  · rename_i line l' h
+    obtain ⟨hne, hlen⟩ := next_fits p hp l l' line h
+    simp only [List.length_nil, Nat.zero_add, hlen, ↓reduceIte, List.nil_append]
+    refine ⟨fun e => hne (List.prefix_nil.mp (e ▸ partWith_prefix _ _ _ _ _)), ?_⟩
+    have hd := next_left p l l' line h
+    exact all_mono (partWith_left p chunk chunk line l') fun x hx => by
+      simp only [decide_eq_true_eq] at hx ⊢; omega
+  · have : ([] : List Byte).length + 3 ≤ chunk := by decide
+    simp only [this, ↓reduceIte]
+    exact ⟨by decide, rfl⟩
 
 /-- **Every reply a connection gets fits one action**, with a store whose articles have article
 numbers and message-ids, or without one. -/
@@ -722,10 +1069,10 @@ theorem reply_fits (i : Identity) (hi : i.ok = true) (p : Posting) (hp : p.Fits)
   text_fits i hi _ (resolve_bounded p hp c _ (replyIn_bounded _ l))
 
 /-- The premise holds without a store, and of a store holding an article. -/
-theorem fits_witness : (Posting.of none).Fits ∧
+theorem fits_witness : (Posting.of 0 none).Fits ∧
     (⟨true, true, [ascii "local.test"],
-      [⟨1, ascii "<a@b>", [⟨ascii "local.test", 1⟩], 19, 24, 0⟩]⟩ : Posting).Fits :=
-  ⟨⟨Nat.zero_le _, fun _ h => absurd h List.not_mem_nil⟩, by unfold Posting.Fits; decide +kernel⟩
+      [⟨1, ascii "<a@b>", [⟨ascii "local.test", 1⟩], 19, 24, 0⟩], 1790000000000⟩ : Posting).Fits :=
+  ⟨by unfold Posting.Fits Posting.of; decide +kernel, by unfold Posting.Fits; decide +kernel⟩
 
 def Action.idx : Action → Nat
   | .send idx .. | .closeGracefully idx _ | .closeNow idx _ => idx
@@ -843,6 +1190,15 @@ theorem claimRead_busy (idx : Nat) (st : Option Store) (c : Conn)
     · simp [h]
   · rfl
 
+theorem progressList_busy (now wall : Nat) (st : Option Store) (c : Conn)
+    (h : c.out ≠ [] ∨ c.phase = .quitting) : progressList now wall st c = c := by
+  unfold progressList
+  split
+  · rcases h with h | h
+    · simp [isEmpty_false h]
+    · simp [h]
+  · rfl
+
 theorem want_both (c : Conn) : (c.want.isSome && c.want.isNone) = false := by
   cases c.want <;> rfl
 
@@ -852,16 +1208,16 @@ theorem act_resends (i : Identity) (now wall idx : Nat) (st : Option Store) (c :
     (hd : c.due now = false) (h : c.out ≠ []) (hb : c.blocked = false) :
     (act i now wall idx st c).2.1 = some (.send idx c.gen c.out (c.wantsWith st)) := by
   simp [act, hd, progress_busy i now wall st c (.inl h), progressRead_busy i now st c (.inl h),
-    claim_busy i now idx st c (.inl h), claimRead_busy idx st c (.inl h), emit, isEmpty_false h, hb,
-    want_both]
+    progressList_busy now wall st c (.inl h), claim_busy i now idx st c (.inl h),
+    claimRead_busy idx st c (.inl h), emit, isEmpty_false h, hb, want_both]
 
 /-- …and nothing is sent to a connection the host has not reported ready. -/
 theorem act_blocked (i : Identity) (now wall idx : Nat) (st : Option Store) (c : Conn)
     (hd : c.due now = false) (h : c.out ≠ []) (hb : c.blocked = true) :
     (act i now wall idx st c).2.1 = none := by
   simp [act, hd, progress_busy i now wall st c (.inl h), progressRead_busy i now st c (.inl h),
-    claim_busy i now idx st c (.inl h), claimRead_busy idx st c (.inl h), emit, isEmpty_false h, hb,
-    want_both]
+    progressList_busy now wall st c (.inl h), claim_busy i now idx st c (.inl h),
+    claimRead_busy idx st c (.inl h), emit, isEmpty_false h, hb, want_both]
 
 /-- Every reply but `ignore` has bytes. -/
 theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
@@ -877,13 +1233,14 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .stat _ _, _ => fun e =>
     absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp e).1).1).1
       (by decide +kernel)
-  | .selected .., _ => fun e => by
+  | .selected .., _ | .listed .., _ | .time _, _ => fun e => by
     simp only [text, List.append_assoc, List.append_eq_nil_iff] at e
     exact absurd e.1 (by decide +kernel)
   | .quit, _ | .noGroup, _ | .noSuchId, _ | .unknown, _ | .syntax, _ | .post, _ | .posted, _
   | .failed, _ | .notPermitted, _ | .unavailable, _ | .lookup _ _ _, _ | .unreadable, _
   | .select _, _ | .byNumber _ _, _ | .current _, _ | .move _, _ | .noSuchGroup, _ | .noCurrent, _
-  | .noNext, _ | .noPrevious, _ | .noNumber, _ => by
+  | .noNext, _ | .noPrevious, _ | .noNumber, _ | .listGroup .., _ | .active _, _ | .newsgroups, _
+  | .newGroups, _ | .date, _ => by
     simp only [text]; decide +kernel
 
 /-- `serve` leaves output that is already there as it is. -/
@@ -1035,6 +1392,11 @@ theorem progressRead_keeps (i : Identity) (now : Nat) (st : Option Store) (c : C
   unfold progressRead
   repeat (first | split | exact ⟨rfl, rfl⟩ | dsimp only)
 
+theorem progressList_keeps (now wall : Nat) (st : Option Store) (c : Conn) :
+    (progressList now wall st c).phase = c.phase ∧ (progressList now wall st c).lineDue = c.lineDue := by
+  unfold progressList
+  repeat (first | split | exact ⟨rfl, rfl⟩ | dsimp only)
+
 theorem claimRead_keeps (idx : Nat) (st : Option Store) (c : Conn) :
     (claimRead idx st c).1.phase = c.phase ∧ (claimRead idx st c).1.lineDue = c.lineDue := by
   unfold claimRead
@@ -1044,8 +1406,8 @@ theorem claimRead_keeps (idx : Nat) (st : Option Store) (c : Conn) :
 after its turn keeps the deadline it had, whatever the turn read. -/
 theorem act_keeps_line (i : Identity) (now wall idx : Nat) (st : Option Store) (c c' : Conn)
     (hd : c.due now = false) (hl : c.lineDue ≠ 0) (h : (act i now wall idx st c).1 = some c')
-    (ho : c'.out = []) (hp : c'.phase = .open_) (hf : c'.line ≠ .fresh) (hw : c'.want = none) :
-    c'.lineDue = c.lineDue := by
+    (ho : c'.out = []) (hp : c'.phase = .open_) (hf : c'.line ≠ .fresh) (hw : c'.want = none)
+    (hli : c'.listing = none) : c'.lineDue = c.lineDue := by
   simp only [act, hd, Bool.false_eq_true, ↓reduceIte] at h
   split at h
   · cases h
@@ -1056,16 +1418,19 @@ theorem act_keeps_line (i : Identity) (now wall idx : Nat) (st : Option Store) (
     have e0 : c0.lineDue = c.lineDue := by
       rw [emit_lineDue idx _ _ c0 h0, (claimRead_keeps ..).2, (claim_keeps ..).2]
       split
-      · rw [serve_lineDue, (progressRead_keeps ..).2, (progress_keeps ..).2]
-      · rw [(progressRead_keeps ..).2, (progress_keeps ..).2]
+      · rw [serve_lineDue, (progressList_keeps ..).2, (progressRead_keeps ..).2, (progress_keeps ..).2]
+      · rw [(progressList_keeps ..).2, (progressRead_keeps ..).2, (progress_keeps ..).2]
     obtain ⟨so, sp, sl⟩ := waitLine_same now c0
     have sw : (c0.waitLine now).want = c0.want := by
+      unfold Conn.waitLine; split <;> (try split) <;> rfl
+    have sli : (c0.waitLine now).listing = c0.listing := by
       unfold Conn.waitLine; split <;> (try split) <;> rfl
     rw [so] at ho
     rw [sp] at hp
     rw [sl] at hf
     rw [sw] at hw
-    simp [Conn.waitLine, ho, hp, hf, hw, e0, hl]
+    rw [sli] at hli
+    simp [Conn.waitLine, ho, hp, hf, hw, hli, e0, hl]
 
 /-- An open connection that answers QUIT is left with the 205 to send and nothing held. -/
 theorem serve_quit (i : Identity) (p : Posting) (now : Nat) :
@@ -1112,6 +1477,8 @@ theorem act_quitting (i : Identity) (now wall idx : Nat) (st : Option Store) (c 
   · rw [progress_busy i now wall st c (.inr hq)]
     simp only [Bool.false_eq_true, ↓reduceIte]
     rw [progressRead_busy i now st c (.inr hq)]
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    rw [progressList_busy now wall st c (.inr hq)]
     simp only [Bool.false_eq_true, ↓reduceIte, hq, bne_self_eq_false, Bool.and_false,
       Bool.false_and, Bool.and_not_self, want_both]
     rw [claim_busy i now idx st c (.inr hq), claimRead_busy idx st c (.inr hq)]
@@ -1296,6 +1663,13 @@ theorem progressRead_quitRest (i : Identity) (now : Nat) (st : Option Store) (c 
   · intro hq'
     exact absurd ((progressRead_keeps i now st c).1 ▸ hq') hq
 
+theorem progressList_quitRest (i : Identity) (now wall : Nat) (st : Option Store) (c : Conn)
+    (h : c.QuitRest i) : (progressList now wall st c).QuitRest i := by
+  by_cases hq : c.phase = .quitting
+  · rw [progressList_busy now wall st c (.inr hq)]; exact h
+  · intro hq'
+    exact absurd ((progressList_keeps now wall st c).1 ▸ hq') hq
+
 theorem claimRead_quitRest (i : Identity) (idx : Nat) (st : Option Store) (c : Conn)
     (h : c.QuitRest i) : (claimRead idx st c).1.QuitRest i := by
   by_cases hq : c.phase = .quitting
@@ -1316,8 +1690,9 @@ theorem act_quitRest {i : Identity} {now wall idx : Nat} {st : Option Store} {c 
       · simp only [Option.map_eq_some_iff] at h
         obtain ⟨c1, h1, rfl⟩ := h
         apply waitLine_quitRest
-        have hg := progressRead_quitRest i now (progress i now wall st c).2.1 _
-          (progress_quitRest i now wall st c hc)
+        have hg := progressList_quitRest i now wall
+          (progressRead i now (progress i now wall st c).2.1 (progress i now wall st c).1).2.1 _
+          (progressRead_quitRest i now (progress i now wall st c).2.1 _ (progress_quitRest i now wall st c hc))
         obtain ⟨hp, ho⟩ := emit_keeps h1
         intro hq
         rw [ho]
@@ -1326,7 +1701,7 @@ theorem act_quitRest {i : Identity} {now wall idx : Nat} {st : Option Store} {c 
         split
         · rename_i hs
           simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hs
-          exact serve_quitRest i _ now _ _ hs.1.1.1.2
+          exact serve_quitRest i _ now _ _ hs.1.1.1.1.2
         · exact hg
 
 theorem actFrom_quitRest {i : Identity} {now wall : Nat} {t : Table} (ht : Table.QuitRest i t) :

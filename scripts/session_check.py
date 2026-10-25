@@ -80,11 +80,17 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "read-lowest-first", "idle-while-fetching", "read-while-fetching", "end-unsought", "header-unchecked",
            "jobs-shared", "left-open", "group-keeps-current", "empty-keeps-current", "unknown-deselects",
            "number-keeps-current", "id-moves", "next-inclusive", "last-inclusive", "move-stays", "number-any-group",
-           "group-caseless", "number-without-group", "utf8-unchecked", "group-name-unchecked", "unread-moves")
-# Those of reading, tried on the scenarios that read first, and those of the selected group, on the
-# scenarios that select one.
+           "group-caseless", "number-without-group", "utf8-unchecked", "group-name-unchecked", "unread-moves",
+           "listgroup-keeps-current", "listgroup-later", "range-ignored", "range-end-exclusive", "wildmat-leftmost",
+           "negation-ignored", "marks-swapped", "status-fixed", "list-default-newsgroups", "list-keyword-cased",
+           "first-negated", "date-monotonic", "date-units", "newgroups-unchecked", "part-longer", "listing-reads",
+           "star-non-empty", "wildmat-unanchored", "wildmat-caseless", "group-line-dropped", "end-forced",
+           "date-unpadded", "line-while-listing")
+# Those of reading, tried on the scenarios that read first, those of the selected group, on the
+# scenarios that select one, and those of the listings, on the scenarios that list.
 READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):MUTANTS.index("group-keeps-current")]
-GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):]
+GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):MUTANTS.index("listgroup-keeps-current")]
+LIST_MUTANTS = MUTANTS[MUTANTS.index("listgroup-keeps-current"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -471,6 +477,10 @@ class Spool:
     journal: tuple[int, int] = (1, 0)
     job_gen: int = 7
     tamper: list[tuple[bytes, bytes]] = field(default_factory=list)
+    # the wall clock when the host's clock is zero, and how long after the time the program names the
+    # host runs its next turn
+    wall: int = WALL
+    late: int = 0
 
     def start(self) -> P.Start:
         return P.Start(self.groups, self.identity, self.run, self.image, self.journal, self.job_gen, self.tamper)
@@ -643,7 +653,7 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
             links[idx] = Link(client, idx, gens[idx])
             events.append(Event("open", idx, gens[idx], post=client.post))
         dones = host.complete(now)
-        wall = WALL + now
+        wall = host.spool.wall + now
         answer = session.turn_post(now, wall, events, dones)
         if isinstance(answer, int):
             raise LaneError(f"the session stopped with code {answer} on a host that kept the contract")
@@ -673,7 +683,7 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
         trace.append(Turn(now, events, actions, took, deadline, wall, dones, jobs))
         if not links and not waiting and not host.jobs:
             return
-        now = next_post_time(now, deadline, links, clients, waiting, host)
+        now = next_post_time(now, deadline + host.spool.late if deadline else 0, links, clients, waiting, host)
     raise LaneError(f"the scenario had not ended after {TURNS} turns, at {now}")
 
 
@@ -1168,6 +1178,68 @@ def group_scenarios() -> Iterator[PostScenario]:
         Spool(READER_GROUPS, image=READER_SPOOL)
 
 
+# A group of articles 1 to 200, and forty groups of names of 60 octets.
+BIG_SPOOL = spool_holding([(stored(b"n"), [(b"local.big", k)]) for k in range(1, 201)])
+MANY_GROUPS = [b"local.%s%02d" % (b"g" * 52, k) for k in range(40)]
+
+
+def list_scenarios() -> Iterator[PostScenario]:
+    yield "a group's articles listed", [
+        reader("GROUP local.other", "LISTGROUP local.test", "STAT", "NEXT", "LISTGROUP", "STAT",
+               "LISTGROUP local.test 2-4", "LISTGROUP local.test 4", "LISTGROUP local.test 5-",
+               "LISTGROUP local.test 6-2", "LISTGROUP local.test 3", "LISTGROUP local.test 0-2147483647",
+               "LISTGROUP local.empty", "STAT",
+               "LISTGROUP local.none", "STAT", "LISTGROUP LOCAL.TEST", "listgroup local.other 6-6", "STAT")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "LISTGROUP with no group selected", [
+        reader("LISTGROUP", "STAT", "LISTGROUP local.none", "LISTGROUP local.test 2", "STAT", "LISTGROUP", "STAT")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "the groups listed", [
+        reader("LIST", "LIST ACTIVE", "list active", "LIST Active local.*", "LIST ACTIVE local.*,!local.empty",
+               "LIST ACTIVE *.test,*.other", "LIST ACTIVE local.?????", "LIST ACTIVE *,!*.t*,local.te*",
+               "LIST ACTIVE local.x", "LIST ACTIVE local.test*", "LIST ACTIVE *local.test", "LIST ACTIVE local.*test",
+               "LIST ACTIVE local.te", "LIST ACTIVE ocal.test", "LIST ACTIVE LOCAL.*", "LIST ACTIVE local.TEST",
+               "LIST NEWSGROUPS", "LIST newsgroups local.*", "STAT")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    lines = (b"LIST ACTIVE !local.test", b"LIST NEWSGROUPS !local.test", b"LIST ACTIVE a,,b", b"LIST ACTIVE a,",
+             b"LIST ACTIVE a,!", b"LIST ACTIVE [a]", b"LIST ACTIVE a\\b", b"LIST ACTIVE l\xc3", b"LIST ACTIVE.TIMES",
+             b"LIST OVERVIEW.FMT", b"LIST ACTIVE a b", b"LIST 1x", b"LISTGROUP a*", b"LISTGROUP local.test -3",
+             b"LISTGROUP local.test 3-7-9", b"LISTGROUP local.test 2147483648", b"LISTGROUP local.test 1 2",
+             b"LISTGROUP " + b"a" * 65 + b" 1", b"DATE x", b"QUIT")
+    yield "arguments of the listings", [Client(1, [(5, b"".join(line + b"\r\n" for line in lines))])], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "dates", [
+        reader("DATE", "date", "NEWGROUPS 19990624 000000 GMT", "newgroups 990624 235960 gmt",
+               "NEWGROUPS 20261024 120000", "NEWGROUPS 20261324 000000", "NEWGROUPS 20261032 000000",
+               "NEWGROUPS 20261000 000000",
+               "NEWGROUPS 18991231 000000", "NEWGROUPS 20261024 240000", "NEWGROUPS 20261024 126000",
+               "NEWGROUPS 20261024 120061", "NEWGROUPS 20261024 120000 UTC", "NEWGROUPS 2026102 120000",
+               "NEWGROUPS 20261024 120000 GMT x", "NEWGROUPS 20261024")], Spool(READER_GROUPS)
+    yield "DATE past the year 9999", [reader("DATE")], Spool(READER_GROUPS, wall=WALL_LIMIT - 10 ** 7)
+    yield "DATE of fields of one digit", [reader("DATE")], Spool(READER_GROUPS, wall=946_782_245_000 - 5)
+    yield "long listings to a slow reader", [
+        reader("LISTGROUP local.big 98-200", "LISTGROUP local.big", "LIST ACTIVE", "LISTGROUP local.big 150",
+               "LISTGROUP local.big 1-122", "LISTGROUP local.big 1-123", "LISTGROUP local.big 1-124",
+               "LISTGROUP local.big 1-125", take=40, slow=5)], Spool([b"local.big"], image=BIG_SPOOL)
+    yield "forty groups listed to a slow reader as the store stops", [
+        reader("LIST ACTIVE", "LIST ACTIVE *1,*3", take=30, slow=5),
+        poster(at=10, sent=article("From: a@b.example", f"Newsgroups: {MANY_GROUPS[0].decode()}", "Subject: hi"))], \
+        Spool(MANY_GROUPS, failures=[Failure("datasync")])
+    yield "a line begun behind a listing, the host late", [
+        Client(1, [(5, ascii_lines("LISTGROUP local.big") + b"HEL")])], \
+        Spool([b"local.big"], image=BIG_SPOOL, late=200_000)
+    yield "listings with nothing sent after them", [
+        Client(1, [(5, ascii_lines("LISTGROUP local.big")), (100_000, ascii_lines("LIST ACTIVE")),
+                   (200_000, QUIT)])], Spool([b"local.big"], image=BIG_SPOOL)
+    yield "a group listed as an article is posted to it", [
+        reader("LISTGROUP local.big", "LISTGROUP local.big 199-", take=20, slow=5),
+        poster(at=10, sent=article("From: a@b.example", "Newsgroups: local.big", "Subject: hi"))], \
+        Spool([b"local.big"], image=BIG_SPOOL)
+    yield "the groups listed once the store has stopped", [
+        poster(), Client(1, [(500, ascii_lines("LIST ACTIVE", "LIST", "QUIT"))])], \
+        Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
+
+
 def read_breaches() -> Iterator[tuple[str, list[str], int]]:
     """Scripts with a store in which a host reports a read, or a file opened at a place still in use,
     as it may not: code 14."""
@@ -1418,6 +1490,16 @@ def unreadable_sent(trace: list[Turn]) -> None:
     t.took[n] = len(sent)
 
 
+def changed_part(trace: list[Turn]) -> None:
+    """A number in a part of a listing after its first line changed."""
+    for t in trace:
+        for k, a in enumerate(t.actions):
+            if a.kind == "send" and a.data.split(b"\r\n", 1)[0].isdigit():
+                t.actions[k] = a._replace(data=b"9" + a.data[1:])
+                return
+    raise LaneError("no part of a listing to plant a defect on")
+
+
 def read_moved(trace: list[Turn]) -> None:
     """A read of the second octets of a file asked one octet further on."""
     for t in trace:
@@ -1435,6 +1517,7 @@ POST_PLANTS: list[tuple[str, str, str, Plant]] = [
     ("an article's octets changed as they are sent", "reads of the spool's articles", "read-out", changed_read),
     ("a file that fails its check sent", "a file whose CRC-32C is not its commit's", "unreadable", unreadable_sent),
     ("a read asked past where the last ended", "a big article sent to a slow reader", "read", read_moved),
+    ("a number of a listing changed", "a group's articles listed", "listing-out", changed_part),
 ]
 
 
@@ -1462,14 +1545,17 @@ def played_post(mutant: str, posts: list[PostScenario]) -> Played:
 
 def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario], checker: Articles) -> str:
     """The first scenario on which the judge refuses the session with `mutant` broken, those with a
-    store first for a rule of POST, those that read first for a rule of reading; a scenario the
-    broken session cannot finish is judged on the turns it had."""
+    store first for a rule of POST, those that read, select a group or list first for a rule of
+    theirs; a scenario the broken session cannot finish is judged on the turns it had."""
     if mutant in READ_MUTANTS:
         reads = {name for name, _, _ in read_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in reads)
     if mutant in GROUP_MUTANTS:
         selects = {name for name, _, _ in group_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in selects)
+    if mutant in LIST_MUTANTS:
+        lists = {name for name, _, _ in list_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in lists)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1500,7 +1586,7 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}

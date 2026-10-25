@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import time
 from typing import NamedTuple
 
 import framing_ref
@@ -31,9 +32,11 @@ FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000,
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
 COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT")
 # The commands a server with a store has besides.
-STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST")
+STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS")
 # The replies a server with a store decides as it gives them.
-DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last")
+DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last", "listgroup", "list-active",
+           "date")
+NUMBER_MAX = 2_147_483_647
 
 
 def words(kept: bytes) -> list[bytes]:
@@ -58,6 +61,64 @@ def is_group_name(w: bytes) -> bool:
     except UnicodeDecodeError:
         return False
     return bool(text) and all(ord(ch) > 0x7F or (0x21 < ord(ch) < 0x7F and ch not in "*,?[\\]") for ch in text)
+
+
+def article_range(w: bytes) -> tuple[int, int] | None:
+    """RFC 3977 §6.1.2.2 and §9.8: a number, a number and a dash, or two numbers and a dash between
+    them; the lowest and the highest number it takes in."""
+    m = re.fullmatch(rb"([^-]*)(-([^-]*))?", w)
+    if m is None or not is_article_number(m[1]):
+        return None
+    if m[2] is None:
+        return int(m[1]), int(m[1])
+    if not m[3]:
+        return int(m[1]), NUMBER_MAX
+    return (int(m[1]), int(m[3])) if is_article_number(m[3]) else None
+
+
+def wildmat(w: bytes) -> list[tuple[bool, str]] | None:
+    """RFC 3977 §4.1: patterns of `wildmat-exact` characters, `*` and `?`, separated by commas, each
+    after the first negated by `!` or not; each with whether it is negated."""
+    try:
+        text = w.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    patterns = []
+    for k, part in enumerate(text.split(",")):
+        negated = k > 0 and part.startswith("!")
+        body = part[1:] if negated else part
+        if not body or not all(ch in "*?" or ord(ch) > 0x7F or (0x21 < ord(ch) < 0x7F and ch not in "*,?[\\]")
+                               for ch in body):
+            return None
+        patterns.append((negated, body))
+    return patterns
+
+
+def wildmatch(patterns: list[tuple[bool, str]], name: bytes) -> bool:
+    """§4.2: the rightmost pattern that matches the whole name decides, against it when negated."""
+    text, verdict = name.decode("utf-8"), False
+    for negated, body in patterns:
+        regex = "".join(".*" if ch == "*" else "." if ch == "?" else re.escape(ch) for ch in body)
+        if re.fullmatch(regex, text, re.DOTALL):
+            verdict = not negated
+    return verdict
+
+
+def is_date(w: bytes) -> bool:
+    """§7.3.2: `[xx]yymmdd`, its century from 19, its month from 1 to 12, its day from 1 to 31."""
+    m = re.fullmatch(rb"([0-9]{2})?[0-9]{2}([0-9]{2})([0-9]{2})", w)
+    return m is not None and (m[1] is None or int(m[1]) >= 19) and 1 <= int(m[2]) <= 12 and 1 <= int(m[3]) <= 31
+
+
+def is_time(w: bytes) -> bool:
+    """§7.3.2: `hhmmss`, to 23:59:60."""
+    m = re.fullmatch(rb"([0-9]{2})([0-9]{2})([0-9]{2})", w)
+    return m is not None and int(m[1]) <= 23 and int(m[2]) <= 59 and int(m[3]) <= 60
+
+
+def date_digits(wall: int) -> bytes:
+    """§7.1: the wall clock, in milliseconds, as `yyyymmddhhmmss` in UTC."""
+    return b"%04d%02d%02d%02d%02d%02d" % time.gmtime(wall // 1000)[:6]
 
 
 def is_keyword(w: bytes) -> bool:
@@ -95,6 +156,18 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
         return "group"
     if name in (b"NEXT", b"LAST") and not args:
         return name.decode().lower()
+    if name == b"LISTGROUP" and (not args or (len(args) <= 2 and is_group_name(args[0]) and
+                                             (len(args) == 1 or article_range(args[1]) is not None))):
+        return "listgroup"
+    if name == b"LIST" and len(args) <= 2 and (len(args) < 2 or wildmat(args[1]) is not None):
+        keyword = args[0].upper() if args else b"ACTIVE"
+        if keyword in (b"ACTIVE", b"NEWSGROUPS"):
+            return "list-active" if keyword == b"ACTIVE" else "list-newsgroups"
+    if name == b"DATE" and not args:
+        return "date"
+    if name == b"NEWGROUPS" and len(args) in (2, 3) and is_date(args[0]) and is_time(args[1]) and \
+            (len(args) == 2 or args[2].upper() == b"GMT"):
+        return "new-groups"
     return "syntax"
 
 
@@ -130,6 +203,8 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "no-number": b"423 No article with that number\r\n",
         "unknown": b"500 Unknown command\r\n",
         "syntax": b"501 Syntax error\r\n",
+        "list-newsgroups": b"215 Information follows\r\n.\r\n",
+        "new-groups": b"231 List of new newsgroups follows\r\n.\r\n",
     }
 
 
@@ -189,6 +264,18 @@ class Turn:
 
 
 @dataclass
+class Listing:
+    """A reply of many lines going out a part at a time: what of it went out, its first line first;
+    LISTGROUP's numbers, or LIST ACTIVE's wildmat, `None` for every group; how far it has gone among
+    them; and whether its terminating line went out."""
+    sent: bytearray
+    numbers: list[int] | None = None
+    patterns: list[tuple[bool, str]] | None = None
+    at: int = 0
+    done: bool = False
+
+
+@dataclass
 class Conn:
     opened: int
     delivered: bytearray = field(default_factory=bytearray)
@@ -223,6 +310,8 @@ class Conn:
     # the selected group and the current article number, None and 0 while invalid
     group: bytes | None = None
     current: int = 0
+    # its replies of many lines, the last going out while it is not done
+    listings: list[Listing] = field(default_factory=list)
 
     def pending(self) -> bytes:
         return bytes(self.emitted[self.taken:])
@@ -428,7 +517,17 @@ class PostJudge(Judge):
     first article current, none if it is empty, answered 211 with the count and the lowest and highest
     numbers, an empty group's 1 and 0; of another, 411. A number finds the article in the selected
     group, no argument the current one, and NEXT and LAST the nearest above or below; a message-id
-    leaves both as they are and is answered with the number 0."""
+    leaves both as they are and is answered with the number 0.
+
+    LISTGROUP selects its group, the named one or the selected one, as GROUP does, answering 211 as
+    GROUP does, then lists, one a line, the numbers of the articles the group holds as it is selected
+    within its range (RFC 3977 §6.1.2). LIST and LIST ACTIVE answer 215, then a line for each group in
+    the order of the start's, of those the wildmat matches (§4): its name, highest and lowest
+    numbers as GROUP gives them, and `y` while the store accepts, else `n`, as the store is when the
+    line goes out. Such a reply goes out a part at a time, each when what went before was taken: its
+    lines that follow, as many whole as one send holds, then its terminating line once it fits too;
+    nothing is read and no line answered until it ends. LIST NEWSGROUPS answers 215 and NEWGROUPS
+    231, each with an empty list; DATE, 111 and the wall clock of the turn in UTC."""
 
     def __init__(self, revision: bytes, source: bytes, start: P.Start, checker: P.Checker) -> None:
         super().__init__(revision, source)
@@ -439,11 +538,11 @@ class PostJudge(Judge):
         self.waiters: list[tuple[int, int]] = []
         self.readers: list[tuple[int, int]] = []
 
-    def items(self, c: Conn) -> tuple[list[str], int, P.Article | P.Fetch | None]:
+    def items(self, c: Conn) -> tuple[list[str], int, P.Article | P.Fetch | Listing | None]:
         """The replies the connection has had or is due, in order; where what it sent is read to;
-        and its article not ended or not answered, or its read not ended, if any. A reply decided
-        when given and not yet given, a waiting POST, an article not answered or a read not ended
-        ends the list."""
+        and its article not ended or not answered, its read not ended, or its listing going out, if
+        any. A reply decided when given and not yet given, a waiting POST, an article not answered, a
+        read not ended or a listing going out ends the list."""
         out: list[str] = []
         data, at, d, k = c.delivered, 0, 0, 0
         while (nl := data.find(b"\n", at)) >= 0:
@@ -466,6 +565,8 @@ class PostJudge(Judge):
                 r = f.answered
             out.append(r)
             at = nl + 1
+            if r.startswith("listing ") and not c.listings[int(r[8:])].done:
+                return out, at, c.listings[int(r[8:])]
             if r == "quit":
                 return out, at, None
             if r == "post":
@@ -491,6 +592,8 @@ class PostJudge(Judge):
             return bytes.fromhex(r[5:])
         if r.startswith("read "):
             return c.fetches[int(r[5:])].out(self.store.start.identity)
+        if r.startswith("listing "):
+            return bytes(c.listings[int(r[8:])].sent)
         return self.text[r]
 
     def expected(self, c: Conn) -> bytes:
@@ -516,9 +619,13 @@ class PostJudge(Judge):
             return c.fetches[-1]
         return None
 
+    def listing(self, c: Conn) -> Listing | None:
+        """The reply of many lines going out, from its first line until its terminating one."""
+        return c.listings[-1] if c.listings and not c.listings[-1].done else None
+
     def busy(self, c: Conn) -> bool:
-        """Whether a read waits for a place or answers it."""
-        return c.wanted is not None or self.fetch(c) is not None
+        """Whether a read waits for a place or answers it, or a listing goes out."""
+        return c.wanted is not None or self.fetch(c) is not None or self.listing(c) is not None
 
     def due_line(self, c: Conn) -> tuple[str, bytes] | None:
         """The reply its next whole line is due, if one is due and not decided, with what the line
@@ -587,6 +694,8 @@ class PostJudge(Judge):
     def ready(self, c: Conn, idx: int = 0, gen: int = 0) -> bool:
         if c.pending():
             return False
+        if self.listing(c) is not None:
+            return True
         if c.waiting:
             return not self.store.accepting or self.admitted(idx, gen)
         if c.wanted is not None:
@@ -686,6 +795,10 @@ class PostJudge(Judge):
         if a is not None and answer in ("posted", "failed") and not c.pending() and \
                 (action is None or action.kind != "send" or not action.data):
             raise Violation("stalled", f"{idx}/{gen} not answered its article's {answer} at {t.now}")
+        listing = self.listing(c)
+        if listing is not None and not c.pending():
+            self.list_turn(t, idx, gen, c, listing, action, sends)
+            return
         f = self.fetch(c)
         if f is not None and not c.pending() and self.read_turn(t, idx, gen, c, f, action, sends):
             return
@@ -758,6 +871,72 @@ class PostJudge(Judge):
         c.reading = action.read
         sends.append((idx, len(piece)))
         return True
+
+    def lines_left(self, listing: Listing) -> list[tuple[int, bytes]]:
+        """The lines of a listing still to go out, as the store is now, each with how far the
+        listing has gone once it is out."""
+        if listing.numbers is not None:
+            return [(k + 1, b"%d\r\n" % n) for k, n in enumerate(listing.numbers[listing.at:], listing.at)]
+        found = []
+        for k, g in enumerate(self.store.start.groups[listing.at:], listing.at):
+            if listing.patterns is None or wildmatch(listing.patterns, g):
+                numbers = [n for n, _ in self.in_group(g)]
+                low, high = (numbers[0], numbers[-1]) if numbers else (1, 0)
+                found.append((k + 1, g + b" %d %d %s\r\n" % (high, low, b"y" if self.store.accepting else b"n")))
+        return found
+
+    def list_turn(self, t: Turn, idx: int, gen: int, c: Conn, listing: Listing, action: Action | None,
+                  sends: list[tuple[int, int]]) -> None:
+        """The turn of a connection a listing answers, with nothing untaken: the listing's next part
+        sent, its lines that follow as many whole as one send holds, then its terminating line once
+        it fits too."""
+        part, at, done = b"", listing.at, False
+        for after, line in self.lines_left(listing):
+            if len(part) + len(line) > CHUNK:
+                break
+            part, at = part + line, after
+        else:
+            if len(part) + 3 <= CHUNK:
+                part, done = part + b".\r\n", True
+        if action is None or action.kind != "send" or action.gen != gen or action.data != part:
+            sent = action.data[:40] if action is not None else None
+            raise Violation("listing-out", f"{idx}/{gen} sent {sent!r} at {t.now}, not the next part of its "
+                            f"listing, {part[:40]!r}")
+        listing.sent += part
+        listing.at, listing.done = at, done
+        c.emitted += part
+        c.activity = t.now
+        if action.read != self.read_wanted(c):
+            raise Violation("read", f"{idx}/{gen} asked {'' if action.read else 'not '}to read at {t.now}")
+        c.reading = action.read
+        sends.append((idx, len(part)))
+
+    def listed(self, t: Turn, c: Conn, kind: str, ws: list[bytes]) -> str:
+        """What a LISTGROUP, a LIST, or a DATE is answered, deciding it now; a LISTGROUP selects its
+        group, the first article current, and lists the numbers in its range of the articles the
+        group holds now."""
+        if kind == "date":
+            return "text " + (b"111 " + date_digits(t.wall) + P.CRLF).hex()
+        if kind == "list-active":
+            listing = Listing(bytearray(b"215 List of newsgroups follows\r\n"),
+                              patterns=wildmat(ws[2]) if len(ws) > 2 else None)
+        else:
+            g = ws[1] if len(ws) > 1 else c.group
+            if g is None:
+                return "no-group"
+            if g not in self.store.start.groups:
+                return "no-such-group"
+            span = article_range(ws[2]) if len(ws) > 2 else (1, NUMBER_MAX)
+            if span is None:
+                raise Violation("syntax", f"{ws[2]!r} taken for a range")
+            lo, hi = span
+            numbers = [n for n, _ in self.in_group(g)]
+            c.group, c.current = g, numbers[0] if numbers else 0
+            low, high = (numbers[0], numbers[-1]) if numbers else (1, 0)
+            listing = Listing(bytearray(b"211 %d %d %d " % (len(numbers), low, high) + g + P.CRLF),
+                              numbers=[n for n in numbers if lo <= n <= hi])
+        c.listings.append(listing)
+        return f"listing {len(c.listings) - 1}"
 
     def in_group(self, g: bytes) -> list[tuple[int, J.Commit]]:
         """The articles the store holds in group `g`, each with its number there."""
@@ -852,6 +1031,10 @@ class PostJudge(Judge):
             c.activity = t.now
             return
         due = self.next_line(c)
+        if due in ("listgroup", "list-active", "date"):
+            line = self.due_line(c)
+            c.decisions.append(self.listed(t, c, due, words(line[1] if line else b"")))
+            return
         if due in ("lookup", "number", "current", "group", "next", "last"):
             line = self.due_line(c)
             try:

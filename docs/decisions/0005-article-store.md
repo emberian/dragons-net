@@ -347,6 +347,13 @@ counting the lines it could not.
   or answer 420. NEXT and LAST move
   to the nearest article above or below it (223), or answer 421 and 422. With no group selected,
   412.
+- LISTGROUP selects a group as GROUP does, the named one or the selected one, then lists the
+  numbers within its range of the articles the group held as it was selected (§6.1.2). LIST and LIST
+  ACTIVE list each group the store carries that the wildmat matches, all without one: its name, its
+  highest and lowest numbers, and `y` while the store accepts, else `n` (§7.6.3).
+- LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
+  created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1). A list goes out a send at a
+  time. The specification has these; the program answers them 500 still.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested

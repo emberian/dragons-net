@@ -12,11 +12,11 @@ from __future__ import annotations
 import argparse
 import calendar
 from dataclasses import dataclass
-import datetime
 from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 from abnf import ParseError, Rule
 
@@ -137,10 +137,10 @@ def date_value(value: bytes) -> int | None:
 
 
 def format_date(wall: int) -> bytes:
-    """The date the server writes, in English whatever the locale."""
-    at = datetime.datetime.fromtimestamp(wall, datetime.UTC)
-    return (f"{DAYS[at.weekday()].title()}, {at.day:02d} {MONTHS[at.month - 1].title()} {at.year} "
-            f"{at.hour:02d}:{at.minute:02d}:{at.second:02d} +0000").encode()
+    """The date the server writes, in English whatever the locale, of any year."""
+    at = time.gmtime(wall)
+    return (f"{DAYS[at.tm_wday].title()}, {at.tm_mday:02d} {MONTHS[at.tm_mon - 1].title()} {at.tm_year} "
+            f"{at.tm_hour:02d}:{at.tm_min:02d}:{at.tm_sec:02d} +0000").encode()
 
 
 def message_ids(value: bytes) -> list[bytes]:

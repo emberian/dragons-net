@@ -17,10 +17,12 @@ take gets 501. An overlong line is never ignored: only its first bytes are kept,
 there says nothing of the rest. Keywords are compared without regard to case (§3.1); the arguments
 follow the grammar of §9.8 and the range of article numbers in §6.
 
-With a store (docs/decisions/0005-article-store.md), POST, ARTICLE, BODY, GROUP, NEXT and LAST are
-commands too (`replyIn`), and the session decides what a well-formed POST gets, what an ARTICLE,
-HEAD, BODY or STAT finds — by message-id (`lookup`), by number (`byNumber`) or the current article
-(`current`) — which group a GROUP selects (`select`) and where a NEXT or LAST moves (`move`).
+With a store (docs/decisions/0005-article-store.md), POST, ARTICLE, BODY, GROUP, NEXT, LAST,
+LISTGROUP, LIST, DATE and NEWGROUPS are commands too (`replyIn`), and the session decides what a
+well-formed POST gets, what an ARTICLE, HEAD, BODY or STAT finds — by message-id (`lookup`), by
+number (`byNumber`) or the current article (`current`) — which group a GROUP or a LISTGROUP selects
+(`select`, `listGroup`), where a NEXT or LAST moves (`move`), and what DATE gives (`date`). A
+wildmat (§4) matches a name as `wildmatch` says.
 
 Each rule is shown to matter: a version with it broken (`Mutant`) answers some line otherwise.
 -/
@@ -51,6 +53,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
 inductive Cmd | capabilities | help | quit | head | stat | post | article | body | group | next | last
+  | listgroup | list | date | newgroups
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -63,8 +66,8 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "STAT" then some .stat
   else none
 
-/-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT and LAST among them when the server
-has a store. -/
+/-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST, DATE and NEWGROUPS
+among them when the server has a store. -/
 def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
   let u := w.map upper
   if offered && u = ascii "POST" then some .post
@@ -73,6 +76,10 @@ def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
   else if offered && u = ascii "GROUP" then some .group
   else if offered && u = ascii "NEXT" then some .next
   else if offered && u = ascii "LAST" then some .last
+  else if offered && u = ascii "LISTGROUP" then some .listgroup
+  else if offered && u = ascii "LIST" then some .list
+  else if offered && u = ascii "DATE" then some .date
+  else if offered && u = ascii "NEWGROUPS" then some .newgroups
   else command? w
 
 def isDigit (b : Byte) : Bool := 48 ≤ b.toNat && b.toNat ≤ 57
@@ -103,29 +110,45 @@ def isExactAscii (b : Byte) : Bool :=
 def inRange (lo hi : Nat) (b : Byte) : Bool := lo ≤ b.toNat && b.toNat ≤ hi
 def isTail : Byte → Bool := inRange 128 191
 
-/-- Whether the bytes are `wildmat-exact` characters (§9.8): such US-ASCII bytes, or UTF-8 of
-characters past US-ASCII, as RFC 3629 §4 writes them. -/
-def exactChars : List Byte → Bool
-  | [] => true
+/-- The length of the character of UTF-8 the bytes start with, as RFC 3629 §4 writes them, if they
+start with one. -/
+def charLength : List Byte → Option Nat
+  | [] => none
   | a :: rest =>
-    if a.toNat < 128 then isExactAscii a && exactChars rest
+    if a.toNat < 128 then some 1
     else match rest with
       | b :: r =>
-        if inRange 194 223 a then isTail b && exactChars r
+        if inRange 194 223 a then (if isTail b then some 2 else none)
         else match r with
           | c :: r' =>
-            if a.toNat == 224 then inRange 160 191 b && isTail c && exactChars r'
-            else if inRange 225 236 a || inRange 238 239 a then isTail b && isTail c && exactChars r'
-            else if a.toNat == 237 then inRange 128 159 b && isTail c && exactChars r'
+            if a.toNat == 224 then (if inRange 160 191 b && isTail c then some 3 else none)
+            else if inRange 225 236 a || inRange 238 239 a then (if isTail b && isTail c then some 3 else none)
+            else if a.toNat == 237 then (if inRange 128 159 b && isTail c then some 3 else none)
             else match r' with
-              | d :: r'' =>
-                if a.toNat == 240 then inRange 144 191 b && isTail c && isTail d && exactChars r''
-                else if inRange 241 243 a then isTail b && isTail c && isTail d && exactChars r''
-                else if a.toNat == 244 then inRange 128 143 b && isTail c && isTail d && exactChars r''
-                else false
-              | [] => false
-          | [] => false
-      | [] => false
+              | d :: _ =>
+                if a.toNat == 240 then (if inRange 144 191 b && isTail c && isTail d then some 4 else none)
+                else if inRange 241 243 a then (if isTail b && isTail c && isTail d then some 4 else none)
+                else if a.toNat == 244 then (if inRange 128 143 b && isTail c && isTail d then some 4 else none)
+                else none
+              | [] => none
+          | [] => none
+      | [] => none
+
+/-- The characters of UTF-8 the bytes are, each by its octets, if they are UTF-8; each takes at least
+one byte, so `fuel` of as many as the bytes is enough. -/
+def charsFrom : Nat → List Byte → Option (List (List Byte))
+  | _, [] => some []
+  | 0, _ :: _ => none
+  | fuel + 1, bs => do
+    let k ← charLength bs
+    return bs.take k :: (← charsFrom fuel (bs.drop k))
+
+def chars (bs : List Byte) : Option (List (List Byte)) := charsFrom bs.length bs
+
+/-- Whether the bytes are `wildmat-exact` characters (§9.8): such US-ASCII bytes, or UTF-8 of
+characters past US-ASCII. -/
+def exactChars (bs : List Byte) : Bool :=
+  (chars bs).any (·.all fun c => c.length != 1 || c.all isExactAscii)
 
 /-- A newsgroup name: `1*wildmat-exact` (§9.8). -/
 def isGroupName (w : List Byte) : Bool := !w.isEmpty && exactChars w
@@ -138,6 +161,80 @@ def isKeyword : List Byte → Bool
   | a :: rest => isAlpha a && 2 ≤ rest.length &&
       rest.all fun b => isAlpha b || isDigit b || b == 46#8 || b == 45#8
   | [] => false
+
+/-- The largest article number (§6). -/
+def numberMax : Nat := 2147483647
+
+/-- A range of article numbers (§6.1.2.2, §9.8): a number, a number and all after it, or two numbers
+and those between: the lowest and the highest. -/
+def range? (w : List Byte) : Option (Nat × Nat) :=
+  match w.splitOn 45#8 with
+  | [a] => if isArticleNumber a then some (value a, value a) else none
+  | [a, []] => if isArticleNumber a then some (value a, numberMax) else none
+  | [a, b] => if isArticleNumber a && isArticleNumber b then some (value a, value b) else none
+  | _ => none
+
+/-- The number the two digits at `k` write. -/
+def twoAt (w : List Byte) (k : Nat) : Nat := value ((w.drop k).take 2)
+
+/-- A date of NEWGROUPS (§7.3.2): `yymmdd` or `yyyymmdd`, the century from 19 to 99, the month from
+01 to 12, the day from 01 to 31. -/
+def isDate (w : List Byte) : Bool :=
+  w.all isDigit && (w.length == 6 || (w.length == 8 && 19 ≤ twoAt w 0)) &&
+    1 ≤ twoAt w (w.length - 4) && twoAt w (w.length - 4) ≤ 12 &&
+    1 ≤ twoAt w (w.length - 2) && twoAt w (w.length - 2) ≤ 31
+
+/-- A time of NEWGROUPS: `hhmmss`, the hour below 24, the minute below 60, the second at most 60. -/
+def isTime (w : List Byte) : Bool :=
+  w.length == 6 && w.all isDigit && twoAt w 0 ≤ 23 && twoAt w 2 ≤ 59 && twoAt w 4 ≤ 60
+
+/-! ## Wildmats (§4) -/
+
+/-- An item of a wildmat's pattern: `*`, `?`, or a `wildmat-exact` character by its octets. -/
+inductive Item | star | one | exact (c : List Byte)
+  deriving DecidableEq, Repr
+
+/-- A wildmat: its patterns in order, each with whether `!` negates it. -/
+abbrev Wildmat := List (Bool × List Item)
+
+def itemOf (c : List Byte) : Option Item :=
+  if c = ascii "*" then some .star else if c = ascii "?" then some .one
+  else if c.length != 1 || c.all isExactAscii then some (.exact c) else none
+
+/-- A pattern of one or more items, negated by a `!` before it where `negates` allows one. -/
+def patternOf (negates : Bool) (cs : List (List Byte)) : Option (Bool × List Item) :=
+  let (neg, rest) := if negates && cs.head? == some (ascii "!") then (true, cs.tail) else (false, cs)
+  if rest.isEmpty then none else return (neg, ← rest.mapM itemOf)
+
+/-- A wildmat (§4.1): patterns separated by `,`, those after the first each negated by a `!` or
+not. -/
+def wildmat? (w : List Byte) : Option Wildmat := do
+  match (← chars w).splitOn (ascii ",") with
+  | first :: rest => return (← patternOf false first) :: (← rest.mapM (patternOf true))
+  | [] => none
+
+/-- The places in the characters `s` an item can reach from the places `from_`. -/
+def reach (s : List (List Byte)) (from_ : List Nat) : Item → List Nat
+  | .exact c => from_.filterMap fun k => if s[k]? == some c then some (k + 1) else none
+  | .one => from_.filterMap fun k => if k < s.length then some (k + 1) else none
+  | .star =>
+    match from_.min? with
+    | some k => List.range' k (s.length + 1 - k)
+    | none => []
+
+/-- A pattern matches the characters `s` when its items, in order, take all of them (§4.2). -/
+def patternMatches (s : List (List Byte)) (p : List Item) : Bool := (p.foldl (reach s) [0]).contains s.length
+
+/-- What a wildmat says of `s` once a pattern is matched: the pattern decides when it matches. -/
+def decides (s : List (List Byte)) (r : Option Bool) (x : Bool × List Item) : Option Bool :=
+  if patternMatches s x.2 then some !x.1 else r
+
+/-- **Whether a wildmat matches a name** (§4.2): the rightmost pattern that matches decides, a negated
+one against; with none matching, no match. -/
+def wildmatch (w : Wildmat) (name : List Byte) : Bool :=
+  match chars name with
+  | some s => (w.foldl (decides s) none).getD false
+  | none => false
 
 inductive Reply
   /-- no reply: an empty or white-space-only line -/
@@ -194,6 +291,21 @@ inductive Reply
   | noPrevious
   /-- 423: no article with that number in the group -/
   | noNumber
+  /-- a LISTGROUP of the group named or the selected one, of the numbers from `lo` to `hi`; the
+  session decides -/
+  | listGroup (g : Option (List Byte)) (lo hi : Nat)
+  /-- 211 as GROUP's, the numbers of the group's articles from `lo` to `hi` to follow -/
+  | listed (count low high : Nat) (g : List Byte) (lo hi : Nat)
+  /-- 215, the groups the wildmat matches, or all, to follow, as LIST ACTIVE writes them -/
+  | active (w : Option Wildmat)
+  /-- 215 and an empty list: no group has a description (§7.6.6) -/
+  | newsgroups
+  /-- 231 and an empty list: no group has a time it was created (§7.3.2) -/
+  | newGroups
+  /-- a DATE; the session decides -/
+  | date
+  /-- 111 and the date and time these digits write -/
+  | time (digits : List Byte)
   deriving DecidableEq, Repr
 
 /-- The reply to a command with these arguments, on a well-formed line. -/
@@ -209,8 +321,11 @@ def answer : Cmd → List (List Byte) → Reply
   | _, _ => .syntax
 
 /-- The reply with a store: ARTICLE and BODY take an argument as HEAD does; a message-id is looked up,
-a number in the selected group, and no argument means the current article. A GROUP of a name no
-group the store carries can have is answered 411 at once. -/
+a number in the selected group, and no argument means the current article. A GROUP or LISTGROUP of a
+name no group the store carries can have is answered 411 at once. LISTGROUP's range is one of
+`range?`; LIST's keyword ACTIVE, the one it takes without any, or NEWSGROUPS, in any case and each
+with a wildmat or none; NEWGROUPS's date and time are `isDate` and `isTime`, `GMT` after them or not,
+in any case (§3.1, §7.3, §7.6). -/
 def answerIn (c : Cmd) (args : List (List Byte)) : Reply :=
   match c, args with
   | .article, [] | .body, [] | .head, [] | .stat, [] => .current c
@@ -221,6 +336,24 @@ def answerIn (c : Cmd) (args : List (List Byte)) : Reply :=
     if !isGroupName g then .syntax else if g.length ≤ groupNameMax then .select g else .noSuchGroup
   | .next, [] => .move true
   | .last, [] => .move false
+  | .listgroup, [] => .listGroup none 1 numberMax
+  | .listgroup, g :: rest =>
+    match (match rest with | [] => some (1, numberMax) | [r] => range? r | _ => none) with
+    | some (lo, hi) =>
+      if !isGroupName g then .syntax else if g.length ≤ groupNameMax then .listGroup (some g) lo hi
+      else .noSuchGroup
+    | none => .syntax
+  | .list, [] => .active none
+  | .list, k :: rest =>
+    match (match rest with | [] => some none | [w] => (wildmat? w).map some | _ => none) with
+    | some w =>
+      if k.map upper = ascii "ACTIVE" then .active w else if k.map upper = ascii "NEWSGROUPS" then .newsgroups
+      else .syntax
+    | none => .syntax
+  | .date, [] => .date
+  | .newgroups, d :: t :: rest =>
+    if isDate d && isTime t && (rest.isEmpty || rest.map (·.map upper) == [ascii "GMT"]) then .newGroups
+    else .syntax
   | _, _ => answer c args
 
 /-- **The reply to a line**, POST, ARTICLE, BODY, GROUP, NEXT and LAST commands when `offered`. -/
@@ -308,43 +441,48 @@ def text (i : Identity) : Reply → List Byte
   | .lookup _ _ _ => ascii "430 No article with that message-id\r\n"
   | .stat n id => ascii "223 " ++ decimal n ++ SP :: id ++ crlf
   | .unreadable => ascii "403 Article not readable\r\n"
-  | .selected count low high g =>
+  | .selected count low high g | .listed count low high g _ _ =>
     ascii "211 " ++ decimal count ++ SP :: decimal low ++ SP :: decimal high ++ SP :: g ++ crlf
+  | .active _ => ascii "215 List of newsgroups follows\r\n"
+  | .newsgroups => ascii "215 Information follows\r\n.\r\n"
+  | .newGroups => ascii "231 List of new newsgroups follows\r\n.\r\n"
+  | .time d => ascii "111 " ++ d ++ crlf
   | .noSuchGroup => ascii "411 No such newsgroup\r\n"
   | .noCurrent => ascii "420 Current article number is invalid\r\n"
   | .noNext => ascii "421 No next article in this group\r\n"
   | .noPrevious => ascii "422 No previous article in this group\r\n"
   | .noNumber => ascii "423 No article with that number\r\n"
   | .select _ => ascii "411 No such newsgroup\r\n"
-  | .byNumber _ _ | .current _ | .move _ => ascii "412 No newsgroup selected\r\n"
+  | .byNumber _ _ | .current _ | .move _ | .listGroup .. => ascii "412 No newsgroup selected\r\n"
+  | .date => ascii "500 Unknown command\r\n"
 
 /-- The first line of an article sent (§6.2): 220, 221 or 222, its number in the selected group or
 0, and the message-id. -/
 def found (c : Cmd) (n : Nat) (id : List Byte) : List Byte :=
   ascii (match c with | .head => "221 " | .body => "222 " | _ => "220 ") ++ decimal n ++ SP :: id ++ crlf
 
-/-- The selected group after a reply: a GROUP's that succeeds; and the current article number: the
-first of a group selected, invalid in an empty one, an article STAT found by number or moved to.
+/-- The selected group after a reply: a GROUP's or a LISTGROUP's that succeeds; and the current article
+number: the first of a group selected, invalid in an empty one, an article STAT found by number or
+moved to.
 An article to be read is made current once the read answers (`SessionSpec.progressRead`). -/
 def Reply.groupAfter : Reply → Option (List Byte) → Option (List Byte)
-  | .selected _ _ _ g, _ => some g
+  | .selected _ _ _ g, _ | .listed _ _ _ g _ _, _ => some g
   | _, g => g
 def Reply.currentAfter : Reply → Nat → Nat
-  | .selected count low _ _, _ => if count = 0 then 0 else low
+  | .selected count low _ _, _ | .listed count low _ _ _ _, _ => if count = 0 then 0 else low
   | .stat n _, k => if n = 0 then k else n
   | _, k => k
 
-/-- The largest article number (§6). -/
-def numberMax : Nat := 2147483647
-
 /-- A reply's message-id is one a store holds, 250 octets at most (§3.6); its numbers are article
-numbers or counts no larger; its group's name is one a store may carry. -/
+numbers or counts no larger; its group's name is one a store may carry; a date has at most sixty
+digits. -/
 def Reply.bounded : Reply → Bool
   | .lookup _ n id | .stat n id => id.length ≤ 250 && n ≤ numberMax
   | .byNumber _ n => n ≤ numberMax
   | .select g => g.length ≤ groupNameMax
-  | .selected count low high g =>
+  | .selected count low high g | .listed count low high g _ _ =>
     count ≤ numberMax && low ≤ numberMax && high ≤ numberMax && g.length ≤ groupNameMax
+  | .time d => d.length ≤ 60
   | _ => true
 
 theorem answer_bounded (c : Cmd) (args : List (List Byte)) : (answer c args).bounded = true := by
@@ -377,14 +515,16 @@ theorem parts_short :
       capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 153 ∧
       ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →
+        (∀ count low high g lo hi, r ≠ .listed count low high g lo hi) → (∀ d, r ≠ .time d) →
         ∀ i, (text i r).length ≤ 40 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, ?_⟩
-  intro r h1 h2 h3 h4 h5 h6 i
+  intro r h1 h2 h3 h4 h5 h6 h7 h8 i
   cases r <;> first
     | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
-    | exact absurd rfl (h5 _ _) | exact absurd rfl (h6 _ _ _ _) | (simp only [text]; decide +kernel)
+    | exact absurd rfl (h5 _ _) | exact absurd rfl (h6 _ _ _ _) | exact absurd rfl (h7 _ _ _ _ _ _)
+    | exact absurd rfl (h8 _) | (simp only [text]; decide +kernel)
 
 /-- **Every reply, and the greeting, fits one action** when the identity fits. -/
 theorem greeting_fits (i : Identity) (h : i.ok = true) :
@@ -400,6 +540,24 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded =
   obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h12⟩ := parts_short
   have hd : ∀ n, n ≤ numberMax → (decimal n).length ≤ 10 := fun n hn =>
     decimal_length n (by simp only [numberMax] at hn; omega)
+  by_cases hl : ∃ count low high g lo hi, r = .listed count low high g lo hi
+  · obtain ⟨count, low, high, g, lo, hi, rfl⟩ := hl
+    simp only [Reply.bounded, Bool.and_eq_true, decide_eq_true_eq, groupNameMax] at hr
+    have := hd count hr.1.1.1
+    have := hd low hr.1.1.2
+    have := hd high hr.1.2
+    simp only [text, List.length_append, List.length_cons, actionData, crlf, List.length_nil]
+    have : (ascii "211 ").length = 4 := by decide +kernel
+    omega
+  replace hl : ∀ count low high g lo hi, r ≠ .listed count low high g lo hi :=
+    fun count low high g lo hi e => hl ⟨count, low, high, g, lo, hi, e⟩
+  by_cases ht : ∃ d, r = .time d
+  · obtain ⟨d, rfl⟩ := ht
+    simp only [Reply.bounded, decide_eq_true_eq] at hr
+    simp only [text, List.length_append, actionData, crlf, List.length_cons, List.length_nil]
+    have : (ascii "111 ").length = 4 := by decide +kernel
+    omega
+  replace ht : ∀ d, r ≠ .time d := fun d e => ht ⟨d, e⟩
   by_cases hs : ∃ n id, r = .stat n id
   · obtain ⟨n, id, rfl⟩ := hs
     simp only [Reply.bounded, Bool.and_eq_true, decide_eq_true_eq] at hr
@@ -427,7 +585,7 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded =
   · subst hcp; simp only [text, List.length_append, actionData]; omega
   by_cases hhp : r = .helpPost
   · subst hhp; simp only [text, List.length_append, actionData]; omega
-  have := h12 r hc hh hcp hhp hs hg i
+  have := h12 r hc hh hcp hhp hs hg hl ht i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -620,6 +778,92 @@ theorem store_examples :
     replyIn true (line "NEXT") = .move true ∧ replyIn true (line "last") = .move false ∧
     replyIn true (line "NEXT 1") = .syntax ∧ reply (line "GROUP local.test") = .unknown ∧
     reply (line "NEXT") = .unknown := by
+  decide +kernel
+
+/-- The group and the range a LISTGROUP asks for, and the wildmat a LIST ACTIVE asks for, `none` for
+every group. -/
+def Reply.listGroupOf : Reply → Option (Option (List Byte) × Nat × Nat)
+  | .listGroup g lo hi => some (g, lo, hi)
+  | _ => none
+def Reply.activeOf : Reply → Option (Option Wildmat)
+  | .active w => some w
+  | _ => none
+
+/-- With a store: LISTGROUP takes a group and a range (§6.1.2). -/
+theorem listgroup_examples :
+    ((replyIn true (line "LISTGROUP")).listGroupOf == some (none, 1, numberMax) &&
+      (replyIn true (line "listgroup local.test")).listGroupOf == some (some (ascii "local.test"), 1, numberMax) &&
+      (replyIn true (line "LISTGROUP local.test 3")).listGroupOf == some (some (ascii "local.test"), 3, 3) &&
+      (replyIn true (line "LISTGROUP local.test 3-")).listGroupOf == some (some (ascii "local.test"), 3, numberMax) &&
+      (replyIn true (line "LISTGROUP local.test 3-7")).listGroupOf == some (some (ascii "local.test"), 3, 7) &&
+      (replyIn true (line "LISTGROUP local.test 7-3")).listGroupOf == some (some (ascii "local.test"), 7, 3)) =
+      true := by
+  decide +kernel
+
+/-- …and refuses a name or a range malformed, 411 for a name longer than any group's. -/
+theorem listgroup_refused :
+    replyIn true (line "LISTGROUP local.test -3") = .syntax ∧ replyIn true (line "LISTGROUP local.test 3-7-9") = .syntax ∧
+    replyIn true (line "LISTGROUP local.test 2147483648") = .syntax ∧ replyIn true (line "LISTGROUP a*") = .syntax ∧
+    replyIn true (line "LISTGROUP local.test 1 2") = .syntax ∧ replyIn true (line "LISTGROUP a*b 1") = .syntax ∧
+    replyIn true ⟨.command, ascii "LISTGROUP " ++ List.replicate 65 (ascii "a").head! ++ ascii " 1"⟩ = .noSuchGroup ∧
+    reply (line "LISTGROUP") = .unknown := by
+  decide +kernel
+
+/-- LIST takes a keyword, ACTIVE without one, and a wildmat (§7.6.1, §4.1). -/
+theorem list_examples :
+    (replyIn true (line "LIST")).activeOf = some none ∧ (replyIn true (line "list active")).activeOf = some none ∧
+    replyIn true (line "LIST NEWSGROUPS") = .newsgroups ∧ replyIn true (line "LIST newsgroups loc*") = .newsgroups ∧
+    (((replyIn true (line "LIST ACTIVE a,!b")).activeOf.bind id).map fun w =>
+      (wildmatch w (ascii "a"), wildmatch w (ascii "b"), wildmatch w (ascii "c"))) = some (true, false, false) ∧
+    replyIn true (line "LIST ACTIVE !a") = .syntax ∧ replyIn true (line "LIST ACTIVE a,,b") = .syntax ∧
+    replyIn true (line "LIST ACTIVE a,") = .syntax ∧ replyIn true (line "LIST ACTIVE a,!") = .syntax ∧
+    replyIn true (line "LIST ACTIVE [a]") = .syntax ∧ replyIn true (line "LIST ACTIVE a\\b") = .syntax ∧
+    replyIn true (line "LIST NEWSGROUPS !a") = .syntax ∧ reply (line "LIST") = .unknown := by
+  decide +kernel
+
+/-- LIST's keywords but ACTIVE and NEWSGROUPS, and their arguments, are refused; DATE takes nothing,
+NEWGROUPS a date, a time and `GMT` or not (§7.1, §7.3). -/
+theorem dated_examples :
+    replyIn true (line "LIST ACTIVE.TIMES") = .syntax ∧ replyIn true (line "LIST OVERVIEW.FMT") = .syntax ∧
+    replyIn true (line "LIST ACTIVE a b") = .syntax ∧ replyIn true (line "LIST 1x") = .syntax ∧
+    replyIn true (line "DATE") = .date ∧ replyIn true (line "DATE 1") = .syntax ∧ reply (line "DATE") = .unknown ∧
+    replyIn true (line "NEWGROUPS 19990624 000000 GMT") = .newGroups ∧
+    replyIn true (line "newgroups 990624 235960 gmt") = .newGroups ∧
+    replyIn true (line "NEWGROUPS 20261024 120000") = .newGroups := by
+  decide +kernel
+
+/-- NEWGROUPS's dates and times out of their ranges, or of other forms, are refused (§7.3.2). -/
+theorem newgroups_examples :
+    replyIn true (line "NEWGROUPS 18991231 000000") = .syntax ∧ replyIn true (line "NEWGROUPS 20261324 000000") = .syntax ∧
+    replyIn true (line "NEWGROUPS 20261000 000000") = .syntax ∧ replyIn true (line "NEWGROUPS 20261032 000000") = .syntax ∧
+    replyIn true (line "NEWGROUPS 20261024 240000") = .syntax ∧ replyIn true (line "NEWGROUPS 20261024 126000") = .syntax ∧
+    replyIn true (line "NEWGROUPS 20261024 120061") = .syntax ∧ replyIn true (line "NEWGROUPS 2026102 120000") = .syntax ∧
+    replyIn true (line "NEWGROUPS 20261024 120000 UTC") = .syntax ∧ replyIn true (line "NEWGROUPS 20261024") = .syntax ∧
+    replyIn true (line "NEWGROUPS 20261024 120000 GMT x") = .syntax ∧
+    replyIn true (line "NEWGROUPS +0261024 120000") = .syntax := by
+  decide +kernel
+
+/-- A wildmat of ASCII. -/
+def wm (s : String) : Wildmat := (wildmat? (ascii s)).getD []
+
+/-- §4.2's and §4.4's examples; `$@` of §4.4, the pound sign, is `C2 A3`. -/
+theorem wildmat_examples :
+    wildmatch (wm "a*,!*b,*c*") (ascii "aaa") = true ∧ wildmatch (wm "a*,!*b,*c*") (ascii "abb") = false ∧
+    wildmatch (wm "a*,!*b,*c*") (ascii "ccb") = true ∧ wildmatch (wm "a*,!*b,*c*") (ascii "xxx") = false ∧
+    wildmatch (wm "abc") (ascii "abc") = true ∧ wildmatch (wm "abc") (ascii "abcd") = false ∧
+    wildmatch (wm "abc,def") (ascii "def") = true ∧
+    wildmatch ((wildmat? [0xC2#8, 0xA3#8]).getD []) [0xC2#8, 0xA3#8] = true ∧
+    wildmatch (wm "a*") (ascii "a") = true ∧ wildmatch (wm "a*") (ascii "ba") = false ∧
+    wildmatch (wm "a*b") (ascii "axxb") = true ∧ wildmatch (wm "a*b") (ascii "axxbc") = false ∧
+    wildmatch (wm "a*,*b") (ascii "xb") = true ∧ wildmatch (wm "a*,!*b") (ascii "ab") = false ∧
+    wildmatch (wm "a*,!*b") (ascii "ac") = true ∧ wildmatch (wm "a*,!*b,c*") (ascii "cb") = true ∧
+    wildmatch (wm "a*,c*,!*b") (ascii "cb") = false ∧ wildmatch (wm "a*,c*,!*b") (ascii "ca") = true ∧
+    wildmatch (wm "?a*") [0xC2#8, 0xA3#8, 0x61#8] = true ∧ wildmatch (wm "??a*") (ascii "xya") = true ∧
+    wildmatch (wm "??a*") [0xC2#8, 0xA3#8, 0x61#8] = false ∧ wildmatch (wm "*a?") (ascii "xab") = true ∧
+    wildmatch (wm "*a??") (ascii "abc") = true ∧ wildmatch (wm "*a??") (ascii "ab") = false ∧
+    wildmatch (wm "a?") [0x61#8, 0xC2#8, 0xA3#8] = true ∧ wildmatch (wm "a??") [0x61#8, 0xC2#8, 0xA3#8] = false ∧
+    wildmatch (wm "*") (ascii "local.test") = true ∧ wildmatch (wm "local.*") (ascii "local.") = true ∧
+    wildmatch (wm "*.*.*") (ascii "a.b") = false ∧ wildmatch (wm "*.*.*") (ascii "a..b") = true := by
   decide +kernel
 
 /-- A newsgroup name may hold UTF-8 past US-ASCII, and nothing else past it (§9.8, RFC 3629). -/
