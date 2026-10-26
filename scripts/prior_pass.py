@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Find a pass that an earlier CI run recorded: `prior_pass.py NAME` prints `run-id=ID` for the
-newest run that uploaded an unexpired artifact NAME, or `run-id=` when there is none. A job records
+"""Find a pass that an earlier CI run recorded: `prior_pass.py NAME` prints `run-id=ID` and `found=ID`
+for the newest run that uploaded an unexpired artifact NAME, or `run-id=` and `found=` when there is
+none. `--noted TREE`, the tree a writer checked before the push (the job `checked` of ci.yml), is a
+pass too: it prints `run-id=` and `found=noted` without asking. A job records
 a pass as an artifact named by its inputs (scripts/once.py), and artifacts, unlike the Actions
 cache, are seen across branches: the run on main after a merge finds what the pull request's run
 passed on the same tree. Only runs of this repository's own branches count; a pull request from a
@@ -46,7 +48,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name")
     parser.add_argument("--branch", action="append", dest="branches")
+    parser.add_argument("--noted", default="")
     args = parser.parse_args()
+    if args.noted:
+        print("run-id=\nfound=noted")
+        return
     name = args.name
     api, repo = os.environ["GITHUB_API_URL"], os.environ["GITHUB_REPOSITORY"]
     if not api.startswith("https://"):
@@ -71,7 +77,7 @@ def main() -> None:
     except (OSError, ValueError) as error:
         print(f"prior_pass.py: no answer from the API, so the checks run: {error}", file=sys.stderr)
         run = None
-    print(f"run-id={run or ''}")
+    print(f"run-id={run or ''}\nfound={run or ''}")
 
 
 if __name__ == "__main__":

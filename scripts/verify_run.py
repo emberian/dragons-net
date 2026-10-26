@@ -47,9 +47,9 @@ from typing import Any
 REQUIRED_JOBS = ("checked", "lint", "build", "proofs", "test", "native", "documents", "lazyfs")
 
 # The note a writer of this repository leaves on a commit in `refs/notes/checked` once its tree
-# passed every check: only a writer can push it. The run of `checks` on that tree then runs none of
-# them again, and its jobs but the first are skipped; the nightly run checks the default branch on
-# its own.
+# passed every check: only a writer can push it. The jobs of `checks` on that tree then pass on it,
+# as on a pass recorded before, without running the checks again; the nightly run checks the default
+# branch on its own.
 CHECKED = "tree {} passed scripts/check_all.sh, the LazyFS lane and the power lane\n"
 
 # What the checks read as their subject: the code under review and the tests that
@@ -95,9 +95,8 @@ def quote(text: str) -> str:
     return f"`{kept[:PATH_LIMIT]}`"
 
 
-def job_problems(jobs: list[dict[str, Any]], checked: bool = False) -> list[str]:
-    """Required jobs that did not run, did not succeed, or ran more than once; on a tree a
-    writer checked, the jobs after the first may be skipped.
+def job_problems(jobs: list[dict[str, Any]]) -> list[str]:
+    """Required jobs that did not run, did not succeed, or ran more than once.
 
     Two jobs of one name would let the second answer for the first, so a name
     that is not there exactly once is itself the problem.
@@ -105,12 +104,11 @@ def job_problems(jobs: list[dict[str, Any]], checked: bool = False) -> list[str]
     problems = []
     for name in REQUIRED_JOBS:
         matching = [job for job in jobs if str(job.get("name")) == name]
-        allowed = ("success", "skipped") if checked and name != REQUIRED_JOBS[0] else ("success",)
         if not matching:
             problems.append(f"{quote(name)}: did not run")
         elif len(matching) > 1:
             problems.append(f"{quote(name)}: ran {len(matching)} times")
-        elif matching[0].get("conclusion") not in allowed:
+        elif matching[0].get("conclusion") != "success":
             state = matching[0].get("conclusion") or matching[0].get("status")
             problems.append(f"{quote(name)}: {quote(str(state))}")
     return problems
@@ -175,7 +173,7 @@ def judge(jobs: list[dict[str, Any]], base: dict[str, Any], head: dict[str, Any]
                        + ", ".join(quote(ref) for ref in elsewhere)
                        + f", and the checks there are whatever that branch carries. This "
                        f"compares against {quote(run.default_branch)} only." + ran)
-    problems = job_problems(jobs, checked)
+    problems = job_problems(jobs)
     changed = differences(contents(base), contents(head))
     edited = "" if not changed else (
         "\nThese files decide what the checks do, and this commit does not have the default "
@@ -193,7 +191,7 @@ def judge(jobs: list[dict[str, Any]], base: dict[str, Any], head: dict[str, Any]
     if checked:
         return Verdict("success", "Checked by the default branch's checks before the push",
                        f"A writer recorded that the tree {quote(head_tree)} passed every check "
-                       "(`refs/notes/checked`), so the jobs did not run them again; the scripts, "
+                       "(`refs/notes/checked`), so the jobs passed without running them again; the scripts, "
                        "workflows, gate tests and pins in this commit are the default branch's.\n" + tail)
     return Verdict("success", "Checked by the default branch's checks",
                    "Every required job succeeded, and the scripts, workflows, gate tests and "

@@ -306,15 +306,29 @@ class CheckScript(unittest.TestCase):
         # Once the build has passed, the kernels, the tests and the native lanes run beside each other,
         # each in jobs of their own; a job gathers each one's, and fails unless every one of them passed.
         # The documents are held to the stamps of the tests and the lanes.
-        for job, previous in (("lint", "checked"), ("build", "lint"), ("kernels", "build"),
-                              ("proofs", "[kernels, checked]"), ("tests", "build"), ("test", "[tests, checked]"),
-                              ("lanes", "build"), ("native", "[lanes, checked]")):
+        for job, previous in (("lint", "checked"), ("build", "[lint, checked]"), ("kernels", "[build, checked]"),
+                              ("proofs", "[kernels, checked]"), ("tests", "[build, checked]"),
+                              ("test", "[tests, checked]"), ("lanes", "[build, checked]"),
+                              ("native", "[lanes, checked]"), ("documents", "[test, native, checked]"),
+                              ("lazyfs", "[build, checked]")):
             self.assertIn(f"    needs: {previous}\n", jobs[job])
-        # A tree checked before the push is not checked again: the first job finds its note, and every
-        # later one waits on a job that then does not run, or asks itself.
-        self.assertIn("    if: needs.checked.outputs.tree == ''\n", jobs["lint"])
+        # A tree checked before the push is not checked again: the first job finds its note, every later
+        # one takes it as a pass on its inputs and passes, which the default branch's verify lane reads
+        # as any pass, and the shards do not start.
         self.assertIn(verify_run.CHECKED.format("$tree").rstrip("\n"), jobs["checked"])
         self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'push'\n", jobs["checked"])
+        for job, body in jobs.items():
+            with self.subTest(job=job):
+                shard = "    strategy:\n" in body
+                self.assertEqual("    if: needs.checked.outputs.tree == ''\n" in body, shard)
+                self.assertEqual(body.count("          NOTED: ${{ needs.checked.outputs.tree }}\n"
+                                            '        run: python3 scripts/prior_pass.py "passed-$KEY" '
+                                            '--noted "$NOTED" >> "$GITHUB_OUTPUT"\n'),
+                                 0 if shard or job == "checked" else 1)
+        self.assertEqual(len(re.findall(r"\bif: .*steps\.passed\.outputs\.run-id", "".join(jobs.values()))), 1)
+        self.assertIn("        if: steps.passed.outputs.run-id != ''\n        with:\n          name: lean-build\n",
+                      jobs["build"])
+        self.assertEqual(jobs["build"].count("        if: steps.passed.outputs.found != 'noted'\n"), 2)
         # What each job unpacks is the archive the build named by its digest.
         self.assertIn("      archive: ${{ steps.archive.outputs.sha256 }}\n", jobs["build"])
         for job in ("kernels", "tests", "lanes", "lazyfs"):
@@ -344,13 +358,12 @@ class CheckScript(unittest.TestCase):
         for job, shards in (("test", "tests"), ("native", "lanes")):
             # The stamps the shards take up next time count where this step passed (scripts/prior_pass.py).
             self.assertIn(f"      - name: Record checks-{job}\n        uses: actions/upload-artifact@", jobs[job])
-            self.assertIn("    if: ${{ !cancelled() && needs.checked.outputs.tree == '' }}\n", jobs[job])
+            self.assertIn("    if: ${{ !cancelled() }}\n", jobs[job])
             self.assertIn(f"SHARDS: ${{{{ needs.{shards}.result }}}}\n        run: test \"$SHARDS\" = success\n",
                           jobs[job])
-        self.assertIn("    if: ${{ !cancelled() && needs.checked.outputs.tree == '' }}\n", jobs["proofs"])
+        self.assertIn("    if: ${{ !cancelled() }}\n", jobs["proofs"])
         self.assertIn('KERNELS: ${{ needs.kernels.result }}\n        run: test "$KERNELS" = success\n', jobs["proofs"])
         self.assertIn("        part: [leanchecker, nanoda]\n", jobs["kernels"])
-        self.assertIn("needs: [test, native]\n", jobs["documents"])
         self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
         # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
         # names the run that holds it; the documents job takes both records by them.
@@ -364,7 +377,6 @@ class CheckScript(unittest.TestCase):
                           f"          run-id: ${{{{ needs.{job}.outputs.run }}}}\n", jobs["documents"])
         # The LazyFS lane mounts FUSE, and the power lane on it needs the build: they run beside the
         # rest of the chain once the build has passed.
-        self.assertIn("needs: build\n", jobs["lazyfs"])
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
         self.assertIn("run: bash scripts/native_lanes.sh power\n", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
@@ -481,6 +493,17 @@ class CheckScript(unittest.TestCase):
         self.assertFalse(prior_pass.recorded(jobs(("Record passed-b", "success")), "passed-a"))
         self.assertFalse(prior_pass.recorded(jobs(), "passed-a"))
         self.assertFalse(prior_pass.recorded({"jobs": [{"steps": None}]}, "passed-a"))
+        # A tree a writer checked before the push is a pass without asking; with none, or the API
+        # silent, nothing is found and the checks run.
+        def asked(*noted: str) -> str:
+            env = {"PATH": os.environ["PATH"], "GITHUB_API_URL": "https://127.0.0.1:9", "GITHUB_REPOSITORY": "o/r",
+                   "GITHUB_REPOSITORY_ID": "7", "GITHUB_RUN_ID": "8", "GH_TOKEN": "t"}
+            return subprocess.run([sys.executable, "-P", str(ROOT / "scripts/prior_pass.py"), "passed-a", *noted],
+                                  env=env, capture_output=True, text=True, check=True, timeout=60).stdout
+
+        self.assertEqual(asked("--noted", "a" * 40), "run-id=\nfound=noted\n")
+        self.assertEqual(asked("--noted", ""), "run-id=\nfound=\n")
+        self.assertEqual(asked(), "run-id=\nfound=\n")
 
     def test_ci_records_a_pass_only_after_its_steps(self) -> None:
         """Every job looks for a recorded pass first, and records its own last, so a job that
@@ -726,23 +749,23 @@ class Verify(unittest.TestCase):
         crowded = verdict(base, jobs=many)
         self.assertEqual(crowded.conclusion, "success")
         self.assertIn(f"and {len(many) - verify_run.LISTED} more", crowded.summary)
-        # A tree a writer checked before the push: the jobs after the first may be skipped, on that tree.
+        # A tree a writer checked before the push: its jobs pass on the note, and the verdict says so; a job
+        # skipped is still one that did not pass, note or not.
         note = verify_run.CHECKED.format("a" * 40)
-        later: list[dict[str, object]] = [{**job, "conclusion": "skipped"} if job["name"] != "checked" else job
-                                          for job in green]
-        signed = verify_run.judge(later, tree(base), tree(base), ok, note, "a" * 40)
+        signed = verify_run.judge(green, tree(base), tree(base), ok, note, "a" * 40)
         self.assertEqual(signed.conclusion, "success")
         self.assertIn("before the push", signed.title)
-        for case, (jobs, text, at) in {"no note": (later, "", "a" * 40),
-                                       "another tree": (later, note, "b" * 40),
-                                       "another note": (later, note.replace("passed", "began"), "a" * 40),
-                                       "no tree": (later, note, ""),
-                                       "the first skipped": ([{**job, "conclusion": "skipped"} for job in green],
-                                                             note, "a" * 40)}.items():
+        for case, (text, at) in {"no note": ("", "a" * 40), "another tree": (note, "b" * 40),
+                                 "another note": (note.replace("passed", "began"), "a" * 40),
+                                 "no tree": (note, "")}.items():
             with self.subTest(case=case):
-                self.assertEqual(verify_run.judge(jobs, tree(base), tree(base), ok, text, at).conclusion, "failure")
+                plain = verify_run.judge(green, tree(base), tree(base), ok, text, at)
+                self.assertEqual((plain.conclusion, plain.title), ("success", "Checked by the default branch's checks"))
+        later: list[dict[str, object]] = [{**job, "conclusion": "skipped"} if job["name"] != "checked" else job
+                                          for job in green]
+        self.assertEqual(verify_run.judge(later, tree(base), tree(base), ok, note, "a" * 40).conclusion, "failure")
         # Its own checks edited, it is read by hand as any other.
-        self.assertEqual(verify_run.judge(later, tree(base), tree(critical["edited"]), ok, note, "a" * 40).conclusion,
+        self.assertEqual(verify_run.judge(green, tree(base), tree(critical["edited"]), ok, note, "a" * 40).conclusion,
                          "neutral")
         # The checks that ran are the base branch's, and this speaks for one branch.
         other = verify_run.Run(url="u", conclusion="success", default_branch="main",

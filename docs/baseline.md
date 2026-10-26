@@ -26,7 +26,7 @@ In CI an artifact keyed by the job's inputs is seen across branches (`scripts/pr
 
 Each linter is a check of its own, and each commit is read for secrets once. A pull request's next run waits for the one in progress instead of cancelling it. A nightly job whose inputs are the repository's alone runs once per key, on CI's build; advisories, the network's answers and new seeds run every night.
 
-A writer who ran every check on a tree notes it on the commit (`refs/notes/checked`, `CHECKED` in `scripts/verify_run.py`), which only a writer can push. CI then runs none of them again, and `verify` accepts the skipped jobs. Each night `checks` runs on `main` by itself.
+A writer who ran every check on a tree notes it on the commit (`refs/notes/checked`, `CHECKED` in `scripts/verify_run.py`), which only a writer can push. Each CI job then takes the note as a pass on its inputs and runs nothing again; `verify` still requires every job to pass. Each night `checks` runs on `main` by itself.
 
 `python3 scripts/native_fuzz.py --cake "$(python3 scripts/bootstrap_tool.py cake)" --seed N --count C --vectors V` runs the generated lane larger, as the nightly run does with 5,000 programs from a seed of the date, reducing a disagreement to `build/fuzz/minimized/`; `--bootstrapped` uses the compiler built from the patched source.
 
