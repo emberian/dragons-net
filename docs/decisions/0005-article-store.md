@@ -353,7 +353,7 @@ counting the lines it could not.
 - LISTGROUP selects a group as GROUP does, the named one or the selected one, then lists the
   numbers within its range of the articles the group held as it was selected (§6.1.2). LIST and LIST
   ACTIVE list each group the store carries that the wildmat matches, all without one: its name, its
-  highest and lowest numbers, and `y` while the store accepts, else `n` (§7.6.3).
+  highest and lowest numbers, and `y` while the store accepts, else `n`: the group's status on this server, the same for a client that may not post (§7.6.3).
 - LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
   created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1), past the year 9999 with more
   digits than §7.1's fourteen. A list goes out a send at a time.

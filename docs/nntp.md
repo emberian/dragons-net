@@ -1,6 +1,6 @@
 # NNTP implementation plan
 
-The first slice answers over sockets on loopback: [decision 0003](decisions/0003-nntp-slice.md) fixes what it answers, how it frames input, its limits and what of it is proved. The baseline says what of its [framing](baseline.md#framers), [session](baseline.md#session-model), [program](baseline.md#session-program) and [server](baseline.md#nntp-server) is proved and what is only tested.
+The server answers over sockets on loopback: [decision 0003](decisions/0003-nntp-slice.md) fixes what its first slice answers, how it frames input, its limits and what of it is proved. The baseline says what of its [framing](baseline.md#framers), [session](baseline.md#session-model), [program](baseline.md#session-program) and [server](baseline.md#nntp-server) is proved and what is only tested.
 
 Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)): [decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. The store is proven in the model and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)); the server is tested under [crashes](baseline.md#crashes), [power loss](baseline.md#power-loss) and [faults](baseline.md#faults).
 
@@ -31,14 +31,40 @@ A line naming one of these commands that is malformed — an argument the comman
 | READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Done (#17, #18) |
 | LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Done (#18) |
 | POST | POST | Done (#17) |
-| OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility |
-| HDR | HDR, LIST HEADERS | Practical reader compatibility |
-| IHAVE | IHAVE | Peer ingestion |
-| NEWNEWS | NEWNEWS | Incremental peer/client discovery |
-| LIST extensions in RFC 3977 | LIST ACTIVE.TIMES, LIST DISTRIB.PATS | Broader core coverage |
+| OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility (#19) |
+| HDR | HDR, LIST HEADERS | Practical reader compatibility (#19) |
+| IHAVE | IHAVE | Peer ingestion (#22) |
+| NEWNEWS | NEWNEWS | Incremental peer/client discovery (#22) |
+| LIST extensions in RFC 3977 | LIST ACTIVE.TIMES, LIST DISTRIB.PATS | ACTIVE.TIMES with the groups' creation dates (#21); DISTRIB.PATS not planned |
 | MODE-READER | MODE READER | Not advertised: the server is not mode-switching and answers MODE READER as §5.3.2 asks of one (#18) |
 
 Capability output includes VERSION 2 first, as required by §3.3.2. It must reflect the current session and permissions. Do not infer implementation from the software name or advertise a capability solely because a command keyword is recognized.
+
+### Commands
+
+What each command of RFC 3977 gets with a store, and what holds it: the session's lanes (`session_check.py` for the model, `session_native.py` for the program), the nntp lane over sockets with `nntplib` and Perl's Net::NNTP, and the crash, power and faults lanes. Without a store the first slice answers as above.
+
+| Command | RFC 3977 | Answer | Held by |
+| --- | --- | --- | --- |
+| CAPABILITIES | §5.2 | `VERSION 2`, `IMPLEMENTATION`, READER, `LIST ACTIVE NEWSGROUPS`, and POST while the client may post | session lanes, nntp lane, faults lane after the store stops |
+| MODE READER | §5.3 | 200 while the client may post, else 201, changing nothing | session lanes, Net::NNTP |
+| QUIT | §5.4 | 205, then the connection closes | session lanes, nntp lane |
+| GROUP | §6.1.1 | 211 with the count and the lowest and highest numbers, the first article current; 411 | session lanes, `nntplib`, Net::NNTP |
+| LISTGROUP | §6.1.2 | GROUP's 211, then the numbers in the range of the articles held as the group is selected | session lanes, nntp lane, Net::NNTP |
+| LAST, NEXT | §6.1.3, §6.1.4 | 223 with the article moved to; 412, 420, 421, 422 | session lanes, `nntplib`, Net::NNTP |
+| ARTICLE, HEAD, BODY | §6.2.1 to §6.2.3 | By message-id, number or the current article, 220, 221, 222 and the file with Xref; 412, 420, 423, 430, 403 | session lanes, nntp, crash and faults lanes |
+| STAT | §6.2.4 | 223; 412, 420, 423, 430 | session lanes, `nntplib`, Net::NNTP |
+| POST | §6.3.1 | 340, then 240 once the journal is synced, or 441; 440, 403 | session lanes, nntp, crash, power and faults lanes |
+| DATE | §7.1 | 111 and the wall clock in UTC | session lanes, `nntplib`, Net::NNTP |
+| HELP | §7.2 | 100, the commands, the revision and the address of the source | session lanes, `nntplib` |
+| NEWGROUPS | §7.3 | 231 and an empty list, as no group has a creation date (#21); a time without GMT is UTC, the server's | session lanes, `nntplib`, Net::NNTP |
+| LIST, LIST ACTIVE | §7.6.1, §7.6.3 | 215, then a line a group the wildmat takes: name, highest, lowest, `y` while the store accepts, else `n` | session lanes, nntp lane, faults lane after the store stops |
+| LIST NEWSGROUPS | §7.6.6 | 215 and an empty list, as no group has a description (#21) | session lanes, `nntplib`, Net::NNTP |
+| IHAVE, NEWNEWS | §6.3.2, §7.4 | 500 (#22) | session lanes |
+| OVER, HDR | §8.3, §8.5 | 500 (#19) | session lanes |
+| LIST ACTIVE.TIMES, DISTRIB.PATS, OVERVIEW.FMT, HEADERS | §7.6.4, §7.6.5, §8.4, §8.6 | 501; OVERVIEW.FMT and HEADERS with #19, ACTIVE.TIMES with #21 | session lanes |
+
+The status of LIST ACTIVE is the group's on this server, not the client's: a client that may not post sees `y` too (§7.6.3).
 
 ## Protocol test plan
 

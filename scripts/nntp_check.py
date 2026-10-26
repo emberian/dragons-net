@@ -3,10 +3,11 @@
 """The NNTP server: the session's program (`DN.Server.Session`) with its socket host
 (`native/nntp_host.c`), run on loopback and checked from outside (docs/baseline.md, "NNTP server").
 
-Every byte a client reads has to be what `session_ref` computes from the bytes it sent. Every run but
-those with a store and those of the clients written apart, `nntplib` and Perl's Net::NNTP, reports its
-turns, and each report is held against the clients' sockets and the host's side of the contract, judged
-by `session_ref.judge`, and replayed through the model. The checks are
+Every byte a client reads has to be what `session_ref` computes from the bytes it sent, or, with a
+store, a fixed text. Every run but most of those with a store and those of the clients written apart,
+`nntplib` and Perl's Net::NNTP, reports its turns, each report held against the clients' sockets and the
+host's side of the contract; those without a store are judged by `session_ref.judge` and replayed
+through the model. The checks are
 `CHECKS`; each defect of `DEFECTS`, planted in the host or in the program, has to be caught by the
 check named for it and for the reason named.
 """
@@ -563,10 +564,12 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
 
 @contextmanager
 def serving(build: Build, virtual: bool = False, *options: str, traced: bool = True,
-            stale: bool = False) -> Iterator[Server]:
+            stale: bool = False, judged: bool = True) -> Iterator[Server]:
     """The server of `build`, or with `stale` its program that acts for the generation before, which
-    is not judged since it is wrong on purpose."""
-    server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, not stale, options)
+    is not judged since it is wrong on purpose; nor, without `judged`, a run with a store, which
+    `session_ref.judge` does not model."""
+    server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, judged and not stale,
+                    options)
     try:
         try:
             yield server
@@ -752,6 +755,45 @@ def every_cut(b: Build) -> str:
         sent, read = recorded["commands"]
         in_parts(server, sent, read, [sent[k:k + 1] for k in range(len(sent))])
     return f"{cuts} cuts of {len(recorded)} transcripts, and one sent a byte at a time"
+
+
+def reader_cuts(b: Build) -> str:
+    """Reader commands on a spool holding two articles of `local.test`, sent whole, read as a fixed
+    text the session's answers make; then cut between two reads at each of their octets, each cut read
+    alike. The run is traced and held to the sockets, not judged: the reference has no store."""
+    ids = [b"<c1@x.example>", b"<c2@x.example>"]
+    stream = lines("GROUP local.test", "LISTGROUP local.test", "STAT 1", "NEXT", "LAST", "LIST ACTIVE local.*",
+                   "LIST NEWSGROUPS", "NEWGROUPS 20260101 000000 GMT", "MODE READER", "CAPABILITIES", "QUIT")
+    selected = b"211 2 1 2 local.test\r\n"
+    read = b"".join([TEXTS["greeting-post"], selected, selected, b"1\r\n2\r\n.\r\n",
+                     b"223 1 %s\r\n223 2 %s\r\n223 1 %s\r\n" % (ids[0], ids[1], ids[0]),
+                     b"215 List of newsgroups follows\r\nlocal.test 2 1 y\r\n.\r\n", TEXTS["list-newsgroups"],
+                     TEXTS["new-groups"], TEXTS["reader-posting"], TEXTS["capabilities-post"], TEXTS["quit"]])
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            for mid in ids:
+                c = server.client()
+                c.sendall(lines("POST") + sessions.article(*sessions.BASIC, f"Message-ID: {mid.decode()}") +
+                          lines("QUIT"))
+                posted = read_to_end(c)
+                if TEXTS["posted"] not in posted:
+                    raise LaneError(f"a post on the spool read {posted[-120:]!r}")
+        # The store's jobs at the start take turns of no event, fifteen on this spool.
+        with serving(b, False, *options, judged=False) as server:
+            server.idle_allowed = 16
+            whole = server.client()
+            whole.sendall(stream)
+            got = read_to_end(whole)
+            if got != read:
+                raise LaneError(f"reader commands sent whole read {got[-200:]!r}, not {read[-200:]!r}")
+            for at in range(1, len(stream)):
+                in_parts(server, stream, read, [stream[:at], stream[at:]])
+    return f"{len(stream) - 1} cuts of reader commands on a spool"
 
 
 def half_close(b: Build) -> str:
@@ -1545,6 +1587,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
     "lines cut between reads": every_cut,
+    "reader lines cut between reads": reader_cuts,
     "half close": half_close,
     "reset mid-line": reset_mid_line,
     "slow reader": slow_reader,
@@ -1725,6 +1768,8 @@ DEFECTS = [
     Defect("NEWGROUPS of a two-digit year refused",
            [(r"ok = 0 < \(\(l1 == 6\) \+ \(l1 == 8\)\);", "ok = l1 == 8;", 1)],
            "Net::NNTP", "231 List of new newsgroups follows", program=True),
+    Defect("LIST NEWSGROUPS answered as LIST ACTIVE", [(r"r = 33;", "r = 32;", 1)], "reader lines cut between reads",
+           "reader commands sent whole read", program=True),
     Defect("the session kept after QUIT", [(r"(if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{)\s+st cb \+ 16, 1;", r"\1", 1)],
            "pipeline", "the stream did not end", program=True),
     Defect("a file's CRC-32C not compared",

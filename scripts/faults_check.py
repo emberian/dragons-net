@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The faults lane: the crash lane's server (scripts/crash_check.py) on a spool holding an article,
 and on that spool as a crash leaves it, its clients one after another, each on a connection of its
-own: an article posted, ARTICLE of the one held, another posted, STAT of the one held.
+own: an article posted, ARTICLE of the one held, another posted, STAT of the one held, then the
+capabilities and LIST ACTIVE, POST among the first and `y` in the second only while the store accepts.
 
 - Each operation failed once with ENOSPC at its first point (`dn/fail`): every reply as in a run
   without the failure until it, then as decision 0005 has it for the point and the file: an
@@ -59,6 +60,7 @@ from lanes import ROOT, LaneError, Report
 import nntp_check as N
 import recovery_ref as R
 import session_native
+import store_ref as J
 
 OUT = ROOT / "build/faults"
 TEXTS = C.TEXTS
@@ -70,7 +72,10 @@ Image = dict[bytes, bytes]
 # A client's step: its command, and the article it posts after a 340.
 Step = tuple[bytes, bytes]
 READ, STAT = b"ARTICLE <held@x.example>\r\n", b"STAT <held@x.example>\r\n"
-STEPS: list[Step] = [(b"POST\r\n", POSTS[0]), (READ, b""), (b"POST\r\n", POSTS[1]), (STAT, b"")]
+STEPS: list[Step] = [(b"POST\r\n", POSTS[0]), (READ, b""), (b"POST\r\n", POSTS[1]), (STAT, b""),
+                     (b"CAPABILITIES\r\n", b""), (b"LIST ACTIVE\r\n", b"")]
+# LIST ACTIVE, the last step, lists the articles the run leaves, which `judged` holds it to.
+LISTING = len(STEPS) - 1
 # What a failure does, by its point and the file of its operation, among the outcomes of `expected`.
 OUTCOMES = {("dn/create", "article"): "refused", ("dn/write", "article"): "refused",
             ("dn/rename", "article"): "refused", ("dn/data-sync", "article"): "stopped",
@@ -86,10 +91,10 @@ RETRIED = {"dn/create", "dn/open", "dn/open-dir", "dn/write", "dn/read", "dn/dat
 
 
 def reply(f: BinaryIO) -> list[bytes]:
-    """A reply's lines: its first and, after 220, 221 or 222, its text to the line of a dot, or what
-    came of it before the server stopped."""
+    """A reply's lines: its first and, after 101, 215, 220, 221 or 222, its text to the line of a dot,
+    or what came of it before the server stopped."""
     lines = [f.readline()]
-    while lines[0][:3] in (b"220", b"221", b"222") and lines[-1].endswith(b"\r\n") and \
+    while lines[0][:3] in (b"101", b"215", b"220", b"221", b"222") and lines[-1].endswith(b"\r\n") and \
             (len(lines) == 1 or lines[-1] != b".\r\n"):
         lines.append(f.readline())
     return lines
@@ -155,6 +160,11 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
             if port is not None:
                 at = int(json.loads(port)["port"])
                 got = during(at, spool) if during else [talk(at, *s) for s in steps]
+                # A refused post's temporary file goes by a job its 441 does not wait for: the store's
+                # last jobs are given their time before the stop, and a file still there is held.
+                settled = time.monotonic() + C.TIMEOUT
+                while any(f.name.startswith("t") for f in spool.iterdir()) and time.monotonic() < settled:
+                    time.sleep(0.01)
                 proc.send_signal(signal.SIGTERM)
             status = proc.wait(C.TIMEOUT)
         finally:
@@ -177,15 +187,27 @@ def replies(base: Image) -> list[bytes]:
     return [b"220 0 " + commit[1] + b"\r\n", *(line + b"\r\n" for line in C.lines_of(text)), b".\r\n"]
 
 
+def listed(commits: list[J.Commit], accepting: bool) -> list[bytes]:
+    """LIST ACTIVE of the groups as a store holding `commits` gives it: each group's highest and lowest
+    numbers, and `y` while it accepts."""
+    numbers = {g: [n for c in commits for name, n in c[2] if name == g] for g in C.GROUPS}
+    return [b"215 List of newsgroups follows\r\n",
+            *(b"%s %d %d %s\r\n" % (g, max(ns, default=0), min(ns, default=1), b"y" if accepting else b"n")
+              for g, ns in numbers.items()), b".\r\n"]
+
+
 def expected(base: Image, outcome: str = "none", at: int = -1) -> list[list[bytes]]:
-    """What each client of `STEPS` reads on a spool holding `base` when step `at` meets `outcome`:
-    none, a post refused, a post refused and the store stopped, a post unanswered and the store
-    stopped, or an article unread."""
+    """What each client of `STEPS` but the last reads on a spool holding `base` when step `at` meets
+    `outcome`: none, a post refused, a post refused and the store stopped, a post unanswered and the
+    store stopped, or an article unread."""
     rows: list[list[bytes]] = []
     stopped = False
-    for k, (command, post) in enumerate(STEPS):
+    for k, (command, post) in enumerate(STEPS[:LISTING]):
         greeting, quit = TEXTS["greeting" if stopped else "greeting-post"], TEXTS["quit"]
-        if post and stopped:
+        if command.startswith(b"CAPABILITIES"):
+            text = TEXTS["capabilities-reader" if stopped else "capabilities-post"]
+            rows.append([greeting, *(line + b"\r\n" for line in text.split(b"\r\n")[:-1]), quit])
+        elif post and stopped:
             rows.append([greeting, TEXTS["not-permitted"], quit])
         elif post:
             answer = ([TEXTS["failed"], quit] if k == at and outcome in ("refused", "stopped")
@@ -216,12 +238,13 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple
             return "", f"{point} failing at the start ended it with status {run.status}: {run.said[-200:]!r}"
         return "start", (f"{point} failing at the start left marks in {run.marks}"
                          if marked != (point in SYNCS or role == "start written") else None)
-    at = next((k for k, (got, row) in enumerate(zip(run.got, expected(base), strict=True)) if got != row), -1)
+    at = next((k for k, (got, row) in enumerate(zip(run.got[:LISTING], expected(base), strict=True))
+               if got != row), -1)
     outcome = "none" if retried or not point else OUTCOMES.get((point, role), "")
     what = f"{point or 'nothing'} on the {role or 'no'} file failing"
     if not outcome:
         return "", f"{what}, which 0005 does not expect"
-    if (outcome == "none") != (at < 0) or run.got != expected(base, outcome, at):
+    if (outcome == "none") != (at < 0) or run.got[:LISTING] != expected(base, outcome, at):
         step = STEPS[max(at, 0)][0].decode().strip()
         return "", f"{what}, the client of {step} read {b''.join(run.got[max(at, 0)])[-200:]!r}, not as {outcome}"
     if marked != (not retried and (point in SYNCS or (point, role) == ("dn/close", "article"))):
@@ -240,8 +263,17 @@ def judged(run: Run, base: Image, binary: Path, where: Path, retried: bool = Fal
         commits = R.recover(C.KEY, C.GROUPS, list(run.image.items()))[3]
     except R.Corrupt as error:
         return f"corrupt {error}"
-    held = {c[1]: c for c in commits}
     before = R.recover(C.KEY, C.GROUPS, list(base.items()))[3]
+    # The store serves the articles it held and those it answered 240; a commit whose append failed
+    # may be in the journal, unanswered and not served.
+    taken = {C.mid_of(post) for (_, post), got in zip(STEPS, run.got, strict=False)
+             if post and got[2:3] == [TEXTS["posted"]]}
+    serving = [c for c in commits if c[1] in taken or any(c[1] == b[1] for b in before)]
+    stopped = outcome in ("stopped", "lost")
+    listing = [TEXTS["greeting" if stopped else "greeting-post"], *listed(serving, not stopped), TEXTS["quit"]]
+    if run.started and run.got[LISTING] != listing:
+        return f"LIST ACTIVE read {b''.join(run.got[LISTING])[-200:]!r}, not {b''.join(listing)[-200:]!r}"
+    held = {c[1]: c for c in commits}
     if any(held.get(c[1]) != c or run.image.get(R.name_of("a", c[0])) != base[R.name_of("a", c[0])] for c in before):
         return "the article held before is not held as it was"
     for (_, post), got in zip(STEPS, run.got if run.started else [], strict=False):
@@ -506,6 +538,8 @@ DEFECTS = [
              r"(\} else \{\n\s+)(st zs \+ 96, 3;\n\s+st zs \+ 104, 0;\n\s+st @base \+ 1032624, 0;)",
              r"\g<1>if ok == 0 { st zs + 160, 3; st zs + 88, 1; st zs + 104, 0; } else { \g<2> }", 1,
              "on the journal file failing"),
+    C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
+             "LIST ACTIVE read"),
 ]
 
 

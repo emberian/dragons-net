@@ -762,6 +762,28 @@ HELP = ascii_lines("HELP")
 Scenario = tuple[str, list[Client], bool, Identity]
 
 
+def letters_changed(lines: list[tuple[str, str, str]]) -> bytes:
+    """Each line `before` + keyword + `after` once for each letter of its keyword, that letter changed
+    to the next one, so that a keyword compared without some letter would answer it."""
+    changed = []
+    for before, keyword, after in lines:
+        for k, c in enumerate(keyword):
+            other = chr((ord(c) - 65 + 1) % 26 + 65)
+            changed.append(before + keyword[:k] + other + keyword[k + 1:] + after)
+    return ascii_lines(*changed)
+
+
+# The keywords of a server without a store, each in a line that would be answered were it read.
+KEYWORDS = [("", "CAPABILITIES", ""), ("", "HELP", ""), ("", "HEAD", ""), ("", "STAT", ""), ("", "MODE", " READER"),
+            ("MODE ", "READER", ""), ("", "QUIT", "")]
+# …and those a store adds.
+STORE_KEYWORDS = [*KEYWORDS[:-1], ("", "POST", ""), ("", "ARTICLE", ""), ("", "BODY", ""),
+                  ("", "GROUP", " local.test"), ("", "NEXT", ""), ("", "LAST", ""), ("", "LISTGROUP", ""),
+                  ("", "LIST", ""),
+                  ("LIST ", "ACTIVE", ""), ("LIST ", "NEWSGROUPS", ""), ("", "DATE", ""),
+                  ("", "NEWGROUPS", " 20260101 000000"), ("NEWGROUPS 20260101 000000 ", "GMT", ""), KEYWORDS[-1]]
+
+
 DRAWN, DRAWN_SEED = 300, 20261002
 PIECES = (b"HELP\r\n", b"HEL", b"P\r\n", b"HE", b"  ", b"\t", b"\r\n", b"\r", b"\n", b"STAT 1\r\n",
           b"QUIT\r\n", b"FOO" + b"x" * 600 + b"\r\n")
@@ -818,6 +840,7 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
     yield "a QUIT and more", [Client(1, [(5, ascii_lines("QUIT", "HELP")), (9, HELP)])], False
     yield "MODE READER without a store", [Client(1, [(5, ascii_lines("HELP", "mode Reader", "HELP")), (9, HELP)])], \
         False
+    yield "every letter of a keyword changed", [Client(1, [(5, letters_changed(KEYWORDS) + QUIT)])], False
     yield "input ending mid-line", [Client(1, [(5, b"HELP\r\nCAPAB")], shut=9)], False
     yield "input ending at once", [Client(1, [], shut=3)], False
     yield "input ending after commands", [Client(1, [(5, ascii_lines("HELP", "STAT"))], shut=5, take=9)], False
@@ -1267,6 +1290,50 @@ def list_scenarios() -> Iterator[PostScenario]:
     yield "the groups listed once the store has stopped", [
         poster(), Client(1, [(500, ascii_lines("LIST ACTIVE", "LIST", "QUIT"))])], \
         Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
+    yield "every letter of a keyword changed, with a store", [
+        Client(1, [(5, letters_changed(STORE_KEYWORDS) + QUIT)], post=True)], Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "every octet in a range", [Client(1, [(5, range_octets())])], Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "every octet in an article's number", [Client(1, [(5, number_octets())])], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "commands and keywords a store does not have", [
+        reader("OVER", "HDR Subject", "IHAVE <a@b.example>", "NEWNEWS * 20260101 000000", "XOVER 1-2",
+               "LIST ACTIVE.TIMES", "LIST DISTRIB.PATS", "LIST OVERVIEW.FMT", "LIST HEADERS", "MODE STREAM")], \
+        Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "marks of two digits and three", [
+        reader("LIST ACTIVE", "GROUP local.test", "LISTGROUP local.other", "LIST ACTIVE local.o*", "STAT 12", "LAST",
+               "NEXT", "NEXT", "GROUP local.ten", "GROUP local.nine")], \
+        Spool([b"local.test", b"local.other", b"local.nine", b"local.ten"], image=MARKS_SPOOL)
+
+
+# Each octet a line may hold inside a word, and the article numbers at the most one may be and past it.
+OCTETS = [bytes([b]) for b in range(256) if b not in (9, 10, 13, 32)]
+LIMITS = (2_147_483_646, 2_147_483_647, 2_147_483_648)
+
+
+def range_octets() -> bytes:
+    """LISTGROUP of `local.test` with each octet a word may hold at each place of a range: a number, its
+    start, its end; then numbers at the most an article number may be and past it, alone, as a start
+    and as an end."""
+    forms = (b"%s", b"1%s", b"%s-", b"1%s-", b"1-%s", b"1-2%s")
+    lines = [b"LISTGROUP local.test " + form % o for form in forms for o in OCTETS]
+    lines += [b"LISTGROUP local.test " + form % n for form in (b"%d", b"%d-", b"1-%d") for n in LIMITS]
+    return b"".join(line + b"\r\n" for line in lines) + QUIT
+
+
+def number_octets() -> bytes:
+    """With `local.test` selected, STAT of each octet a word may hold as a number and after a digit;
+    then ARTICLE, HEAD, BODY and STAT of the numbers at the most an article number may be and past it."""
+    lines = [b"GROUP local.test", *(b"STAT " + form % o for form in (b"%s", b"1%s") for o in OCTETS),
+             *(b"%s %d" % (cmd, n) for cmd in (b"ARTICLE", b"HEAD", b"BODY", b"STAT") for n in LIMITS)]
+    return b"".join(line + b"\r\n" for line in lines) + QUIT
+
+
+# Groups whose lowest numbers have two digits and three, and whose numbers are 9 and 99, 10 and 100.
+MARKS_SPOOL = spool_holding([(stored(b"n"), [(b"local.test", 12)]),
+                             (stored(b"m"), [(b"local.test", 13), (b"local.other", 130)]),
+                             (stored(b"o"), [(b"local.other", 131)]), (stored(b"p"), [(b"local.nine", 9)]),
+                             (stored(b"q"), [(b"local.nine", 99), (b"local.ten", 10)]),
+                             (stored(b"r"), [(b"local.ten", 100)])])
 
 
 def mode_scenarios() -> Iterator[PostScenario]:

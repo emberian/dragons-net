@@ -67,12 +67,12 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | Store runs | 120 chains of runs, every point held to what a crash may leave ([details](#store-runs)) | The directories drawn are a sample |
 | Fault points | libfiu points fail as enabled and never without `FIU_ENABLE` ([details](#fault-points)) | — |
 | LazyFS | Synced data survives a cache clear, unsynced does not, appends tear ([details](#lazyfs)) | Tears a write request, not a block; runs apart |
-| Session model | 400 scenarios and 3,301 turns judged by an independent reference, 116 with a store and 11,655 turns; 99 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
+| Session model | 401 scenarios and 3,342 turns judged by an independent reference, 121 with a store and 13,909 turns; 99 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
-| NNTP server | The server over loopback held three ways; 53 planted defects caught ([details](#nntp-server)) | Tested, not proven |
+| NNTP server | The server over loopback held three ways; 54 planted defects caught ([details](#nntp-server)) | Tested, not proven |
 | Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss below |
 | Power loss | The server on LazyFS, power lost before each operation, after a run with each failed with EIO, and at each of 10 journal writes torn; held to `store_safe`; 4 planted defects of the power lane caught ([details](#power-loss)) | Names durable at once: a missing directory sync is not shown here |
-| Faults | The server's test build, each of its 35 and 46 operations failed with ENOSPC and interrupted, writes cut short, syncs slowed; an article's file changed in 6 ways after the start; 8 planted defects of the faults lane caught ([details](#faults)) | Faults at the host's points, one client at a time |
+| Faults | The server's test build, each of its 35 and 46 operations failed with ENOSPC and interrupted, writes cut short, syncs slowed; an article's file changed in 6 ways after the start; 9 planted defects of the faults lane caught ([details](#faults)) | Faults at the host's points, one client at a time |
 | Host's store | Spool, file jobs and fault points of `native/store.c` and `native/jobs.c` ([details](#hosts-store)) | Tested, not proven |
 | Copy kernel | 26,039 cases of offsets, lengths, capacities and overlaps | No theorem covers overlap |
 | Stopping states | 110 cases, 108 of which stop, against an independent implementation (`scripts/state_check.py`) | Not a proof against HOL |
@@ -164,7 +164,7 @@ At 64 KiB, 9 hard forms are answered as the model answers them, at most twice as
 
 ### Session model
 
-`scripts/session_check.py` drives `dn-compiler session-model` with a simulated host through 400 scenarios and 3,301 turns, `scripts/session_ref.py` judging every turn and twelve hosts that break the contract ending the run.
+`scripts/session_check.py` drives `dn-compiler session-model` with a simulated host through 401 scenarios and 3,342 turns, `scripts/session_ref.py` judging every turn and twelve hosts that break the contract ending the run.
 
 Scenarios with a store post articles: at the bounds of size, header and capacity, five at once, one Message-ID twice, file operations failing, the store stopping with others in flight. They read them too: nine readers, four posts beside eight reads, files of 16,384 and 32,768 octets, files failing their checks or changed after the start, slow readers.
 
@@ -178,21 +178,23 @@ Forty groups go to a slow reader as the store stops, and the groups are listed o
 
 Others ask for READER: the capabilities and MODE READER of a client that may post, of one that may not, once the store has stopped and of a store with no group, MODE READER between GROUP and LISTGROUP, and MODE's arguments. Without a store MODE READER ends the connection.
 
+Others change each letter of every keyword, with a store and without, put every octet at each place of a range and of an article's number, ask for commands a store does not have, and list groups whose numbers have one digit to three.
+
 The host keeps the spool on `scripts/fs_ref.py`. `scripts/post_ref.py` checks headers by `scripts/article_ref.py`, holds every job to decision 0005's order, recovers crash images after each 240, and checks every file read against its own copy of the spool.
 
 Each of the session's 99 rules broken in the model (`DN.News.SessionMutant`, 28 of them POST's, 13 reading's, 14 the selected group's, 23 the listings' and 6 READER's) is caught. So are 21 planted defects, each by the check named for it; thirteen hosts that report a completion they may not end the run.
 
 ### Session program
 
-`scripts/session_native.py` requires the compiled session's trace, jobs included, to equal the model's on the model's 400 scenarios and 3,301 turns, on the other 116 with a store and 11,655 turns, and on 200 hosts drawn at random without one.
+`scripts/session_native.py` requires the compiled session's trace, jobs included, to equal the model's on the model's 401 scenarios and 3,342 turns, on the other 121 with a store and 13,909 turns, and on 200 hosts drawn at random without one.
 
 With a store the program first recovers it: from the spool the model's starts from, before its start record, and once from an empty directory.
 
-It catches 72 planted defects, thirty-eight in the store's side, the selected group's, the listings' and READER's. The analysis accepts the program in the pieces of `DN.Server.SessionCert`, the claims of its functions a run of them at a time.
+It catches 80 planted defects, forty-five in the store's side, the selected group's, the listings' and READER's. The analysis accepts the program in the pieces of `DN.Server.SessionCert`, the claims of its functions a run of them at a time.
 
 ### NNTP server
 
-`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. It catches 53 planted defects.
+`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. Reader commands on a spool are cut between two reads at each of their octets. It catches 54 planted defects.
 
 It posts on an empty spool, after a restart and through `nntplib`, finds each poster in the host's log by `logging-data`, reads each article back through `nntplib`, walks their group by GROUP, NEXT, LAST and number, and refuses one whose file changed on the disk. It lists the group by LIST, LISTGROUP, DATE and NEWGROUPS.
 
@@ -216,7 +218,7 @@ Each spool is held as in the crash lane; where an operation failed, a post may b
 
 ### Faults
 
-`scripts/faults_check.py` runs the crash lane's server on a spool holding an article, and on that spool as a crash leaves it: a post, ARTICLE of the article held, another post, STAT, one client after another.
+`scripts/faults_check.py` runs the crash lane's server on a spool holding an article, and on that spool as a crash leaves it: a post, ARTICLE of the article held, another post, STAT, the capabilities and LIST ACTIVE, one client after another. POST leaves the capabilities and LIST ACTIVE says `n` once the store stops.
 
 Each of its 35 and 46 operations at a point fails once with ENOSPC, every reply as decision 0005 has it for the point and the file. An article's creation, write or rename refuses the post; its sync also stops the store and leaves the mark.
 
@@ -224,7 +226,7 @@ The journal's write or sync leaves the post unanswered and stops the store; a re
 
 Every write cut to one octet changes nothing; a write of no progress refuses the start. With every sync slowed, a read and a STAT on other connections are answered before a post's 240, which waits for its three syncs.
 
-Each spool is held as in the crash lane. It catches 8 planted defects of the faults lane.
+Each spool is held as in the crash lane. It catches 9 planted defects of the faults lane.
 
 An article's file changed after the start in 6 ways after `fn`'s table, of one buffer and of two, is never sent whole; STAT still answers and a post is taken. The next start refuses the store where recovery finds it corrupt or a file opens no more.
 
@@ -234,7 +236,7 @@ An article's file changed after the start in 6 ways after `fn`'s table, of one b
 
 ### Test sensitivity
 
-Each lane catches its planted defects, from copy and reply kernels to the session's program and fifty-three NNTP servers (thirty-six planted in its host and seventeen in its program).
+Each lane catches its planted defects, from copy and reply kernels to the session's program and fifty-four NNTP servers (thirty-six planted in its host and eighteen in its program).
 
 The Lean build carries no warnings (`--wfail`) and `autoImplicit` is off.
 
