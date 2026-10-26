@@ -129,6 +129,92 @@ inductive Mutant
   | jobsShared
   /-- a file a failed read or a connection gone leaves open never closed -/
   | leftOpen
+  /-- GROUP leaves the current article as it was -/
+  | groupKeepsCurrent
+  /-- GROUP of an empty group leaves the current article as it was -/
+  | emptyKeepsCurrent
+  /-- a GROUP answered 411 leaves no group selected -/
+  | unknownDeselects
+  /-- an article found by number not made current -/
+  | numberKeepsCurrent
+  /-- an article found by message-id made current when the selected group holds it -/
+  | idMoves
+  /-- NEXT may stay on the current article -/
+  | nextInclusive
+  /-- LAST may stay on the current article -/
+  | lastInclusive
+  /-- NEXT and LAST answer without moving -/
+  | moveStays
+  /-- a number found in another group when the selected one lacks it -/
+  | numberAnyGroup
+  /-- groups named without regard to case -/
+  | groupCaseless
+  /-- a number with no group selected answered 423 -/
+  | numberWithoutGroup
+  /-- octets past US-ASCII taken in a group's name whatever they are -/
+  | utf8Unchecked
+  /-- a group's name of any bytes -/
+  | groupNameUnchecked
+  /-- an article to be read by its number made current before the read answers, so after a 403 -/
+  | unreadMoves
+  /-- LISTGROUP leaves the current article as it was -/
+  | listgroupKeepsCurrent
+  /-- LISTGROUP lists the articles the store takes after the group is selected -/
+  | listgroupLater
+  /-- LISTGROUP lists all the group's articles whatever its range -/
+  | rangeIgnored
+  /-- the last number of a range left out -/
+  | rangeEndExclusive
+  /-- the leftmost pattern of a wildmat that matches decides -/
+  | wildmatLeftmost
+  /-- a negated pattern that matches taken as a match -/
+  | negationIgnored
+  /-- LIST ACTIVE gives a group's lowest number before its highest -/
+  | marksSwapped
+  /-- LIST ACTIVE gives `y` once the store has stopped accepting -/
+  | statusFixed
+  /-- LIST without a keyword answered as LIST NEWSGROUPS -/
+  | listDefaultNewsgroups
+  /-- LIST's keywords compared with regard to case -/
+  | listKeywordCased
+  /-- a wildmat's first pattern negated -/
+  | firstNegated
+  /-- DATE gives the host's monotonic clock -/
+  | dateMonotonic
+  /-- DATE takes the wall clock for seconds -/
+  | dateUnits
+  /-- NEWGROUPS takes any six or eight digits for a date and any six for a time -/
+  | newgroupsUnchecked
+  /-- a part of a listing one octet longer than an action -/
+  | partLonger
+  /-- the host told to read while a listing goes out -/
+  | listingReads
+  /-- `*` taking one character or more -/
+  | starNonEmpty
+  /-- a pattern matching a name it takes the start of -/
+  | wildmatUnanchored
+  /-- a pattern's characters compared without regard to case -/
+  | wildmatCaseless
+  /-- the line of a group that does not fit a part left out -/
+  | groupLineDropped
+  /-- the terminating line put in a part it does not fit -/
+  | endForced
+  /-- DATE's day, hour, minute and second without the zero before one digit -/
+  | dateUnpadded
+  /-- the line's deadline running while a listing goes out -/
+  | lineWhileListing
+  /-- READER left out of the capabilities of a server with a store, to a connection that may not post -/
+  | readerUnadvertised
+  /-- READER among the capabilities of a server without a store -/
+  | readerWithoutStore
+  /-- MODE READER answered 200 once the store has stopped accepting -/
+  | modeStale
+  /-- MODE READER leaves no group selected -/
+  | modeDeselects
+  /-- the connection kept open after MODE READER's 502 -/
+  | refusedStaysOpen
+  /-- MODE READER answered 200 to a connection greeted with 201 -/
+  | modeUngreeted
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -158,7 +244,26 @@ def names : List (String × Mutant) :=
    ("status-early", .statusEarly), ("read-lowest-first", .readLowestFirst),
    ("idle-while-fetching", .idleWhileFetching), ("read-while-fetching", .readWhileFetching),
    ("end-unsought", .endUnsought), ("header-unchecked", .headerUnchecked), ("jobs-shared", .jobsShared),
-   ("left-open", .leftOpen)]
+   ("left-open", .leftOpen), ("group-keeps-current", .groupKeepsCurrent),
+   ("empty-keeps-current", .emptyKeepsCurrent), ("unknown-deselects", .unknownDeselects),
+   ("number-keeps-current", .numberKeepsCurrent), ("id-moves", .idMoves),
+   ("next-inclusive", .nextInclusive), ("last-inclusive", .lastInclusive), ("move-stays", .moveStays),
+   ("number-any-group", .numberAnyGroup), ("group-caseless", .groupCaseless),
+   ("number-without-group", .numberWithoutGroup), ("utf8-unchecked", .utf8Unchecked),
+   ("group-name-unchecked", .groupNameUnchecked), ("unread-moves", .unreadMoves),
+   ("listgroup-keeps-current", .listgroupKeepsCurrent), ("listgroup-later", .listgroupLater),
+   ("range-ignored", .rangeIgnored), ("range-end-exclusive", .rangeEndExclusive),
+   ("wildmat-leftmost", .wildmatLeftmost),
+   ("negation-ignored", .negationIgnored), ("marks-swapped", .marksSwapped), ("status-fixed", .statusFixed),
+   ("list-default-newsgroups", .listDefaultNewsgroups), ("list-keyword-cased", .listKeywordCased),
+   ("first-negated", .firstNegated), ("date-monotonic", .dateMonotonic), ("date-units", .dateUnits),
+   ("newgroups-unchecked", .newgroupsUnchecked), ("part-longer", .partLonger),
+   ("listing-reads", .listingReads), ("star-non-empty", .starNonEmpty),
+   ("wildmat-unanchored", .wildmatUnanchored), ("wildmat-caseless", .wildmatCaseless),
+   ("group-line-dropped", .groupLineDropped), ("end-forced", .endForced), ("date-unpadded", .dateUnpadded),
+   ("line-while-listing", .lineWhileListing), ("reader-unadvertised", .readerUnadvertised),
+   ("reader-without-store", .readerWithoutStore), ("mode-stale", .modeStale), ("mode-deselects", .modeDeselects),
+   ("refused-stays-open", .refusedStaysOpen), ("mode-ungreeted", .modeUngreeted)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -247,25 +352,145 @@ def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
     | none => return s
 
 def wantsWithM (m : Mutant) (st : Option Store) (c : Conn) : Bool :=
-  (c.wantsWith st || (m = .readWhileFetching && c.read.isSome && c.wants && !c.waiting)) &&
+  (c.wantsWith st || (m = .readWhileFetching && c.read.isSome && c.wants && !c.waiting) ||
+      (m = .listingReads && { c with listing := none }.wantsWith st)) &&
     !(m = .readNotResumed && c.first == 0)
 
 def waitLineM (m : Mutant) (now : Nat) (c : Conn) : Conn :=
   if (c.out.isEmpty || m = .lineWhileBusy) && c.phase == .open_ && c.line != .fresh &&
-      c.want.isNone && m != .noLineDeadline then
+      c.want.isNone && (c.listing.isNone || m = .lineWhileListing) && m != .noLineDeadline then
     if c.lineDue == 0 then { c with lineDue := now + lineTime } else c
   else { c with lineDue := 0 }
+
+/-- A wildmat whose first pattern may be negated too. -/
+def wildmatFirstNegated (w : List Byte) : Option Wildmat := do
+  match (← chars w).splitOn (ascii ",") with
+  | first :: rest => return (← patternOf true first) :: (← rest.mapM (patternOf true))
+  | [] => none
+
+/-- LIST's and NEWGROUPS's arguments as the mutant's rule takes them. -/
+def readerReplyM (m : Mutant) (r : Reply) (c : Option Cmd) (args : List (List Byte)) : Reply :=
+  match c, args with
+  | some .list, [] => if m = .listDefaultNewsgroups then .newsgroups else r
+  | some .list, k :: rest =>
+    if m = .listKeywordCased && k != ascii "ACTIVE" && k != ascii "NEWSGROUPS" then .syntax
+    else if m = .firstNegated && r = .syntax then
+      match rest with
+      | [x] =>
+        match wildmatFirstNegated x with
+        | some w =>
+          if k.map upper = ascii "ACTIVE" then .active (some w)
+          else if k.map upper = ascii "NEWSGROUPS" then .newsgroups else r
+        | none => r
+      | _ => r
+    else r
+  | some .newgroups, d :: t :: rest =>
+    if m = .newgroupsUnchecked && r = .syntax && d.all isDigit && (d.length == 6 || d.length == 8) &&
+        t.all isDigit && t.length == 6 && (rest.isEmpty || rest.map (·.map upper) == [ascii "GMT"])
+    then .newGroups else r
+  | _, _ => r
+
+/-- A GROUP's name taken without its check, or with octets past US-ASCII unchecked; LIST's and
+NEWGROUPS's arguments as `readerReplyM` takes them. -/
+def replyInM (m : Mutant) (offered : Bool) (l : Line) : Reply :=
+  match replyIn offered l, words l.kept with
+  | .syntax, [w, g] =>
+    if offered && l.kind == .command && commandIn offered w == some .group && !g.isEmpty &&
+        (m = .groupNameUnchecked || (m = .utf8Unchecked && g.all fun b => 128 ≤ b.toNat || isExactAscii b))
+    then (if g.length ≤ groupNameMax then .select g else .noSuchGroup)
+    else if offered && l.kind == .command then readerReplyM m .syntax (commandIn offered w) [g]
+    else .syntax
+  | r, w :: args => if offered && l.kind == .command then readerReplyM m r (commandIn offered w) args else r
+  | r, [] => r
 
 def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
     if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
+    else if (p.offered && m != .readerUnadvertised) || m = .readerWithoutStore then .capabilitiesReader
     else .capabilities
-  | .help => if p.offered then .helpPost else .help
+  | .modeReader =>
+    if !p.offered then .modeReader
+    else if (c.greeted || m = .modeUngreeted) && (p.accepting || m = .modeStale) then .readerPosting
+    else .readerNoPosting
   | .post =>
     if !c.greeted && !(m = .postUnpermitted && p.offered) then .notPermitted
     else if !p.accepting && m != .postAfterStop then .unavailable else .post
-  | .lookup k id => if !p.ids.contains id then .noSuchId else if k = .stat then .stat id else .lookup k id
-  | r => r
+  | .select g =>
+    if m = .groupCaseless then
+      match p.groups.find? (·.map upper == g.map upper) with
+      | some g' => summary p.held g'
+      | none => .noSuchGroup
+    else resolve p c (.select g)
+  | .byNumber k n =>
+    if m = .numberWithoutGroup && c.group.isNone then .noNumber
+    else if m = .numberAnyGroup then
+      match c.group with
+      | none => .noGroup
+      | some g =>
+        (((atNumber p.held g n).orElse fun _ => p.groups.findSome? fun g' => atNumber p.held g' n).map
+          (foundAs k)).getD .noNumber
+    else resolve p c (.byNumber k n)
+  | .move fwd =>
+    if (m = .nextInclusive && fwd) || (m = .lastInclusive && !fwd) then
+      match c.group with
+      | none => .noGroup
+      | some g =>
+        if c.current = 0 then .noCurrent
+        else (((if fwd then nextAfter p.held g (c.current - 1) else prevBefore p.held g (c.current + 1))).map
+          fun (n, id) => .stat n id).getD (if fwd then .noNext else .noPrevious)
+    else resolve p c (.move fwd)
+  | r => resolve p c r
+
+/-- The selected group and the current article after a reply, as `Reply.groupAfter` and
+`Reply.currentAfter` have them, but for the mutant's rule. -/
+def groupAfterM (m : Mutant) (r : Reply) (g : Option (List Byte)) : Option (List Byte) :=
+  if (m = .unknownDeselects && r = .noSuchGroup) ||
+      (m = .modeDeselects && (r = .readerPosting || r = .readerNoPosting)) then none
+  else r.groupAfter g
+
+def currentAfterM (m : Mutant) (p : Posting) (c : Conn) (asked r : Reply) : Nat :=
+  match r with
+  | .selected count _ _ _ =>
+    if m = .groupKeepsCurrent || (m = .emptyKeepsCurrent && count = 0) then c.current
+    else r.currentAfter c.current
+  | .noSuchGroup => if m = .unknownDeselects then 0 else c.current
+  | .listed .. => if m = .listgroupKeepsCurrent then c.current else r.currentAfter c.current
+  | .stat n id | .lookup _ n id =>
+    let byNumber := match asked with | .byNumber .. => true | _ => false
+    let moved := match asked with | .move _ => true | _ => false
+    let read := match r with | .lookup .. => true | _ => false
+    if (m = .numberKeepsCurrent && byNumber) || (m = .moveStays && moved) then c.current
+    else if m = .idMoves && n = 0 then
+      match c.group with
+      | some g => (((numbered p.held g).find? (·.2 == id)).map (·.1)).getD c.current
+      | none => c.current
+    else if m = .unreadMoves && read && n != 0 then n
+    else r.currentAfter c.current
+  | _ => r.currentAfter c.current
+
+/-- What is left to go out after a reply's first line, but for the mutant's rule. -/
+def listingOfM (m : Mutant) : Reply → Option Listing
+  | .listed _ _ high g lo hi =>
+    let (lo, hi) := if m = .rangeIgnored then (1, numberMax) else if m = .rangeEndExclusive then (lo, hi - 1)
+      else (lo, hi)
+    some (.numbers g lo (if m = .listgroupLater then hi else min hi high))
+  | r => listingOf r
+
+/-- DATE's digits with the fields after the month as they are, no zero before one digit. -/
+def dateUnpaddedDigits (wall : Nat) : List Byte :=
+  let secs := wall / 1000
+  let date := ArticleSpec.civilFromDays (secs / 86400)
+  let t := secs % 86400
+  padded 4 date.1 ++ padded 2 date.2.1 ++ decimal date.2.2 ++ decimal (t / 3600) ++ decimal (t % 3600 / 60) ++
+    decimal (t % 60)
+
+/-- DATE's reply, from the clock the mutant's rule takes. -/
+def dateM (m : Mutant) (p : Posting) (now : Nat) (r : Reply) : Reply :=
+  match r with
+  | .time _ =>
+    if m = .dateMonotonic then .time (dateDigits now) else if m = .dateUnits then .time (dateDigits (p.wall * 1000))
+    else if m = .dateUnpadded then .time (dateUnpaddedDigits p.wall) else r
+  | _ => r
 
 def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
   | 0, c => c
@@ -277,21 +502,27 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
       match v with
       | none => c1
       | some l =>
-        match resolveM m p c (replyIn p.offered l) with
+        let asked := replyInM m p.offered l
+        match dateM m p now (resolveM m p c asked) with
         | .ignore =>
           serveM m i p now fuel
             (if m = .blankCounts then { c1 with first := 0, idle := now + inactivity } else c1)
         | r =>
-          if (!c.out.isEmpty && m != .answerWhileBusy) || c.want.isSome then c
+          if (!c.out.isEmpty && m != .answerWhileBusy) || c.want.isSome || c.listing.isSome then c
           else if r = .post then
             if m = .waitDeadlines then { c1 with waiting := true }
             else { c1 with waiting := true, first := 0, idle := 0 }
-          else if let .lookup k id := r then
-            serveM m i p now fuel { c1 with want := some (k, id), first := 0, idle := 0 }
+          else if let .lookup k n id := r then
+            serveM m i p now fuel
+              { c1 with want := some (k, n, id), first := 0, idle := 0,
+                        current := currentAfterM m p c1 asked (.lookup k n id) }
           else
             let first := if m = .firstNotCleared then c1.first else 0
-            let c2 := { c1 with out := text i r, first := first, idle := now + inactivity }
-            if r = .quit && m != .quitTail then { c2 with phase := .quitting, held := [] }
+            let c2 := { c1 with out := text i r, first := first, idle := now + inactivity,
+                                group := groupAfterM m r c1.group, current := currentAfterM m p c1 asked r,
+                                listing := listingOfM m r }
+            if (r = .quit && m != .quitTail) || (r = .modeReader && m != .refusedStaysOpen) then
+              { c2 with phase := .quitting, held := [] }
             else serveM m i p now fuel c2
 
 /-- `progress`, an article's octets taken renewing its deadline with `articleRenewed`. -/
@@ -319,12 +550,82 @@ def claimM (m : Mutant) (i : Identity) (now idx : Nat) (st : Option Store) (c : 
   else k
 
 /-- `progressRead`, inactivity left running while the read has nothing to give by
-`idleWhileFetching`. -/
+`idleWhileFetching`; an article read by its number not made current by `numberKeepsCurrent`. -/
 def progressReadM (m : Mutant) (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
     Conn × Option Store × Bool :=
   let g := progressRead i now st c
   if m = .idleWhileFetching && g.1.read.isSome && g.1.idle == 0 then ({ g.1 with idle := c.idle }, g.2)
+  else if m = .numberKeepsCurrent then ({ g.1 with current := c.current }, g.2)
   else g
+
+/-- `reach`, `*` taking one character or more by `starNonEmpty`, a character matched without regard
+to case by `wildmatCaseless`. -/
+def reachM (m : Mutant) (s : List (List Byte)) (from_ : List Nat) (x : Item) : List Nat :=
+  match x with
+  | .exact c =>
+    if m = .wildmatCaseless then
+      from_.filterMap fun k => if (s[k]?).any (·.map upper == c.map upper) then some (k + 1) else none
+    else reach s from_ x
+  | .star =>
+    if m = .starNonEmpty then
+      match from_.min? with
+      | some k => List.range' (k + 1) (s.length - k)
+      | none => []
+    else reach s from_ x
+  | .one => reach s from_ x
+
+/-- `patternMatches`, a pattern that takes the start of `s` matching by `wildmatUnanchored`. -/
+def patternMatchesM (m : Mutant) (s : List (List Byte)) (p : List Item) : Bool :=
+  let ends := p.foldl (reachM m s) [0]
+  if m = .wildmatUnanchored then !ends.isEmpty else ends.contains s.length
+
+def decidesM (m : Mutant) (s : List (List Byte)) (r : Option Bool) (x : Bool × List Item) : Option Bool :=
+  if !patternMatchesM m s x.2 then r
+  else if m = .wildmatLeftmost then r.orElse fun _ => some !x.1
+  else some (!x.1 || m = .negationIgnored)
+
+/-- A wildmat matched as the mutant's rule matches it: the leftmost pattern that matches deciding, by
+`wildmatLeftmost`; a negated pattern taken as a match, by `negationIgnored`. -/
+def wildmatchM (m : Mutant) (w : Wildmat) (name : List Byte) : Bool :=
+  match chars name with
+  | some s => (w.foldl (decidesM m s) none).getD false
+  | none => false
+
+def activeLineM (m : Mutant) (p : Posting) (g : List Byte) : List Byte :=
+  match summary p.held g with
+  | .selected _ low high _ =>
+    let (a, b) := if m = .marksSwapped then (low, high) else (high, low)
+    g ++ SP :: decimal a ++ SP :: decimal b ++ SP ::
+      ascii (if p.accepting || m = .statusFixed then "y" else "n") ++ crlf
+  | _ => []
+
+def nextM (m : Mutant) (p : Posting) : Listing → Option (List Byte × Listing) :=
+  nextWith (wildmatchM m) (activeLineM m p) p
+
+/-- `partWith`, the line of a group that does not fit left out by `groupLineDropped`, the terminating
+line put in whether it fits or not by `endForced`. -/
+def partWithM (m : Mutant) (next : Listing → Option (List Byte × Listing)) (most : Nat) :
+    Nat → List Byte → Listing → List Byte × Option Listing
+  | 0, acc, l => (acc, some l)
+  | fuel + 1, acc, l =>
+    match next l with
+    | some (line, l') =>
+      if acc.length + line.length ≤ most then partWithM m next most fuel (acc ++ line) l'
+      else (acc, some (if m = .groupLineDropped && (match l with | .groups .. => true | _ => false) then l' else l))
+    | none => if acc.length + 3 ≤ most || m = .endForced then (acc ++ ascii ".\r\n", none) else (acc, some l)
+
+/-- `Listing.part`, of `chunk` and one more octets by `partLonger`. -/
+def partM (m : Mutant) (p : Posting) : Nat → List Byte → Listing → List Byte × Option Listing :=
+  partWithM m (nextM m p) (if m = .partLonger then chunk + 1 else chunk)
+
+def progressListM (m : Mutant) (now wall : Nat) (st : Option Store) (c : Conn) : Conn :=
+  match c.listing with
+  | some l =>
+    if !c.out.isEmpty || c.phase = .quitting then c
+    else
+      let (part, rest) := partM m (Posting.of wall st) (chunk + 1) [] l
+      { c with out := part, listing := rest, idle := now + inactivity }
+  | none => c
 
 /-- `claimRead`, the connection first among those waiting by `readLowestFirst`. -/
 def claimReadM (m : Mutant) (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store :=
@@ -351,9 +652,10 @@ def actM (m : Mutant) (i : Identity) (now wall idx : Nat) (st : Option Store) (c
       let h := progressReadM m i now g.2.1 g.1
       if h.2.2 then (none, some (.closeNow idx c.gen), h.2.1.map (Store.abandon idx c.gen))
       else
-        let c1 := if (h.1.out.isEmpty || m = .answerWhileBusy) && h.1.phase != .quitting &&
-            h.1.post.isNone && !h.1.waiting && h.1.want.isNone
-          then serveM m i (Posting.of h.2.1) now (h.1.held.length + 1) h.1 else h.1
+        let l := progressListM m now wall h.2.1 h.1
+        let c1 := if (l.out.isEmpty || m = .answerWhileBusy) && l.phase != .quitting &&
+            l.post.isNone && !l.waiting && l.want.isNone && l.listing.isNone
+          then serveM m i (Posting.of wall h.2.1) now (l.held.length + 1) l else l
         let st1 := if c1.waiting && !h.1.waiting then
             h.2.1.map fun st => { st with waiters := st.waiters ++ [(idx, c.gen)] }
           else if c1.want.isSome && h.1.want.isNone then
@@ -436,9 +738,80 @@ theorem wantsWithM_none : wantsWithM .none = Conn.wantsWith := by
   funext st c
   simp [wantsWithM]
 
+theorem readerReplyM_none (r : Reply) (c : Option Cmd) (args : List (List Byte)) :
+    readerReplyM .none r c args = r := by
+  unfold readerReplyM
+  split <;> simp
+
+theorem replyInM_none : replyInM .none = replyIn := by
+  funext offered l
+  unfold replyInM
+  split <;> simp_all [readerReplyM_none]
+
 theorem resolveM_none : resolveM .none = resolve := by
   funext p c r
   cases r <;> simp [resolveM, resolve]
+
+theorem groupAfterM_none : groupAfterM .none = Reply.groupAfter := by
+  funext r g
+  simp [groupAfterM]
+
+theorem currentAfterM_none (p : Posting) (c : Conn) (asked r : Reply) :
+    currentAfterM .none p c asked r = r.currentAfter c.current := by
+  unfold currentAfterM
+  split <;> simp [Reply.currentAfter]
+
+theorem listingOfM_none : listingOfM .none = listingOf := by
+  funext r
+  cases r <;> simp [listingOfM, listingOf]
+
+theorem dateM_none (p : Posting) (now : Nat) (r : Reply) : dateM .none p now r = r := by
+  unfold dateM
+  split <;> simp
+
+theorem reachM_none : reachM .none = reach := by
+  funext s from_ x
+  cases x <;> simp [reachM]
+
+theorem patternMatchesM_none : patternMatchesM .none = patternMatches := by
+  funext s p
+  simp [patternMatchesM, patternMatches, reachM_none]
+
+theorem decidesM_none : decidesM .none = decides := by
+  funext s r x
+  unfold decidesM decides
+  rw [patternMatchesM_none]
+  split <;> simp_all
+
+theorem wildmatchM_none : wildmatchM .none = wildmatch := by
+  funext w name
+  cases h : chars name <;> simp [wildmatchM, wildmatch, decidesM_none, h]
+
+theorem activeLineM_none : activeLineM .none = activeLine := by
+  funext p g
+  cases h : summary p.held g <;> simp [activeLineM, activeLine, h]
+
+theorem nextM_none : nextM .none = Listing.next := by
+  funext p
+  simp [nextM, Listing.next, wildmatchM_none, activeLineM_none]
+
+theorem partWithM_none : partWithM .none = partWith := by
+  funext next most fuel acc l
+  induction fuel generalizing acc l with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [partWithM, partWith]
+    cases next l with
+    | none => simp
+    | some x => obtain ⟨line, l'⟩ := x; simp [ih]
+
+theorem partM_none : partM .none = Listing.part := by
+  funext p
+  simp [partM, Listing.part, nextM_none, partWithM_none]
+
+theorem progressListM_none : progressListM .none = progressList := by
+  funext now wall st c
+  cases h : c.listing <;> simp [progressListM, progressList, partM_none, h]
 
 theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
     serveM .none i p now = serve i p now := by
@@ -448,7 +821,9 @@ theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
   | succ fuel ih =>
     have h1 : (Mutant.none != Mutant.answerWhileBusy) = true := rfl
     have h2 : (Mutant.none != Mutant.quitTail) = true := rfl
-    simp only [serveM, serve, ih, resolveM_none, reduceCtorEq, if_false, h1, h2, Bool.and_true,
+    have h3 : (Mutant.none != Mutant.refusedStaysOpen) = true := rfl
+    simp only [serveM, serve, ih, resolveM_none, replyInM_none, groupAfterM_none, currentAfterM_none,
+      dateM_none, listingOfM_none, reduceCtorEq, if_false, h1, h2, h3, Bool.and_true, Bool.or_eq_true,
       decide_eq_true_eq]
     rfl
 
@@ -480,7 +855,7 @@ theorem applyEventM_none : applyEventM .none = applyEvent := by
 theorem actM_none : actM .none = act := by
   funext i now wall idx st c
   simp [actM, act, emitM_none, serveM_none, waitLineM_none, progressM_none, claimM_none,
-    wantsWithM_none, progressReadM_none, claimReadM_none]
+    wantsWithM_none, progressReadM_none, claimReadM_none, progressListM_none]
 
 theorem actFromM_none (i : Identity) (now wall : Nat) (t : Table) :
     actFromM .none i now wall t = actFrom i now wall t := by

@@ -47,7 +47,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 10
+def version : Nat := 13
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -177,7 +177,10 @@ ends, how many numbers are set aside, the batch's wall clock in seconds; what a 
 last found; the actions of the turn so far; how many connections have opened, the POSTs waiting
 for a slot and the connections waiting for a read (each a count, then an index and a generation
 each), the journal's key and the index's; a Message-ID being looked up and its length, a message a
-tag is made of, and the CRC-32C's table. -/
+tag is made of, and the CRC-32C's table; the count and the lowest and highest numbers of the group a
+GROUP selects, and the number a 223 gives; of a LISTGROUP whether it names its group, and the lowest
+and highest numbers of its range; where the wildmat of a LIST lies in the line and its length, and the
+groups it takes, a bit each; and a line of a listing as it is made. -/
 def ownStore : Nat := ownSrc + srcMax
 def ownAccepting : Nat := ownStore + 8
 def ownNext : Nat := ownAccepting + 8
@@ -197,7 +200,20 @@ def ownIdLen : Nat := ownIndexKey + indexKeyLen
 def ownId : Nat := ownIdLen + 8
 def ownMsg : Nat := ownId + 256
 def ownCrc : Nat := ownMsg + (News.Journal.maxFrame + 7) / 8 * 8
-def ownTexts : Nat := ownCrc + 256 * 8
+def ownCount : Nat := ownCrc + 256 * 8
+def ownLow : Nat := ownCount + 8
+def ownHigh : Nat := ownLow + 8
+def ownNum : Nat := ownHigh + 8
+def ownNamed : Nat := ownNum + 8
+def ownLo : Nat := ownNamed + 8
+def ownHi : Nat := ownLo + 8
+def ownWs : Nat := ownHi + 8
+def ownWl : Nat := ownWs + 8
+def ownMask : Nat := ownWl + 8
+def ownLine : Nat := ownMask + 8
+/-- The longest line of a listing: a group's name, its highest and lowest numbers and its status. -/
+def lineMax : Nat := 96
+def ownTexts : Nat := ownLine + lineMax
 
 /-- The fixed texts the replies are made of, and the names of the commands, in the order they lie
 from `ownTexts`. -/
@@ -208,8 +224,15 @@ def texts : List (List (BitVec 8)) :=
    ascii "CAPABILITIES", ascii "HELP", ascii "QUIT", ascii "HEAD", ascii "STAT", ascii "POST",
    greetingPostHead, greetingPostMid, capabilitiesPostTail, helpPostHead, text ⟨[], []⟩ .post,
    text ⟨[], []⟩ .posted, text ⟨[], []⟩ .failed, text ⟨[], []⟩ .notPermitted,
-   text ⟨[], []⟩ .unavailable, ascii "ARTICLE", ascii "BODY", ascii "220 0 ", ascii "221 0 ",
-   ascii "222 0 ", ascii "223 0 ", text ⟨[], []⟩ .unreadable, ascii "Xref: ", ascii ".\r\n"]
+   text ⟨[], []⟩ .unavailable, ascii "ARTICLE", ascii "BODY", ascii "220 ", ascii "221 ",
+   ascii "222 ", ascii "223 ", text ⟨[], []⟩ .unreadable, ascii "Xref: ", ascii ".\r\n",
+   ascii "GROUP", ascii "NEXT", ascii "LAST", ascii "211 ", text ⟨[], []⟩ .noSuchGroup,
+   text ⟨[], []⟩ .noCurrent, text ⟨[], []⟩ .noNext, text ⟨[], []⟩ .noPrevious,
+   text ⟨[], []⟩ .noNumber, ascii "LISTGROUP", ascii "LIST", ascii "DATE", ascii "NEWGROUPS",
+   ascii "ACTIVE", ascii "NEWSGROUPS", ascii "GMT", text ⟨[], []⟩ (.active none),
+   text ⟨[], []⟩ .newsgroups, text ⟨[], []⟩ .newGroups, ascii "111 ", ascii "MODE", ascii "READER",
+   capabilitiesReaderTail, text ⟨[], []⟩ .modeReader, text ⟨[], []⟩ .readerPosting,
+   text ⟨[], []⟩ .readerNoPosting]
 
 /-- Where the `k`-th text starts, from `ownTexts`. -/
 def textAt (k : Nat) : Nat := ((texts.take k).map List.length).sum
@@ -230,7 +253,11 @@ position it is framed to, whether it has an action in the turn, its number among
 whether it was greeted with 200, whether a POST waits, the slot of its POST and one, or zero, the
 article's deadline, the ARTICLE, HEAD or BODY it waits for a read for or is answered by (zero, or
 one, two or three) and its commit's place in recovery's area, the read that answers it and one,
-or zero, the framer's block, the held input, and the output. -/
+or zero, the selected group's place among the store's groups and one, or zero, the current article
+number, the number the read's first line gives; what is left of a reply that goes out a part at a
+time — none (zero), the numbers of a group's articles (one) or the groups (two) — with the group's
+place or that of the next group, the lowest number left, and the highest one or the groups the
+wildmat takes, a bit each; the framer's block, the held input, and the output. -/
 def cLive : Nat := 0
 def cGen : Nat := 8
 def cPhase : Nat := 16
@@ -251,7 +278,14 @@ def cArticleDue : Nat := 128
 def cWant : Nat := 136
 def cWantCi : Nat := 144
 def cRead : Nat := 152
-def cFramer : Nat := 160
+def cGroup : Nat := 160
+def cCurrent : Nat := 168
+def cWantNo : Nat := 176
+def cList : Nat := 184
+def cListA : Nat := 192
+def cListB : Nat := 200
+def cListC : Nat := 208
+def cFramer : Nat := 216
 def cHeld : Nat := cFramer + framerHead + News.SessionSpec.lineLimit
 def cOut : Nat := cHeld + data
 def connSlot : Nat := cOut + data
@@ -342,7 +376,8 @@ has one, its job slot, generation, operations, task (open, read, close) and the 
 header section's size, the file's size and CRC-32C; the check carried over from one read to the
 next — the CRC-32C so far, whether at a line's start, after a CR, after a dot that starts a line;
 where in the file its buffer starts and how many octets it holds; the 220, 221 or 222 line and the
-Xref field with their lengths, and the buffer: the octets of the last read. -/
+Xref field with their lengths, the number the line gives, and the buffer: the octets of the last
+read. -/
 def readsOff : Nat := indexOff + indexCells * 8
 def reads : Nat := ({} : News.PostSpec.Rules).reads
 def rLive : Nat := 0
@@ -374,10 +409,12 @@ def rBufAt : Nat := 200
 def rBufLen : Nat := 208
 def rLineLen : Nat := 216
 def rXrefLen : Nat := 224
-def rLine : Nat := 232
-/-- The longest 220, 221 or 222 line and the longest Xref field: the path identity and sixteen
-groups, each a name and a number of ten digits, folded at most twice. -/
-def statusMax : Nat := 264
+def rNumber : Nat := 232
+def rLine : Nat := 240
+/-- The longest 220, 221 or 222 line, a number of ten digits and a Message-ID, and the longest
+Xref field: the path identity and sixteen groups, each a name and a number of ten digits, folded
+at most twice. -/
+def statusMax : Nat := 272
 def xrefMax : Nat := align8 (6 + identityMax + 16 * (1 + groupMax + 1 + 10) + 2 * 2 + 2)
 def rXref : Nat := rLine + statusMax
 def rBuf : Nat := rXref + xrefMax
@@ -503,7 +540,9 @@ def header : String :=
      ("NAME_QUARANTINE", nameQuarantine), ("NAME_TAIL", nameTail),
      ("WALL_LIMIT", News.SessionSpec.wallLimit), ("OWN_STORE", ownStore), ("OWN_WAIT_N", ownWaitN),
      ("OWN_NEXT", ownNext), ("OWN_JOURNAL_END", ownJournalEnd), ("OWN_ACTS", ownActs),
-     ("C_POST", cPost),
+     ("C_POST", cPost), ("C_GROUP", cGroup), ("C_CURRENT", cCurrent), ("C_LIST", cList),
+     ("C_LIST_A", cListA),
+     ("REC_GROUP_COUNT", News.RecoverProg.rGroupCount),
      ("SLOTS_OFF", slotsOff), ("SLOT_LEN", slotLen), ("POSTS", posts), ("Z_PH", zPh),
      ("Z_PEND", zPend), ("Z_HEAD_SIZE", zHeadSize), ("Z_JOB", zJob), ("Z_GROUP_N", zGroupN),
      ("Z_MSG_LEN", zMsgLen), ("BUF_MAX", bufMax), ("INDEX_OFF", indexOff),

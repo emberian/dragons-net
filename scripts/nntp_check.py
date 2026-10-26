@@ -3,9 +3,11 @@
 """The NNTP server: the session's program (`DN.Server.Session`) with its socket host
 (`native/nntp_host.c`), run on loopback and checked from outside (docs/baseline.md, "NNTP server").
 
-Every byte a client reads has to be what `session_ref` computes from the bytes it sent. Every run but
-`nntplib`'s reports its turns, and each report is held against the clients' sockets and the host's
-side of the contract, judged by `session_ref.judge`, and replayed through the model. The checks are
+Every byte a client reads has to be what `session_ref` computes from the bytes it sent, or, with a
+store, a fixed text. Every run but most of those with a store and those of the clients written apart,
+`nntplib` and Perl's Net::NNTP, reports its turns, each report held against the clients' sockets and the
+host's side of the contract; those without a store are judged by `session_ref.judge` and replayed
+through the model. The checks are
 `CHECKS`; each defect of `DEFECTS`, planted in the host or in the program, has to be caught by the
 check named for it and for the reason named.
 """
@@ -16,14 +18,17 @@ from collections.abc import Buffer, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+import datetime
 import fcntl
 import json
 import os
 from pathlib import Path
 import queue
 import random
+import re
 import resource
 import selectors
+import shutil
 import signal
 import socket
 import struct
@@ -559,10 +564,12 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
 
 @contextmanager
 def serving(build: Build, virtual: bool = False, *options: str, traced: bool = True,
-            stale: bool = False) -> Iterator[Server]:
+            stale: bool = False, judged: bool = True) -> Iterator[Server]:
     """The server of `build`, or with `stale` its program that acts for the generation before, which
-    is not judged since it is wrong on purpose."""
-    server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, not stale, options)
+    is not judged since it is wrong on purpose; nor, without `judged`, a run with a store, which
+    `session_ref.judge` does not model."""
+    server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, judged and not stale,
+                    options)
     try:
         try:
             yield server
@@ -685,7 +692,29 @@ def with_nntplib(b: Build) -> str:
         raise LaneError(f"nntplib read the help {help_lines}")
     if bye + "\r\n" != TEXTS["quit"].decode():
         raise LaneError(f"nntplib quit with {bye!r}")
-    return f"{len(help_lines)} lines of help"
+    # Asked for reader mode, nntplib sends MODE READER to a server that does not advertise READER, takes
+    # the 502 in its stride, as its own method does, and asks for the capabilities again, on a
+    # connection the server closed.
+    answered: list[str] = []
+    client: Any = nntplib.NNTP
+
+    class Reader(client):  # type: ignore[misc]
+        def _setreadermode(self) -> None:
+            try:
+                answered.append(self._shortcmd("mode reader"))
+            except nntplib.NNTPPermanentError as error:
+                answered.append(str(error))
+
+    with serving(b, traced=False) as server:
+        try:
+            Reader("127.0.0.1", server.port, timeout=b.timeout, readermode=True).quit()
+        except EOFError:
+            pass
+        else:
+            raise LaneError("nntplib's MODE READER of a server without a store left the connection open")
+    if [a + "\r\n" for a in answered] != [TEXTS["mode-reader"].decode()]:
+        raise LaneError(f"nntplib's MODE READER of a server without a store was answered {answered}")
+    return f"{len(help_lines)} lines of help, MODE READER answered 502 and the connection closed"
 
 
 def pipeline(b: Build) -> str:
@@ -726,6 +755,45 @@ def every_cut(b: Build) -> str:
         sent, read = recorded["commands"]
         in_parts(server, sent, read, [sent[k:k + 1] for k in range(len(sent))])
     return f"{cuts} cuts of {len(recorded)} transcripts, and one sent a byte at a time"
+
+
+def reader_cuts(b: Build) -> str:
+    """Reader commands on a spool holding two articles of `local.test`, sent whole, read as a fixed
+    text the session's answers make; then cut between two reads at each of their octets, each cut read
+    alike. The run is traced and held to the sockets, not judged: the reference has no store."""
+    ids = [b"<c1@x.example>", b"<c2@x.example>"]
+    stream = lines("GROUP local.test", "LISTGROUP local.test", "STAT 1", "NEXT", "LAST", "LIST ACTIVE local.*",
+                   "LIST NEWSGROUPS", "NEWGROUPS 20260101 000000 GMT", "MODE READER", "CAPABILITIES", "QUIT")
+    selected = b"211 2 1 2 local.test\r\n"
+    read = b"".join([TEXTS["greeting-post"], selected, selected, b"1\r\n2\r\n.\r\n",
+                     b"223 1 %s\r\n223 2 %s\r\n223 1 %s\r\n" % (ids[0], ids[1], ids[0]),
+                     b"215 List of newsgroups follows\r\nlocal.test 2 1 y\r\n.\r\n", TEXTS["list-newsgroups"],
+                     TEXTS["new-groups"], TEXTS["reader-posting"], TEXTS["capabilities-post"], TEXTS["quit"]])
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            for mid in ids:
+                c = server.client()
+                c.sendall(lines("POST") + sessions.article(*sessions.BASIC, f"Message-ID: {mid.decode()}") +
+                          lines("QUIT"))
+                posted = read_to_end(c)
+                if TEXTS["posted"] not in posted:
+                    raise LaneError(f"a post on the spool read {posted[-120:]!r}")
+        # The store's jobs at the start take turns of no event, fifteen on this spool.
+        with serving(b, False, *options, judged=False) as server:
+            server.idle_allowed = 16
+            whole = server.client()
+            whole.sendall(stream)
+            got = read_to_end(whole)
+            if got != read:
+                raise LaneError(f"reader commands sent whole read {got[-200:]!r}, not {read[-200:]!r}")
+            for at in range(1, len(stream)):
+                in_parts(server, stream, read, [stream[:at], stream[at:]])
+    return f"{len(stream) - 1} cuts of reader commands on a spool"
 
 
 def half_close(b: Build) -> str:
@@ -1145,16 +1213,21 @@ def store_start(b: Build) -> str:
     return f"a journal of {len(want)} octets; refused: {'; '.join(said for _, _, said in cases)}"
 
 
+def served(spool: Path, k: int) -> tuple[list[bytes], list[bytes]]:
+    """The `k`-th article as the server sends it from its file: the header fields and Xref with its
+    number in `local.test`, and the lines of the body, the dots put before lines taken away."""
+    header, body = (spool / f"a{k:016x}").read_bytes().split(b"\r\n\r\n", 1)
+    unstuffed = [line[1:] if line.startswith(b".") else line for line in (header + b"\r\n").split(b"\r\n")]
+    head = [*unstuffed[:-1], f"Xref: dn.example local.test:{k}".encode()]
+    return head, [line[1:] if line.startswith(b".") else line for line in body.split(b"\r\n")[:-1]]
+
+
 def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> None:
     """Each article read back by `nntplib` as its file holds it: ARTICLE the header fields, Xref with
     its number in `local.test`, the empty line and the body; HEAD up to Xref, BODY after the empty line,
     STAT the number 0 and the Message-ID; an article the store lacks 430."""
     for k, mid in enumerate(ids, 1):
-        octets = (spool / f"a{k:016x}").read_bytes()
-        header, body = octets.split(b"\r\n\r\n", 1)
-        unstuffed = [line[1:] if line.startswith(b".") else line for line in (header + b"\r\n").split(b"\r\n")]
-        head = [*unstuffed[:-1], f"Xref: dn.example local.test:{k}".encode()]
-        lines = [line[1:] if line.startswith(b".") else line for line in body.split(b"\r\n")[:-1]]
+        head, lines = served(spool, k)
         got = {"article": news.article(mid), "head": news.head(mid), "body": news.body(mid)}
         wanted = {"article": (220, [*head, b"", *lines]), "head": (221, head), "body": (222, lines)}
         for what, (resp, info) in got.items():
@@ -1172,12 +1245,65 @@ def read_back(news: Any, nntplib: ModuleType, spool: Path, ids: list[str]) -> No
         raise LaneError("an article the store lacks found")
 
 
+def past_end(move: Any, nntplib: ModuleType, code: str) -> None:
+    """NEXT or LAST past an end of the group: `code`, 421 or 422."""
+    try:
+        found = move()
+    except nntplib.NNTPTemporaryError as error:
+        if not str(error).startswith(code):
+            raise LaneError(f"{move.__name__.upper()} past an end answered {error}") from None
+    else:
+        raise LaneError(f"{move.__name__.upper()} found {found} past an end")
+
+
+def walk(news: Any, nntplib: ModuleType, ids: list[str]) -> None:
+    """`local.test` selected by `nntplib`, its count and its numbers; each of its articles reached by
+    STAT and NEXT, and back by LAST, 421 and 422 at the ends; ARTICLE by number makes it current."""
+    _, count, first, last, name = news.group("local.test")
+    if (count, first, last, name) != (len(ids), 1, len(ids), "local.test"):
+        raise LaneError(f"GROUP local.test answered {count} {first} {last} {name}")
+    steps = [news.stat(), *(news.next() for _ in ids[1:])]
+    if [(num, mid) for _, num, mid in steps] != list(enumerate(ids, 1)):
+        raise LaneError(f"STAT and NEXT over local.test gave {steps}")
+    past_end(news.next, nntplib, "421")
+    back = [news.last() for _ in ids[1:]]
+    if [(num, mid) for _, num, mid in back] != list(enumerate(ids, 1))[-2::-1]:
+        raise LaneError(f"LAST over local.test gave {back}")
+    past_end(news.last, nntplib, "422")
+    _, info = news.article(2)
+    if (info.number, info.message_id) != (2, ids[1]) or news.stat()[1:] != (2, ids[1]):
+        raise LaneError(f"ARTICLE 2 gave {info.number} {info.message_id}, then STAT {news.stat()}")
+
+
+def listings(news: Any, server: Server, ids: list[str]) -> None:
+    """`local.test` listed by `nntplib`: LIST ACTIVE with its highest and lowest numbers and `y`, as a
+    wildmat takes it or not; LIST NEWSGROUPS and NEWGROUPS empty; DATE the wall clock in UTC. Its
+    numbers from 2 by LISTGROUP over a socket of its own."""
+    whole = [("local.test", str(len(ids)), "1", "y")]
+    for pattern, want in ((None, whole), ("local.t*", whole), ("*,!local.*", [])):
+        got = [tuple(g) for g in news.list(pattern)[1]]
+        if got != want:
+            raise LaneError(f"LIST ACTIVE {pattern} gave {got}")
+    if news.descriptions("local.*")[1] != {} or news.newgroups(datetime.date(2026, 1, 1))[1] != []:
+        raise LaneError("LIST NEWSGROUPS or NEWGROUPS gave groups")
+    when = news.date()[1]
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+    if abs((now - when).total_seconds()) > 60:
+        raise LaneError(f"DATE gave {when}, at {now}")
+    c = server.client()
+    read_expected(c, TEXTS["greeting-post"], "the greeting")
+    c.sendall(b"LISTGROUP local.test 2-\r\n")
+    numbers = "".join(f"{k}\r\n" for k in range(2, len(ids) + 1))
+    read_expected(c, f"211 {len(ids)} 1 {len(ids)} local.test\r\n{numbers}.\r\n".encode(), "LISTGROUP")
+
+
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
     refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
     16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
     `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
-    of a file is changed on the disk, its ARTICLE is answered 403."""
+    of a file is changed on the disk, its ARTICLE is answered 403; walks the group (`walk`) and lists it
+    (`listings`)."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
     third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
@@ -1222,7 +1348,13 @@ def post_over_sockets(b: Build) -> str:
         try:
             with serving(b, False, *options, traced=False) as server, \
                     nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                capabilities = news.getcapabilities()
+                if capabilities != {"VERSION": ["2"], "IMPLEMENTATION": ["dragons-net", REVISION.decode()],
+                                    "READER": [], "LIST": ["ACTIVE", "NEWSGROUPS"], "POST": []}:
+                    raise LaneError(f"nntplib read the capabilities {capabilities}")
                 read_back(news, nntplib, spool, ids)
+                walk(news, nntplib, ids)
+                listings(news, server, ids)
             first_file = spool / "a0000000000000001"
             changed = bytearray(first_file.read_bytes())
             changed[-3] ^= 1
@@ -1249,7 +1381,100 @@ def post_over_sockets(b: Build) -> str:
         if f"connection {value} from 127.0.0.1 port {port}" not in logged:
             raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
     return ("posted, the Message-ID refused after a restart, two others posted, their posters logged, each read "
-            "back, a changed file refused")
+            "back and listed, a changed file refused")
+
+
+def net_nntp(timeout: float, *args: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """What `scripts/net_nntp.pl` asked and what Perl's Net::NNTP made of each answer; and the
+    conversation, each line sent and each status line read, from the greeting on. Perl runs without
+    the variables that would load modules from elsewhere."""
+    perl = shutil.which("perl")
+    if perl is None:
+        raise LaneError("this check needs Perl and its Net::NNTP")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PERL")}
+    try:
+        done = subprocess.run([perl, str(ROOT / "scripts/net_nntp.pl"), *args[:1], str(timeout), *args[1:]],
+                              capture_output=True, text=True, timeout=4 * timeout, check=False, env=env)
+    except subprocess.TimeoutExpired:
+        raise LaneError(f"Net::NNTP did not finish in {4 * timeout} s") from None
+    if done.returncode != 0:
+        raise LaneError(f"Net::NNTP stopped with status {done.returncode}: {done.stderr[-300:]!r}")
+    answers = [(asked, made) for asked, _, made in (line.partition("\t") for line in done.stdout.splitlines())]
+    said = [("sent" if way == ">>>" else "got", text.removesuffix("\r"))
+            for way, text in re.findall(r"^Net::NNTP=GLOB\(0x[0-9a-f]+\)(>>>|<<<) (.*)$", done.stderr, re.MULTILINE)]
+    first = next((k for k, (way, _) in enumerate(said) if way == "got"), len(said))
+    return answers, said[first:]
+
+
+def as_wanted(what: str, got: list[tuple[str, str]], want: list[tuple[str, str]]) -> None:
+    """Each item of `got` is the one of `want` in its place, or matches it where that one is a pattern
+    (`re:`)."""
+    for k, (g, w) in enumerate(zip(got, want, strict=False)):
+        if g != w and not (w[0] == g[0] and w[1].startswith("re:") and re.fullmatch(w[1][3:], g[1])):
+            raise LaneError(f"{what} at {k}: {g}, not {w}")
+    if len(got) != len(want):
+        raise LaneError(f"{what}: {len(got)} items, not {len(want)}: {got[len(want):][:3] or want[len(got):][:3]}")
+
+
+def with_net_nntp(b: Build) -> str:
+    """Perl's Net::NNTP, a client written apart from the server and from `nntplib`, on an empty spool:
+    connecting, it sends MODE READER and is told it may post; it posts two articles, one with lines
+    that start with a dot, and finds them by DATE, the listings, NEWGROUPS of a two-digit year, GROUP,
+    LISTGROUP, STAT, NEXT, LAST and ARTICLE. Without a store its MODE READER is answered 502 and the
+    connection closed. Both conversations are held line by line, and so is what Net::NNTP made of them."""
+    status = {name: TEXTS[name].decode().removesuffix("\r\n") for name in TEXTS if TEXTS[name].count(b"\r\n") == 1}
+    with serving(b, traced=False) as server:
+        refused, said = net_nntp(b.timeout, "refused", str(server.port))
+    # Net::NNTP sends QUIT as it is destroyed, its socket still open on its side, and reads no answer.
+    as_wanted("Net::NNTP's conversation without a store", said,
+              [("got", status["greeting"]), ("sent", "MODE READER"), ("got", status["mode-reader"]),
+               ("sent", "QUIT")])
+    as_wanted("Net::NNTP's answers without a store", refused, [("mode", "502"), ("read", "closed")])
+    ids = ["<perl1@x.example>", "<perl2@x.example>"]
+    bodies = (("text",), (".", "..x", "text"))
+    sent = [[*sessions.BASIC, f"Message-ID: {mid}", "", *body] for mid, body in zip(ids, bodies, strict=True)]
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        files = []
+        for k, text in enumerate(sent):
+            path = Path(temp, f"article-{k}")
+            path.write_bytes(b"".join(line.encode() + b"\r\n" for line in text))
+            files.append(str(path))
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            asked = time.time()
+            got, said = net_nntp(b.timeout, "reader", str(server.port), *files)
+        head, lines = served(spool, 2)
+    if lines != [line.encode() for line in bodies[1]]:
+        raise LaneError(f"the article Net::NNTP posted is held with the body {lines}")
+    selected, listed = "211 2 1 2 local.test", "215 List of newsgroups follows"
+    as_wanted("Net::NNTP's conversation", said, [
+        ("got", status["greeting-post"]), ("sent", "MODE READER"), ("got", status["reader-posting"]),
+        *(item for text in sent for item in (("sent", "POST"), ("got", status["post"]),
+                                             *(("sent", line) for line in text), ("sent", "."),
+                                             ("got", status["posted"]))),
+        ("sent", "DATE"), ("got", "re:111 [0-9]{14}"), ("sent", "LIST"), ("got", listed),
+        ("sent", "LIST ACTIVE local.t*"), ("got", listed), ("sent", "LIST ACTIVE *,!local.*"),
+        ("got", listed), ("sent", "LIST NEWSGROUPS"), ("got", "215 Information follows"),
+        ("sent", "re:NEWGROUPS [0-9]{6} [0-9]{6} GMT "), ("got", "231 List of new newsgroups follows"),
+        ("sent", "GROUP local.test"), ("got", selected), ("sent", "LISTGROUP local.test"), ("got", selected),
+        ("sent", "STAT 1"), ("got", f"223 1 {ids[0]}"), ("sent", "NEXT"), ("got", f"223 2 {ids[1]}"),
+        ("sent", "NEXT"), ("got", status["no-next"]), ("sent", "LAST"), ("got", f"223 1 {ids[0]}"),
+        ("sent", "ARTICLE 2"), ("got", f"220 2 {ids[1]}"), ("sent", "QUIT"), ("got", status["quit"])])
+    dated = [made for what, made in got if what == "date"]
+    if len(dated) != 1 or not dated[0].isdigit() or abs(int(dated[0]) - asked) > 60:
+        raise LaneError(f"Net::NNTP read DATE as {dated}, at {asked:.0f}")
+    # Net::Cmd ends each line it reads with LF alone.
+    article = b"".join(line + b"\n" for line in (*head, b"", *lines)).hex()
+    as_wanted("Net::NNTP's answers", got, [
+        ("mode", "200"), ("postok", "1"), ("post", "240"), ("post", "240"), ("date", dated[0]),
+        ("list", "local.test 2 1 y"), ("active", "local.test 2 1 y"), ("active-none", ""), ("newsgroups", "0"),
+        ("newgroups", "0"), ("group", "2\t1\t2\tlocal.test"), ("listgroup", "1,2"), ("stat", ids[0]),
+        ("next", ids[1]), ("next", "none"), ("last", ids[0]), ("article", article), ("quit", "205")])
+    return "MODE READER, two posts, the listings, GROUP, LISTGROUP, STAT, NEXT, LAST and ARTICLE; 502 without a store"
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1362,6 +1587,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
     "lines cut between reads": every_cut,
+    "reader lines cut between reads": reader_cuts,
     "half close": half_close,
     "reset mid-line": reset_mid_line,
     "slow reader": slow_reader,
@@ -1380,6 +1606,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "sixty-five clients": crowd,
     "a store recovered at start": store_start,
     "a post over sockets": post_over_sockets,
+    "Net::NNTP": with_net_nntp,
     "the store lane's directories": store_directories,
 }
 
@@ -1521,17 +1748,37 @@ DEFECTS = [
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
     Defect("the inactivity deadline a millisecond early",
-           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 7)],
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 8)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),
     Defect("a line past the limit answered as its command", [(r"if \(kind == 1\) == 0 \{", "if 0 {", 1)],
            "pipeline", "broke the session's contract", program=True),
-    Defect("the session kept after QUIT", [(r"if r == 3 \{\s+st cb \+ 16, 1;", "if r == 3 {", 1)],
+    Defect("MODE READER answered 201 to a client that may post",
+           [(r"(if \(lds 1 \(cb \+ 104\)\) & \(lds 1 \(@base \+ \d+\)\) \{\s*)r = 38;", r"\1r = 39;", 1)],
+           "Net::NNTP", "not ('got', '200 Posting allowed')", program=True),
+    Defect("the READER lines left out of POST's capabilities",
+           [(r"(?s)(if t == 13 \{.*?)j = 0;\s+while j < 32 \{.*?\}\s+o = o \+ 32;", r"\1", 1)],
+           "a post over sockets", "read the capabilities", program=True),
+    Defect("the connection kept open after MODE READER's 502", [(r"\(r == 3\) \+ \(r == 37\)", "(r == 3)", 1)],
+           "nntplib", "left the connection open", program=True),
+    Defect("MODE READER of a server without a store answered as with one",
+           [(r"if \(r == 37\) & \(lds 1 \(@base \+ \d+\)\) \{", "if (r == 37) {", 1)],
+           "Net::NNTP", "conversation without a store", program=True),
+    Defect("NEWGROUPS of a two-digit year refused",
+           [(r"ok = 0 < \(\(l1 == 6\) \+ \(l1 == 8\)\);", "ok = l1 == 8;", 1)],
+           "Net::NNTP", "231 List of new newsgroups follows", program=True),
+    Defect("LIST NEWSGROUPS answered as LIST ACTIVE", [(r"r = 33;", "r = 32;", 1)], "reader lines cut between reads",
+           "reader commands sent whole read", program=True),
+    Defect("the session kept after QUIT", [(r"(if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{)\s+st cb \+ 16, 1;", r"\1", 1)],
            "pipeline", "the stream did not end", program=True),
     Defect("a file's CRC-32C not compared",
            [(r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1)],
            "a post over sockets", "changed on the disk answered", program=True),
+    Defect("NEXT taken at the current article", [(r"\(mode == 2\) & \(x < num\)", "(mode == 2) & (x <= num)", 1)],
+           "a post over sockets", "STAT and NEXT over local.test gave", program=True),
+    Defect("LAST taken at the current article", [(r"\(mode == 3\) & \(num < x\)", "(mode == 3) & (num <= x)", 1)],
+           "a post over sockets", "LAST over local.test gave", program=True),
 ]
 
 

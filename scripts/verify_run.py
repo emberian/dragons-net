@@ -44,7 +44,13 @@ from typing import Any
 
 # The jobs of `.github/workflows/ci.yml`. A run that is missing one, or that let
 # one fail, checked less than the name `checks` claims.
-REQUIRED_JOBS = ("lint", "build", "proofs", "test", "native", "documents", "lazyfs")
+REQUIRED_JOBS = ("checked", "lint", "build", "proofs", "test", "native", "documents", "lazyfs")
+
+# The note a writer of this repository leaves on a commit in `refs/notes/checked` once its tree
+# passed every check: only a writer can push it. The jobs of `checks` on that tree then pass on it,
+# as on a pass recorded before, without running the checks again; the nightly run checks the default
+# branch on its own.
+CHECKED = "tree {} passed scripts/check_all.sh, the LazyFS lane and the power lane\n"
 
 # What the checks read as their subject: the code under review and the tests that
 # ship with it, which a reviewer reads together with the code. Everything else is
@@ -149,8 +155,9 @@ def listing(items: list[str]) -> str:
 
 
 def judge(jobs: list[dict[str, Any]], base: dict[str, Any], head: dict[str, Any],
-          run: Run) -> Verdict:
+          run: Run, note: str = "", head_tree: str = "") -> Verdict:
     ran = f"\nThe run: {run.url}\n"
+    checked = re.fullmatch("[0-9a-f]{40}", head_tree) is not None and note == CHECKED.format(head_tree)
     if run.conclusion != "success":
         return Verdict("neutral", "The checks did not succeed",
                        f"The `checks` run ended as {quote(run.conclusion)}, so there is nothing "
@@ -181,6 +188,12 @@ def judge(jobs: list[dict[str, Any]], base: dict[str, Any], head: dict[str, Any]
                        "Every required job succeeded. A green `checks` run is then the change "
                        "certifying itself, and the difference has to be read by hand.\n"
                        + edited + tail)
+    if checked:
+        return Verdict("success", "Noted as checked by the default branch's checks before the push",
+                       f"A writer recorded that the tree {quote(head_tree)} passed every check "
+                       "(`refs/notes/checked`), so the jobs may have passed on it without running them again; "
+                       "the scripts, workflows, gate tests and pins in this commit are the default branch's.\n"
+                       + tail)
     return Verdict("success", "Checked by the default branch's checks",
                    "Every required job succeeded, and the scripts, workflows, gate tests and "
                    "pins in this commit are the default branch's.\n" + tail)
@@ -196,6 +209,8 @@ def main() -> int:
     parser.add_argument("--default-branch", required=True, help="the branch this compares against")
     parser.add_argument("--base-refs", default="", help="the branches the run's pull requests target")
     parser.add_argument("--run-url", required=True, help="the finished run, for the summary")
+    parser.add_argument("--head-tree-sha", default="", help="the tree of the checked commit")
+    parser.add_argument("--checked-note", type=Path, help="the commit's note in refs/notes/checked, if any")
     parser.add_argument("--details-url", help="this run, which the check run links to")
     parser.add_argument("--summary", type=Path, help="append the summary here as well")
     args = parser.parse_args()
@@ -205,8 +220,9 @@ def main() -> int:
     run = Run(url=args.run_url, conclusion=args.conclusion, default_branch=args.default_branch,
               base_refs=tuple(args.base_refs.split()))
     jobs = json.loads(args.jobs.read_text()).get("jobs", [])
+    note = args.checked_note.read_text() if args.checked_note is not None else ""
     verdict = judge(jobs, json.loads(args.base_tree.read_text()),
-                    json.loads(args.head_tree.read_text()), run)
+                    json.loads(args.head_tree.read_text()), run, note, args.head_tree_sha)
     if args.summary is not None:
         with args.summary.open("a") as out:
             out.write(f"## verify: {verdict.title}\n\n{verdict.summary}\n")

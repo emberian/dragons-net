@@ -1,7 +1,8 @@
 name: backend
 # The curated optimization is only worth something if its proof still goes through, and the
 # only way to know that is to rebuild it. That is far too slow for the per-commit chain, so it
-# runs weekly, on a change to what it rebuilds, and on request.
+# runs weekly, on a change to what it rebuilds, and on request; a run on the inputs a pass was
+# recorded on, kept 90 days, rebuilds nothing (scripts/prior_pass.py).
 #
 # A hosted runner for a public repository gives four cores and six hours per job. The whole
 # chain, from a clean tree up to `pan_to_target_compile_semantics` and its tag check, took 46
@@ -41,11 +42,11 @@ on:
 
 permissions: {}
 
-# A hosted runner is occupied for as long as this takes, so a superseded pull-request run is
-# cancelled. A run on the default branch is not: it is the one the record rests on.
+# A run waits for the one in progress rather than cancel it: what that one passes it records, and a
+# target that passed on the same inputs is not built again.
 concurrency:
   group: backend-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -57,6 +58,7 @@ jobs:
     timeout-minutes: 350
     permissions:
       contents: read
+      actions: read
     env:
       # The weekly run rebuilds the chain the patch can break; a push or a pull request that
       # touches the lane builds the narrow target, which is enough to show the lane still runs.
@@ -68,12 +70,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Built here on every run rather than restored with the prover: this is the compiler the
+      # What the paths above name and the target: a target that passed on them is not built again.
+      - name: The job's inputs
+        id: inputs
+        env:
+          TARGET: ${{ env.DN_BACKEND_TARGET }}
+        run: |
+          key=$(git rev-parse HEAD:backend HEAD:scripts/backend.py HEAD:scripts/bootstrap_tool.py \
+            HEAD:scripts/backend_lane.sh HEAD:scripts/check_backend.sh HEAD:scripts/check_holmake.py \
+            HEAD:tools.lock.json HEAD:.github/workflows/backend.yml | sha256sum | cut -d' ' -f1)
+          echo "key=backend-${TARGET%.uo}-$key" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      # Built here on every run that builds, not restored with the prover: this is the compiler the
       # lane's whole claim rests on, and a few minutes buy its verification against the pin.
       - name: Build the pinned ML compiler
+        if: steps.passed.outputs.run-id == ''
         run: python3 -P scripts/bootstrap_tool.py polyml
       - name: What the prover is built from
         id: pins
+        if: steps.passed.outputs.run-id == ''
         run: |
           python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -85,29 +105,46 @@ jobs:
       # when its revision or its compiler does, which is what the key says and nothing else.
       - name: Restore the prover
         id: prover
+        if: steps.passed.outputs.run-id == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deps/hol
           key: ${{ steps.pins.outputs.key }}
       - name: Build the prover
-        if: steps.prover.outputs.cache-hit != 'true'
+        if: steps.passed.outputs.run-id == '' && steps.prover.outputs.cache-hit != 'true'
         run: |
           python3 -P scripts/backend.py fetch hol
           python3 -P scripts/backend.py build hol
       # Saved from its own step, so that a prover whose build broke half way through is not
       # stored for the next run to trust.
       - name: Keep the prover
-        if: (steps.prover.outputs.cache-hit != 'true') && github.event_name != 'pull_request'
+        if: steps.passed.outputs.run-id == '' && steps.prover.outputs.cache-hit != 'true' &&
+          github.event_name != 'pull_request'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deps/hol
           key: ${{ steps.pins.outputs.key }}
       - name: Fetch the patched compiler source
+        if: steps.passed.outputs.run-id == ''
         run: python3 -P scripts/backend.py fetch cakeml
       - name: Rebuild the proof
+        if: steps.passed.outputs.run-id == ''
         run: bash scripts/check_backend.sh
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
       - name: Keep what the run reported
-        if: always()
+        if: always() && steps.passed.outputs.run-id == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: backend-logs

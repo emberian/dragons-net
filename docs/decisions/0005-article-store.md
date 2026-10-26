@@ -338,9 +338,25 @@ counting the lines it could not.
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
 - ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
-  number 0, or 430), and 412 to a number or, ARTICLE and BODY, to no argument, since GROUP is not
-  implemented. READER is not advertised until the reader commands are (#18). HELP lists ARTICLE,
-  BODY and POST.
+  number 0, or 430). HELP lists ARTICLE, BODY, DATE, GROUP, LAST, LIST, LISTGROUP, NEWGROUPS, NEXT
+  and POST; ARTICLE, BODY, HEAD and STAT share a line.
+- The capabilities name READER and `LIST ACTIVE NEWSGROUPS` (RFC 3977 §3.3.2, §7.6.2). As a server
+  that is not mode-switching and advertises READER, it answers MODE READER 200 while the
+  capabilities name POST, else 201, changing nothing (§5.3.2); HELP does not name it.
+- GROUP selects a group the store carries and makes its first article current: 211 with the count
+  of its articles and their lowest and highest numbers, an empty group's 1 and 0; else 411 (RFC
+  3977 §6.1, §6.2). By number the four find the article in the selected group and make it current
+  once they answer it, not after a 403; else 423. With no argument they take the current article,
+  or answer 420. NEXT and LAST move
+  to the nearest article above or below it (223), or answer 421 and 422. With no group selected,
+  412.
+- LISTGROUP selects a group as GROUP does, the named one or the selected one, then lists the
+  numbers within its range of the articles the group held as it was selected (§6.1.2). LIST and LIST
+  ACTIVE list each group the store carries that the wildmat matches, all without one: its name, its
+  highest and lowest numbers, and `y` while the store accepts, else `n`: the group's status on this server, the same for a client that may not post (§7.6.3).
+- LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
+  created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1), past the year 9999 with more
+  digits than §7.1's fourteen. A list goes out a send at a time.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested

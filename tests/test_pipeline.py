@@ -301,14 +301,34 @@ class CheckScript(unittest.TestCase):
         for block in re.split(r"^  (?=[a-z]+:\n)", workflow, flags=re.MULTILINE)[1:]:
             name, _, body = block.partition(":\n")
             jobs[name] = body
-        self.assertEqual(list(jobs), ["lint", "build", "kernels", "proofs", "tests", "test", "lanes", "native",
-                                      "documents", "lazyfs"])
+        self.assertEqual(list(jobs), ["checked", "lint", "build", "kernels", "proofs", "tests", "test", "lanes",
+                                      "native", "documents", "lazyfs"])
         # Once the build has passed, the kernels, the tests and the native lanes run beside each other,
         # each in jobs of their own; a job gathers each one's, and fails unless every one of them passed.
         # The documents are held to the stamps of the tests and the lanes.
-        for job, previous in (("build", "lint"), ("kernels", "build"), ("proofs", "kernels"), ("tests", "build"),
-                              ("test", "tests"), ("lanes", "build"), ("native", "lanes")):
+        for job, previous in (("lint", "checked"), ("build", "[lint, checked]"), ("kernels", "[build, checked]"),
+                              ("proofs", "[kernels, checked]"), ("tests", "[build, checked]"),
+                              ("test", "[tests, checked]"), ("lanes", "[build, checked]"),
+                              ("native", "[lanes, checked]"), ("documents", "[test, native, checked]"),
+                              ("lazyfs", "[build, checked]")):
             self.assertIn(f"    needs: {previous}\n", jobs[job])
+        # A tree checked before the push is not checked again: the first job finds its note, every later
+        # one takes it as a pass on its inputs and passes, which the default branch's verify lane reads
+        # as any pass, and the shards do not start.
+        self.assertIn(verify_run.CHECKED.format("$tree").rstrip("\n"), jobs["checked"])
+        self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'push'\n", jobs["checked"])
+        for job, body in jobs.items():
+            with self.subTest(job=job):
+                shard = "    strategy:\n" in body
+                self.assertEqual("    if: needs.checked.outputs.tree == ''\n" in body, shard)
+                self.assertEqual(body.count("          NOTED: ${{ needs.checked.outputs.tree }}\n"
+                                            '        run: python3 scripts/prior_pass.py "passed-$KEY" '
+                                            '--noted "$NOTED" >> "$GITHUB_OUTPUT"\n'),
+                                 0 if shard or job == "checked" else 1)
+        self.assertEqual(len(re.findall(r"\bif: .*steps\.passed\.outputs\.run-id", "".join(jobs.values()))), 1)
+        self.assertIn("        if: steps.passed.outputs.run-id != ''\n        with:\n          name: lean-build\n",
+                      jobs["build"])
+        self.assertEqual(jobs["build"].count("        if: steps.passed.outputs.found != 'noted'\n"), 2)
         # What each job unpacks is the archive the build named by its digest.
         self.assertIn("      archive: ${{ steps.archive.outputs.sha256 }}\n", jobs["build"])
         for job in ("kernels", "tests", "lanes", "lazyfs"):
@@ -330,7 +350,7 @@ class CheckScript(unittest.TestCase):
             self.assertNotIn("native_lanes.sh", jobs[job])
         # The stamps of the checks come from this branch's runs or the default branch's alone; the
         # test job merges the shards' passes into the last ones.
-        for job in ("tests", "test", "lanes", "native"):
+        for job in ("lint", "tests", "test", "lanes", "native"):
             looked = re.findall(r'prior_pass\.py checks-\w+ --branch "\$OWN" --branch "\$MAIN"', jobs[job])
             self.assertEqual(len(looked), 1, job)
         self.assertIn("run: mkdir -p build/made && python3 scripts/once.py merge build/stamps build/made\n",
@@ -344,8 +364,10 @@ class CheckScript(unittest.TestCase):
         self.assertIn("    if: ${{ !cancelled() }}\n", jobs["proofs"])
         self.assertIn('KERNELS: ${{ needs.kernels.result }}\n        run: test "$KERNELS" = success\n', jobs["proofs"])
         self.assertIn("        part: [leanchecker, nanoda]\n", jobs["kernels"])
-        self.assertIn("needs: [test, native]\n", jobs["documents"])
         self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
+        # An implicit condition asks every job before this one, the shards a note leaves unstarted too.
+        self.assertIn("    if: ${{ !cancelled() && needs.test.result == 'success'"
+                      " && needs.native.result == 'success' }}\n", jobs["documents"])
         # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
         # names the run that holds it; the documents job takes both records by them.
         self.assertEqual(jobs["test"].count("!build/stamps/lane-*.json\n"), 2)
@@ -358,7 +380,6 @@ class CheckScript(unittest.TestCase):
                           f"          run-id: ${{{{ needs.{job}.outputs.run }}}}\n", jobs["documents"])
         # The LazyFS lane mounts FUSE, and the power lane on it needs the build: they run beside the
         # rest of the chain once the build has passed.
-        self.assertIn("needs: build\n", jobs["lazyfs"])
         self.assertIn("python3 scripts/lazyfs_check.py", jobs["lazyfs"])
         self.assertIn("run: bash scripts/native_lanes.sh power\n", jobs["lazyfs"])
         self.assertIn("bash scripts/lint.sh", jobs["lint"])
@@ -475,6 +496,17 @@ class CheckScript(unittest.TestCase):
         self.assertFalse(prior_pass.recorded(jobs(("Record passed-b", "success")), "passed-a"))
         self.assertFalse(prior_pass.recorded(jobs(), "passed-a"))
         self.assertFalse(prior_pass.recorded({"jobs": [{"steps": None}]}, "passed-a"))
+        # A tree a writer checked before the push is a pass without asking; with none, or the API
+        # silent, nothing is found and the checks run.
+        def asked(*noted: str) -> str:
+            env = {"PATH": os.environ["PATH"], "GITHUB_API_URL": "https://127.0.0.1:9", "GITHUB_REPOSITORY": "o/r",
+                   "GITHUB_REPOSITORY_ID": "7", "GITHUB_RUN_ID": "8", "GH_TOKEN": "t"}
+            return subprocess.run([sys.executable, "-P", str(ROOT / "scripts/prior_pass.py"), "passed-a", *noted],
+                                  env=env, capture_output=True, text=True, check=True, timeout=60).stdout
+
+        self.assertEqual(asked("--noted", "a" * 40), "run-id=\nfound=noted\n")
+        self.assertEqual(asked("--noted", ""), "run-id=\nfound=\n")
+        self.assertEqual(asked(), "run-id=\nfound=\n")
 
     def test_ci_records_a_pass_only_after_its_steps(self) -> None:
         """Every job looks for a recorded pass first, and records its own last, so a job that
@@ -488,6 +520,10 @@ class CheckScript(unittest.TestCase):
                 steps = re.split(r"(?m)^      - ", job)[1:]
                 found = [i for i, s in enumerate(steps) if 'run: python3 scripts/prior_pass.py "passed-' in s]
                 recorded = [i for i, s in enumerate(steps) if "name: passed-${{" in s]
+                if name == "checked":
+                    # It reads a note, and passes either way: it checks nothing.
+                    self.assertEqual((found, recorded), ([], []))
+                    continue
                 self.assertEqual(len(found), 1)
                 if name in shards:
                     # A shard records no pass: the job that gathers the shards does, once all passed.
@@ -526,20 +562,42 @@ class CheckScript(unittest.TestCase):
                                                                               "`y` z."])
         # Lint holds every Markdown file to them but the records and the files listed as not yet brought.
         lint = (ROOT / "scripts/lint.sh").read_text()
-        self.assertIn("| xargs -0 python3 -P scripts/check_prose.py", lint)
-        self.assertIn("git ls-files -z '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/'", lint)
+        self.assertIn('once lint-prose python3 -P scripts/check_prose.py "${prose[@]}"', lint)
+        self.assertIn("tracked prose '*.md' ':!:migration/' ':!:docs/decisions/' ':!:docs/reviews/'", lint)
 
-    def test_every_native_lane_also_runs_alone(self) -> None:
-        """CI runs the native lanes one after another in one checkout, where a lane can lean on what
-        an earlier one left in build/; the nightly run starts each on a fresh machine, always."""
+    def test_every_native_lane_runs_alone(self) -> None:
+        """A lane run after another in one checkout could lean on what that one left in build/; CI starts
+        each on a machine of its own, on the build alone."""
         [listed] = re.findall(r"^lanes=\(([a-z ]+)\)$", (ROOT / "scripts/native_lanes.sh").read_text(),
                               re.MULTILINE)
-        nightly = (ROOT / ".github/workflows/scheduled.yml").read_text()
-        [job] = re.findall(r"^  lanes-alone:\n(.*?)\n\n", nightly, re.MULTILINE | re.DOTALL)
-        [alone] = re.findall(r"^        lane: \[([a-z, ]+)\]$", job, re.MULTILINE)
-        self.assertEqual(alone.split(", "), listed.split())
-        self.assertIn('run: bash scripts/native_lanes.sh "${LANE}"', job)
-        self.assertNotIn("if:", job)
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        [job] = re.findall(r"^  lanes:\n(.*?)\n\n", workflow, re.MULTILINE | re.DOTALL)
+        shards = re.findall(r"^          - \{name: ([a-z]+), lanes: ([a-z ]+)\}$", job, re.MULTILINE)
+        self.assertEqual(sorted(lanes for _, lanes in shards), sorted(listed.split()))
+        self.assertTrue(all(name == lanes for name, lanes in shards), shards)
+
+    def test_nightly_runs_again_only_what_changes_without_the_repository(self) -> None:
+        """A nightly job whose inputs are the repository's alone looks for a pass on their key first and
+        records its own last, so that it is not run again on them; only the jobs whose inputs change
+        without the repository run every night: advisories and the network's answers, new seeds."""
+        workflow = (ROOT / ".github/workflows/scheduled.yml").read_text().split("\njobs:\n", 1)[1]
+        jobs = dict(re.findall(r"^  ([a-z-]+):\n(.*?)(?=\n\n  [#a-z]|\Z)", workflow, re.MULTILINE | re.DOTALL))
+        every_night = {"advisories", "properties", "generated-programs", "upstream-sources"}
+        self.assertLess(every_night, set(jobs))
+        for name, job in jobs.items():
+            with self.subTest(job=name):
+                steps = re.split(r"(?m)^      - ", job)[1:]
+                found = [i for i, s in enumerate(steps) if 'run: python3 -P scripts/prior_pass.py "passed-' in s]
+                recorded = [i for i, s in enumerate(steps) if s.startswith("name: Record passed-")]
+                if name in every_night:
+                    self.assertEqual((found, recorded), ([], []))
+                    continue
+                self.assertEqual(len(found), 1)
+                self.assertEqual(len(recorded), 1)
+                self.assertIn("          name: passed-${{ steps.inputs.outputs.key }}\n", steps[recorded[0]])
+                # Only the build's archive and its digest go up either way: the jobs after it need them.
+                self.assertTrue(all("if:" in s or "name: lean-build" in s or "id: archive" in s
+                                    for s in steps[found[0] + 1:recorded[0] + 1]))
 
     def test_checkers_cover_what_decides_the_checks(self) -> None:
         """The tests stage runs code from the change; what it may not change is this."""
@@ -694,6 +752,24 @@ class Verify(unittest.TestCase):
         crowded = verdict(base, jobs=many)
         self.assertEqual(crowded.conclusion, "success")
         self.assertIn(f"and {len(many) - verify_run.LISTED} more", crowded.summary)
+        # A tree a writer checked before the push: its jobs pass on the note, and the verdict says so; a job
+        # skipped is still one that did not pass, note or not.
+        note = verify_run.CHECKED.format("a" * 40)
+        signed = verify_run.judge(green, tree(base), tree(base), ok, note, "a" * 40)
+        self.assertEqual(signed.conclusion, "success")
+        self.assertIn("before the push", signed.title)
+        for case, (text, at) in {"no note": ("", "a" * 40), "another tree": (note, "b" * 40),
+                                 "another note": (note.replace("passed", "began"), "a" * 40),
+                                 "no tree": (note, "")}.items():
+            with self.subTest(case=case):
+                plain = verify_run.judge(green, tree(base), tree(base), ok, text, at)
+                self.assertEqual((plain.conclusion, plain.title), ("success", "Checked by the default branch's checks"))
+        later: list[dict[str, object]] = [{**job, "conclusion": "skipped"} if job["name"] != "checked" else job
+                                          for job in green]
+        self.assertEqual(verify_run.judge(later, tree(base), tree(base), ok, note, "a" * 40).conclusion, "failure")
+        # Its own checks edited, it is read by hand as any other.
+        self.assertEqual(verify_run.judge(green, tree(base), tree(critical["edited"]), ok, note, "a" * 40).conclusion,
+                         "neutral")
         # The checks that ran are the base branch's, and this speaks for one branch.
         other = verify_run.Run(url="u", conclusion="success", default_branch="main",
                                base_refs=("release",))

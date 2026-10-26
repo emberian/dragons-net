@@ -6,7 +6,7 @@
 
 The path is **Lean specifications and proofs → Pancake → CakeML → native code**, with a narrow host for sockets, buffers and durable storage, built on the inherited `orb-compiler`, `orb`, `drorb` and datacake work.
 
-**Today: compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server answering RFC 3977's mandatory commands on loopback, recovering its store at start; not yet a usable news server or an end-to-end verified executable.**
+**Today: compiler infrastructure, models, a generated-code TCP echo server, and an NNTP server on loopback that takes articles by POST into a durable store and serves them to readers by RFC 3977's reader commands; not yet a usable news server or an end-to-end verified executable.**
 
 Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](docs/assurance.md); the [inherited-code review](docs/reviews/README.md) records the defects found in what was inherited.
 
@@ -30,7 +30,7 @@ Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](
 
 ## Build and check
 
-Install Git, Python 3.12, [elan](https://github.com/leanprover/elan), [rustup](https://rustup.rs/) and a C toolchain; the checks run on Linux x86-64 and fetch their pinned tools on first use (elsewhere, `bash scripts/check.sh build`).
+Install Git, Python 3.12, Perl with its Net::NNTP 3.15, [elan](https://github.com/leanprover/elan), [rustup](https://rustup.rs/) and a C toolchain; the checks run on Linux x86-64 and fetch their pinned tools on first use (elsewhere, `bash scripts/check.sh build`).
 
 ```sh
 git clone https://github.com/emberian/dragons-net.git dn

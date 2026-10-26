@@ -450,6 +450,24 @@ def artCivil : PFun :=
      .ret (eSub (eAdd (eAdd (eMul (v "era") (n 146097)) (eMul (v "yoe") (n 365)))
         (eSub (eAdd (v "q4") (eSub (eAdd (v "q5") (v "d")) (n 1))) (v "qc"))) (n 719468))] }
 
+/-- The day of the Gregorian calendar `days` after 1970-01-01 (`ArticleSpec.civilFromDays`), in one
+word: its year times 512, its month times 32, and its day. -/
+def artCivilOf : PFun :=
+  { name := "artCivilOf", params := [(1, "days")], body :=
+    [area, .dec "z" (eAdd (v "days") (n 719468)), .call "era" "artDiv" [v "z", n 146097],
+     .dec "doe" (eSub (v "z") (eMul (v "era") (n 146097))),
+     .call "a1" "artDiv" [v "doe", n 1460], .call "a2" "artDiv" [v "doe", n 36524],
+     .call "a3" "artDiv" [v "doe", n 146096],
+     .call "yoe" "artDiv" [eSub (eAdd (eSub (v "doe") (v "a1")) (v "a2")) (v "a3"), n 365],
+     .call "b1" "artDiv" [v "yoe", n 4], .call "b2" "artDiv" [v "yoe", n 100],
+     .dec "doy" (eSub (v "doe") (eSub (eAdd (eMul (n 365) (v "yoe")) (v "b1")) (v "b2"))),
+     .call "mp" "artDiv" [eAdd (eMul (n 5) (v "doy")) (n 2), n 153],
+     .call "c1" "artDiv" [eAdd (eMul (n 153) (v "mp")) (n 2), n 5],
+     .dec "dy" (eAdd (eSub (v "doy") (v "c1")) (n 1)),
+     .dec "mo" (eAdd (v "mp") (n 3)), ifs (eLe (n 10) (v "mp")) [.assign "mo" (eSub (v "mp") (n 9))],
+     .dec "yr" (eAdd (v "yoe") (eMul (v "era") (n 400))), ifs (eLe (v "mo") (n 2)) [inc "yr"],
+     .ret (eAdd (eAdd (eMul (v "yr") (n 512)) (eMul (v "mo") (n 32))) (v "dy"))] }
+
 /-- The seconds since 1970 the date-time from `s` to `e` says, as `ArticleSpec.dateValue` reads
 it: 1 and the seconds in `xValue`; 0 if it says none; 2 if its year is `yearBig` or later. -/
 def artDate : PFun :=
@@ -687,18 +705,8 @@ def artFormat : PFun :=
   { name := "artFormat", params := [(1, "o")], body :=
     [area, .dec "wl" (wd xWall),
      .call "dd" "artDiv" [v "wl", n 86400], .dec "sc" (eSub (v "wl") (eMul (v "dd") (n 86400))),
-     .dec "z" (eAdd (v "dd") (n 719468)), .call "era" "artDiv" [v "z", n 146097],
-     .dec "doe" (eSub (v "z") (eMul (v "era") (n 146097))),
-     .call "a1" "artDiv" [v "doe", n 1460], .call "a2" "artDiv" [v "doe", n 36524],
-     .call "a3" "artDiv" [v "doe", n 146096],
-     .call "yoe" "artDiv" [eSub (eAdd (eSub (v "doe") (v "a1")) (v "a2")) (v "a3"), n 365],
-     .call "b1" "artDiv" [v "yoe", n 4], .call "b2" "artDiv" [v "yoe", n 100],
-     .dec "doy" (eSub (v "doe") (eSub (eAdd (eMul (n 365) (v "yoe")) (v "b1")) (v "b2"))),
-     .call "mp" "artDiv" [eAdd (eMul (n 5) (v "doy")) (n 2), n 153],
-     .call "c1" "artDiv" [eAdd (eMul (n 153) (v "mp")) (n 2), n 5],
-     .dec "dy" (eAdd (eSub (v "doy") (v "c1")) (n 1)),
-     .dec "mo" (eAdd (v "mp") (n 3)), ifs (eLe (n 10) (v "mp")) [.assign "mo" (eSub (v "mp") (n 9))],
-     .dec "yr" (eAdd (v "yoe") (eMul (v "era") (n 400))), ifs (eLe (v "mo") (n 2)) [inc "yr"],
+     .call "cv" "artCivilOf" [v "dd"], .dec "dy" (eAnd (v "cv") (n 31)),
+     .dec "mo" (eAnd (.shr (v "cv") (n 5)) (n 15)), .dec "yr" (.shr (v "cv") (n 9)),
      .call "q7" "artDiv" [eAdd (v "dd") (n 4), n 7],
      .dec "wk" (eSub (eAdd (v "dd") (n 4)) (eMul (v "q7") (n 7))),
      .call "hr" "artDiv" [v "sc", n 3600], .dec "rest" (eSub (v "sc") (eMul (v "hr") (n 3600))),
@@ -904,7 +912,7 @@ below it, so that no loop goes on with what the failed check returned. -/
 def functions : List PFun :=
   AbnfProg.functions .none ofs ++ List.map (fun f => { f with body := guardL f.body })
   [artEol m, artStruct r, artField, artAllWS, artBlank, artClass es m, artGrammar, artMsgIds r m,
-   artReceived, artTok, artNum, artDiv, artCivil, artDate m, artNum10, artCopy es m, artToMsg es,
+   artReceived, artTok, artNum, artDiv, artCivil, artCivilOf, artDate m, artNum10, artCopy es m, artToMsg es,
    artNameAt, artElem, artKnown, artGroups, artDistAll, artPosted, artFormat, artAdded r es m,
    artCheck r es, artContext, artTables r es]
 

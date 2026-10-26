@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import time
 from typing import NamedTuple
 
 import framing_ref
@@ -29,7 +30,16 @@ import store_ref as J
 
 FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000, 1_800_000
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
-COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT")
+COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT", b"MODE")
+# The commands a server with a store has besides.
+STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS")
+# The replies a server with a store decides as it gives them.
+DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last", "listgroup", "list-active",
+           "date", "mode-reader")
+# The replies after which the connection closes: QUIT's, and MODE READER's 502 of a server that does not
+# advertise READER (RFC 3977 §5.3.2).
+CLOSING = ("quit", "mode-reader")
+NUMBER_MAX = 2_147_483_647
 
 
 def words(kept: bytes) -> list[bytes]:
@@ -46,20 +56,90 @@ def is_message_id(w: bytes) -> bool:
     return re.fullmatch(rb"<[\x21-\x3d\x3f-\x7e]{1,248}>", w) is not None
 
 
+def is_group_name(w: bytes) -> bool:
+    """RFC 3977 §9.8: one or more `wildmat-exact` characters, printable US-ASCII but for `!*,?[\\]`,
+    or characters past it in UTF-8 (RFC 3629)."""
+    try:
+        text = w.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and all(ord(ch) > 0x7F or (0x21 < ord(ch) < 0x7F and ch not in "*,?[\\]") for ch in text)
+
+
+def article_range(w: bytes) -> tuple[int, int] | None:
+    """RFC 3977 §6.1.2.2 and §9.8: a number, a number and a dash, or two numbers and a dash between
+    them; the lowest and the highest number it takes in."""
+    m = re.fullmatch(rb"([^-]*)(-([^-]*))?", w)
+    if m is None or not is_article_number(m[1]):
+        return None
+    if m[2] is None:
+        return int(m[1]), int(m[1])
+    if not m[3]:
+        return int(m[1]), NUMBER_MAX
+    return (int(m[1]), int(m[3])) if is_article_number(m[3]) else None
+
+
+def wildmat(w: bytes) -> list[tuple[bool, str]] | None:
+    """RFC 3977 §4.1: patterns of `wildmat-exact` characters, `*` and `?`, separated by commas, each
+    after the first negated by `!` or not; each with whether it is negated."""
+    try:
+        text = w.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    patterns = []
+    for k, part in enumerate(text.split(",")):
+        negated = k > 0 and part.startswith("!")
+        body = part[1:] if negated else part
+        if not body or not all(ch in "*?" or ord(ch) > 0x7F or (0x21 < ord(ch) < 0x7F and ch not in "*,?[\\]")
+                               for ch in body):
+            return None
+        patterns.append((negated, body))
+    return patterns
+
+
+def wildmatch(patterns: list[tuple[bool, str]], name: bytes) -> bool:
+    """§4.2: the rightmost pattern that matches the whole name decides, against it when negated."""
+    text, verdict = name.decode("utf-8"), False
+    for negated, body in patterns:
+        regex = "".join(".*" if ch == "*" else "." if ch == "?" else re.escape(ch) for ch in body)
+        if re.fullmatch(regex, text, re.DOTALL):
+            verdict = not negated
+    return verdict
+
+
+def is_date(w: bytes) -> bool:
+    """§7.3.2: `[xx]yymmdd`, its century from 19, its month from 1 to 12, its day from 1 to 31."""
+    m = re.fullmatch(rb"([0-9]{2})?[0-9]{2}([0-9]{2})([0-9]{2})", w)
+    return m is not None and (m[1] is None or int(m[1]) >= 19) and 1 <= int(m[2]) <= 12 and 1 <= int(m[3]) <= 31
+
+
+def is_time(w: bytes) -> bool:
+    """§7.3.2: `hhmmss`, to 23:59:60."""
+    m = re.fullmatch(rb"([0-9]{2})([0-9]{2})([0-9]{2})", w)
+    return m is not None and int(m[1]) <= 23 and int(m[2]) <= 59 and int(m[3]) <= 60
+
+
+def date_digits(wall: int) -> bytes:
+    """§7.1: the wall clock, in milliseconds, as `yyyymmddhhmmss` in UTC."""
+    return b"%04d%02d%02d%02d%02d%02d" % time.gmtime(wall // 1000)[:6]
+
+
 def is_keyword(w: bytes) -> bool:
     """RFC 3977 §9.8: a letter, then two or more letters, digits, dots or hyphens."""
     return re.fullmatch(rb"[A-Za-z][A-Za-z0-9.-]{2,}", w) is not None
 
 
 def reply(kind: str, kept: bytes, offered: bool = False) -> str:
-    """The reply 0003 gives a line of this kind keeping these bytes; with a store, POST, ARTICLE and
-    BODY are commands too, a well-formed POST answered as the session decides (`post`), and a
-    message-id looked up in the store (`lookup`)."""
+    """The reply 0003 gives a line of this kind keeping these bytes, MODE READER's 502 of a server
+    that does not advertise READER among them (RFC 3977 §5.3.2); with a store, POST, ARTICLE, BODY,
+    GROUP, NEXT and LAST are commands too, and the session decides what a well-formed POST gets
+    (`post`), what a message-id finds in the store (`lookup`), a number in the selected group
+    (`number`), no argument (`current`), a GROUP (`group`), a NEXT, a LAST and a MODE READER."""
     ws = words(kept)
     if not ws:
         return "unknown" if kind == "overlong" else "ignore"
     name, args = ws[0].upper(), ws[1:]
-    if name not in COMMANDS and not (offered and name in (b"POST", b"ARTICLE", b"BODY")):
+    if name not in COMMANDS and not (offered and name in STORED):
         return "unknown"
     if kind != "command":
         return "syntax"
@@ -67,29 +147,53 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
         return "capabilities"
     if name in (b"HELP", b"QUIT") and not args:
         return name.decode().lower()
+    if name == b"MODE" and len(args) == 1 and args[0].upper() == b"READER":
+        return "mode-reader"
     if name in (b"HEAD", b"STAT", b"ARTICLE", b"BODY") and len(args) <= 1:
-        if not args or is_article_number(args[0]):
-            return "no-group"
+        if not args:
+            return "current" if offered else "no-group"
+        if is_article_number(args[0]):
+            return "number" if offered else "no-group"
         if is_message_id(args[0]):
             return "lookup" if offered else "no-such-id"
     if name == b"POST" and not args:
         return "post"
+    if name == b"GROUP" and len(args) == 1 and is_group_name(args[0]):
+        return "group"
+    if name in (b"NEXT", b"LAST") and not args:
+        return name.decode().lower()
+    if name == b"LISTGROUP" and (not args or (len(args) <= 2 and is_group_name(args[0]) and
+                                             (len(args) == 1 or article_range(args[1]) is not None))):
+        return "listgroup"
+    if name == b"LIST" and len(args) <= 2 and (len(args) < 2 or wildmat(args[1]) is not None):
+        keyword = args[0].upper() if args else b"ACTIVE"
+        if keyword in (b"ACTIVE", b"NEWSGROUPS"):
+            return "list-active" if keyword == b"ACTIVE" else "list-newsgroups"
+    if name == b"DATE" and not args:
+        return "date"
+    if name == b"NEWGROUPS" and len(args) in (2, 3) and is_date(args[0]) and is_time(args[1]) and \
+            (len(args) == 2 or args[2].upper() == b"GMT"):
+        return "new-groups"
     return "syntax"
 
 
 def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
-    help_lines = (b"100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\n",
-                  b"QUIT\r\nSTAT [message-ID|number]\r\ndragons-net " + revision
-                  + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n")
     return {
         "greeting": b"201 dragons-net " + revision + b" ready, no posting; source code at " + source
         + b"\r\n",
         "greeting-post": b"200 dragons-net " + revision + b" ready, posting allowed; source code at " + source
         + b"\r\n",
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
-        + b"\r\nPOST\r\n.\r\n",
-        "help-post": b"100 Help text follows\r\nARTICLE [message-ID|number]\r\nBODY [message-ID|number]\r\n"
-        + help_lines[0][len(b"100 Help text follows\r\n"):] + b"POST\r\n" + help_lines[1],
+        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\nPOST\r\n.\r\n",
+        "capabilities-reader": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
+        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\n.\r\n",
+        "mode-reader": b"502 Reading service unavailable\r\n",
+        "reader-posting": b"200 Posting allowed\r\n",
+        "reader-no-posting": b"201 Posting prohibited\r\n",
+        "help-post": b"100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n"
+        b"CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\nNEWGROUPS\r\n"
+        b"NEXT\r\nPOST\r\nQUIT\r\ndragons-net "
+        + revision + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n",
         "unreadable": b"403 Article not readable\r\n",
         "post": b"340 Send article to be posted\r\n",
         "posted": b"240 Article received OK\r\n",
@@ -104,20 +208,28 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "quit": b"205 Bye\r\n",
         "no-group": b"412 No newsgroup selected\r\n",
         "no-such-id": b"430 No article with that message-id\r\n",
+        "no-such-group": b"411 No such newsgroup\r\n",
+        "no-current": b"420 Current article number is invalid\r\n",
+        "no-next": b"421 No next article in this group\r\n",
+        "no-previous": b"422 No previous article in this group\r\n",
+        "no-number": b"423 No article with that number\r\n",
         "unknown": b"500 Unknown command\r\n",
         "syntax": b"501 Syntax error\r\n",
+        "list-newsgroups": b"215 Information follows\r\n.\r\n",
+        "new-groups": b"231 List of new newsgroups follows\r\n.\r\n",
     }
 
 
 def answers(stream: bytes) -> list[str]:
-    """The replies to the whole lines of `stream`, in order, up to and including a QUIT's."""
+    """The replies to the whole lines of `stream`, in order, up to and including the one after which
+    the connection closes."""
     found = []
     for body in stream.split(b"\n")[:-1]:
         kind, kept = framing_ref.classify(LINE_LIMIT, body)
         r = reply(kind, kept)
         if r != "ignore":
             found.append(r)
-        if r == "quit":
+        if r in CLOSING:
             break
     return found
 
@@ -165,6 +277,18 @@ class Turn:
 
 
 @dataclass
+class Listing:
+    """A reply of many lines going out a part at a time: what of it went out, its first line first;
+    LISTGROUP's numbers, or LIST ACTIVE's wildmat, `None` for every group; how far it has gone among
+    them; and whether its terminating line went out."""
+    sent: bytearray
+    numbers: list[int] | None = None
+    patterns: list[tuple[bool, str]] | None = None
+    at: int = 0
+    done: bool = False
+
+
+@dataclass
 class Conn:
     opened: int
     delivered: bytearray = field(default_factory=bytearray)
@@ -192,10 +316,15 @@ class Conn:
     posts: list[tuple[int, P.Article]] = field(default_factory=list)
     waiting: bool = False
     sent340: int = 0
-    # the reads that answered its ARTICLE, HEAD and BODY; the one it waits for, with the command and
-    # the commit, until it gets it
+    # the reads that answered its ARTICLE, HEAD and BODY; the one it waits for, with the command, the
+    # number its first line gives and the commit, until it gets it
     fetches: list[P.Fetch] = field(default_factory=list)
-    wanted: tuple[str, J.Commit] | None = None
+    wanted: tuple[str, int, J.Commit] | None = None
+    # the selected group and the current article number, None and 0 while invalid
+    group: bytes | None = None
+    current: int = 0
+    # its replies of many lines, the last going out while it is not done
+    listings: list[Listing] = field(default_factory=list)
 
     def pending(self) -> bytes:
         return bytes(self.emitted[self.taken:])
@@ -213,8 +342,8 @@ class Judge:
         return self.text["greeting"] + b"".join(self.text[r] for r in self.replies(c))
 
     def quitting(self, c: Conn) -> bool:
-        """Whether the connection has been answered its QUIT."""
-        return c.replies > 0 and self.replies(c)[c.replies - 1] == "quit"
+        """Whether the connection has been answered its QUIT, or MODE READER's 502."""
+        return c.replies > 0 and self.replies(c)[c.replies - 1] in CLOSING
 
     def owed(self, c: Conn) -> bool:
         """Whether a whole line the client sent waits for its reply."""
@@ -381,7 +510,9 @@ class Judge:
 class PostJudge(Judge):
     """The session of a server with a store (decision 0005). A connection is greeted with 200 when it
     may post and the store accepts and carries a group. Its replies are the 0003 ones, HELP's naming
-    POST; the capabilities name POST while it was greeted with 200 and the store accepts. A POST is
+    POST; the capabilities name READER and LIST ACTIVE NEWSGROUPS, and POST while it was greeted with
+    200 and the store accepts, and MODE READER is answered 200 then, else 201, changing nothing
+    (RFC 3977 §5.3.2). A POST is
     answered at once 440 when it was greeted with 201, 403 once the store has stopped accepting, else
     340 once one of four slots is free for it: POSTs that wait, unread and with no deadline, get the
     slots that free in the order they came. The article after a 340 is `post_ref`'s; it has 1,800
@@ -394,7 +525,24 @@ class PostJudge(Judge):
     answered 403 when it gave nothing, else its connection is closed once what it gave was taken.
     STAT of an article the store holds is answered 223, any of the four of one it does not hold 430.
     Each turn, after the events and the completions, the connections in order: the octets an article
-    takes, a read's next octets, then the connection's action; then the jobs."""
+    takes, a read's next octets, then the connection's action; then the jobs.
+
+    A connection's selected group and current article are RFC 3977's (§6.1, §6.2), over the articles
+    the store holds as each line is answered: GROUP of a group the store carries selects it, its
+    first article current, none if it is empty, answered 211 with the count and the lowest and highest
+    numbers, an empty group's 1 and 0; of another, 411. A number finds the article in the selected
+    group, no argument the current one, and NEXT and LAST the nearest above or below; a message-id
+    leaves both as they are and is answered with the number 0.
+
+    LISTGROUP selects its group, the named one or the selected one, as GROUP does, answering 211 as
+    GROUP does, then lists, one a line, the numbers of the articles the group holds as it is selected
+    within its range (RFC 3977 §6.1.2). LIST and LIST ACTIVE answer 215, then a line for each group in
+    the order of the start's, of those the wildmat matches (§4): its name, highest and lowest
+    numbers as GROUP gives them, and `y` while the store accepts, else `n`, as the store is when the
+    line goes out. Such a reply goes out a part at a time, each when what went before was taken: its
+    lines that follow, as many whole as one send holds, then its terminating line once it fits too;
+    nothing is read and no line answered until it ends. LIST NEWSGROUPS answers 215 and NEWGROUPS
+    231, each with an empty list; DATE, 111 and the wall clock of the turn in UTC."""
 
     def __init__(self, revision: bytes, source: bytes, start: P.Start, checker: P.Checker) -> None:
         super().__init__(revision, source)
@@ -405,11 +553,11 @@ class PostJudge(Judge):
         self.waiters: list[tuple[int, int]] = []
         self.readers: list[tuple[int, int]] = []
 
-    def items(self, c: Conn) -> tuple[list[str], int, P.Article | P.Fetch | None]:
+    def items(self, c: Conn) -> tuple[list[str], int, P.Article | P.Fetch | Listing | None]:
         """The replies the connection has had or is due, in order; where what it sent is read to;
-        and its article not ended or not answered, or its read not ended, if any. A reply decided
-        when given and not yet given, a waiting POST, an article not answered or a read not ended
-        ends the list."""
+        and its article not ended or not answered, its read not ended, or its listing going out, if
+        any. A reply decided when given and not yet given, a waiting POST, an article not answered, a
+        read not ended or a listing going out ends the list."""
         out: list[str] = []
         data, at, d, k = c.delivered, 0, 0, 0
         while (nl := data.find(b"\n", at)) >= 0:
@@ -418,7 +566,7 @@ class PostJudge(Judge):
             if r == "ignore":
                 at = nl + 1
                 continue
-            if r in ("capabilities", "post", "lookup"):
+            if r in DECIDED:
                 if d == len(c.decisions):
                     return out, at, None
                 r = c.decisions[d]
@@ -432,6 +580,8 @@ class PostJudge(Judge):
                 r = f.answered
             out.append(r)
             at = nl + 1
+            if r.startswith("listing ") and not c.listings[int(r[8:])].done:
+                return out, at, c.listings[int(r[8:])]
             if r == "quit":
                 return out, at, None
             if r == "post":
@@ -451,9 +601,14 @@ class PostJudge(Judge):
 
     def text_of(self, c: Conn, r: str) -> bytes:
         if r.startswith("stat "):
-            return b"223 0 " + bytes.fromhex(r[5:]) + P.CRLF
+            n, message_id = r[5:].split()
+            return b"223 " + n.encode() + b" " + bytes.fromhex(message_id) + P.CRLF
+        if r.startswith("text "):
+            return bytes.fromhex(r[5:])
         if r.startswith("read "):
             return c.fetches[int(r[5:])].out(self.store.start.identity)
+        if r.startswith("listing "):
+            return bytes(c.listings[int(r[8:])].sent)
         return self.text[r]
 
     def expected(self, c: Conn) -> bytes:
@@ -479,9 +634,13 @@ class PostJudge(Judge):
             return c.fetches[-1]
         return None
 
+    def listing(self, c: Conn) -> Listing | None:
+        """The reply of many lines going out, from its first line until its terminating one."""
+        return c.listings[-1] if c.listings and not c.listings[-1].done else None
+
     def busy(self, c: Conn) -> bool:
-        """Whether a read waits for a place or answers it."""
-        return c.wanted is not None or self.fetch(c) is not None
+        """Whether a read waits for a place or answers it, or a listing goes out."""
+        return c.wanted is not None or self.fetch(c) is not None or self.listing(c) is not None
 
     def due_line(self, c: Conn) -> tuple[str, bytes] | None:
         """The reply its next whole line is due, if one is due and not decided, with what the line
@@ -550,6 +709,8 @@ class PostJudge(Judge):
     def ready(self, c: Conn, idx: int = 0, gen: int = 0) -> bool:
         if c.pending():
             return False
+        if self.listing(c) is not None:
+            return True
         if c.waiting:
             return not self.store.accepting or self.admitted(idx, gen)
         if c.wanted is not None:
@@ -649,6 +810,10 @@ class PostJudge(Judge):
         if a is not None and answer in ("posted", "failed") and not c.pending() and \
                 (action is None or action.kind != "send" or not action.data):
             raise Violation("stalled", f"{idx}/{gen} not answered its article's {answer} at {t.now}")
+        listing = self.listing(c)
+        if listing is not None and not c.pending():
+            self.list_turn(t, idx, gen, c, listing, action, sends)
+            return
         f = self.fetch(c)
         if f is not None and not c.pending() and self.read_turn(t, idx, gen, c, f, action, sends):
             return
@@ -656,11 +821,11 @@ class PostJudge(Judge):
             self.post_due(t, idx, gen, c, action)
         if a is None and f is None and c.wanted is None and not c.pending() and c.replies == len(self.replies(c)):
             line = self.due_line(c)
-            if line is not None and line[0] == "lookup":
-                self.lookup_due(t, idx, gen, c, line[1])
+            if line is not None and line[0] in ("lookup", "number", "current"):
+                self.lookup_due(t, idx, gen, c, line[0], line[1])
         if c.wanted is not None and self.admitted_read(idx, gen):
-            cmd, commit = c.wanted
-            c.fetches.append(self.store.grant((idx, gen), cmd, commit))
+            cmd, number, commit = c.wanted
+            c.fetches.append(self.store.grant((idx, gen), cmd, commit, number))
             c.decisions.append(f"read {len(c.fetches) - 1}")
             c.wanted = None
             self.readers.remove((idx, gen))
@@ -707,6 +872,9 @@ class PostJudge(Judge):
             sent = action.data[:40] if action is not None else None
             raise Violation("read-out", f"{idx}/{gen} sent {sent!r} at {t.now}, not the next of its read, "
                             f"{piece[:40]!r}")
+        if f.given == 0 and f.number:
+            # Its first line answers the command: only now is the article current (RFC 3977 §6.2.1.2).
+            c.current = f.number
         f.given += len(piece)
         c.emitted += piece
         c.activity = t.now
@@ -719,14 +887,135 @@ class PostJudge(Judge):
         sends.append((idx, len(piece)))
         return True
 
-    def lookup_due(self, t: Turn, idx: int, gen: int, c: Conn, kept: bytes) -> None:
-        """An ARTICLE, HEAD or BODY of an article the store holds: the connection waits for a read."""
+    def lines_left(self, listing: Listing) -> list[tuple[int, bytes]]:
+        """The lines of a listing still to go out, as the store is now, each with how far the
+        listing has gone once it is out."""
+        if listing.numbers is not None:
+            return [(k + 1, b"%d\r\n" % n) for k, n in enumerate(listing.numbers[listing.at:], listing.at)]
+        found = []
+        for k, g in enumerate(self.store.start.groups[listing.at:], listing.at):
+            if listing.patterns is None or wildmatch(listing.patterns, g):
+                numbers = [n for n, _ in self.in_group(g)]
+                low, high = (numbers[0], numbers[-1]) if numbers else (1, 0)
+                found.append((k + 1, g + b" %d %d %s\r\n" % (high, low, b"y" if self.store.accepting else b"n")))
+        return found
+
+    def list_turn(self, t: Turn, idx: int, gen: int, c: Conn, listing: Listing, action: Action | None,
+                  sends: list[tuple[int, int]]) -> None:
+        """The turn of a connection a listing answers, with nothing untaken: the listing's next part
+        sent, its lines that follow as many whole as one send holds, then its terminating line once
+        it fits too."""
+        part, at, done = b"", listing.at, False
+        for after, line in self.lines_left(listing):
+            if len(part) + len(line) > CHUNK:
+                break
+            part, at = part + line, after
+        else:
+            if len(part) + 3 <= CHUNK:
+                part, done = part + b".\r\n", True
+        if action is None or action.kind != "send" or action.gen != gen or action.data != part:
+            sent = action.data[:40] if action is not None else None
+            raise Violation("listing-out", f"{idx}/{gen} sent {sent!r} at {t.now}, not the next part of its "
+                            f"listing, {part[:40]!r}")
+        listing.sent += part
+        listing.at, listing.done = at, done
+        c.emitted += part
+        c.activity = t.now
+        if action.read != self.read_wanted(c):
+            raise Violation("read", f"{idx}/{gen} asked {'' if action.read else 'not '}to read at {t.now}")
+        c.reading = action.read
+        sends.append((idx, len(part)))
+
+    def listed(self, t: Turn, c: Conn, kind: str, ws: list[bytes]) -> str:
+        """What a LISTGROUP, a LIST, or a DATE is answered, deciding it now; a LISTGROUP selects its
+        group, the first article current, and lists the numbers in its range of the articles the
+        group holds now."""
+        if kind == "date":
+            return "text " + (b"111 " + date_digits(t.wall) + P.CRLF).hex()
+        if kind == "list-active":
+            listing = Listing(bytearray(b"215 List of newsgroups follows\r\n"),
+                              patterns=wildmat(ws[2]) if len(ws) > 2 else None)
+        else:
+            g = ws[1] if len(ws) > 1 else c.group
+            if g is None:
+                return "no-group"
+            if g not in self.store.start.groups:
+                return "no-such-group"
+            span = article_range(ws[2]) if len(ws) > 2 else (1, NUMBER_MAX)
+            if span is None:
+                raise Violation("syntax", f"{ws[2]!r} taken for a range")
+            lo, hi = span
+            numbers = [n for n, _ in self.in_group(g)]
+            c.group, c.current = g, numbers[0] if numbers else 0
+            low, high = (numbers[0], numbers[-1]) if numbers else (1, 0)
+            listing = Listing(bytearray(b"211 %d %d %d " % (len(numbers), low, high) + g + P.CRLF),
+                              numbers=[n for n in numbers if lo <= n <= hi])
+        c.listings.append(listing)
+        return f"listing {len(c.listings) - 1}"
+
+    def in_group(self, g: bytes) -> list[tuple[int, J.Commit]]:
+        """The articles the store holds in group `g`, each with its number there."""
+        return sorted((n, commit) for commit in self.store.commits for name, n in commit[2] if name == g)
+
+    def target(self, c: Conn, kind: str, ws: list[bytes]) -> tuple[int, J.Commit] | str:
+        """The article a line of ARTICLE, HEAD, BODY or STAT names, with the number its reply gives,
+        or the reply when there is none."""
+        if kind == "lookup":
+            commit = self.store.found(ws[1])
+            return "no-such-id" if commit is None else (0, commit)
+        if c.group is None:
+            return "no-group"
+        n = int(ws[1]) if kind == "number" else c.current
+        if kind == "current" and n == 0:
+            return "no-current"
+        hit = [x for x in self.in_group(c.group) if x[0] == n]
+        if not hit:
+            return "no-number" if kind == "number" else "no-current"
+        return hit[0]
+
+    def reader(self, c: Conn, kind: str, ws: list[bytes]) -> str:
+        """What a GROUP, NEXT, LAST, or a STAT, is answered, deciding it now, and where it leaves the
+        selected group and the current article; an ARTICLE, HEAD or BODY that finds an article waits
+        for a read instead."""
+        if kind == "group":
+            g = ws[1]
+            if g not in self.store.start.groups:
+                return "no-such-group"
+            numbers = [n for n, _ in self.in_group(g)]
+            c.group, c.current = g, numbers[0] if numbers else 0
+            low, high = (numbers[0], numbers[-1]) if numbers else (1, 0)
+            return "text " + (b"211 %d %d %d " % (len(numbers), low, high) + g + P.CRLF).hex()
+        if kind in ("next", "last"):
+            if c.group is None:
+                return "no-group"
+            if c.current == 0:
+                return "no-current"
+            near = [x for x in self.in_group(c.group) if (x[0] > c.current if kind == "next" else x[0] < c.current)]
+            if not near:
+                return "no-next" if kind == "next" else "no-previous"
+            n, commit = near[0] if kind == "next" else near[-1]
+            c.current = n
+            return f"stat {n} {commit[1].hex()}"
+        found = self.target(c, kind, ws)
+        if isinstance(found, str):
+            return found
+        if ws[0].upper() != b"STAT":
+            raise Violation("read", f"{ws[0]!r} answered at once, before a read")
+        n, commit = found
+        if n:
+            c.current = n
+        return f"stat {n} {commit[1].hex()}"
+
+    def lookup_due(self, t: Turn, idx: int, gen: int, c: Conn, kind: str, kept: bytes) -> None:
+        """An ARTICLE, HEAD or BODY of an article the store holds: the connection waits for a read,
+        which makes the article current as it answers when it was named by its number."""
         ws = words(kept)
         cmd = ws[0].decode().lower()
-        commit = self.store.found(ws[1])
-        if commit is None or cmd == "stat":
+        found = self.target(c, kind, ws)
+        if isinstance(found, str) or cmd == "stat":
             return
-        c.wanted = (cmd, commit)
+        n, commit = found
+        c.wanted = (cmd, n, commit)
         if c.answered is None:
             c.answered = t.now
         if (idx, gen) not in self.readers:
@@ -757,19 +1046,21 @@ class PostJudge(Judge):
             c.activity = t.now
             return
         due = self.next_line(c)
-        if due == "lookup":
+        if due in ("listgroup", "list-active", "date"):
             line = self.due_line(c)
-            ws = words(line[1] if line else b"")
-            commit = self.store.found(ws[1])
-            if commit is None:
-                c.decisions.append("no-such-id")
-            elif ws[0].upper() == b"STAT":
-                c.decisions.append("stat " + ws[1].hex())
-            else:
-                raise Violation("read", f"{idx} answered {ws[0]!r} at once, before a read")
+            c.decisions.append(self.listed(t, c, due, words(line[1] if line else b"")))
+            return
+        if due in ("lookup", "number", "current", "group", "next", "last"):
+            line = self.due_line(c)
+            try:
+                c.decisions.append(self.reader(c, due, words(line[1] if line else b"")))
+            except Violation as error:
+                raise Violation(error.kind, f"{idx} {error}") from None
             return
         if due == "capabilities":
-            c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities")
+            c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities-reader")
+        elif due == "mode-reader":
+            c.decisions.append("reader-posting" if c.greeted and self.store.accepting else "reader-no-posting")
         elif due == "post":
             if not c.greeted:
                 c.decisions.append("not-permitted")
