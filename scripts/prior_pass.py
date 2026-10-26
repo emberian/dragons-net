@@ -6,7 +6,7 @@ none. `--noted TREE`, the tree a writer checked before the push (the job `checke
 pass too: it prints `run-id=` and `found=noted` without asking. A job records
 a pass as an artifact named by its inputs (scripts/once.py), and artifacts, unlike the Actions
 cache, are seen across branches: the run on main after a merge finds what the pull request's run
-passed on the same tree. Only runs of this repository's own branches count; a pull request from a
+passed on the same inputs. Only runs of this repository's own branches count; a pull request from a
 fork runs a workflow of its own, which could record anything. A run of this repository's branches
 is trusted as its writers are, who choose its workflow. But any code a job runs can upload an
 artifact of any name, the change's tests among it, so a run counts only where GitHub says the step

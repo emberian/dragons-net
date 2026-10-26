@@ -88,18 +88,20 @@ main() {
     --enable-error-code truthy-bool --enable-error-code ignore-without-code \
     --cache-dir=/dev/null scripts tests
   # Each commit once: those the default branch has were read before they reached it, a push to it
-  # names those it brings, and `all` is every one (DN_COMMITS_FROM). A merge adds nothing git log shows.
+  # names those it brings, and `all` is every one (DN_COMMITS_FROM), as is a push whose commit before
+  # is gone, forced. A merge is read against its first parent, its resolutions among what it changes.
   local default=origin/${DN_DEFAULT_BRANCH:-main} from=${DN_COMMITS_FROM:-} range commits
   git rev-parse -q --verify "$default^{commit}" >/dev/null || default=${default#origin/}
-  if [[ $from == all ]]; then
+  if [[ $from == all ]] || { [[ -n $from ]] && ! git cat-file -e "$from^{commit}" 2>/dev/null; }; then
     range=HEAD
   else
-    if [[ -z $from ]] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then from=$(git merge-base HEAD "$default"); fi
+    [[ -n $from ]] || from=$(git merge-base HEAD "$default")
     range=$from..HEAD
   fi
-  commits=$(git rev-list --no-merges "$range")
+  commits=$(git rev-list "$range")
   for commit in $commits; do
-    once "lint-gitleaks-$commit" "$gitleaks" git --no-banner --redact --log-level warn --log-opts="$commit^!" .
+    once "lint-gitleaks-$commit" "$gitleaks" git --no-banner --redact --log-level warn \
+      --log-opts="-m --first-parent $commit^!" .
   done
   once lint-typos "$typos" "${docs[@]}"
   once lint-editorconfig "$editorconfig" "${files[@]}"

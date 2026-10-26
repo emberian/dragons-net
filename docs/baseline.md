@@ -28,6 +28,10 @@ Each linter is a check of its own, and each commit is read for secrets once. A p
 
 A writer who ran every check on a tree notes it on the commit (`refs/notes/checked`, `CHECKED` in `scripts/verify_run.py`), which only a writer can push. Each CI job then takes the note as a pass on its inputs and runs nothing again; `verify` still requires every job to pass. Each night `checks` runs on `main` by itself.
 
+The note says what it was written after: `scripts/check_all.sh`, lint included with every commit after the default branch, `scripts/lazyfs_check.py` and `scripts/native_lanes.sh power`, each passed on the commit in an isolated container, the note then pushed with the branch.
+
+A lint pass recorded by CI is keyed by the commit and by whether it read every commit or the new ones, as lint reads the history; a merge is read against its first parent.
+
 `python3 scripts/native_fuzz.py --cake "$(python3 scripts/bootstrap_tool.py cake)" --seed N --count C --vectors V` runs the generated lane larger, as the nightly run does with 5,000 programs from a seed of the date, reducing a disagreement to `build/fuzz/minimized/`; `--bootstrapped` uses the compiler built from the patched source.
 
 The default compiler is the release pinned in `tools.lock.json`, run with the simple register allocator (`--reg_alg=0`, [assurance](assurance.md)); `CAKE` selects another, whose digest is recorded, such as the one `scripts/bootstrap_cake.sh` builds ([backend](../backend/README.md#bootstrap-the-compiler)).

@@ -189,10 +189,11 @@ def judge(jobs: list[dict[str, Any]], base: dict[str, Any], head: dict[str, Any]
                        "certifying itself, and the difference has to be read by hand.\n"
                        + edited + tail)
     if checked:
-        return Verdict("success", "Checked by the default branch's checks before the push",
+        return Verdict("success", "Noted as checked by the default branch's checks before the push",
                        f"A writer recorded that the tree {quote(head_tree)} passed every check "
-                       "(`refs/notes/checked`), so the jobs passed without running them again; the scripts, "
-                       "workflows, gate tests and pins in this commit are the default branch's.\n" + tail)
+                       "(`refs/notes/checked`), so the jobs may have passed on it without running them again; "
+                       "the scripts, workflows, gate tests and pins in this commit are the default branch's.\n"
+                       + tail)
     return Verdict("success", "Checked by the default branch's checks",
                    "Every required job succeeded, and the scripts, workflows, gate tests and "
                    "pins in this commit are the default branch's.\n" + tail)

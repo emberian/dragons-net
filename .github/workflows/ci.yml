@@ -84,24 +84,28 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # A tree this job passed on before is not checked again.
-      - name: The tree
-        id: tree
-        run: echo "key=lint-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      # A commit this job passed on before is not checked again: lint reads its history too, each
+      # commit's secrets, so a tree of another history is linted again, and the nightly run, which
+      # reads every commit, takes no pass of a run that read the new ones alone.
+      - name: The commit
+        id: commit
+        env:
+          SCOPE: ${{ github.event_name == 'schedule' && 'all' || 'new' }}
+        run: echo "key=lint-$SCOPE-$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: A pass recorded on the same inputs
         id: passed
         env:
           GH_TOKEN: ${{ github.token }}
-          KEY: ${{ steps.tree.outputs.key }}
+          KEY: ${{ steps.commit.outputs.key }}
           NOTED: ${{ needs.checked.outputs.tree }}
         run: python3 scripts/prior_pass.py "passed-$KEY" --noted "$NOTED" >> "$GITHUB_OUTPUT"
       - name: Say the job is not run again
         if: steps.passed.outputs.found != ''
         env:
-          KEY: ${{ steps.tree.outputs.key }}
+          KEY: ${{ steps.commit.outputs.key }}
         run: |
           mkdir -p build/evidence
-          echo "DN SKIP lint: passed on this tree ($KEY)" | tee build/evidence/lint.log
+          echo "DN SKIP lint: passed on this commit ($KEY)" | tee build/evidence/lint.log
       - name: Check that failing pipelines fail the step
         if: steps.passed.outputs.found == ''
         run: |
@@ -153,18 +157,18 @@ jobs:
           if-no-files-found: ignore
           # Lint asks the network too, whose answers change: a week, not months.
           retention-days: 7
-      # Recorded only once every step above has passed; artifacts are seen across branches, so the
-      # run on main after a merge finds it too (scripts/prior_pass.py).
+      # Recorded only once every step above has passed; artifacts are seen across branches, so a run
+      # of the same commit finds it on any of them (scripts/prior_pass.py).
       - name: The time of the pass
         if: steps.passed.outputs.found == ''
         run: |
           mkdir -p build/stamps
           date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
-      - name: Record passed-${{ steps.tree.outputs.key }}
+      - name: Record passed-${{ steps.commit.outputs.key }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.passed.outputs.found == ''
         with:
-          name: passed-${{ steps.tree.outputs.key }}
+          name: passed-${{ steps.commit.outputs.key }}
           path: build/stamps/job
           if-no-files-found: error
           # Lint asks the network too, whose answers change: a week, not months.

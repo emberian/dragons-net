@@ -1,7 +1,8 @@
 name: backend
 # The curated optimization is only worth something if its proof still goes through, and the
 # only way to know that is to rebuild it. That is far too slow for the per-commit chain, so it
-# runs weekly, on a change to what it rebuilds, and on request.
+# runs weekly, on a change to what it rebuilds, and on request; a run on the inputs a pass was
+# recorded on, kept 90 days, rebuilds nothing (scripts/prior_pass.py).
 #
 # A hosted runner for a public repository gives four cores and six hours per job. The whole
 # chain, from a clean tree up to `pan_to_target_compile_semantics` and its tag check, took 46
