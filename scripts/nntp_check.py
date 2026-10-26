@@ -1583,7 +1583,7 @@ DEFECTS = [
            "broke the session's contract", program=True),
     Defect("a line past the limit answered as its command", [(r"if \(kind == 1\) == 0 \{", "if 0 {", 1)],
            "pipeline", "broke the session's contract", program=True),
-    Defect("the session kept after QUIT", [(r"if r == 3 \{\s+st cb \+ 16, 1;", "if r == 3 {", 1)],
+    Defect("the session kept after QUIT", [(r"(if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{)\s+st cb \+ 16, 1;", r"\1", 1)],
            "pipeline", "the stream did not end", program=True),
     Defect("a file's CRC-32C not compared",
            [(r"if \(\(acc \^ 4294967295\) == \(lds 1 \(rs \+ 160\)\)\) == 0 \{", "if 0 {", 1)],

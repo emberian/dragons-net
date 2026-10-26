@@ -22,7 +22,8 @@ LISTGROUP, LIST, DATE and NEWGROUPS are commands too (`replyIn`), and the sessio
 well-formed POST gets, what an ARTICLE, HEAD, BODY or STAT finds — by message-id (`lookup`), by
 number (`byNumber`) or the current article (`current`) — which group a GROUP or a LISTGROUP selects
 (`select`, `listGroup`), where a NEXT or LAST moves (`move`), and what DATE gives (`date`). A
-wildmat (§4) matches a name as `wildmatch` says.
+wildmat (§4) matches a name as `wildmatch` says. MODE READER is a command of every server, and the
+session decides what it gets (`modeReader`, §5.3.2).
 
 Each rule is shown to matter: a version with it broken (`Mutant`) answers some line otherwise.
 -/
@@ -53,7 +54,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
 inductive Cmd | capabilities | help | quit | head | stat | post | article | body | group | next | last
-  | listgroup | list | date | newgroups
+  | listgroup | list | date | newgroups | mode
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -64,6 +65,7 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "QUIT" then some .quit
   else if u = ascii "HEAD" then some .head
   else if u = ascii "STAT" then some .stat
+  else if u = ascii "MODE" then some .mode
   else none
 
 /-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST, DATE and NEWGROUPS
@@ -245,6 +247,16 @@ inductive Reply
   | help
   /-- 205, then the connection closes -/
   | quit
+  /-- a MODE READER; the session decides. A server that does not advertise READER answers 502, then
+  the connection closes (§5.3.2) -/
+  | modeReader
+  /-- 200 and 201 to a MODE READER of a server that is not mode-switching and advertises READER: as
+  the greeting, whether the client may post (§5.3.2) -/
+  | readerPosting
+  | readerNoPosting
+  /-- the capabilities of a server with a store that does not offer POST: READER and LIST's
+  keywords (§3.3.2, §7.6.2) -/
+  | capabilitiesReader
   /-- 412: no newsgroup selected -/
   | noGroup
   /-- 430: no article with that message-id -/
@@ -314,6 +326,7 @@ def answer : Cmd → List (List Byte) → Reply
   | .capabilities, [k] => if isKeyword k then .capabilities else .syntax
   | .help, [] => .help
   | .quit, [] => .quit
+  | .mode, [k] => if k.map upper = ascii "READER" then .modeReader else .syntax
   | .head, [] | .stat, [] => .noGroup
   | .head, [a] | .stat, [a] =>
     if isArticleNumber a then .noGroup else if isMessageId a then .noSuchId else .syntax
@@ -408,6 +421,7 @@ def blockEnd : List Byte := ascii "\r\n.\r\n"
 def greetingPostHead : List Byte := ascii "200 dragons-net "
 def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
 def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
+def capabilitiesReaderTail : List Byte := ascii "\r\nREADER\r\nLIST ACTIVE NEWSGROUPS"
 def helpPostHead : List Byte :=
   ascii "100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n" ++
     ascii "CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\n" ++
@@ -428,6 +442,10 @@ def text (i : Identity) : Reply → List Byte
   | .capabilities => capabilitiesHead ++ i.revision ++ blockEnd
   | .help => helpHead ++ i.revision ++ helpMid ++ i.source ++ blockEnd
   | .quit => ascii "205 Bye\r\n"
+  | .modeReader => ascii "502 Reading service unavailable\r\n"
+  | .readerPosting => ascii "200 Posting allowed\r\n"
+  | .readerNoPosting => ascii "201 Posting prohibited\r\n"
+  | .capabilitiesReader => capabilitiesHead ++ i.revision ++ capabilitiesReaderTail ++ blockEnd
   | .noGroup => ascii "412 No newsgroup selected\r\n"
   | .noSuchId => ascii "430 No article with that message-id\r\n"
   | .unknown => ascii "500 Unknown command\r\n"
@@ -437,7 +455,8 @@ def text (i : Identity) : Reply → List Byte
   | .failed => ascii "441 Posting failed\r\n"
   | .notPermitted => ascii "440 Posting not permitted\r\n"
   | .unavailable => ascii "403 Not accepting articles\r\n"
-  | .capabilitiesPost => capabilitiesHead ++ i.revision ++ capabilitiesPostTail ++ blockEnd
+  | .capabilitiesPost =>
+    capabilitiesHead ++ i.revision ++ capabilitiesReaderTail ++ capabilitiesPostTail ++ blockEnd
   | .helpPost => helpPostHead ++ i.revision ++ helpMid ++ i.source ++ blockEnd
   | .lookup _ _ _ => ascii "430 No article with that message-id\r\n"
   | .stat n id => ascii "223 " ++ decimal n ++ SP :: id ++ crlf
@@ -513,17 +532,18 @@ theorem parts_short :
     greetingHead.length ≤ 16 ∧ greetingMid.length ≤ 35 ∧ capabilitiesHead.length ≤ 60 ∧
       helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
-      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 187 ∧
-      ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost →
+      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 187 ∧ capabilitiesReaderTail.length ≤ 32 ∧
+      ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → r ≠ .capabilitiesReader →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →
         (∀ count low high g lo hi, r ≠ .listed count low high g lo hi) → (∀ d, r ≠ .time d) →
         ∀ i, (text i r).length ≤ 40 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, ?_⟩
-  intro r h1 h2 h3 h4 h5 h6 h7 h8 i
+    by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  intro r h1 h2 h3 h4 h9 h5 h6 h7 h8 i
   cases r <;> first
     | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
+    | exact absurd rfl h9
     | exact absurd rfl (h5 _ _) | exact absurd rfl (h6 _ _ _ _) | exact absurd rfl (h7 _ _ _ _ _ _)
     | exact absurd rfl (h8 _) | (simp only [text]; decide +kernel)
 
@@ -538,7 +558,7 @@ theorem greeting_fits (i : Identity) (h : i.ok = true) :
 theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded = true) :
     (text i r).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
-  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h12⟩ := parts_short
+  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h13, h12⟩ := parts_short
   have hd : ∀ n, n ≤ numberMax → (decimal n).length ≤ 10 := fun n hn =>
     decimal_length n (by simp only [numberMax] at hn; omega)
   by_cases hl : ∃ count low high g lo hi, r = .listed count low high g lo hi
@@ -586,7 +606,9 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded =
   · subst hcp; simp only [text, List.length_append, actionData]; omega
   by_cases hhp : r = .helpPost
   · subst hhp; simp only [text, List.length_append, actionData]; omega
-  have := h12 r hc hh hcp hhp hs hg hl ht i
+  by_cases hcr : r = .capabilitiesReader
+  · subst hcr; simp only [text, List.length_append, actionData]; omega
+  have := h12 r hc hh hcp hhp hcr hs hg hl ht i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -627,6 +649,12 @@ inductive Mutant
   | moreDigits
   /-- an empty line answered -/
   | emptyAnswered
+  /-- MODE's argument READER compared with regard to case -/
+  | readerCaseSensitive
+  /-- MODE with any one word answered as MODE READER -/
+  | modeAnyWord
+  /-- MODE READER answered as such with more arguments after it -/
+  | modeArgsIgnored
   deriving DecidableEq, Repr
 
 def isWSM (m : Mutant) (b : Byte) : Bool := b == SP || (b == TAB && m != .tabNotSpace)
@@ -642,7 +670,7 @@ def command?M (m : Mutant) (w : List Byte) : Option Cmd :=
   if m = .caseSensitive then
     if w = ascii "CAPABILITIES" then some .capabilities else if w = ascii "HELP" then some .help
     else if w = ascii "QUIT" then some .quit else if w = ascii "HEAD" then some .head
-    else if w = ascii "STAT" then some .stat else none
+    else if w = ascii "STAT" then some .stat else if w = ascii "MODE" then some .mode else none
   else command? w
 
 def keywordRest (b : Byte) : Bool := isAlpha b || isDigit b || b == 46#8 || b == 45#8
@@ -650,6 +678,7 @@ def keywordRest (b : Byte) : Bool := isAlpha b || isDigit b || b == 46#8 || b ==
 def answerM (m : Mutant) (c : Cmd) (args : List (List Byte)) : Reply :=
   let args := if m = .extraArgsIgnored then args.take 1 else args
   let args := if m = .argsIgnored && (c = .help || c = .quit) then [] else args
+  let args := if m = .modeArgsIgnored && c = .mode then args.take 1 else args
   match c, args with
   | .capabilities, [] => .capabilities
   | .capabilities, [k] =>
@@ -658,6 +687,10 @@ def answerM (m : Mutant) (c : Cmd) (args : List (List Byte)) : Reply :=
     else .syntax
   | .help, [] => .help
   | .quit, [] => .quit
+  | .mode, [k] =>
+    if (if m = .readerCaseSensitive then k = ascii "READER" else k.map upper = ascii "READER") ||
+        m = .modeAnyWord then .modeReader
+    else .syntax
   | .head, [] | .stat, [] => .noGroup
   | .head, [a] | .stat, [a] =>
     if (isArticleNumber a && !(m = .zeroRejected && value a = 0)) ||
@@ -721,6 +754,9 @@ def witness : Mutant → Line
   | .keywordAnyStart => ⟨.command, ascii "CAPABILITIES 1ab"⟩
   | .moreDigits => ⟨.command, ascii "HEAD 00000000000000001"⟩
   | .emptyAnswered => ⟨.command, []⟩
+  | .readerCaseSensitive => ⟨.command, ascii "MODE reader"⟩
+  | .modeAnyWord => ⟨.command, ascii "MODE STREAM"⟩
+  | .modeArgsIgnored => ⟨.command, ascii "MODE READER x"⟩
 
 /-- **Each broken rule changes the reply to its line.** -/
 theorem mutants_differ : ∀ m, m ≠ .none → replyM m (witness m) ≠ reply (witness m) := by
@@ -742,7 +778,10 @@ theorem examples :
     reply (line "HEAD -1") = .syntax ∧ reply (line "HEAD 12abc") = .syntax ∧
     reply (line "HEAD <a@b>") = .noSuchId ∧ reply (line "STAT <a@b>") = .noSuchId ∧
     reply (line "HEAD <>") = .syntax ∧ reply (line "HEAD <a>b>") = .syntax ∧
-    reply (line "HEAD 53 54 55") = .syntax ∧ reply (line "MODE READER") = .unknown ∧
+    reply (line "HEAD 53 54 55") = .syntax ∧ reply (line "MODE READER") = .modeReader ∧
+    reply (line "mode Reader") = .modeReader ∧ reply (line "MODE") = .syntax ∧
+    reply (line "MODE STREAM") = .syntax ∧ reply (line "MODE READER x") = .syntax ∧
+    replyIn true (line "MODE READER") = .modeReader ∧
     reply (line "XY") = .unknown ∧ reply (line "") = .ignore ∧ reply (line " \t") = .ignore ∧
     reply ⟨.malformed, []⟩ = .ignore ∧ reply ⟨.malformed, ascii "HELP"⟩ = .syntax ∧
     reply ⟨.malformed, ascii "FOO"⟩ = .unknown ∧ reply ⟨.overlong, ascii "HELP"⟩ = .syntax ∧

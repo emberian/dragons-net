@@ -14,20 +14,29 @@ This plan separates a first useful implementation from later extensions without 
 
 Implement RFC 3977 with a non-mode-switching reader/poster profile. Advertise only capabilities whose behavior is implemented and tested. A discovery-only development server is not a complete implementation of RFC 3977: HEAD and STAT are mandatory too.
 
-The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). LIST ACTIVE and LIST NEWSGROUPS are required when advertising READER (§7.6.2). The first slice answers the mandatory commands without a store: CAPABILITIES (`VERSION 2` and `IMPLEMENTATION`; a keyword argument is ignored), HELP and QUIT, and HEAD and STAT as a server with no group selected and no articles (412 to a number or no argument, 430 to a message-id). A line naming one of these commands that is malformed — an argument the command does not take, a byte it may not hold, more than 512 octets — gets 501; a line naming any other command gets 500, and an empty line is ignored ([decision 0003](decisions/0003-nntp-slice.md)). The other rows are **planned**.
+The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). LIST ACTIVE and LIST NEWSGROUPS are required when advertising READER (§7.6.2).
+
+Without a store the server answers the mandatory commands ([decision 0003](decisions/0003-nntp-slice.md)):
+
+- CAPABILITIES: `VERSION 2` and `IMPLEMENTATION`; a keyword argument is ignored;
+- HELP and QUIT;
+- HEAD and STAT as a server with no group selected and no articles: 412 to a number or no argument, 430 to a message-id;
+- MODE READER: 502, then the connection closes, as §5.3.2 asks of a server that does not advertise READER.
+
+A line naming one of these commands that is malformed — an argument the command does not take, a byte it may not hold, more than 512 octets — gets 501. A line naming any other command gets 500, and an empty line is ignored. Rows that name no issue are **planned**.
 
 | Capability | Commands | Intended stage |
 | --- | --- | --- |
 | Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | Answered; HEAD and STAT from the store by message-id and by number (#17, #18) |
-| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Answered (#17, #18), not yet advertised |
-| LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Answered (#18), not yet advertised |
+| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Done (#17, #18) |
+| LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Done (#18) |
 | POST | POST | Done (#17) |
 | OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility |
 | HDR | HDR, LIST HEADERS | Practical reader compatibility |
 | IHAVE | IHAVE | Peer ingestion |
 | NEWNEWS | NEWNEWS | Incremental peer/client discovery |
 | LIST extensions in RFC 3977 | LIST ACTIVE.TIMES, LIST DISTRIB.PATS | Broader core coverage |
-| MODE-READER | MODE READER | Compatibility review; initially avoid mode-switching |
+| MODE-READER | MODE READER | Not advertised: the server is not mode-switching and answers MODE READER as §5.3.2 asks of one (#18) |
 
 Capability output includes VERSION 2 first, as required by §3.3.2. It must reflect the current session and permissions. Do not infer implementation from the software name or advertise a capability solely because a command keyword is recognized.
 

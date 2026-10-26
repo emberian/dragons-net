@@ -92,7 +92,7 @@ class Emitted(unittest.TestCase):
         # The whole programs, the differential fixture and the reply cases are too long to read in a
         # diff; their digests catch a change just as well.
         self.assertEqual(hashlib.sha256(emit("session").encode()).hexdigest(),
-                         "8ae1acfce7d969af10cebeea1e347b3b34355382aabbbcac0a4b13251416cefa")
+                         "263577762dab365803b8c5e1252a88822a0067601645724ce7e9583bbe1e066c")
         self.assertEqual(hashlib.sha256(emit("recover").encode()).hexdigest(),
                          "8f562e94aa1ba27b2c0c00f99fed5732470d27594079e46a8778fbf369b24472")
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),

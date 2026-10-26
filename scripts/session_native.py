@@ -115,11 +115,27 @@ POST_DEFECTS = [
      r"(?s)(fun listClassify\(.*?)if 0 < \(\(cz < clo\) \+ \(chi < cz\)\) \{", r"\1if 0 {", 1,
      "scenario 'every octet in a wildmat'"),
     ("a second of 61 taken by NEWGROUPS", r"\) <= 60\);", ") <= 61);", 1, "scenario 'dates'"),
+    ("MODE READER answered 200 once the store has stopped",
+     r"if \(lds 1 \(cb \+ 104\)\) & \(lds 1 \(@base \+ \d+\)\) \{(\s*)r = 38;", r"if lds 1 (cb + 104) {\1r = 38;", 1,
+     "scenario 'MODE READER once the store has stopped'"),
+    ("READER left out of the capabilities", r"(if \(r == 1\) & \(lds 1 \(@base \+ \d+\)\) \{\s*)r = 40;", r"\1r = 1;",
+     1, "scenario 'a client that may not post'"),
+    ("the READER lines left out of POST's capabilities",
+     r"(?s)(if t == 13 \{.*?)j = 0;\s+while j < 32 \{.*?\}\s+o = o \+ 32;", r"\1", 1,
+     "scenario 'the capabilities and help, then a post'"),
+    ("MODE's argument unchecked", r"(\s*)if eqk \{(\s*)r = 37;", r"\1if 1 {\2r = 37;", 1,
+     "scenario 'MODE READER and its arguments'"),
 ]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 18, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 20, TRACE),
+    ("a prefix of READER taken by MODE", r"(if cmd == 16 \{\s+if args == 1 \{\s+eqk = )l1 == 6;", r"\1l1 <= 6;", 1,
+     "scenario 'commands'"),
+    ("READER compared with regard to case", r"(?s)(if cmd == 16 \{.*?)\(32 \* \(\(96 <", r"\1(0 * ((96 <", 1,
+     "scenario 'MODE READER without a store'"),
+    ("MODE READER's 502 without the close", r"if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{", "if 0 < ((r == 3) + 0) {", 1,
+     "scenario 'MODE READER without a store'"),
     ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 4, TRACE),
     ("a bare LF ending a command", r"if cr & \(bad == 0\) \{", "if bad == 0 {", 1, TRACE),
     ("an overlong line with no word left unanswered", r"if kind == 3 \{(\s*)r = 6;", r"if kind == 3 {\1r = 0;", 1,
@@ -560,7 +576,7 @@ def check(cake: str) -> Report:
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
         posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios(),
-                 *sessions.list_scenarios()]
+                 *sessions.list_scenarios(), *sessions.mode_scenarios()]
         model = sessions.model_command()
         scripts = [(name, script, code) for name, script, code in
                    (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())

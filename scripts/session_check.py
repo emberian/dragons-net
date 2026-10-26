@@ -85,12 +85,15 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "negation-ignored", "marks-swapped", "status-fixed", "list-default-newsgroups", "list-keyword-cased",
            "first-negated", "date-monotonic", "date-units", "newgroups-unchecked", "part-longer", "listing-reads",
            "star-non-empty", "wildmat-unanchored", "wildmat-caseless", "group-line-dropped", "end-forced",
-           "date-unpadded", "line-while-listing")
+           "date-unpadded", "line-while-listing", "reader-unadvertised", "reader-without-store", "mode-stale",
+           "mode-deselects", "refused-stays-open", "mode-ungreeted")
 # Those of reading, tried on the scenarios that read first, those of the selected group, on the
-# scenarios that select one, and those of the listings, on the scenarios that list.
+# scenarios that select one, those of the listings, on the scenarios that list, and those of READER
+# and MODE READER, on the scenarios that ask for them.
 READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):MUTANTS.index("group-keeps-current")]
 GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):MUTANTS.index("listgroup-keeps-current")]
-LIST_MUTANTS = MUTANTS[MUTANTS.index("listgroup-keeps-current"):]
+LIST_MUTANTS = MUTANTS[MUTANTS.index("listgroup-keeps-current"):MUTANTS.index("reader-unadvertised")]
+MODE_MUTANTS = MUTANTS[MUTANTS.index("reader-unadvertised"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -752,7 +755,8 @@ CASES = ("CAPABILITIES", "capabilities foo", "CAPABILITIES 1x", "CAPABILITIES ab
          "HEAD 99999999999999999999", "HEAD 00000000000000001", "HEAD +5", "HEAD -1", "HEAD 12abc",
          "HEAD <a@b>", "HEAD <a b>", "HEAD <>", "HEAD <a>b>", "HEAD <a@b> extra", "HEAD <" + "a" * 248 + ">",
          "HEAD <" + "a" * 249 + ">", "HEAD <\x7f>", "HEAD <~!>", "STAT", "STAT 1",
-         "STAT <x@y>", "STAT z", "MODE READER", "XY", "LIST", "", "  \t ")
+         "STAT <x@y>", "STAT z", "MODE", "MODE STREAM", "mode reader x", "MODE READ", "MODE READERS", "XY",
+         "LIST", "", "  \t ")
 TRANSCRIPT = ascii_lines("CAPABILITIES", "help", "", "HEAD <a@b>", "STAT 12abc", "QUIT", "HELP")
 HELP = ascii_lines("HELP")
 Scenario = tuple[str, list[Client], bool, Identity]
@@ -812,6 +816,8 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
            b"HEAD " + b"1" * 505 + b"\r\n", b"HEAD " + b"1" * 506 + b"\r\n", b"QUIT\r\n")
     yield "odd lines", [Client(1, [(5, b"".join(odd))])], False
     yield "a QUIT and more", [Client(1, [(5, ascii_lines("QUIT", "HELP")), (9, HELP)])], False
+    yield "MODE READER without a store", [Client(1, [(5, ascii_lines("HELP", "mode Reader", "HELP")), (9, HELP)])], \
+        False
     yield "input ending mid-line", [Client(1, [(5, b"HELP\r\nCAPAB")], shut=9)], False
     yield "input ending at once", [Client(1, [], shut=3)], False
     yield "input ending after commands", [Client(1, [(5, ascii_lines("HELP", "STAT"))], shut=5, take=9)], False
@@ -1263,6 +1269,25 @@ def list_scenarios() -> Iterator[PostScenario]:
         Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
 
 
+def mode_scenarios() -> Iterator[PostScenario]:
+    yield "MODE READER of a client that may post", [
+        Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "mode reader", "QUIT"))], post=True)], Spool(GROUPS)
+    yield "MODE READER of a client that may not post", [
+        Client(1, [(5, ascii_lines("CAPABILITIES", "MODE READER", "POST", "QUIT"))])], Spool(GROUPS)
+    yield "MODE READER keeps the selected group", [
+        reader("GROUP local.test", "NEXT", "MODE READER", "STAT", "NEXT", "LISTGROUP local.other", "MODE READER",
+               "STAT", "LAST")], Spool(READER_GROUPS, image=READER_SPOOL)
+    yield "MODE READER once the store has stopped", [
+        poster(), Client(1, [(500, ascii_lines("MODE READER", "CAPABILITIES", "QUIT"))], post=True)], \
+        Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
+    yield "MODE READER and its arguments", [
+        reader("MODE", "MODE STREAM", "MODE READER x", "MODE  READER", "\tmode\treader\t", "MODEREADER", "MODE READ",
+               "MODE READERS")], \
+        Spool(GROUPS)
+    yield "MODE READER of a store with no group", [
+        Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "QUIT"))], post=True)], Spool([])
+
+
 def read_breaches() -> Iterator[tuple[str, list[str], int]]:
     """Scripts with a store in which a host reports a read, or a file opened at a place still in use,
     as it may not: code 14."""
@@ -1579,6 +1604,9 @@ def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario]
     if mutant in LIST_MUTANTS:
         lists = {name for name, _, _ in list_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in lists)
+    if mutant in MODE_MUTANTS:
+        modes = {name for name, _, _ in mode_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in modes)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1609,7 +1637,7 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios(), *mode_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}

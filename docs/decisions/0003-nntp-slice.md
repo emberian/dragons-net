@@ -36,6 +36,8 @@ From [RFC 3977](../../rfcs/rfc3977.txt):
   it is a 501 (§5.4); HELP takes none either (§9.2), so one is a syntax error (§3.2.1).
 - HEAD and STAT with no group selected answer 412 to a number or to no argument, and 430 to a
   message-id the server does not have (§6.2.2, §6.2.4).
+- A server that is not mode-switching answers MODE READER as its greeting when it advertises READER,
+  changing nothing, and otherwise with 502, then closes the connection (§5.3.2).
 
 ## What servers do where the standard is silent
 
@@ -83,6 +85,8 @@ most 30 s in all, at most 5 s of silence).
   With them the slice answers every mandatory command of RFC 3977, so `VERSION 2` is not a false
   claim.
 - QUIT: `205`, after which the connection closes; input after the QUIT is not answered.
+- MODE READER: `502`, after which the connection closes as after QUIT, since the slice does not
+  advertise READER (§5.3.2); MODE with another argument, or none, is `501`.
 - Anything else is `500`. The order of the checks is: an empty or white-space-only line is
   ignored, as INN does; a line whose first word is not a command the server has is `500`,
   whatever else is wrong with it; a line naming such a command that is malformed in any way —

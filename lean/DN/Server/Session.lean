@@ -56,6 +56,7 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .current _ => 22 | .move _ => 23 | .selected .. => 24 | .noSuchGroup => 25 | .noCurrent => 26
   | .noNext => 27 | .noPrevious => 28 | .noNumber => 29 | .listGroup .. => 30 | .listed .. => 31
   | .active _ => 32 | .newsgroups => 33 | .newGroups => 34 | .date => 35 | .time _ => 36
+  | .modeReader => 37 | .readerPosting => 38 | .readerNoPosting => 39 | .capabilitiesReader => 40
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15
@@ -157,6 +158,14 @@ def tNoDescriptions : Nat := 53
 def tNoNewGroups : Nat := 54
 def tTime : Nat := 55
 
+/-- The texts of MODE READER and of READER's capabilities, by their place in `SessionLayout.texts`. -/
+def tMode : Nat := 56
+def tReader : Nat := 57
+def tCapabilitiesReaderTail : Nat := 58
+def tModeReader : Nat := 59
+def tReaderPosting : Nat := 60
+def tReaderNoPosting : Nat := 61
+
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownSrc)) (v "sl") ++
@@ -202,7 +211,9 @@ def connText : PFun :=
      text (replyCode .capabilities)
        [appendText tCapabilitiesHead, appendRevision, appendText tBlockEnd],
      text (replyCode .capabilitiesPost) [appendText tCapabilitiesHead, appendRevision,
-       appendText tCapabilitiesPostTail, appendText tBlockEnd],
+       appendText tCapabilitiesReaderTail, appendText tCapabilitiesPostTail, appendText tBlockEnd],
+     text (replyCode .capabilitiesReader) [appendText tCapabilitiesHead, appendRevision,
+       appendText tCapabilitiesReaderTail, appendText tBlockEnd],
      text (replyCode .help) [appendText tHelpHead, appendRevision, appendText tHelpMid,
        appendSource, appendText tBlockEnd],
      text (replyCode .helpPost) [appendText tHelpPostHead, appendRevision, appendText tHelpMid,
@@ -230,7 +241,8 @@ def connText : PFun :=
       (.syntax, tSyntax), (.post, tPost), (.posted, tPosted), (.failed, tFailed),
       (.notPermitted, tNotPermitted), (.unavailable, tUnavailable), (.unreadable, tUnreadable),
       (.noSuchGroup, tNoSuchGroup), (.noCurrent, tNoCurrent), (.noNext, tNoNext),
-      (.noPrevious, tNoPrevious), (.noNumber, tNoNumber)].map
+      (.noPrevious, tNoPrevious), (.noNumber, tNoNumber), (.modeReader, tModeReader),
+      (.readerPosting, tReaderPosting), (.readerNoPosting, tReaderNoPosting)].map
       fun ((r : News.CommandSpec.Reply), k) => text (replyCode r) [appendText k]) ++
     [setf "cb" cOutLen (v "o"), .ret (n 0)] }
 
@@ -433,10 +445,10 @@ def dateTimeCheck : List PStmt :=
         [.assign "ok" (eAnd (eAnd (eLe (twoAt (v "s2") (n 0)) (n 23))
            (eLe (twoAt (v "s2") (n 2)) (n 59))) (eLe (twoAt (v "s2") (n 4)) (n 60)))]])]
 
-/-- The reply to a LISTGROUP (12), LIST (13), DATE (14) or NEWGROUPS (15), the line connection `c`
-keeps, as `CommandSpec.answerIn` gives it: of a LISTGROUP whether it names its group and its range,
-in `ownNamed`, `ownLo` and `ownHi`; of a LIST where its wildmat lies, in `ownWs` and `ownWl`, of
-length zero when it has none. -/
+/-- The reply to a LISTGROUP (12), LIST (13), DATE (14), NEWGROUPS (15) or MODE (16), the line
+connection `c` keeps, as `CommandSpec.answerIn` gives it: of a LISTGROUP whether it names its group
+and its range, in `ownNamed`, `ownLo` and `ownHi`; of a LIST where its wildmat lies, in `ownWs` and
+`ownWl`, of length zero when it has none. -/
 def listClassify : PFun :=
   let set (o : Nat) (e : PExpr) : PStmt := .store (at_ (ownOff + o)) e
   let say (r : News.CommandSpec.Reply) : PStmt := .assign "r" (n (replyCode r))
@@ -474,14 +486,17 @@ def listClassify : PFun :=
          (dateTimeCheck ++
           [ifs (eAnd (v "ok") (eEq (v "args") (n 3)))
              (wordIsAt "s3" "l3" tGmt ++ [.assign "ok" (v "eqk")]),
-           ifs (v "ok") [say .newGroups]])]] ++
+           ifs (v "ok") [say .newGroups]])],
+     ifs (eEq (v "cmd") (n 16))
+       [ifs (eEq (v "args") (n 1)) (wordIsAt "s1" "l1" tReader ++ [ifs (v "eqk") [say .modeReader]])]] ++
     SessionStore.give (v "r") }
 
 /-- The reply `r` to the line the framer reported (`kind`, `kept`, the bytes from `blk + 40`),
 as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST,
 DATE and NEWGROUPS commands when there is a store, which looks up a message-id (`lookup`), a number
 (`byNumber`, its value in `val`), the current article (`current`), a group (`select`) and the next or
-previous article (`move`); `listClassify` reads the last four's arguments. -/
+previous article (`move`); `listClassify` reads the last four's arguments, and MODE's, a command
+with a store or without. -/
 def classify : List PStmt :=
   scanWords 2 ++
   [.dec "cmd" (n 0), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "ok" (n 0), .dec "val" (n 0),
@@ -489,6 +504,7 @@ def classify : List PStmt :=
      [.ite (isKind .overlong) [reply .unknown] [reply .ignore]]
      ((List.range 5).flatMap (fun k => nameIs k ++
         [.ite (v "eqk") [.assign "cmd" (n (k + 1))] []]) ++
+      nameIsAt tMode ++ [ifs (v "eqk") [.assign "cmd" (n 16)]] ++
       [ifs hasStore (nameIs 5 ++ [ifs (v "eqk") [.assign "cmd" (n 6)]] ++
          nameIsAt tArticle ++ [ifs (v "eqk") [.assign "cmd" (n 7)]] ++
          nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]] ++
@@ -666,9 +682,10 @@ def moveLookup : List PStmt :=
             callS "im" "idOf" [v "mci"] ++
             [reply (.stat 0 []), .assign "setc" (n 1), .assign "cnew" (v "mn")])])]]
 
-/-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with POST while the
-connection may post, the help with POST, for a POST 440 or 403 unless it may have a slot, and for a
-message-id 430 when the store does not hold it, 223 for STAT when it does; else the ARTICLE (one),
+/-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with READER, and with POST
+while the connection may post, MODE READER's 200 or 201 as they name POST or not, the help with POST,
+for a POST 440 or 403 unless it may have a slot, and for a message-id 430 when the store does not
+hold it, 223 for STAT when it does; else the ARTICLE (one),
 HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`, its first line
 giving the number `wno`; the replies of the selected group and the current article, and where they
 leave them (`setg`, `gnew`, `setc`, `cnew`); the groups a LIST ACTIVE takes (`listActive`); and the
@@ -678,6 +695,9 @@ def resolve : List PStmt :=
    .dec "setc" (n 0), .dec "cnew" (n 0),
    ifs (eAnd (isReply .capabilities) (eAnd (fld "cb" cGreeted) (ownW ownAccepting)))
      [reply .capabilitiesPost],
+   ifs (eAnd (isReply .capabilities) hasStore) [reply .capabilitiesReader],
+   ifs (eAnd (isReply .modeReader) hasStore)
+     [.ite (eAnd (fld "cb" cGreeted) (ownW ownAccepting)) [reply .readerPosting] [reply .readerNoPosting]],
    ifs (eAnd (isReply .help) hasStore) [reply .helpPost],
    ifs (isReply .post)
      [.ite (eEq (fld "cb" cGreeted) (n 0)) [reply .notPermitted]
@@ -801,7 +821,7 @@ def serve : List PStmt :=
                       setf "cb" cListC (ownW ownMask)],
                    setf "cb" cFirst (n 0),
                    setf "cb" cIdle (eAdd (v "now") (n inactivity)),
-                   .ite (isReply .quit)
+                   .ite (or2 (isReply .quit) (isReply .modeReader))
                      [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]]])])],
    .ite (eEq (v "i") (v "n")) [setf "cb" cHeldPos (n 0), setf "cb" cHeldLen (n 0)]
      [setf "cb" cHeldPos (v "i")]]
@@ -937,7 +957,7 @@ def claim : List PStmt :=
              callS "cl" "postClaim" [v "fk", v "c", fld "cb" cGen, fld "cb" cNumber])]])]]
 
 /-- `SessionSpec.emit`: the output as a send, unless the host has not yet reported the connection
-ready; a graceful close once everything is answered and taken after a QUIT or the end of input;
+ready; a graceful close once everything is answered and taken after a QUIT, a 502 or the end of input;
 or a send of nothing when whether to read has changed. No POST or read waits or answers the
 connection, and no reply goes out a part at a time, when it is asked to read. -/
 def emit : List PStmt :=
@@ -1537,7 +1557,12 @@ def regression_967 : Bool :=
    (tActiveHead, News.CommandSpec.text i (.active none)),
    (tNoDescriptions, News.CommandSpec.text i .newsgroups),
    (tNoNewGroups, News.CommandSpec.text i .newGroups),
-   (tTime, News.CommandSpec.ascii "111 ")].all (fun (k, t) => texts[k]? == some t) &&
+   (tTime, News.CommandSpec.ascii "111 "), (tMode, News.CommandSpec.ascii "MODE"),
+   (tReader, News.CommandSpec.ascii "READER"),
+   (tCapabilitiesReaderTail, News.CommandSpec.capabilitiesReaderTail),
+   (tModeReader, News.CommandSpec.text i .modeReader),
+   (tReaderPosting, News.CommandSpec.text i .readerPosting),
+   (tReaderNoPosting, News.CommandSpec.text i .readerNoPosting)].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
     (texts[SessionStore.tStatus + j]?).map
       (· ++ News.CommandSpec.decimal 0 ++ [News.CommandSpec.SP] ++ News.CommandSpec.crlf) ==

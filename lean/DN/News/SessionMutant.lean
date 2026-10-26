@@ -203,6 +203,18 @@ inductive Mutant
   | dateUnpadded
   /-- the line's deadline running while a listing goes out -/
   | lineWhileListing
+  /-- READER left out of the capabilities of a server with a store, to a connection that may not post -/
+  | readerUnadvertised
+  /-- READER among the capabilities of a server without a store -/
+  | readerWithoutStore
+  /-- MODE READER answered 200 once the store has stopped accepting -/
+  | modeStale
+  /-- MODE READER leaves no group selected -/
+  | modeDeselects
+  /-- the connection kept open after MODE READER's 502 -/
+  | refusedStaysOpen
+  /-- MODE READER answered 200 to a connection greeted with 201 -/
+  | modeUngreeted
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -249,7 +261,9 @@ def names : List (String × Mutant) :=
    ("listing-reads", .listingReads), ("star-non-empty", .starNonEmpty),
    ("wildmat-unanchored", .wildmatUnanchored), ("wildmat-caseless", .wildmatCaseless),
    ("group-line-dropped", .groupLineDropped), ("end-forced", .endForced), ("date-unpadded", .dateUnpadded),
-   ("line-while-listing", .lineWhileListing)]
+   ("line-while-listing", .lineWhileListing), ("reader-unadvertised", .readerUnadvertised),
+   ("reader-without-store", .readerWithoutStore), ("mode-stale", .modeStale), ("mode-deselects", .modeDeselects),
+   ("refused-stays-open", .refusedStaysOpen), ("mode-ungreeted", .modeUngreeted)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -392,7 +406,12 @@ def replyInM (m : Mutant) (offered : Bool) (l : Line) : Reply :=
 def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
     if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
+    else if (p.offered && m != .readerUnadvertised) || m = .readerWithoutStore then .capabilitiesReader
     else .capabilities
+  | .modeReader =>
+    if !p.offered then .modeReader
+    else if (c.greeted || m = .modeUngreeted) && (p.accepting || m = .modeStale) then .readerPosting
+    else .readerNoPosting
   | .post =>
     if !c.greeted && !(m = .postUnpermitted && p.offered) then .notPermitted
     else if !p.accepting && m != .postAfterStop then .unavailable else .post
@@ -425,7 +444,9 @@ def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
 /-- The selected group and the current article after a reply, as `Reply.groupAfter` and
 `Reply.currentAfter` have them, but for the mutant's rule. -/
 def groupAfterM (m : Mutant) (r : Reply) (g : Option (List Byte)) : Option (List Byte) :=
-  if m = .unknownDeselects && r = .noSuchGroup then none else r.groupAfter g
+  if (m = .unknownDeselects && r = .noSuchGroup) ||
+      (m = .modeDeselects && (r = .readerPosting || r = .readerNoPosting)) then none
+  else r.groupAfter g
 
 def currentAfterM (m : Mutant) (p : Posting) (c : Conn) (asked r : Reply) : Nat :=
   match r with
@@ -500,7 +521,8 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
             let c2 := { c1 with out := text i r, first := first, idle := now + inactivity,
                                 group := groupAfterM m r c1.group, current := currentAfterM m p c1 asked r,
                                 listing := listingOfM m r }
-            if r = .quit && m != .quitTail then { c2 with phase := .quitting, held := [] }
+            if (r = .quit && m != .quitTail) || (r = .modeReader && m != .refusedStaysOpen) then
+              { c2 with phase := .quitting, held := [] }
             else serveM m i p now fuel c2
 
 /-- `progress`, an article's octets taken renewing its deadline with `articleRenewed`. -/
@@ -799,8 +821,10 @@ theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
   | succ fuel ih =>
     have h1 : (Mutant.none != Mutant.answerWhileBusy) = true := rfl
     have h2 : (Mutant.none != Mutant.quitTail) = true := rfl
+    have h3 : (Mutant.none != Mutant.refusedStaysOpen) = true := rfl
     simp only [serveM, serve, ih, resolveM_none, replyInM_none, groupAfterM_none, currentAfterM_none,
-      dateM_none, listingOfM_none, reduceCtorEq, if_false, h1, h2, Bool.and_true, decide_eq_true_eq]
+      dateM_none, listingOfM_none, reduceCtorEq, if_false, h1, h2, h3, Bool.and_true, Bool.or_eq_true,
+      decide_eq_true_eq]
     rfl
 
 theorem progressM_none : progressM .none = progress := by

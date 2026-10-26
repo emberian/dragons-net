@@ -30,12 +30,15 @@ import store_ref as J
 
 FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000, 1_800_000
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
-COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT")
+COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT", b"MODE")
 # The commands a server with a store has besides.
 STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS")
 # The replies a server with a store decides as it gives them.
 DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last", "listgroup", "list-active",
-           "date")
+           "date", "mode-reader")
+# The replies after which the connection closes: QUIT's, and MODE READER's 502 of a server that does not
+# advertise READER (RFC 3977 §5.3.2).
+CLOSING = ("quit", "mode-reader")
 NUMBER_MAX = 2_147_483_647
 
 
@@ -127,10 +130,11 @@ def is_keyword(w: bytes) -> bool:
 
 
 def reply(kind: str, kept: bytes, offered: bool = False) -> str:
-    """The reply 0003 gives a line of this kind keeping these bytes; with a store, POST, ARTICLE,
-    BODY, GROUP, NEXT and LAST are commands too, and the session decides what a well-formed POST
-    gets (`post`), what a message-id finds in the store (`lookup`), a number in the selected group
-    (`number`), no argument (`current`), a GROUP (`group`), a NEXT and a LAST."""
+    """The reply 0003 gives a line of this kind keeping these bytes, MODE READER's 502 of a server
+    that does not advertise READER among them (RFC 3977 §5.3.2); with a store, POST, ARTICLE, BODY,
+    GROUP, NEXT and LAST are commands too, and the session decides what a well-formed POST gets
+    (`post`), what a message-id finds in the store (`lookup`), a number in the selected group
+    (`number`), no argument (`current`), a GROUP (`group`), a NEXT, a LAST and a MODE READER."""
     ws = words(kept)
     if not ws:
         return "unknown" if kind == "overlong" else "ignore"
@@ -143,6 +147,8 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
         return "capabilities"
     if name in (b"HELP", b"QUIT") and not args:
         return name.decode().lower()
+    if name == b"MODE" and len(args) == 1 and args[0].upper() == b"READER":
+        return "mode-reader"
     if name in (b"HEAD", b"STAT", b"ARTICLE", b"BODY") and len(args) <= 1:
         if not args:
             return "current" if offered else "no-group"
@@ -178,7 +184,12 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "greeting-post": b"200 dragons-net " + revision + b" ready, posting allowed; source code at " + source
         + b"\r\n",
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
-        + b"\r\nPOST\r\n.\r\n",
+        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\nPOST\r\n.\r\n",
+        "capabilities-reader": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
+        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\n.\r\n",
+        "mode-reader": b"502 Reading service unavailable\r\n",
+        "reader-posting": b"200 Posting allowed\r\n",
+        "reader-no-posting": b"201 Posting prohibited\r\n",
         "help-post": b"100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n"
         b"CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\nNEWGROUPS\r\n"
         b"NEXT\r\nPOST\r\nQUIT\r\ndragons-net "
@@ -210,14 +221,15 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
 
 
 def answers(stream: bytes) -> list[str]:
-    """The replies to the whole lines of `stream`, in order, up to and including a QUIT's."""
+    """The replies to the whole lines of `stream`, in order, up to and including the one after which
+    the connection closes."""
     found = []
     for body in stream.split(b"\n")[:-1]:
         kind, kept = framing_ref.classify(LINE_LIMIT, body)
         r = reply(kind, kept)
         if r != "ignore":
             found.append(r)
-        if r == "quit":
+        if r in CLOSING:
             break
     return found
 
@@ -330,8 +342,8 @@ class Judge:
         return self.text["greeting"] + b"".join(self.text[r] for r in self.replies(c))
 
     def quitting(self, c: Conn) -> bool:
-        """Whether the connection has been answered its QUIT."""
-        return c.replies > 0 and self.replies(c)[c.replies - 1] == "quit"
+        """Whether the connection has been answered its QUIT, or MODE READER's 502."""
+        return c.replies > 0 and self.replies(c)[c.replies - 1] in CLOSING
 
     def owed(self, c: Conn) -> bool:
         """Whether a whole line the client sent waits for its reply."""
@@ -498,7 +510,9 @@ class Judge:
 class PostJudge(Judge):
     """The session of a server with a store (decision 0005). A connection is greeted with 200 when it
     may post and the store accepts and carries a group. Its replies are the 0003 ones, HELP's naming
-    POST; the capabilities name POST while it was greeted with 200 and the store accepts. A POST is
+    POST; the capabilities name READER and LIST ACTIVE NEWSGROUPS, and POST while it was greeted with
+    200 and the store accepts, and MODE READER is answered 200 then, else 201, changing nothing
+    (RFC 3977 §5.3.2). A POST is
     answered at once 440 when it was greeted with 201, 403 once the store has stopped accepting, else
     340 once one of four slots is free for it: POSTs that wait, unread and with no deadline, get the
     slots that free in the order they came. The article after a 340 is `post_ref`'s; it has 1,800
@@ -1044,7 +1058,9 @@ class PostJudge(Judge):
                 raise Violation(error.kind, f"{idx} {error}") from None
             return
         if due == "capabilities":
-            c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities")
+            c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities-reader")
+        elif due == "mode-reader":
+            c.decisions.append("reader-posting" if c.greeted and self.store.accepting else "reader-no-posting")
         elif due == "post":
             if not c.greeted:
                 c.decisions.append("not-permitted")

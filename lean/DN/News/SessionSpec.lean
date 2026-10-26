@@ -14,8 +14,9 @@ A connection is greeted when it opens. Its input is held as received and framed 
 (`DN.News.Framer.frameOnce`); a line is answered only while nothing the connection was sent is
 still untaken, so replies go out in the order of the commands, one per command, and a connection
 that does not read stops being read from. After a QUIT the reply is the last thing sent and the
-connection is closed gracefully once it is taken; after the end of input the connection is closed
-the same way once every whole line it sent is answered. A deadline that passes closes the
+connection is closed gracefully once it is taken, and likewise after the 502 that a server without a
+store gives to MODE READER, as it does not advertise READER (RFC 3977 §5.3.2); after the end of input
+the connection is closed the same way once every whole line it sent is answered. A deadline that passes closes the
 connection at once, dropping what was not sent: ten seconds for the first command; 1,800 seconds
 with no command answered and no output taken; 180 seconds for the rest of a line, from when the
 program begins waiting for it — everything sent taken, a line begun — and only while it waits.
@@ -66,6 +67,11 @@ terminating line once that fits too, each when the last was taken; the host is n
 no line is answered until it ends. LIST NEWSGROUPS answers 215 and an empty list, as no group has a
 description, and NEWGROUPS 231 and an empty list, as no group has a time it was created (§7.6.6,
 §7.3.2). DATE answers 111 with the host's wall clock in UTC (§7.1).
+
+The capabilities name READER and LIST's keywords ACTIVE and NEWSGROUPS (§3.3.2, §7.6.2), with POST
+while the connection may post. As a server that is not mode-switching and advertises READER, it
+answers MODE READER as the greeting does now — 200 when POST is among the capabilities, else 201 —
+changing nothing (§5.3.2).
 -/
 
 namespace DN.News.SessionSpec
@@ -95,7 +101,7 @@ def wallLimit : Nat := 1000 * 2 ^ 40
 inductive Phase
   /-- greeted, no command yet or commands being answered -/
   | open_
-  /-- the reply to QUIT is being sent; the connection closes when it is taken -/
+  /-- the reply to QUIT, or MODE READER's 502, is being sent; the connection closes when it is taken -/
   | quitting
   /-- the input has ended; what was received is answered, then the connection closes -/
   | ending
@@ -345,12 +351,18 @@ def dateDigits (wall : Nat) : List Byte :=
 def foundAs (k : Cmd) : Nat × List Byte → Reply
   | (n, id) => if k = .stat then .stat n id else .lookup k n id
 
-/-- The reply a connection gets with a store: the capabilities with POST while it may post, the
-help with POST, for a well-formed POST 340, 440 or 403, and for a message-id the store does not
-hold 430, for one it holds with STAT 223; the replies of the selected group and the current
-article. -/
+/-- The reply a connection gets with a store: the capabilities with READER, and with POST while it
+may post, and MODE READER's 200 or 201 as they name POST or not; the help with POST, for a
+well-formed POST 340, 440 or 403, and for a message-id the store does not hold 430, for one it holds
+with STAT 223; the replies of the selected group and the current article. Without a store, the
+capabilities and the help of 0003, and MODE READER's 502. -/
 def resolve (p : Posting) (c : Conn) : Reply → Reply
-  | .capabilities => if c.greeted && p.accepting then .capabilitiesPost else .capabilities
+  | .capabilities =>
+    if c.greeted && p.accepting then .capabilitiesPost else if p.offered then .capabilitiesReader
+    else .capabilities
+  | .modeReader =>
+    if !p.offered then .modeReader else if c.greeted && p.accepting then .readerPosting
+    else .readerNoPosting
   | .help => if p.offered then .helpPost else .help
   | .post => if !c.greeted then .notPermitted else if !p.accepting then .unavailable else .post
   | .lookup k n id =>
@@ -458,7 +470,8 @@ def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
             let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity,
                                 group := r.groupAfter c1.group, current := r.currentAfter c1.current,
                                 listing := listingOf r }
-            if r = .quit then { c2 with phase := .quitting, held := [] } else serve i p now fuel c2
+            if r = .quit ∨ r = .modeReader then { c2 with phase := .quitting, held := [] }
+            else serve i p now fuel c2
 
 /-- The reply an outcome gives. -/
 def outcomeReply : PostSpec.Outcome → Reply
@@ -571,8 +584,8 @@ def claimRead (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store 
 
 /-- What a connection that is not closed at a deadline asks of the host once it is served: its
 output, with whether to read once it is taken, unless the host has not yet reported it ready
-after leaving part of it; or a graceful close once everything is answered and taken after a QUIT
-or the end of input; or, with nothing to send, whether to read, when that has changed. -/
+after leaving part of it; or a graceful close once everything is answered and taken after a QUIT, a
+502 or the end of input; or, with nothing to send, whether to read, when that has changed. -/
 def emit (idx : Nat) (wants : Bool) (c : Conn) : Option Conn × Option Action :=
   if !c.out.isEmpty then
     if c.blocked then (some c, none)
@@ -1224,9 +1237,9 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .ignore, h => absurd rfl h
   | .capabilities, _ => fun e =>
     absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp e).1).1 (by decide +kernel)
-  | .capabilitiesPost, _ => fun e =>
-    absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp
-      e).1).1).1 (by decide +kernel)
+  | .capabilitiesPost, _ | .capabilitiesReader, _ => fun e => by
+    simp only [text, List.append_assoc, List.append_eq_nil_iff] at e
+    exact absurd e.1 (by decide +kernel)
   | .help, _ | .helpPost, _ => fun e =>
     absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp
       (List.append_eq_nil_iff.mp e).1).1).1).1 (by decide +kernel)
@@ -1240,7 +1253,7 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .failed, _ | .notPermitted, _ | .unavailable, _ | .lookup _ _ _, _ | .unreadable, _
   | .select _, _ | .byNumber _ _, _ | .current _, _ | .move _, _ | .noSuchGroup, _ | .noCurrent, _
   | .noNext, _ | .noPrevious, _ | .noNumber, _ | .listGroup .., _ | .active _, _ | .newsgroups, _
-  | .newGroups, _ | .date, _ => by
+  | .newGroups, _ | .date, _ | .modeReader, _ | .readerPosting, _ | .readerNoPosting, _ => by
     simp only [text]; decide +kernel
 
 /-- `serve` leaves output that is already there as it is. -/
@@ -1432,10 +1445,35 @@ theorem act_keeps_line (i : Identity) (now wall idx : Nat) (st : Option Store) (
     rw [sli] at hli
     simp [Conn.waitLine, ho, hp, hf, hw, hli, e0, hl]
 
-/-- An open connection that answers QUIT is left with the 205 to send and nothing held. -/
+theorem summary_ne_modeReader (held : List Journal.Commit) (g : List Byte) :
+    summary held g ≠ .modeReader := by
+  unfold summary; split <;> simp
+
+theorem foundAs_ne_modeReader (k : Cmd) (x : Nat × List Byte) : foundAs k x ≠ .modeReader := by
+  obtain ⟨n, id⟩ := x; simp only [foundAs]; split <;> simp
+
+theorem getD_map_ne_modeReader {α : Type} (o : Option α) (f : α → Reply) (d : Reply)
+    (hf : ∀ x, f x ≠ .modeReader) (hd : d ≠ .modeReader) : (o.map f).getD d ≠ .modeReader := by
+  cases o <;> simp_all
+
+/-- MODE READER's 502 is left by `resolve` only without a store. -/
+theorem resolve_modeReader {p : Posting} {c : Conn} :
+    ∀ r, resolve p c r = .modeReader → p.offered = false := by
+  intro r h
+  cases r <;> simp only [resolve] at h <;> (repeat' split at h) <;>
+    first
+      | exact absurd h (summary_ne_modeReader _ _)
+      | exact absurd h (getD_map_ne_modeReader _ _ _ (foundAs_ne_modeReader _) (by decide))
+      | exact absurd h (getD_map_ne_modeReader _ _ _ (fun _ e => Reply.noConfusion e) (by decide))
+      | (simp_all; done)
+
+/-- An open connection that answers QUIT, or MODE READER without a store, is left with the 205 or the
+502 to send and nothing held; the 502 only without a store. -/
 theorem serve_quit (i : Identity) (p : Posting) (now : Nat) :
     ∀ fuel (c : Conn), c.phase = .open_ → (serve i p now fuel c).phase = .quitting →
-      (serve i p now fuel c).out = text i .quit ∧ (serve i p now fuel c).held = [] := by
+      ((serve i p now fuel c).out = text i .quit ∨
+        (p.offered = false ∧ (serve i p now fuel c).out = text i .modeReader)) ∧
+        (serve i p now fuel c).held = [] := by
   intro fuel
   induction fuel with
   | zero => intro c hp h; simp only [serve] at h; rw [hp] at h; cases h
@@ -1459,12 +1497,14 @@ theorem serve_quit (i : Identity) (p : Posting) (now : Nat) :
               · split
                 · rename_i hq
                   intro _
-                  exact ⟨by rw [hq], rfl⟩
+                  rcases hq with hq | hq
+                  · exact ⟨.inl (by rw [hq]), rfl⟩
+                  · exact ⟨.inr ⟨resolve_modeReader _ hq, by rw [hq]⟩, rfl⟩
                 · exact ih _ hp
 
-/-- **After a QUIT, only what is left of its reply and the close**: a connection answering QUIT
-is closed at a deadline, waits for the host, sends the rest of its output without asking to
-read, or is closed gracefully. -/
+/-- **After a QUIT, only what is left of its reply and the close**: a connection answering QUIT, or
+MODE READER without a store, is closed at a deadline, waits for the host, sends the rest of its output
+without asking to read, or is closed gracefully. -/
 theorem act_quitting (i : Identity) (now wall idx : Nat) (st : Option Store) (c : Conn)
     (hq : c.phase = .quitting) :
     (act i now wall idx st c).2.1 = some (.closeNow idx c.gen) ∨
@@ -1489,10 +1529,12 @@ theorem act_quitting (i : Identity) (now wall idx : Nat) (st : Option Store) (c 
       · exact .inr (.inr (.inl (by simp [Conn.wantsWith, Conn.wants, hq])))
     · exact .inr (.inr (.inr (by simp [hq])))
 
-/-! ## After a QUIT, only what is left of the 205 -/
+/-! ## After a QUIT or a 502, only what is left of it -/
 
-/-- A connection that answered QUIT has only what is left of the 205 to send. -/
-def Conn.QuitRest (i : Identity) (c : Conn) : Prop := c.phase = .quitting → c.out <:+ text i .quit
+/-- A connection that answered QUIT, or MODE READER without a store, has only what is left of the 205
+or the 502 to send. -/
+def Conn.QuitRest (i : Identity) (c : Conn) : Prop :=
+  c.phase = .quitting → c.out <:+ text i .quit ∨ c.out <:+ text i .modeReader
 
 def Table.QuitRest (i : Identity) (t : Table) : Prop := ∀ c, some c ∈ t → c.QuitRest i
 
@@ -1595,8 +1637,8 @@ theorem events_quitRest {i : Identity} {now : Nat} :
     · rename_i s1 h1
       exact events_quitRest es s1 s' h (applyEvent_quitRest h1 hs)
 
-/-- Serving a connection that has not answered QUIT leaves it with the 205 to send, if it answers
-QUIT now. -/
+/-- Serving a connection that has not answered QUIT leaves it with the 205 or the 502 to send, if it
+answers QUIT or MODE READER without a store now. -/
 theorem serve_quitRest (i : Identity) (p : Posting) (now : Nat) :
     ∀ fuel (c : Conn), c.phase ≠ .quitting → (serve i p now fuel c).QuitRest i := by
   intro fuel
@@ -1621,9 +1663,10 @@ theorem serve_quitRest (i : Identity) (p : Posting) (now : Nat) :
               · split
                 · rename_i hq
                   intro _
-                  show text i _ <:+ _
-                  rw [hq]
-                  exact List.suffix_refl _
+                  show text i _ <:+ _ ∨ text i _ <:+ _
+                  rcases hq with hq | hq
+                  · rw [hq]; exact .inl (List.suffix_refl _)
+                  · rw [hq]; exact .inr (List.suffix_refl _)
                 · exact ih _ hp
 
 theorem waitLine_quitRest {i : Identity} {now : Nat} {c : Conn} (h : c.QuitRest i) :
@@ -1757,7 +1800,7 @@ theorem settleTable_quitRest {i : Identity} {now : Nat} :
         cases hc'
         apply waitLine_quitRest
         intro hq
-        exact (List.drop_suffix _ _).trans (ht c (live_mem hl) hq)
+        exact (ht c (live_mem hl) hq).imp (List.drop_suffix _ _).trans (List.drop_suffix _ _).trans
       · exact ht
   | t, .send .. :: _, [], t', h, _ => by simp [settleTable] at h
   | t, .closeGracefully .. :: rest, ns, t', h, ht => by
@@ -1768,10 +1811,10 @@ theorem settleTable_quitRest {i : Identity} {now : Nat} :
     exact settleTable_quitRest t rest ns t' h ht
   | t, [], _ :: _, t', h, _ => by simp [settleTable] at h
 
-/-- **After a QUIT, only what is left of the 205**: from a table in which every connection that
-answered QUIT has only the rest of the 205 to send, as the empty table, a turn and what the host
-took of its sends leave a table of which the same holds; `act_quitting` says such a connection
-sends only its output or closes. -/
+/-- **After a QUIT or a 502, only what is left of it**: from a table in which every connection that
+answered QUIT, or MODE READER without a store, has only the rest of the 205 or the 502 to send, as the
+empty table, a turn and what the host took of its sends leave a table of which the same holds;
+`act_quitting` says such a connection sends only its output or closes. -/
 theorem quit_rest {i : Identity} {s s' s'' : Server} {now wall : Nat} {es : List Event}
     {ds : List Done} {actions : List Action} {js : List Job} {taken : List Nat}
     (hs : Table.QuitRest i s.table) (h : turn i s now wall es ds = .ok (s', actions, js))
@@ -1790,6 +1833,6 @@ theorem quitRest_witness :
     Conn.QuitRest ⟨[], []⟩ { Conn.fresh ⟨[], []⟩ false 1 1 0 with
         phase := .quitting, out := text ⟨[], []⟩ .quit } ∧
       Table.QuitRest ⟨[], []⟩ Table.empty :=
-  ⟨fun _ => List.suffix_refl _, empty_quitRest _⟩
+  ⟨fun _ => .inl (List.suffix_refl _), empty_quitRest _⟩
 
 end DN.News.SessionSpec
