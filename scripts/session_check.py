@@ -1128,6 +1128,16 @@ READER_SPOOL = spool_holding([(stored(b"one"), [(b"local.test", 1)]),
                               (stored(b"six"), [(b"local.other", 6), (b"local.test", 6)])])
 
 
+def odd_words() -> list[bytes]:
+    """`a` and each octet a word may hold, then `a` and UTF-8 cut at its edges: each lead octet near a
+    bound, a second octet near one, and none to two continuation octets."""
+    octets = [b for b in range(1, 256) if b not in (9, 10, 13, 32)]
+    leads = (0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF3, 0xF4, 0xF5)
+    edges = (0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0)
+    return [b"a" + bytes([b]) for b in octets] + [b"a" + bytes([lead, edge]) + b"\x80" * k
+                                                  for lead in leads for edge in edges for k in range(3)]
+
+
 def group_scenarios() -> Iterator[PostScenario]:
     yield "a group's articles walked", [
         reader("GROUP local.test", "ARTICLE", "STAT", "NEXT", "NEXT", "NEXT", "NEXT", "LAST", "STAT 3", "STAT",
@@ -1148,12 +1158,7 @@ def group_scenarios() -> Iterator[PostScenario]:
              b"STAT 2147483648", b"STAT 2147483647", b"QUIT")
     yield "group names and arguments", [Client(1, [(5, b"".join(line + b"\r\n" for line in names))])], \
         Spool(READER_GROUPS, image=READER_SPOOL)
-    octets = [b for b in range(1, 256) if b not in (9, 10, 13, 32)]
-    leads = (0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF3, 0xF4, 0xF5)
-    edges = (0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0)
-    tried = [b"a" + bytes([b]) for b in octets] + [b"a" + bytes([lead, edge]) + b"\x80" * k
-                                                   for lead in leads for edge in edges for k in range(3)]
-    yield "every octet in a group's name", [Client(1, [(5, b"".join(b"GROUP " + name + b"\r\n" for name in tried)
+    yield "every octet in a group's name", [Client(1, [(5, b"".join(b"GROUP " + name + b"\r\n" for name in odd_words())
                                                        + b"QUIT\r\n")])], Spool(READER_GROUPS)
     yield "a group with no article at all", [reader("GROUP local.test", "STAT", "NEXT", "ARTICLE 1")], \
         Spool(READER_GROUPS)
@@ -1181,6 +1186,13 @@ def group_scenarios() -> Iterator[PostScenario]:
 # A group of articles 1 to 200, and forty groups of names of 60 octets.
 BIG_SPOOL = spool_holding([(stored(b"n"), [(b"local.big", k)]) for k in range(1, 201)])
 MANY_GROUPS = [b"local.%s%02d" % (b"g" * 52, k) for k in range(40)]
+# As many groups as a store may carry.
+ALL_GROUPS = [b"local.g%02d" % k for k in range(64)]
+# Wall clocks at the calendar's edges: a year's last second, a leap day of a fourth century, the end
+# of a February a century has without one and the next day, the end of a leap day of a fourth century
+# past the epoch's era, and seconds into an hour fewer than its number.
+CALENDAR = (946_684_799_999, 951_782_400_000, 4_107_542_399_999, 4_107_542_400_000, 13_574_649_599_000,
+            1_792_846_805_000)
 
 
 def list_scenarios() -> Iterator[PostScenario]:
@@ -1217,6 +1229,8 @@ def list_scenarios() -> Iterator[PostScenario]:
                "NEWGROUPS 20261024 120000 GMT x", "NEWGROUPS 20261024")], Spool(READER_GROUPS)
     yield "DATE past the year 9999", [reader("DATE")], Spool(READER_GROUPS, wall=WALL_LIMIT - 10 ** 7)
     yield "DATE of fields of one digit", [reader("DATE")], Spool(READER_GROUPS, wall=946_782_245_000 - 5)
+    yield "DATE at the calendar's edges", [Client(at - 10, [(at, ascii_lines("DATE", "QUIT"))]) for at in CALENDAR], \
+        Spool(READER_GROUPS, wall=0)
     yield "long listings to a slow reader", [
         reader("LISTGROUP local.big 98-200", "LISTGROUP local.big", "LIST ACTIVE", "LISTGROUP local.big 150",
                "LISTGROUP local.big 1-122", "LISTGROUP local.big 1-123", "LISTGROUP local.big 1-124",
@@ -1225,6 +1239,15 @@ def list_scenarios() -> Iterator[PostScenario]:
         reader("LIST ACTIVE", "LIST ACTIVE *1,*3", take=30, slow=5),
         poster(at=10, sent=article("From: a@b.example", f"Newsgroups: {MANY_GROUPS[0].decode()}", "Subject: hi"))], \
         Spool(MANY_GROUPS, failures=[Failure("datasync")])
+    yield "sixty-four groups listed", [
+        reader("LIST ACTIVE", "LIST ACTIVE *3", "LIST ACTIVE local.g6?,!*0", "LISTGROUP local.g63", "GROUP local.g00",
+               take=60, slow=5)], Spool(ALL_GROUPS)
+    yield "a listing to a reader that pauses", [
+        Client(1, [(5, ascii_lines("LISTGROUP local.big", "QUIT"))], pause=(6, 3_000_000))], \
+        Spool([b"local.big"], image=BIG_SPOOL, late=200_000)
+    yield "every octet in a wildmat", [
+        Client(1, [(5, b"".join(b"LIST ACTIVE " + w + b"\r\n" for w in odd_words()) + b"QUIT\r\n")])], \
+        Spool(READER_GROUPS)
     yield "a line begun behind a listing, the host late", [
         Client(1, [(5, ascii_lines("LISTGROUP local.big") + b"HEL")])], \
         Spool([b"local.big"], image=BIG_SPOOL, late=200_000)

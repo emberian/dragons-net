@@ -19,8 +19,8 @@ The command inventory below follows [RFC 3977 Appendix B](../rfcs/rfc3977.txt). 
 | Capability | Commands | Intended stage |
 | --- | --- | --- |
 | Mandatory | CAPABILITIES, HEAD, HELP, QUIT, STAT | Answered; HEAD and STAT from the store by message-id and by number (#17, #18) |
-| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | ARTICLE, BODY, GROUP, LAST and NEXT (#17, #18); DATE, LISTGROUP and NEWGROUPS to come (#18) |
-| LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Reader completeness |
+| READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Answered (#17, #18), not yet advertised |
+| LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Answered (#18), not yet advertised |
 | POST | POST | Done (#17) |
 | OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility |
 | HDR | HDR, LIST HEADERS | Practical reader compatibility |

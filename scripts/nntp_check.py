@@ -16,6 +16,7 @@ from collections.abc import Buffer, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+import datetime
 import fcntl
 import json
 import os
@@ -1202,12 +1203,35 @@ def walk(news: Any, nntplib: ModuleType, ids: list[str]) -> None:
         raise LaneError(f"ARTICLE 2 gave {info.number} {info.message_id}, then STAT {news.stat()}")
 
 
+def listings(news: Any, server: Server, ids: list[str]) -> None:
+    """`local.test` listed by `nntplib`: LIST ACTIVE with its highest and lowest numbers and `y`, as a
+    wildmat takes it or not; LIST NEWSGROUPS and NEWGROUPS empty; DATE the wall clock in UTC. Its
+    numbers from 2 by LISTGROUP over a socket of its own."""
+    whole = [("local.test", str(len(ids)), "1", "y")]
+    for pattern, want in ((None, whole), ("local.t*", whole), ("*,!local.*", [])):
+        got = [tuple(g) for g in news.list(pattern)[1]]
+        if got != want:
+            raise LaneError(f"LIST ACTIVE {pattern} gave {got}")
+    if news.descriptions("local.*")[1] != {} or news.newgroups(datetime.date(2026, 1, 1))[1] != []:
+        raise LaneError("LIST NEWSGROUPS or NEWGROUPS gave groups")
+    when = news.date()[1]
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+    if abs((now - when).total_seconds()) > 60:
+        raise LaneError(f"DATE gave {when}, at {now}")
+    c = server.client()
+    read_expected(c, TEXTS["greeting-post"], "the greeting")
+    c.sendall(b"LISTGROUP local.test 2-\r\n")
+    numbers = "".join(f"{k}\r\n" for k in range(2, len(ids) + 1))
+    read_expected(c, f"211 {len(ids)} 1 {len(ids)} local.test\r\n{numbers}.\r\n".encode(), "LISTGROUP")
+
+
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
     refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
     16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
     `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
-    of a file is changed on the disk, its ARTICLE is answered 403; and walks the group (`walk`)."""
+    of a file is changed on the disk, its ARTICLE is answered 403; walks the group (`walk`) and lists it
+    (`listings`)."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
     third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
@@ -1254,6 +1278,7 @@ def post_over_sockets(b: Build) -> str:
                     nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
                 read_back(news, nntplib, spool, ids)
                 walk(news, nntplib, ids)
+                listings(news, server, ids)
             first_file = spool / "a0000000000000001"
             changed = bytearray(first_file.read_bytes())
             changed[-3] ^= 1
@@ -1280,7 +1305,7 @@ def post_over_sockets(b: Build) -> str:
         if f"connection {value} from 127.0.0.1 port {port}" not in logged:
             raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
     return ("posted, the Message-ID refused after a restart, two others posted, their posters logged, each read "
-            "back, a changed file refused")
+            "back and listed, a changed file refused")
 
 
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
@@ -1552,7 +1577,7 @@ DEFECTS = [
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
     Defect("the inactivity deadline a millisecond early",
-           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 7)],
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 8)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),

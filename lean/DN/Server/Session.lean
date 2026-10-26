@@ -143,12 +143,47 @@ def tNoNext : Nat := 42
 def tNoPrevious : Nat := 43
 def tNoNumber : Nat := 44
 
+/-- The texts of the listings' commands, keywords and replies, by their place in
+`SessionLayout.texts`. -/
+def tListgroup : Nat := 45
+def tList : Nat := 46
+def tDate : Nat := 47
+def tNewgroups : Nat := 48
+def tActive : Nat := 49
+def tNewsgroups : Nat := 50
+def tGmt : Nat := 51
+def tActiveHead : Nat := 52
+def tNoDescriptions : Nat := 53
+def tNoNewGroups : Nat := 54
+def tTime : Nat := 55
+
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
   copy "j" (eAdd (v "ob") (v "o")) (at_ (ownOff + ownSrc)) (v "sl") ++
     [.assign "o" (eAdd (v "o") (v "sl"))]
 
 def record (idx : PExpr) : PExpr := eAdd (at_ tableOff) (eMul idx (n connSlot))
+
+/-- The batch's wall clock as DATE gives it (`SessionSpec.dateDigits`), in UTC, into the output of
+connection `c` from `o`, and the place past it; the day of the calendar is `ArticleProg.artCivilOf`'s.
+-/
+def dateText : PFun :=
+  let two (x : PExpr) : List PStmt :=
+    [keptIn (v "o") (data - 2),
+     .storeb (eAdd (v "ob") (v "o")) (eAdd (n 48) (SessionStore.div10 x)),
+     .storeb (eAdd (eAdd (v "ob") (v "o")) (n 1))
+       (eAdd (n 48) (eSub x (eMul (SessionStore.div10 x) (n 10)))),
+     .assign "o" (eAdd (v "o") (n 2))]
+  { name := "dateText", params := [(1, "c"), (1, "o")], body :=
+    [keptIn (v "c") (conns - 1), keptIn (v "o") 8, .dec "ob" (atOff (record (v "c")) cOut),
+     .dec "sc" (ownW ownWall),
+     .call "dd" "artDiv" [v "sc", n 86400], .dec "sd" (eSub (v "sc") (eMul (v "dd") (n 86400))),
+     .call "cv" "artCivilOf" [v "dd"], .dec "dy" (eAnd (v "cv") (n 31)),
+     .dec "mo" (eAnd (.shr (v "cv") (n 5)) (n 15)), .dec "yr" (.shr (v "cv") (n 9)),
+     .call "hr" "artDiv" [v "sd", n 3600], .dec "rest" (eSub (v "sd") (eMul (v "hr") (n 3600))),
+     .call "mn" "artDiv" [v "rest", n 60]] ++
+    digits "yd" (v "ob") "o" (v "yr") data ++ two (v "mo") ++ two (v "dy") ++ two (v "hr") ++
+    two (v "mn") ++ two (eSub (v "rest") (eMul (v "mn") (n 60))) ++ SessionStore.give (v "o") }
 
 /-- The text `t` — a reply's code, or one of the greetings' — into the output of connection `c`,
 from its start. -/
@@ -174,7 +209,14 @@ def connText : PFun :=
        appendSource, appendText tBlockEnd],
      text (replyCode (.stat 0 []))
        [appendText tStat, appendNumber "sn" (ownW ownNum), appendId, appendText tCrlf],
-     text (replyCode (.selected 0 0 0 []))
+     text (replyCode (.active none)) [appendText tActiveHead],
+     text (replyCode .newsgroups) [appendText tNoDescriptions],
+     text (replyCode .newGroups) [appendText tNoNewGroups],
+     text (replyCode (.time []))
+       [appendText tTime, callS "dt" "dateText" [v "c", v "o"],
+        [.assign "o" found, keptIn (v "o") (data - textLen tCrlf)], appendText tCrlf],
+     ifs (or2 (eEq (v "t") (n (replyCode (.selected 0 0 0 []))))
+         (eEq (v "t") (n (replyCode (.listed 0 0 0 [] 0 0))))) <| List.flatten
        [appendText tSelected, appendNumber "nc" (ownW ownCount), appendNumber "nl" (ownW ownLow),
         appendNumber "nh" (ownW ownHigh),
         [.dec "sg" (fld "cb" cGroup), keptIn (v "sg") groupsMax,
@@ -203,37 +245,41 @@ def isDigitE (e : PExpr) : PExpr := eAnd (eLt (n 47) e) (eLt e (n 58))
 /-- An ASCII letter in upper case. -/
 def fold (e : PExpr) : PExpr := eSub e (eMul (n 32) (eAnd (eLt (n 96) e) (eLt e (n 123))))
 
-/-- Where a word ends at `pos`: the first and second words' lengths. -/
-def endWord (pos : PExpr) : List PStmt :=
-  [.ite (eEq (v "w") (n 1)) [.assign "l0" (eSub pos (v "ws"))] [],
-   .ite (eEq (v "w") (n 2)) [.assign "l1" (eSub pos (v "ws"))] [],
-   .assign "inw" (n 0)]
+/-- Where a word ends at `pos`: the lengths of the first `k` words. -/
+def endWord (k : Nat) (pos : PExpr) : List PStmt :=
+  (List.range k).map (fun j =>
+    .ite (eEq (v "w") (n (j + 1))) [.assign s!"l{j}" (eSub pos (v "ws"))] []) ++
+  [.assign "inw" (n 0)]
 
-/-- The words of the kept line: how many (`w`), and where the first two start and how long they
+/-- The words of the kept line: how many (`w`), and where the first `k` start and how long they
 are; words are runs of bytes other than SP and TAB. -/
-def scanWords : List PStmt :=
-  [.dec "w" (n 0), .dec "s0" (n 0), .dec "l0" (n 0), .dec "s1" (n 0), .dec "l1" (n 0),
-   .dec "inw" (n 0), .dec "ws" (n 0), .dec "q" (n 0),
+def scanWords (k : Nat) : List PStmt :=
+  [.dec "w" (n 0)] ++
+  (List.range k).flatMap (fun j => [.dec s!"s{j}" (n 0), .dec s!"l{j}" (n 0)]) ++
+  [.dec "inw" (n 0), .dec "ws" (n 0), .dec "q" (n 0),
    .while (eLt (v "q") (v "kept"))
      [.dec "cq" (kept (v "q")),
       .ite (or2 (eEq (v "cq") (n 32)) (eEq (v "cq") (n 9)))
-        [.ite (v "inw") (endWord (v "q")) []]
+        [.ite (v "inw") (endWord k (v "q")) []]
         [.ite (eEq (v "inw") (n 0))
-          [inc "w", .assign "ws" (v "q"), .assign "inw" (n 1),
-           .ite (eEq (v "w") (n 1)) [.assign "s0" (v "q")] [],
-           .ite (eEq (v "w") (n 2)) [.assign "s1" (v "q")] []]
+          ([inc "w", .assign "ws" (v "q"), .assign "inw" (n 1)] ++
+           (List.range k).map fun j => .ite (eEq (v "w") (n (j + 1))) [.assign s!"s{j}" (v "q")] [])
           []],
       inc "q"],
-   .ite (v "inw") (endWord (v "kept")) []]
+   .ite (v "inw") (endWord k (v "kept")) []]
 
-/-- `eqk` is one when the first word is the name the text `t` holds, in any case. -/
-def nameIsAt (t : Nat) : List PStmt :=
-  [.assign "eqk" (eEq (v "l0") (n (textLen t))),
+/-- `eqk` is one when the word from `s` of length `l` is the name the text `t` holds, in any
+case. -/
+def wordIsAt (s l : String) (t : Nat) : List PStmt :=
+  [.assign "eqk" (eEq (v l) (n (textLen t))),
    .assign "jq" (n 0),
-   .while (eAnd (v "eqk") (eLt (v "jq") (v "l0")))
-     [.ite (ne (fold (kept (eAdd (v "s0") (v "jq")))) (.loadb (eAdd (textAddr t) (v "jq"))))
+   .while (eAnd (v "eqk") (eLt (v "jq") (v l)))
+     [.ite (ne (fold (kept (eAdd (v s) (v "jq")))) (.loadb (eAdd (textAddr t) (v "jq"))))
         [.assign "eqk" (n 0)] [],
       inc "jq"]]
+
+/-- `eqk` is one when the first word is the name the text `t` holds, in any case. -/
+def nameIsAt (t : Nat) : List PStmt := wordIsAt "s0" "l0" t
 
 /-- `eqk` is one when the first word is the `k`-th command name, in any case. -/
 def nameIs (k : Nat) : List PStmt := nameIsAt (tNames + k)
@@ -253,44 +299,59 @@ def keywordCheck : List PStmt :=
         (or2 (eEq (v "cz") (n 46)) (eEq (v "cz") (n 45)))),
       inc "jq"]]
 
-/-- `ok` is one when the second word is an article number (§6, §9.8). -/
-def numberCheck : List PStmt :=
-  [.assign "ok" (eAnd (eLe (n 1) (v "l1")) (eLe (v "l1") (n 16))),
+/-- `ok` is one when the word from `s` of length `l` is an article number (§6, §9.8), its value in
+`val`. -/
+def numberCheckAt (s l : PExpr) : List PStmt :=
+  [.assign "ok" (eAnd (eLe (n 1) l) (eLe l (n 16))),
    .assign "val" (n 0),
    .assign "jq" (n 0),
-   .while (eAnd (v "ok") (eLt (v "jq") (v "l1")))
-     [.dec "cz" (kept (eAdd (v "s1") (v "jq"))),
+   .while (eAnd (v "ok") (eLt (v "jq") l))
+     [.dec "cz" (kept (eAdd s (v "jq"))),
       .assign "ok" (isDigitE (v "cz")),
       .assign "val" (eAdd (eMul (v "val") (n 10)) (eSub (v "cz") (n 48))),
       inc "jq"],
    .ite (v "ok") [.assign "ok" (eLe (v "val") (n 2147483647))] []]
 
-/-- `ok` is one when the second word is a newsgroup name: `wildmat-exact` characters (§9.8), the
-US-ASCII ones printable but for `!*,?[\]`, past US-ASCII UTF-8 as RFC 3629 §4 writes it; `nd`
-counts the continuation octets a character still needs, the first of them between `clo` and
-`chi`. -/
-def groupNameCheck : List PStmt :=
-  let between (lo hi : Nat) (e : PExpr) : PExpr := eAnd (eLe (n lo) e) (eLe e (n hi))
-  [.assign "ok" (eLe (n 1) (v "l1")), .dec "nd" (n 0), .dec "clo" (n 128), .dec "chi" (n 191),
-   .assign "jq" (n 0),
-   .while (eAnd (v "ok") (eLt (v "jq") (v "l1")))
-     [.dec "cz" (kept (eAdd (v "s1") (v "jq"))),
-      .ite (eLt (n 0) (v "nd"))
-        [ifs (or2 (eLt (v "cz") (v "clo")) (eLt (v "chi") (v "cz"))) [.assign "ok" (n 0)],
-         .assign "nd" (eSub (v "nd") (n 1)), .assign "clo" (n 128), .assign "chi" (n 191)]
-        [.ite (eLt (v "cz") (n 128))
-          [.assign "ok" (or2 (or2 (or2 (between 34 41 (v "cz")) (eEq (v "cz") (n 43)))
-              (or2 (between 45 62 (v "cz")) (between 64 90 (v "cz")))) (between 94 126 (v "cz")))]
-          [.ite (between 194 223 (v "cz")) [.assign "nd" (n 1)]
-            [.ite (eEq (v "cz") (n 224)) [.assign "nd" (n 2), .assign "clo" (n 160)]
-              [.ite (or2 (between 225 236 (v "cz")) (between 238 239 (v "cz"))) [.assign "nd" (n 2)]
-                [.ite (eEq (v "cz") (n 237)) [.assign "nd" (n 2), .assign "chi" (n 159)]
-                  [.ite (eEq (v "cz") (n 240)) [.assign "nd" (n 3), .assign "clo" (n 144)]
-                    [.ite (between 241 243 (v "cz")) [.assign "nd" (n 3)]
-                      [.ite (eEq (v "cz") (n 244)) [.assign "nd" (n 3), .assign "chi" (n 143)]
-                        [.assign "ok" (n 0)]]]]]]]]],
-      inc "jq"],
-   ifs (eLt (n 0) (v "nd")) [.assign "ok" (n 0)]]
+/-- `ok` is one when the second word is an article number. -/
+def numberCheck : List PStmt := numberCheckAt (v "s1") (v "l1")
+
+def between (lo hi : Nat) (e : PExpr) : PExpr := eAnd (eLe (n lo) e) (eLe e (n hi))
+
+/-- A `wildmat-exact` octet of US-ASCII (§9.8): printable, but for `!*,?[\]`. -/
+def isExactE (e : PExpr) : PExpr :=
+  or2 (or2 (or2 (between 34 41 e) (eEq e (n 43))) (or2 (between 45 62 e) (between 64 90 e)))
+    (between 94 126 e)
+
+/-- UTF-8 past US-ASCII, as RFC 3629 §4 writes it, an octet `cz` at a time: `nd` counts the
+continuation octets a character still needs, the first of them between `clo` and `chi`. One is
+checked; a lead octet sets them; `ok` is zero for any other. -/
+def utf8Tail : List PStmt :=
+  [ifs (or2 (eLt (v "cz") (v "clo")) (eLt (v "chi") (v "cz"))) [.assign "ok" (n 0)],
+   .assign "nd" (eSub (v "nd") (n 1)), .assign "clo" (n 128), .assign "chi" (n 191)]
+def utf8Lead : PStmt :=
+  .ite (between 194 223 (v "cz")) [.assign "nd" (n 1)]
+    [.ite (eEq (v "cz") (n 224)) [.assign "nd" (n 2), .assign "clo" (n 160)]
+      [.ite (or2 (between 225 236 (v "cz")) (between 238 239 (v "cz"))) [.assign "nd" (n 2)]
+        [.ite (eEq (v "cz") (n 237)) [.assign "nd" (n 2), .assign "chi" (n 159)]
+          [.ite (eEq (v "cz") (n 240)) [.assign "nd" (n 3), .assign "clo" (n 144)]
+            [.ite (between 241 243 (v "cz")) [.assign "nd" (n 3)]
+              [.ite (eEq (v "cz") (n 244)) [.assign "nd" (n 3), .assign "chi" (n 143)]
+                [.assign "ok" (n 0)]]]]]]]
+
+/-- Whether the word from `s1` of length `l1` of the line connection `c` keeps is a newsgroup
+name: `wildmat-exact` characters (§9.8). -/
+def groupName : PFun :=
+  { name := "groupName", params := [(1, "c"), (1, "s1"), (1, "l1")], body :=
+    [keptIn (v "c") (conns - 1), keptIn (v "s1") lineLimit, keptIn (v "l1") lineLimit,
+     .dec "blk" (atOff (record (v "c")) cFramer),
+     .dec "ok" (eLe (n 1) (v "l1")), .dec "nd" (n 0), .dec "clo" (n 128), .dec "chi" (n 191),
+     .dec "jq" (n 0),
+     .while (eAnd (v "ok") (eLt (v "jq") (v "l1")))
+       [.dec "cz" (kept (eAdd (v "s1") (v "jq"))),
+        .ite (eLt (n 0) (v "nd")) utf8Tail
+          [.ite (eLt (v "cz") (n 128)) [.assign "ok" (isExactE (v "cz"))] [utf8Lead]],
+        inc "jq"],
+     ifs (eLt (n 0) (v "nd")) [.assign "ok" (n 0)]] ++ SessionStore.give (v "ok") }
 
 /-- `ok` is one when the second word is a message-id (§3.6, §9.8). -/
 def messageIdCheck : List PStmt :=
@@ -305,12 +366,124 @@ def messageIdCheck : List PStmt :=
         (eAnd (eLt (n 62) (v "cz")) (eLt (v "cz") (n 127)))),
       inc "jq"]]
 
+/-- `ok` is one when the third word is a range of article numbers (§6.1.2.2, §9.8), from `lo` to
+`hi`: a number, a number and a dash, or two numbers with a dash between them. -/
+def rangeCheck : List PStmt :=
+  [.dec "dn" (n 0), .dec "dp" (n 0), .assign "jq" (n 0),
+   .while (eLt (v "jq") (v "l2"))
+     [ifs (eEq (kept (eAdd (v "s2") (v "jq"))) (n 45))
+        [ifs (eEq (v "dn") (n 0)) [.assign "dp" (v "jq")], inc "dn"],
+      inc "jq"],
+   .ite (eEq (v "dn") (n 0))
+     (numberCheckAt (v "s2") (v "l2") ++ [.assign "lo" (v "val"), .assign "hi" (v "val")])
+     [.ite (eEq (v "dn") (n 1))
+       (numberCheckAt (v "s2") (v "dp") ++
+        [.assign "lo" (v "val"),
+         ifs (v "ok")
+           [.ite (eEq (eAdd (v "dp") (n 1)) (v "l2")) [.assign "hi" (n News.CommandSpec.numberMax)]
+             (numberCheckAt (eAdd (eAdd (v "s2") (v "dp")) (n 1))
+                (eSub (eSub (v "l2") (v "dp")) (n 1)) ++
+              [.assign "hi" (v "val")])]])
+       [.assign "ok" (n 0)]]]
+
+/-- `ok` is one when the third word is a wildmat (§4.1): patterns parted by commas, each of
+`wildmat-exact` characters, `*` and `?`, those after the first negated by a `!` before them or not;
+`items` counts a pattern's items, and `bang` is one where a `!` may stand. -/
+def wildmatCheck : List PStmt :=
+  [.dec "nd" (n 0), .dec "clo" (n 128), .dec "chi" (n 191), .dec "items" (n 0), .dec "bang" (n 0),
+   .assign "jq" (n 0),
+   .while (eAnd (v "ok") (eLt (v "jq") (v "l2")))
+     [.dec "cz" (kept (eAdd (v "s2") (v "jq"))),
+      .ite (eLt (n 0) (v "nd")) utf8Tail
+        [.ite (eEq (v "cz") (n 44))
+          [ifs (eEq (v "items") (n 0)) [.assign "ok" (n 0)], .assign "items" (n 0),
+           .assign "bang" (n 1)]
+          [.ite (eEq (v "cz") (n 33))
+            [.ite (v "bang") [.assign "bang" (n 0)] [.assign "ok" (n 0)]]
+            [.assign "bang" (n 0), inc "items",
+             .ite (eLt (v "cz") (n 128))
+               [.assign "ok"
+                 (or2 (isExactE (v "cz")) (or2 (eEq (v "cz") (n 42)) (eEq (v "cz") (n 63))))]
+               [utf8Lead]]]],
+      inc "jq"],
+   ifs (or2 (eLt (n 0) (v "nd")) (eEq (v "items") (n 0))) [.assign "ok" (n 0)]]
+
+/-- The number the two digits at `s + k` write. -/
+def twoAt (s k : PExpr) : PExpr :=
+  eAdd (eMul (eSub (kept (eAdd s k)) (n 48)) (n 10)) (eSub (kept (eAdd (eAdd s k) (n 1))) (n 48))
+
+/-- `ok` stays one while each octet of the word from `s` of length `l` is a digit. -/
+def allDigits (s l : PExpr) : List PStmt :=
+  [.assign "jq" (n 0),
+   .while (eAnd (v "ok") (eLt (v "jq") l))
+     [.assign "ok" (isDigitE (kept (eAdd s (v "jq")))), inc "jq"]]
+
+/-- `ok` is one when the second word is a date of NEWGROUPS and the third its time (§7.3.2):
+`yymmdd` or `yyyymmdd`, the century from 19, the month from 01 to 12, the day from 01 to 31;
+`hhmmss`, the hour below 24, the minute below 60, the second at most 60. -/
+def dateTimeCheck : List PStmt :=
+  [.assign "ok" (or2 (eEq (v "l1") (n 6)) (eEq (v "l1") (n 8)))] ++ allDigits (v "s1") (v "l1") ++
+  [ifs (eEq (v "l1") (n 8)) [.assign "ok" (eAnd (v "ok") (eLe (n 19) (twoAt (v "s1") (n 0))))],
+   ifs (v "ok")
+     [.assign "ok" (eAnd (between 1 12 (twoAt (v "s1") (eSub (v "l1") (n 4))))
+        (between 1 31 (twoAt (v "s1") (eSub (v "l1") (n 2)))))],
+   ifs (v "ok")
+     ([.assign "ok" (eEq (v "l2") (n 6))] ++ allDigits (v "s2") (v "l2") ++
+      [ifs (v "ok")
+        [.assign "ok" (eAnd (eAnd (eLe (twoAt (v "s2") (n 0)) (n 23))
+           (eLe (twoAt (v "s2") (n 2)) (n 59))) (eLe (twoAt (v "s2") (n 4)) (n 60)))]])]
+
+/-- The reply to a LISTGROUP (12), LIST (13), DATE (14) or NEWGROUPS (15), the line connection `c`
+keeps, as `CommandSpec.answerIn` gives it: of a LISTGROUP whether it names its group and its range,
+in `ownNamed`, `ownLo` and `ownHi`; of a LIST where its wildmat lies, in `ownWs` and `ownWl`, of
+length zero when it has none. -/
+def listClassify : PFun :=
+  let set (o : Nat) (e : PExpr) : PStmt := .store (at_ (ownOff + o)) e
+  let say (r : News.CommandSpec.Reply) : PStmt := .assign "r" (n (replyCode r))
+  { name := "listClassify", params := [(1, "c"), (1, "cmd")], body :=
+    [keptIn (v "c") (conns - 1), .dec "blk" (atOff (record (v "c")) cFramer),
+     .dec "kept" (ld (atOff (v "blk") 32)), keptIn (v "kept") lineLimit] ++ scanWords 4 ++
+    ([1, 2, 3].flatMap fun j => [keptIn (v s!"s{j}") lineLimit, keptIn (v s!"l{j}") lineLimit]) ++
+    [.dec "args" (eSub (v "w") (n 1)), .dec "r" (n (replyCode .syntax)), .dec "ok" (n 1),
+     .dec "val" (n 0), .dec "jq" (n 0), .dec "eqk" (n 0), .dec "lo" (n 1),
+     .dec "hi" (n News.CommandSpec.numberMax),
+     ifs (eEq (v "cmd") (n 12))
+       [.ite (eEq (v "args") (n 0))
+         [say (.listGroup none 0 0), set ownNamed (n 0), set ownLo (v "lo"), set ownHi (v "hi")]
+         [ifs (eLe (v "args") (n 2))
+           ([ifs (eEq (v "args") (n 2)) rangeCheck] ++
+            [ifs (v "ok")
+              (callS "gn" "groupName" [v "c", v "s1", v "l1"] ++
+               [ifs found
+                 [.ite (eLe (v "l1") (n News.CommandSpec.groupNameMax))
+                   [say (.listGroup none 0 0), set ownNamed (n 1), set ownLo (v "lo"),
+                    set ownHi (v "hi")]
+                   [say .noSuchGroup]]])])]],
+     ifs (eEq (v "cmd") (n 13))
+       [set ownWs (n 0), set ownWl (n 0),
+        .ite (eEq (v "args") (n 0)) [say (.active none)]
+          [ifs (eLe (v "args") (n 2))
+            ([ifs (eEq (v "args") (n 2))
+                (wildmatCheck ++ [set ownWs (v "s2"), set ownWl (v "l2")])] ++
+             [ifs (v "ok")
+               (wordIsAt "s1" "l1" tActive ++ [ifs (v "eqk") [say (.active none)]] ++
+                wordIsAt "s1" "l1" tNewsgroups ++ [ifs (v "eqk") [say .newsgroups]])])]],
+     ifs (eEq (v "cmd") (n 14)) [ifs (eEq (v "args") (n 0)) [say .date]],
+     ifs (eEq (v "cmd") (n 15))
+       [ifs (eAnd (eLe (n 2) (v "args")) (eLe (v "args") (n 3)))
+         (dateTimeCheck ++
+          [ifs (eAnd (v "ok") (eEq (v "args") (n 3)))
+             (wordIsAt "s3" "l3" tGmt ++ [.assign "ok" (v "eqk")]),
+           ifs (v "ok") [say .newGroups]])]] ++
+    SessionStore.give (v "r") }
+
 /-- The reply `r` to the line the framer reported (`kind`, `kept`, the bytes from `blk + 40`),
-as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE, BODY, GROUP, NEXT and LAST commands when
-there is a store, which looks up a message-id (`lookup`), a number (`byNumber`, its value in `val`),
-the current article (`current`), a group (`select`) and the next or previous article (`move`). -/
+as `DN.News.CommandSpec.replyIn` gives it, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST,
+DATE and NEWGROUPS commands when there is a store, which looks up a message-id (`lookup`), a number
+(`byNumber`, its value in `val`), the current article (`current`), a group (`select`) and the next or
+previous article (`move`); `listClassify` reads the last four's arguments. -/
 def classify : List PStmt :=
-  scanWords ++
+  scanWords 2 ++
   [.dec "cmd" (n 0), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "ok" (n 0), .dec "val" (n 0),
    .ite (eEq (v "w") (n 0))
      [.ite (isKind .overlong) [reply .unknown] [reply .ignore]]
@@ -321,9 +494,15 @@ def classify : List PStmt :=
          nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]] ++
          nameIsAt tGroup ++ [ifs (v "eqk") [.assign "cmd" (n 9)]] ++
          nameIsAt tNext ++ [ifs (v "eqk") [.assign "cmd" (n 10)]] ++
-         nameIsAt tLast ++ [ifs (v "eqk") [.assign "cmd" (n 11)]]),
+         nameIsAt tLast ++ [ifs (v "eqk") [.assign "cmd" (n 11)]] ++
+         nameIsAt tListgroup ++ [ifs (v "eqk") [.assign "cmd" (n 12)]] ++
+         nameIsAt tList ++ [ifs (v "eqk") [.assign "cmd" (n 13)]] ++
+         nameIsAt tDate ++ [ifs (v "eqk") [.assign "cmd" (n 14)]] ++
+         nameIsAt tNewgroups ++ [ifs (v "eqk") [.assign "cmd" (n 15)]]),
        .ite (eEq (v "cmd") (n 0)) [reply .unknown]
         [.ite (ne (v "kind") (n (News.FramerProg.kindCode .command))) [reply .syntax]
+         [.ite (eLe (n 12) (v "cmd"))
+           (callS "lc" "listClassify" [v "c", v "cmd"] ++ [.assign "r" found])
           [.dec "args" (eSub (v "w") (n 1)),
            .ite (eEq (v "cmd") (n 1))
              [.ite (eEq (v "args") (n 0)) [reply .capabilities]
@@ -338,8 +517,8 @@ def classify : List PStmt :=
                    [.ite (eEq (v "args") (n 0)) [reply .post] [reply .syntax]]
                    [.ite (eEq (v "cmd") (n 9))
                      [.ite (eEq (v "args") (n 1))
-                       (groupNameCheck ++
-                        [.ite (v "ok")
+                       (callS "gn" "groupName" [v "c", v "s1", v "l1"] ++
+                        [.ite found
                           [.ite (eLe (v "l1") (n News.CommandSpec.groupNameMax))
                             [reply (.select [])] [reply .noSuchGroup]]
                           [reply .syntax]])
@@ -356,7 +535,7 @@ def classify : List PStmt :=
                                [.ite (v "ok")
                                  [.ite hasStore [reply (.lookup .head 0 [])] [reply .noSuchId]]
                                  [reply .syntax]])])
-                           [reply .syntax]]]]]]]]]]])]
+                           [reply .syntax]]]]]]]]]]]])]
 
 /-- The read an ARTICLE (one), HEAD (two) or BODY (three) is answered by, as `wc`, of the commit at
 `wci`, its first line giving the number `no`; or, for STAT, 223. -/
@@ -366,31 +545,99 @@ def readOrStat (no : PExpr) : List PStmt :=
      ifs (eEq (v "cmd") (n 7)) [.assign "wc" (n 1)],
      ifs (eEq (v "cmd") (n 8)) [.assign "wc" (n 3)]]]
 
-/-- GROUP (`SessionSpec.resolve`): the group of the store whose name is the second word, its count
-and its lowest and highest numbers, an empty group's 1 and 0, to be selected and its first article
-made current; or 411. -/
+/-- The place among the store's groups of the one whose name is the word from `s1` of length `l1`
+of the line connection `c` keeps, or `groupsMax` when it carries none of that name. -/
+def groupNamed : PFun :=
+  { name := "groupNamed", params := [(1, "c"), (1, "s1"), (1, "l1")], body :=
+    [keptIn (v "c") (conns - 1), keptIn (v "s1") lineLimit, keptIn (v "l1") lineLimit,
+     .dec "blk" (atOff (record (v "c")) cFramer),
+     .dec "gc" (ld (at_ (recOff + News.RecoverProg.rGroupCount))), keptIn (v "gc") groupsMax,
+     .dec "gx" (n groupsMax), .dec "gq" (n 0),
+     .while (eLt (v "gq") (v "gc"))
+       [.dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+          (eMul (v "gq") (n News.RecoverProg.rGroupSlot))),
+        .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax,
+        ifs (eAnd (eEq (v "gx") (n groupsMax)) (eEq (v "gl") (v "l1")))
+          [.dec "same" (n 1), .dec "jg" (n 0),
+           .while (eLt (v "jg") (v "gl"))
+             [ifs (ne (.loadb (eAdd (atOff (v "gp") 8) (v "jg"))) (kept (eAdd (v "s1") (v "jg"))))
+                [.assign "same" (n 0)],
+              inc "jg"],
+           ifs (v "same") [.assign "gx" (v "gq")]],
+        inc "gq"]] ++ SessionStore.give (v "gx") }
+
+/-- The groups of the store a LIST's wildmat takes (§4.2), a bit each, into `ownMask`; all without
+one. The rightmost pattern that matches decides, a negated one against. A pattern matches by
+moving back to its last `*` on a mismatch. The store's names are of US-ASCII alone
+(`ArticleSpec.Context.ok`), so a character of one is an octet. A character of the wildmat past
+US-ASCII matches none, and so does each of its octets. -/
+def listActive : PFun :=
+  { name := "listActive", params := [(1, "c")], body :=
+    [keptIn (v "c") (conns - 1), .dec "blk" (atOff (record (v "c")) cFramer),
+     .dec "ws" (ownW ownWs), .dec "wl" (ownW ownWl), keptIn (v "ws") lineLimit,
+     keptIn (v "wl") lineLimit, .dec "we" (eAdd (v "ws") (v "wl")), keptIn (v "we") lineLimit,
+     .dec "gc" (ld (at_ (recOff + News.RecoverProg.rGroupCount))), keptIn (v "gc") groupsMax,
+     .dec "mask" (n 0), .dec "bit" (n 1), .dec "k" (n 0),
+     .while (eLt (v "k") (v "gc"))
+       [.dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+          (eMul (v "k") (n News.RecoverProg.rGroupSlot))),
+        .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax,
+        .dec "res" (eEq (v "wl") (n 0)), .dec "ps" (v "ws"),
+        .while (eLt (v "ps") (v "we"))
+          [keptIn (v "ps") lineLimit, .dec "neg" (eEq (kept (v "ps")) (n 33)),
+           .dec "pe" (eAdd (v "ps") (v "neg")),
+           .dec "pa" (v "pe"),
+           .dec "on" (n 1),
+           .while (v "on")
+             [.ite (eLt (v "pe") (v "we"))
+               [keptIn (v "pe") lineLimit,
+                .ite (eEq (kept (v "pe")) (n 44)) [.assign "on" (n 0)] [inc "pe"]]
+               [.assign "on" (n 0)]],
+           .dec "i" (n 0), .dec "j" (v "pa"), .dec "hs" (n 0), .dec "si" (n 0), .dec "mi" (n 0),
+           .dec "fl" (n 0),
+           .while (eAnd (eLt (v "i") (v "gl")) (eEq (v "fl") (n 0)))
+             [keptIn (v "i") (groupMax - 1), .dec "pj" (n 256),
+              ifs (eLt (v "j") (v "pe")) [keptIn (v "j") lineLimit, .assign "pj" (kept (v "j"))],
+              .ite (or2 (eEq (v "pj") (n 63))
+                  (eEq (v "pj") (.loadb (eAdd (atOff (v "gp") 8) (v "i")))))
+                [inc "i", inc "j"]
+                [.ite (eEq (v "pj") (n 42))
+                  [.assign "hs" (n 1), .assign "si" (v "j"), .assign "mi" (v "i"), inc "j"]
+                  [.ite (v "hs") [.assign "j" (eAdd (v "si") (n 1)), inc "mi", .assign "i" (v "mi")]
+                    [.assign "fl" (n 1)]]]],
+           .assign "on" (eEq (v "fl") (n 0)),
+           .while (v "on")
+             [.ite (eLt (v "j") (v "pe"))
+               [keptIn (v "j") lineLimit,
+                .ite (eEq (kept (v "j")) (n 42)) [inc "j"] [.assign "on" (n 0)]]
+               [.assign "on" (n 0)]],
+           ifs (eAnd (eEq (v "fl") (n 0)) (eEq (v "j") (v "pe")))
+             [.assign "res" (eEq (v "neg") (n 0))],
+           .assign "ps" (eAdd (v "pe") (n 1))],
+        ifs (v "res") [.assign "mask" (eOr (v "mask") (v "bit"))],
+        .assign "bit" (.shl (v "bit") (n 1)), inc "k"],
+     .store (at_ (ownOff + ownMask)) (v "mask")] ++ SessionStore.give (n 0) }
+
+/-- GROUP and LISTGROUP (`SessionSpec.resolve`): the group of the store whose name is the second
+word, or for a LISTGROUP without one the selected group, else 412; its count and its lowest and
+highest numbers, an empty group's 1 and 0, to be selected and its first article made current; or
+411. -/
 def selectGroup : List PStmt :=
-  [.dec "gc" (ld (at_ (recOff + News.RecoverProg.rGroupCount))), keptIn (v "gc") groupsMax,
-   .dec "gx" (n groupsMax), .dec "gq" (n 0),
-   .while (eLt (v "gq") (v "gc"))
-     [.dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
-        (eMul (v "gq") (n News.RecoverProg.rGroupSlot))),
-      .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax,
-      ifs (eAnd (eEq (v "gx") (n groupsMax)) (eEq (v "gl") (v "l1")))
-        [.dec "same" (n 1), .dec "jg" (n 0),
-         .while (eLt (v "jg") (v "gl"))
-           [ifs (ne (.loadb (eAdd (atOff (v "gp") 8) (v "jg"))) (kept (eAdd (v "s1") (v "jg"))))
-              [.assign "same" (n 0)],
-            inc "jg"],
-         ifs (v "same") [.assign "gx" (v "gq")]],
-      inc "gq"],
-   .ite (eEq (v "gx") (n groupsMax)) [reply .noSuchGroup]
-     (callS "gs" "groupScan" [v "gx", n 0, n 0] ++
-      [.dec "gk" (ownW ownCount),
-       ifs (eEq (v "gk") (n 0)) [SessionStore.sset ownLow (n 1), SessionStore.sset ownHigh (n 0)],
-       reply (.selected 0 0 0 []), .assign "setg" (n 1), .assign "gnew" (eAdd (v "gx") (n 1)),
-       .assign "setc" (n 1), .assign "cnew" (n 0),
-       ifs (ne (v "gk") (n 0)) [.assign "cnew" (ownW ownLow)]])]
+  [.dec "gx" (n groupsMax),
+   .ite (eAnd (isReply (.listGroup none 0 0)) (eEq (ownW ownNamed) (n 0)))
+     [.dec "gg" (fld "cb" cGroup), keptIn (v "gg") groupsMax,
+      .ite (eEq (v "gg") (n 0)) [.assign "gx" (n (groupsMax + 1))]
+        [.assign "gx" (eSub (v "gg") (n 1))]]
+     (callS "gf" "groupNamed" [v "c", v "s1", v "l1"] ++ [.assign "gx" found]),
+   .ite (eEq (v "gx") (n (groupsMax + 1))) [reply .noGroup]
+     [.ite (eEq (v "gx") (n groupsMax)) [reply .noSuchGroup]
+       (callS "gs" "groupScan" [v "gx", n 0, n 0] ++
+        [.dec "gk" (ownW ownCount),
+         ifs (eEq (v "gk") (n 0)) [SessionStore.sset ownLow (n 1), SessionStore.sset ownHigh (n 0)],
+         .ite (isReply (.select [])) [reply (.selected 0 0 0 [])] [reply (.listed 0 0 0 [] 0 0)],
+         .assign "setg" (n 1), .assign "gnew" (eAdd (v "gx") (n 1)),
+         .assign "setc" (n 1), .assign "cnew" (n 0),
+         ifs (ne (v "gk") (n 0)) [.assign "cnew" (ownW ownLow)]])]]
 
 /-- By number or of the current article (`SessionSpec.resolve`): with no group selected 412; the
 article of that number in the selected group, else 423, or the current one, else 420. -/
@@ -424,7 +671,8 @@ connection may post, the help with POST, for a POST 440 or 403 unless it may hav
 message-id 430 when the store does not hold it, 223 for STAT when it does; else the ARTICLE (one),
 HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`, its first line
 giving the number `wno`; the replies of the selected group and the current article, and where they
-leave them (`setg`, `gnew`, `setc`, `cnew`). -/
+leave them (`setg`, `gnew`, `setc`, `cnew`); the groups a LIST ACTIVE takes (`listActive`); and the
+wall clock of a DATE. -/
 def resolve : List PStmt :=
   [.dec "wc" (n 0), .dec "wci" (n 0), .dec "wno" (n 0), .dec "setg" (n 0), .dec "gnew" (n 0),
    .dec "setc" (n 0), .dec "cnew" (n 0),
@@ -440,7 +688,9 @@ def resolve : List PStmt :=
          [.storeb (eAdd (at_ (ownOff + ownId)) (v "ij")) (kept (eAdd (v "s1") (v "ij"))), inc "ij"]] ++
       callS "fi" "idFind" [v "l1"] ++
       [.ite (eEq found (n 0)) [reply .noSuchId] (readOrStat (n 0))]),
-   ifs (isReply (.select [])) selectGroup,
+   ifs (or2 (isReply (.select [])) (isReply (.listGroup none 0 0))) selectGroup,
+   ifs (isReply (.active none)) (callS "la" "listActive" [v "c"]),
+   ifs (isReply .date) [reply (.time [])],
    ifs (or2 (isReply (.byNumber .head 0)) (isReply (.current .head))) numberLookup,
    ifs (isReply (.move true)) moveLookup]
 
@@ -453,9 +703,70 @@ def inPhase (ph : News.SessionSpec.Phase) : PExpr := eEq phase (n (phaseCode ph)
 def toPhase (ph : News.SessionSpec.Phase) : PStmt := setf "cb" cPhase (n (phaseCode ph))
 def heldEmpty : PExpr := eEq (fld "cb" cHeldPos) (fld "cb" cHeldLen)
 
+/-- `SessionSpec.progressList`: with nothing untaken, the next part of the reply that goes out a
+part at a time put to send (`Listing.part`), each line made in `ownLine` first: as many lines as
+fit an action, then the terminating line once that fits too; the inactivity deadline started
+again. The next of a group's numbers is the lowest of its articles' from `cListB` to `cListC`; of
+the groups, the first from `cListA` whose bit in `cListC` is set. -/
+def listPart : PFun :=
+  let line : PExpr := at_ (ownOff + ownLine)
+  let put (e : PExpr) : List PStmt :=
+    [keptIn (v "ln") (lineMax - 1), .storeb (eAdd line (v "ln")) e, inc "ln"]
+  { name := "listPart", params := [(1, "c"), (1, "now")], body :=
+    [keptIn (v "c") (conns - 1), .dec "cb" (record (v "c")), .dec "lk" (fld "cb" cList),
+     keptIn (v "lk") 2,
+     ifs (eAnd (ne (v "lk") (n 0)) (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting)))))
+       [.dec "la" (fld "cb" cListA), keptIn (v "la") groupsMax, .dec "lb" (fld "cb" cListB),
+        .dec "lc" (fld "cb" cListC),
+        .dec "gc" (ld (at_ (recOff + News.RecoverProg.rGroupCount))), keptIn (v "gc") groupsMax,
+        .dec "ob" (atOff (v "cb") cOut), .dec "o" (n 0), .dec "go" (n 1),
+        .while (v "go")
+          [.dec "ln" (n 0), .dec "nx" (n 0),
+           .ite (eEq (v "lk") (n 1))
+             (callS "ls" "groupScan" [v "la", n 2, eSub (v "lb") (n 1)] ++
+              [.dec "num" (ownW ownNum),
+               ifs (eAnd (ne found (n 0)) (eLe (v "num") (v "lc")))
+                 (digits "nn" line "ln" (v "num") lineMax ++ put (n 13) ++ put (n 10) ++
+                  [.assign "nx" (eAdd (v "num") (n 1))])])
+             [.dec "k" (n 0), .dec "bits" (v "lc"),
+              .while (eLt (v "k") (v "la")) [.assign "bits" (.shr (v "bits") (n 1)), inc "k"],
+              .while (eAnd (eLt (v "k") (v "gc")) (eEq (eAnd (v "bits") (n 1)) (n 0)))
+                [.assign "bits" (.shr (v "bits") (n 1)), inc "k"],
+              ifs (eLt (v "k") (v "gc"))
+                (callS "lt" "groupScan" [v "k", n 0, n 0] ++
+                 [.dec "lw" (ownW ownLow), .dec "lh" (ownW ownHigh),
+                  ifs (eEq (ownW ownCount) (n 0)) [.assign "lw" (n 1), .assign "lh" (n 0)],
+                  .dec "gp" (eAdd (at_ (recOff + News.RecoverProg.rGroups))
+                    (eMul (v "k") (n News.RecoverProg.rGroupSlot))),
+                  .dec "gl" (ld (v "gp")), keptIn (v "gl") groupMax] ++
+                 copyNew "gj" line (atOff (v "gp") 8) (v "gl") ++
+                 [.assign "ln" (v "gl")] ++ put (n 32) ++ digits "nh" line "ln" (v "lh") lineMax ++
+                 put (n 32) ++ digits "nl" line "ln" (v "lw") lineMax ++ put (n 32) ++
+                 [.dec "yn" (n 110), ifs (ownW ownAccepting) [.assign "yn" (n 121)]] ++
+                 put (v "yn") ++ put (n 13) ++ put (n 10) ++ [.assign "nx" (eAdd (v "k") (n 1))])],
+           .ite (eLt (n 0) (v "ln"))
+             [.ite (eLe (eAdd (v "o") (v "ln")) (n data))
+               [.dec "cj" (n 0),
+                .while (eLt (v "cj") (v "ln"))
+                  [keptIn (v "o") (data - 1),
+                   .storeb (eAdd (v "ob") (v "o")) (.loadb (eAdd line (v "cj"))), inc "o",
+                   inc "cj"],
+                .ite (eEq (v "lk") (n 1)) [.assign "lb" (v "nx")] [.assign "la" (v "nx")]]
+               [.assign "go" (n 0)]]
+             [ifs (eLe (eAdd (v "o") (n 3)) (n data))
+                [keptIn (v "o") (data - 3), .storeb (eAdd (v "ob") (v "o")) (n 46),
+                 .storeb (eAdd (eAdd (v "ob") (v "o")) (n 1)) (n 13),
+                 .storeb (eAdd (eAdd (v "ob") (v "o")) (n 2)) (n 10),
+                 .assign "o" (eAdd (v "o") (n 3)), .assign "lk" (n 0)],
+              .assign "go" (n 0)]],
+        setf "cb" cList (v "lk"), setf "cb" cListA (v "la"), setf "cb" cListB (v "lb"),
+        setf "cb" cOutLen (v "o"), setf "cb" cIdle (eAdd (v "now") (n inactivity))]] ++
+    SessionStore.give (n 0) }
+
 /-- Answer the first held line that gets a reply and frame on past the lines that get none, as
 `DN.News.SessionSpec.serve` does; a POST that may have a slot waits for one, and an ARTICLE, HEAD or
-BODY of an article the store holds for a read, framing on. -/
+BODY of an article the store holds for a read, framing on. A LISTGROUP or LIST ACTIVE answered
+leaves what is left of its reply (`cList`), and nothing is answered until it has gone out. -/
 def serve : List PStmt :=
   [.dec "blk" (atOff (v "cb") cFramer), .dec "p" (atOff (v "cb") cHeld),
    .dec "n" (fld "cb" cHeldLen), .dec "i" (fld "cb" cHeldPos), .dec "sv" (n 1),
@@ -468,7 +779,8 @@ def serve : List PStmt :=
         [.ite (eEq (v "kind") (n 0)) [.assign "sv" (n 0)]
           ([.dec "r" (n (replyCode .ignore))] ++ classify ++ resolve ++
            [.ite (isReply .ignore) []
-             [.ite (or2 (ne outLen (n 0)) (ne (fld "cb" cWant) (n 0)))
+             [.ite (or2 (or2 (ne outLen (n 0)) (ne (fld "cb" cWant) (n 0)))
+                 (ne (fld "cb" cList) (n 0)))
                [.assign "i" (v "i0"), .assign "sv" (n 0)]
                [.ite (isReply .post)
                  [setf "cb" cWaiting (n 1), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0),
@@ -479,7 +791,15 @@ def serve : List PStmt :=
                  ([ifs (v "setg") [setf "cb" cGroup (v "gnew")],
                    ifs (v "setc") [setf "cb" cCurrent (v "cnew")]] ++
                   callS "wt" "connText" [v "c", v "r"] ++
-                  [setf "cb" cFirst (n 0),
+                  [ifs (isReply (.listed 0 0 0 [] 0 0))
+                     [setf "cb" cList (n 1), setf "cb" cListA (eSub (v "gnew") (n 1)),
+                      setf "cb" cListB (ownW ownLo), .dec "lh" (ownW ownHi),
+                      ifs (eLt (ownW ownHigh) (v "lh")) [.assign "lh" (ownW ownHigh)],
+                      setf "cb" cListC (v "lh")],
+                   ifs (isReply (.active none))
+                     [setf "cb" cList (n 2), setf "cb" cListA (n 0),
+                      setf "cb" cListC (ownW ownMask)],
+                   setf "cb" cFirst (n 0),
                    setf "cb" cIdle (eAdd (v "now") (n inactivity)),
                    .ite (isReply .quit)
                      [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]]])])],
@@ -519,7 +839,8 @@ def emptySend : List PStmt :=
 /-- The line's deadline runs while the program waits for the rest of a line, as
 `DN.News.SessionSpec.Conn.waitLine` says. -/
 def waitLine : List PStmt :=
-  [.ite (eAnd (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_)) (eEq (fld "cb" cWant) (n 0)))
+  [.ite (eAnd (eAnd (eAnd (eAnd (eEq outLen (n 0)) (inPhase .open_)) (eEq (fld "cb" cWant) (n 0)))
+        (eEq (fld "cb" cList) (n 0)))
       (eLt (n 0)
         (eAdd (eAdd (fld "cb" cFramer) (fld "cb" (cFramer + 8))) (fld "cb" (cFramer + 16)))))
      [.ite (eEq (fld "cb" cLineDue) (n 0))
@@ -618,10 +939,11 @@ def claim : List PStmt :=
 /-- `SessionSpec.emit`: the output as a send, unless the host has not yet reported the connection
 ready; a graceful close once everything is answered and taken after a QUIT or the end of input;
 or a send of nothing when whether to read has changed. No POST or read waits or answers the
-connection when it is asked to read. -/
+connection, and no reply goes out a part at a time, when it is asked to read. -/
 def emit : List PStmt :=
   [.dec "wants" (eAnd (eAnd (inPhase .open_) heldEmpty)
-      (eAnd (eEq (fld "cb" cWaiting) (n 0)) (eEq (fld "cb" cWant) (n 0)))),
+      (eAnd (eAnd (eEq (fld "cb" cWaiting) (n 0)) (eEq (fld "cb" cWant) (n 0)))
+        (eEq (fld "cb" cList) (n 0)))),
    ifs (eAnd (v "wants") (ne (fld "cb" cPost) (n 0)))
      ([.dec "tk" (eSub (fld "cb" cPost) (n 1))] ++ callS "tq" "postTakes" [v "tk"] ++
       [.assign "wants" found]),
@@ -644,10 +966,10 @@ def act : List PStmt :=
       [.ite (v "lost") (closing closeNow)
         (progressRead ++
          [.ite (v "rlost") (closing closeNow ++ abandon (v "c") (fld "cb" cGen))
-           ([.dec "wasw" (fld "cb" cWant),
-             .ite (or2 (v "said") (eAnd (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting))))
+           ([.dec "wasw" (fld "cb" cWant)] ++ callS "lp" "listPart" [v "c", v "now"] ++
+            [.ite (or2 (v "said") (eAnd (eAnd (eEq outLen (n 0)) (ne phase (n (phaseCode .quitting))))
                 (eAnd (eAnd (eEq (fld "cb" cPost) (n 0)) (eEq (fld "cb" cWaiting) (n 0)))
-                  (eEq (fld "cb" cWant) (n 0))))) serve [],
+                  (eAnd (eEq (fld "cb" cWant) (n 0)) (eEq (fld "cb" cList) (n 0)))))) serve [],
              ifs (eAnd (fld "cb" cWaiting) (eEq (v "was") (n 0)))
                (callS "pw" "queueAdd" [waiters, v "c", fld "cb" cGen]),
              ifs (eAnd (ne (fld "cb" cWant) (n 0)) (eEq (v "wasw") (n 0)))
@@ -673,7 +995,7 @@ def openConn : List PStmt :=
       setf "cb" cNumber (v "op"), setf "cb" cGreeted (v "gr"), setf "cb" cWaiting (n 0),
       setf "cb" cPost (n 0), setf "cb" cArticleDue (n 0), setf "cb" cWant (n 0),
       setf "cb" cWantCi (n 0), setf "cb" cRead (n 0), setf "cb" cGroup (n 0),
-      setf "cb" cCurrent (n 0), setf "cb" cWantNo (n 0),
+      setf "cb" cCurrent (n 0), setf "cb" cWantNo (n 0), setf "cb" cList (n 0),
       .dec "gt" (n greetCode), ifs (v "gr") [.assign "gt" (n greetPostCode)]] ++
      callS "wg" "connText" [v "ex", v "gt"])]
 
@@ -742,7 +1064,8 @@ def wake : List PStmt :=
       ifs (fld "cb" cLive)
         ([.dec "ry" (n 0),
           ifs (eEq outLen (n 0))
-            [.ite (ne phase (n (phaseCode .open_))) [.assign "ry" (n 1)]
+            [.ite (or2 (ne phase (n (phaseCode .open_))) (ne (fld "cb" cList) (n 0)))
+              [.assign "ry" (n 1)]
               [.ite (fld "cb" cWaiting)
                 [ifs hasStore
                   [.ite (eEq (ownW ownAccepting) (n 0)) [.assign "ry" (n 1)]
@@ -1154,8 +1477,8 @@ def turn : List PStmt :=
 /-- The functions: the grammar's and the article's, the store's, and the replies' texts. -/
 def functions : List PFun :=
   (News.ArticleProg.program).1 ++ SessionStore.functions ++
-    [connText, textsSet, identityTake, connEvent, connAct, connSettle, wakeAt, storeContextF,
-     storeStartF, recoverStep]
+    [dateText, connText, textsSet, identityTake, connEvent, groupName, groupNamed, listClassify,
+     listActive, listPart, connAct, connSettle, wakeAt, storeContextF, storeStartF, recoverStep]
 
 /-- `main`: the version, no check of the article's failed, the tables and the texts, no store, an
 empty table and no action or job, the first batch; then with a store, the article's context taken
@@ -1207,7 +1530,14 @@ def regression_967 : Bool :=
    (tSelected, News.CommandSpec.ascii "211 "), (tNoSuchGroup, News.CommandSpec.text i .noSuchGroup),
    (tNoCurrent, News.CommandSpec.text i .noCurrent), (tNoNext, News.CommandSpec.text i .noNext),
    (tNoPrevious, News.CommandSpec.text i .noPrevious),
-   (tNoNumber, News.CommandSpec.text i .noNumber)].all (fun (k, t) => texts[k]? == some t) &&
+   (tNoNumber, News.CommandSpec.text i .noNumber), (tListgroup, News.CommandSpec.ascii "LISTGROUP"),
+   (tList, News.CommandSpec.ascii "LIST"), (tDate, News.CommandSpec.ascii "DATE"),
+   (tNewgroups, News.CommandSpec.ascii "NEWGROUPS"), (tActive, News.CommandSpec.ascii "ACTIVE"),
+   (tNewsgroups, News.CommandSpec.ascii "NEWSGROUPS"), (tGmt, News.CommandSpec.ascii "GMT"),
+   (tActiveHead, News.CommandSpec.text i (.active none)),
+   (tNoDescriptions, News.CommandSpec.text i .newsgroups),
+   (tNoNewGroups, News.CommandSpec.text i .newGroups),
+   (tTime, News.CommandSpec.ascii "111 ")].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
     (texts[SessionStore.tStatus + j]?).map
       (· ++ News.CommandSpec.decimal 0 ++ [News.CommandSpec.SP] ++ News.CommandSpec.crlf) ==

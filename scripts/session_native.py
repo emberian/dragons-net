@@ -85,18 +85,42 @@ POST_DEFECTS = [
      "scenario 'an empty group'"),
     ("an article read by its number not made current", r"st cb \+ 168, rn;", "st cb + 168, lds 1 (cb + 168);", 1,
      "scenario \"a group's articles walked\""),
-    ("a UTF-8 continuation octet unchecked", r"if 0 < \(\(cz < clo\) \+ \(chi < cz\)\) \{", "if 0 {", 1,
+    ("a UTF-8 continuation octet unchecked", r"if 0 < \(\(cz < clo\) \+ \(chi < cz\)\) \{", "if 0 {", 2,
      "scenario 'group names and arguments'"),
-    ("a ? taken in a group's name", r"\(64 <= cz\) & \(cz <= 90\)", "(63 <= cz) & (cz <= 90)", 1,
+    ("a ? taken in a group's name", r"\(64 <= cz\) & \(cz <= 90\)", "(63 <= cz) & (cz <= 90)", 2,
      "scenario \"every octet in a group's name\""),
-    ("a lead octet past F4 taken", r"if \(241 <= cz\) & \(cz <= 243\) \{", "if (241 <= cz) & (cz <= 245) {", 1,
+    ("a lead octet past F4 taken", r"if \(241 <= cz\) & \(cz <= 243\) \{", "if (241 <= cz) & (cz <= 245) {", 2,
      "scenario \"every octet in a group's name\""),
+    ("a range of one number taken as all after it", r"(lo = val;\s*)hi = val;", r"\g<1>hi = 2147483647;", 1,
+     "scenario \"a group's articles listed\""),
+    ("a LISTGROUP's numbers past the group's highest as it is selected",
+     r"if \(lds 1 \(@base \+ \d+\)\) < lh \{", "if 0 {", 1, "scenario 'a group listed as an article is posted to it'"),
+    ("a pattern of a wildmat matched as a prefix", r"if \(fl == 0\) & \(j == pe\) \{", "if fl == 0 {", 1,
+     "scenario 'the groups listed'"),
+    ("a negated pattern of a wildmat taken for one", r"res = neg == 0;", "res = 1;", 1, "scenario 'the groups listed'"),
+    ("a part of a listing one octet longer", r"if \(o \+ ln\) <= 512 \{", "if (o + ln) <= 513 {", 1,
+     "scenario 'long listings to a slow reader'"),
+    ("a listing's terminating line put with no room left", r"if \(o \+ 3\) <= 512 \{", "if 1 {", 1,
+     "scenario 'long listings to a slow reader'"),
+    ("a group's status y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
+     "scenario 'forty groups listed to a slow reader as the store stops'"),
+    ("DATE a day late", r"(?s)(fun dateText\(.*?var dy = )cv & 31;", r"\g<1>(cv & 31) + 1;", 1, "scenario 'dates'"),
+    ("a century's February given a leap day", r"artDiv\(doe, 36524\)", "artDiv(doe, 36525)", 1,
+     "scenario \"DATE at the calendar's edges\""),
+    ("a listing's inactivity deadline not started again", r"(?s)(fun listPart\(.*?)st cb \+ 48, now \+ 1800000;",
+     r"\1st cb + 48, 0;", 1, "scenario 'a listing to a reader that pauses'"),
+    ("the sixty-fourth group never listed", r"(?s)(fun listActive\(.*?)while k < gc \{",
+     r"\1while k < (gc - (gc == 64)) {", 1, "scenario 'sixty-four groups listed'"),
+    ("a wildmat's continuation octet unchecked",
+     r"(?s)(fun listClassify\(.*?)if 0 < \(\(cz < clo\) \+ \(chi < cz\)\) \{", r"\1if 0 {", 1,
+     "scenario 'every octet in a wildmat'"),
+    ("a second of 61 taken by NEWGROUPS", r"\) <= 60\);", ") <= 61);", 1, "scenario 'dates'"),
 ]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 11, TRACE),
-    ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 1, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 18, TRACE),
+    ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 4, TRACE),
     ("a bare LF ending a command", r"if cr & \(bad == 0\) \{", "if bad == 0 {", 1, TRACE),
     ("an overlong line with no word left unanswered", r"if kind == 3 \{(\s*)r = 6;", r"if kind == 3 {\1r = 0;", 1,
      TRACE),
@@ -264,6 +288,12 @@ def store_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
                    for at, value in pokes]
         yield f"{what} written by the host", IDENTITY, [
             *asking, *written, "recv 0 1 " + sessions.ascii_lines(line).hex(), "go", "took"], 10
+    selected = len(b"211 0 1 0 local.test\r\n")
+    listing = [*asking, "recv 0 1 " + sessions.ascii_lines("LISTGROUP local.test").hex(), "go", f"took {selected}",
+               f"turn 6 {WALL + 6}"]
+    for what, at, value in (("the kind of a listing", "C_LIST", 3), ("the group of a listing", "C_LIST_A", 65)):
+        yield f"{what} written by the host", IDENTITY, [
+            *listing, f"poke {record + words[at]} {value}", "go", "took"], 10
     yield "the count of POSTs that wait written by the host", IDENTITY, [
         native_line(spool), f"turn 1 {WALL + 1}", "open 0 1 1", "go", f"took {greeted}", f"turn 5 {WALL + 5}",
         f"poke {words['OWN_OFF'] + words['OWN_WAIT_N']} 65", "recv 0 1 " + sessions.ascii_lines("POST").hex(),
@@ -529,7 +559,8 @@ def check(cake: str) -> Report:
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
-        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios()]
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios(),
+                 *sessions.list_scenarios()]
         model = sessions.model_command()
         scripts = [(name, script, code) for name, script, code in
                    (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())

@@ -50,8 +50,8 @@ RUNTIME_SYMBOLS = {"cake_bitmaps_buffer_begin", "cake_bitmaps_buffer_end",
 EXPORT_PREFIX = "dn_"
 # The heap, in MiB, of the compiler's runtime when it prints every intermediate program, which it
 # takes whole: at its default and at 1024 the grammar's program alone, 174 KB of source, runs it out,
-# at 2048 not; twice that leaves room for the session's program with the grammar in it.
-EXPLORE_HEAP_MB = 4096
+# at 2048 not; at 4096 the session's program with its listings, 558 KB, does, at 5120 not.
+EXPLORE_HEAP_MB = 6144
 
 
 class LaneError(Exception):

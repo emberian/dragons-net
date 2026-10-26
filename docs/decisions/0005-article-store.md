@@ -352,8 +352,8 @@ counting the lines it could not.
   ACTIVE list each group the store carries that the wildmat matches, all without one: its name, its
   highest and lowest numbers, and `y` while the store accepts, else `n` (§7.6.3).
 - LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
-  created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1). A list goes out a send at a
-  time. The specification has these; the program answers them 500 still.
+  created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1), past the year 9999 with more
+  digits than §7.1's fourteen. A list goes out a send at a time.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested
