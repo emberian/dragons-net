@@ -365,6 +365,9 @@ class CheckScript(unittest.TestCase):
         self.assertIn('KERNELS: ${{ needs.kernels.result }}\n        run: test "$KERNELS" = success\n', jobs["proofs"])
         self.assertIn("        part: [leanchecker, nanoda]\n", jobs["kernels"])
         self.assertIn("run: python3 scripts/check_documents.py\n", jobs["documents"])
+        # An implicit condition asks every job before this one, the shards a note leaves unstarted too.
+        self.assertIn("    if: ${{ !cancelled() && needs.test.result == 'success'"
+                      " && needs.native.result == 'success' }}\n", jobs["documents"])
         # Each job's record of a pass carries its own stamps, the native lanes' or all the others, and
         # names the run that holds it; the documents job takes both records by them.
         self.assertEqual(jobs["test"].count("!build/stamps/lane-*.json\n"), 2)

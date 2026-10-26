@@ -870,8 +870,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  # A condition of its own: the implicit one asks every job before it, the shards a note leaves
+  # unstarted among them.
   documents:
     needs: [test, native, checked]
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.native.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
