@@ -123,7 +123,7 @@ def compilerModules : Array Name :=
     `DN.News.FrameModel,
     `DN.News.FrameSpec, `DN.News.Framer, `DN.News.FramerProg, `DN.News.FsCases, `DN.News.FsLeaves,
     `DN.News.FsModel, `DN.News.FsMutant, `DN.News.Journal, `DN.News.JournalCrash,
-    `DN.News.JournalModel, `DN.News.PostSpec, `DN.News.RecoverProg, `DN.News.Recovery,
+    `DN.News.JournalModel, `DN.News.Overview, `DN.News.PostSpec, `DN.News.RecoverProg, `DN.News.Recovery,
     `DN.News.RecoveryModel,
     `DN.News.RecoveryMutant, `DN.News.RecoveryRun, `DN.News.ScanProg, `DN.News.SessionModel,
     `DN.News.SessionMutant, `DN.News.SessionSpec, `DN.News.SipHash, `DN.News.SipProg,

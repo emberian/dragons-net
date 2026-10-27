@@ -57,6 +57,8 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .noNext => 27 | .noPrevious => 28 | .noNumber => 29 | .listGroup .. => 30 | .listed .. => 31
   | .active _ => 32 | .newsgroups => 33 | .newGroups => 34 | .date => 35 | .time _ => 36
   | .modeReader => 37 | .readerPosting => 38 | .readerNoPosting => 39 | .capabilitiesReader => 40
+  | .over .. => 41 | .hdr .. => 42 | .overview .. => 43 | .noneOver => 44 | .noneHdr => 45 | .noRange => 46
+  | .fieldRefused => 47 | .overviewFmt => 48 | .headerList => 49
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15

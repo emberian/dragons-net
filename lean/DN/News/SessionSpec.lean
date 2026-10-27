@@ -72,12 +72,18 @@ The capabilities name READER and LIST's keywords ACTIVE and NEWSGROUPS (§3.3.2,
 while the connection may post. As a server that is not mode-switching and advertises READER, it
 answers MODE READER as the greeting does now — 200 when POST is among the capabilities, else 201 —
 changing nothing (§5.3.2).
+
+OVER and HDR, and their RFC 2980 spellings XOVER and XHDR, name an article by its message-id, the
+selected group's articles in a range as the store holds them when the line is answered, or the
+current article (`viewOf`), and wait for a read as ARTICLE does: the read gives each article's line
+in turn (`DN.News.PostSpec.View`), and none is made current. With none to give they are answered
+430, 412, 420, or for a range 423, and XOVER and XHDR 224 and 221 with an empty list.
 -/
 
 namespace DN.News.SessionSpec
 
 open DN.News.FrameSpec DN.News.Framer DN.News.CommandSpec
-open DN.News.PostSpec (Store Slot Job Done Fault Read)
+open DN.News.PostSpec (Store Slot Job Done Fault Read View)
 
 /-- Connections the table holds. -/
 def conns : Nat := 64
@@ -147,6 +153,8 @@ structure Conn where
   want : Option (Cmd × Nat × List Byte) := none
   /-- the read that answers it -/
   read : Option Nat := none
+  /-- for an OVER or HDR, what the read gives of the article and the articles after it -/
+  view : Option View := none
   /-- the selected group and the current article number, `none` and zero while invalid -/
   group : Option (List Byte) := none
   current : Nat := 0
@@ -262,7 +270,7 @@ def applyEvent (i : Identity) (now : Nat) (s : Server) : Event → Except Breach
     | some c =>
       if c.asked then
         let c' := { c with phase := .ending, lineDue := 0, post := none, articleDue := 0, want := none,
-                           read := none }
+                           read := none, view := none }
         return { s with
           table := s.table.set idx (some c'),
           store := s.store.map (Store.abandon idx gen) }
@@ -351,6 +359,27 @@ def dateDigits (wall : Nat) : List Byte :=
 def foundAs (k : Cmd) : Nat × List Byte → Reply
   | (n, id) => if k = .stat then .stat n id else .lookup k n id
 
+/-- The articles an OVER or HDR names, read for their lines (`overview`): by message-id the one the
+store holds, number 0, else 430; of a range the selected group's within it, by their numbers, as the
+store holds them when the line is answered, else 423, and for XOVER and XHDR an empty list as INN
+gives it; with neither the current article, else 420; with no group selected 412. Nothing is made
+current (§8.3.2, §8.5.2). -/
+def viewOf (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) : Sel → Reply
+  | .id mid => if p.held.any (·.messageId == mid) then .overview lg f true [(0, mid)] else .noSuchId
+  | .range lo hi =>
+    match c.group with
+    | none => .noGroup
+    | some g =>
+      match ((numbered p.held g).filter fun x => lo ≤ x.1 && x.1 ≤ hi).mergeSort fun a b => a.1 ≤ b.1 with
+      | [] => if lg then (if f.isSome then .noneHdr else .noneOver) else .noRange
+      | items => .overview lg f false items
+  | .current =>
+    match c.group with
+    | none => .noGroup
+    | some g =>
+      if c.current = 0 then .noCurrent
+      else ((atNumber p.held g c.current).map fun x => .overview lg f false [x]).getD .noCurrent
+
 /-- The reply a connection gets with a store: the capabilities with READER, and with POST while it
 may post, and MODE READER's 200 or 201 as they name POST or not; the help with POST, for a
 well-formed POST 340, 440 or 403, and for a message-id the store does not hold 430, for one it holds
@@ -393,6 +422,8 @@ def resolve (p : Posting) (c : Conn) : Reply → Reply
         | r => r
       else .noSuchGroup
   | .date => .time (dateDigits p.wall)
+  | .over lg s => viewOf p c lg none s
+  | .hdr lg f s => viewOf p c lg (some f) s
   | r => r
 
 /-- The line of LIST ACTIVE for group `g`: its name, its highest and lowest numbers as GROUP gives
@@ -409,6 +440,16 @@ highest as it is selected, LIST ACTIVE's groups from the first. -/
 def listingOf : Reply → Option Listing
   | .listed _ _ high g lo hi => some (.numbers g lo (min hi high))
   | .active w => some (.groups w 0)
+  | _ => none
+
+/-- What a reply answered by a read waits for: the command, the number its first line gives and the
+message-id of its article, and for an OVER or HDR what is read of it and the articles after it, by
+their commits as the store holds them when the line is answered. -/
+def readOf (p : Posting) : Reply → Option (Cmd × Nat × List Byte × Option View)
+  | .lookup k n id => some (k, n, id, none)
+  | .overview lg f byId ((n, id) :: rest) =>
+    let more := rest.filterMap fun x => (p.held.find? (·.messageId == x.2)).map fun cm => (x.1, cm)
+    some (if f.isSome then .hdr else .over, n, id, some { legacy := lg, field := f, byId, rest := more })
   | _ => none
 
 /-- A listing's next line, and the listing after it, none once it has no line left: of the groups
@@ -464,8 +505,8 @@ def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
         | r =>
           if !c.out.isEmpty || c.want.isSome || c.listing.isSome then c
           else if r = .post then { c1 with waiting := true, first := 0, idle := 0 }
-          else if let .lookup k n id := r then
-            serve i p now fuel { c1 with want := some (k, n, id), first := 0, idle := 0 }
+          else if let some (k, n, id, v) := readOf p r then
+            serve i p now fuel { c1 with want := some (k, n, id), view := v, first := 0, idle := 0 }
           else
             let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity,
                                 group := r.groupAfter c1.group, current := r.currentAfter c1.current,
@@ -527,8 +568,9 @@ def claim (i : Identity) (now idx : Nat) (st : Option Store) (c : Conn) : Conn �
 
 /-- A connection answered by a read, with nothing untaken: the read's next octets put to send, the
 inactivity deadline then started, or stopped while there are none, the article made current with
-the first of them when it was named by its number; once all of them are put, the read ended; a read
-that failed answered 403 when it gave nothing, or the connection to close. -/
+the first of them when it was named by its number; once all of them are put, the read ended, or for
+an OVER or HDR given the next article, an article whose XHDR line is left out among them; a read that failed answered 403 when nothing was given for its
+command, or the connection to close. -/
 def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
     Conn × Option Store × Bool :=
   match c.read, st with
@@ -538,22 +580,30 @@ def progressRead (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
       match st.readSlot k with
       | some r =>
         if r.bad then
-          if r.given = 0 then
-            ({ c with out := text i .unreadable, read := none, want := none, idle := now + inactivity },
+          if r.given = 0 && r.view.all (·.first) then
+            ({ c with out := text i .unreadable, read := none, want := none, view := none,
+                      idle := now + inactivity },
              some (st.setRead k (some { r with owner := none })).tidy, false)
           else (c, some st, true)
         else
           let piece := (r.out.extract r.given (r.given + CommandSpec.actionData)).toList
-          if piece.isEmpty then ({ c with idle := 0 }, some st, false)
-          else
-            let given := r.given + piece.length
-            let ends := r.whole st.rules && given == r.out.size
-            let c' := { c with out := piece, idle := now + inactivity,
-                               current := if r.given = 0 && r.number != 0 then r.number else c.current }
-            let r' := { r with given, owner := if ends then none else r.owner }
-            (if ends then { c' with read := none, want := none } else c',
-             some (st.setRead k (some r')).tidy, false)
-      | none => ({ c with read := none, want := none }, some st, false)
+          let given := r.given + piece.length
+          let ends := r.whole st.rules && given == r.out.size
+          let c' := if piece.isEmpty then { c with idle := 0 }
+            else { c with out := piece, idle := now + inactivity,
+                          current := if r.view.isNone && r.given = 0 && r.number != 0 then r.number
+                            else c.current }
+          match (if ends then r.view else none).bind fun v => v.rest.head?.map fun x => (x, v) with
+          | some ((n, cm), v) =>
+            (c', some (st.setRead k (some (r.advance st.rules st.cfg.identity n cm
+              { v with rest := v.rest.tail, first := false }))), false)
+          | none =>
+            if piece.isEmpty then (c', some st, false)
+            else
+              let r' := { r with given, owner := if ends then none else r.owner }
+              (if ends then { c' with read := none, want := none, view := none } else c',
+               some (st.setRead k (some r')).tidy, false)
+      | none => ({ c with read := none, want := none, view := none }, some st, false)
   | _, st => (c, st, false)
 
 /-- A connection with a reply going out a part at a time and nothing untaken: its next part put to
@@ -576,8 +626,8 @@ def claimRead (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store 
       match (List.range st.rules.reads).find? st.readFree, st.find id with
       | some j, some cm =>
         let st' := { st with readers := st.readers.erase (idx, c.gen) }
-        let r : Read := { owner := some (idx, c.gen), cmd := k, number := n, commit := cm }
-        ({ c with read := some j }, some (st'.setRead j (some (r.refresh st.rules st.cfg.identity))))
+        let r := Read.make st.rules st.cfg.identity (idx, c.gen) k n cm c.view
+        ({ c with read := some j }, some (st'.setRead j (some r)))
       | _, _ => (c, some st)
     else (c, some st)
   | st, _ => (c, st)
@@ -852,6 +902,44 @@ theorem listing_examples :
       (((List.range 76).map fun k => decimal (k + 125) ++ crlf).flatten ++ ascii ".\r\n", none) := by
   decide +kernel
 
+/-- The articles an OVER or HDR names are ones a store may hold, with article numbers. -/
+theorem viewOf_bounded (p : Posting) (hp : p.Fits) (c : Conn) (lg : Bool) (f : Option (List Byte))
+    (s : Sel) (hs : ∀ mid, s = .id mid → mid.length ≤ 250) : (viewOf p c lg f s).bounded = true := by
+  cases s with
+  | id mid =>
+    simp only [viewOf]
+    split
+    · simp [Reply.bounded, numberMax, hs mid rfl]
+    · rfl
+  | range lo hi =>
+    simp only [viewOf]
+    split
+    · rfl
+    · rename_i g _
+      generalize hl : ((numbered p.held g).filter fun x => lo ≤ x.1 && x.1 ≤ hi).mergeSort
+        (fun a b => a.1 ≤ b.1) = items
+      have hm : ∀ x ∈ items, x ∈ numbered p.held g := fun x hx => by
+        rw [← hl] at hx
+        exact (List.mem_filter.mp ((List.mergeSort_perm _ _).mem_iff.mp hx)).1
+      cases items with
+      | nil => simp only; split <;> (try split) <;> rfl
+      | cons y rest =>
+        simp only [Reply.bounded, List.all_eq_true, Bool.and_eq_true, decide_eq_true_eq]
+        intro x hx
+        exact numbered_bounded hp g x (hm x hx)
+  | current =>
+    simp only [viewOf]
+    split
+    · rfl
+    · rename_i g _
+      split
+      · rfl
+      · cases ha : atNumber p.held g c.current with
+        | none => rfl
+        | some x =>
+          obtain ⟨h1, h2⟩ := numbered_bounded hp g x (pick_mem (.inl ha))
+          simp [Reply.bounded, h1, h2]
+
 /-- A store's answer keeps a reply's message-id one a store may hold, and its numbers article
 numbers. -/
 theorem resolve_bounded (p : Posting) (hp : p.Fits) (c : Conn) (r : Reply) (h : r.bounded = true) :
@@ -917,6 +1005,11 @@ theorem resolve_bounded (p : Posting) (hp : p.Fits) (c : Conn) (r : Reply) (h : 
   case date =>
     simp only [resolve, Reply.bounded, decide_eq_true_eq]
     exact Nat.le_trans (dateDigits_length _ hp.2.2.2) (by decide)
+  case over lg s =>
+    exact viewOf_bounded p hp c lg none s fun mid e => by subst e; simpa [Reply.bounded] using h
+  case hdr lg f s =>
+    exact viewOf_bounded p hp c lg (some f) s fun mid e => by subst e; simpa [Reply.bounded] using h
+  case overview => simpa only [resolve] using h
   all_goals simp only [resolve] <;> (repeat' split) <;> simp_all [Reply.bounded]
 
 /-! ## A listing's parts -/
@@ -1253,8 +1346,12 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .failed, _ | .notPermitted, _ | .unavailable, _ | .lookup _ _ _, _ | .unreadable, _
   | .select _, _ | .byNumber _ _, _ | .current _, _ | .move _, _ | .noSuchGroup, _ | .noCurrent, _
   | .noNext, _ | .noPrevious, _ | .noNumber, _ | .listGroup .., _ | .active _, _ | .newsgroups, _
-  | .newGroups, _ | .date, _ | .modeReader, _ | .readerPosting, _ | .readerNoPosting, _ => by
+  | .newGroups, _ | .date, _ | .modeReader, _ | .readerPosting, _ | .readerNoPosting, _
+  | .over .., _ | .hdr .., _ | .noneOver, _ | .noneHdr, _ | .noRange, _ | .fieldRefused, _
+  | .overviewFmt, _ | .headerList, _ => by
     simp only [text]; decide +kernel
+  | .overview lg f _ _, _ => by
+    cases lg <;> cases f <;> (simp only [text, overviewStatus]; decide +kernel)
 
 /-- `serve` leaves output that is already there as it is. -/
 theorem serve_out (i : Identity) (p : Posting) (now : Nat) :
@@ -1456,6 +1553,11 @@ theorem getD_map_ne_modeReader {α : Type} (o : Option α) (f : α → Reply) (d
     (hf : ∀ x, f x ≠ .modeReader) (hd : d ≠ .modeReader) : (o.map f).getD d ≠ .modeReader := by
   cases o <;> simp_all
 
+theorem viewOf_ne_modeReader (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) (s : Sel) :
+    viewOf p c lg f s ≠ .modeReader := by
+  cases s <;> simp only [viewOf] <;> (repeat' split) <;> simp_all
+  all_goals exact getD_map_ne_modeReader _ _ _ (fun _ e => Reply.noConfusion e) (by decide)
+
 /-- MODE READER's 502 is left by `resolve` only without a store. -/
 theorem resolve_modeReader {p : Posting} {c : Conn} :
     ∀ r, resolve p c r = .modeReader → p.offered = false := by
@@ -1465,6 +1567,7 @@ theorem resolve_modeReader {p : Posting} {c : Conn} :
       | exact absurd h (summary_ne_modeReader _ _)
       | exact absurd h (getD_map_ne_modeReader _ _ _ (foundAs_ne_modeReader _) (by decide))
       | exact absurd h (getD_map_ne_modeReader _ _ _ (fun _ e => Reply.noConfusion e) (by decide))
+      | exact absurd h (viewOf_ne_modeReader _ _ _ _ _)
       | (simp_all; done)
 
 /-- An open connection that answers QUIT, or MODE READER without a store, is left with the 205 or the

@@ -35,6 +35,11 @@ the commit says and have its CRC-32C. A read that fails the check, or reads fewe
 asked for and than are left, or more than are left, fails. It may give the 220, 221 or 222 line
 and the octets checked — ARTICLE the file with Xref after the header fields, HEAD the header
 section with Xref, BODY what follows the empty line — then, all of the file checked, the dot.
+
+A read for OVER or HDR gives an article's line of scripts/overview_ref.py once all of its file is
+checked, the 224, 225 or 221 line before the first, and the dot after the last; then it goes on to
+the next article in the same place, from its file not yet opened. One whose article's header
+section is longer than 69,632 octets, the longest the store writes, fails before it opens the file.
 """
 from __future__ import annotations
 
@@ -45,11 +50,12 @@ from typing import NamedTuple
 
 import framing_ref as F
 import fs_ref
+import overview_ref as O
 import recovery_ref as R
 import store_ref as J
 
 JOBS, JOB_OPS, JOB_DATA, PLACES = 12, 8, 16384, 16
-POSTS, READS, ARTICLE_MAX, HEADER_MAX = 4, 8, 1_000_000, 65536
+POSTS, READS, ARTICLE_MAX, HEADER_MAX, OVERVIEW_MAX = 4, 8, 1_000_000, 65536, 69632
 LINE_MOST = 998
 STATUS = {"article": b"220", "head": b"221", "body": b"222"}
 CR, LF, NUL, CRLF, DOT = F.CR, F.LF, F.NUL, F.CRLF, F.DOT
@@ -140,11 +146,24 @@ def xref(identity: bytes, groups: list[tuple[bytes, int]]) -> bytes:
 
 
 @dataclass
+class View:
+    """What a read for OVER or HDR gives besides its article: the field, `None` for OVER's; whether
+    the command is XOVER or XHDR, and whether it named the article by message-id; the articles after
+    it, each with the number its line gives; whether its first line is still to go."""
+    legacy: bool
+    field: bytes | None
+    by_id: bool
+    rest: list[tuple[int, J.Commit]]
+    first: bool = True
+
+
+@dataclass
 class Fetch:
     """A read for ARTICLE, HEAD or BODY: its connection while it is to be answered; the command, the
     commit of its article and its place among the reads; its file — `none`, `open` at a place, or
     `gone` — the octets read and checked, how many octets it has given; whether it failed; its job in
-    flight; how its connection was answered; the number its first line gives."""
+    flight; how its connection was answered; the number its first line gives. For OVER or HDR also
+    what it reads of its articles, and what it made of those before this one."""
     owner: tuple[int, int] | None
     cmd: str
     commit: J.Commit
@@ -157,6 +176,8 @@ class Fetch:
     busy: tuple[int, int] | None = None
     answered: str | None = None
     number: int = 0
+    view: View | None = None
+    done: bytes = b""
     # what `out` last made, for as many octets read and whether they were whole
     made: tuple[tuple[int, bool], bytes] = field(default=((-1, False), b""), repr=False, compare=False)
 
@@ -172,6 +193,8 @@ class Fetch:
         return self.made[1]
 
     def making(self, identity: bytes) -> bytes:
+        if self.view is not None:
+            return self.done + (self.line(identity) if self.whole() else b"")
         if not self.got:
             return b""
         header = self.commit[3]
@@ -185,6 +208,32 @@ class Fetch:
             stream = self.got[:header] + (x + self.got[header:] if known else b"")
         return STATUS[self.cmd] + b" %d " % self.number + self.commit[1] + CRLF + stream + \
             (DOT + CRLF if self.whole() else b"")
+
+    def line(self, identity: bytes) -> bytes:
+        """An overview read's first line if still to go, its article's line, and after the last the dot."""
+        v = self.view
+        if v is None:
+            return b""
+        x = xref(identity, self.commit[2])
+        if v.field is None:
+            line = O.overview_line(identity, self.commit, self.got, self.number, x)
+        else:
+            label = self.commit[1] if v.legacy and v.by_id else b"%d" % self.number
+            line = O.hdr_line(v.legacy, label, O.field(identity, self.commit, self.got, x, v.field))
+        status = O.STATUS["over" if v.field is None else "xhdr" if v.legacy else "hdr"] if v.first else b""
+        return status + line + (b"" if v.rest else DOT + CRLF)
+
+    def advance(self, identity: bytes) -> None:
+        """Given its article's line, on to the next article, its file not yet opened."""
+        v = self.view
+        if v is None or not v.rest:
+            raise Violation("read", "an overview read with no article after its last given more")
+        self.done = self.out(identity)
+        self.number, self.commit = v.rest.pop(0)
+        v.first = False
+        self.file, self.place, self.got = "none", None, b""
+        self.bad = self.commit[3] > OVERVIEW_MAX
+        self.made = ((-1, False), b"")
 
     def held(self) -> bool:
         """Whether it still holds its place: its connection to answer, a job in flight or its file
@@ -431,10 +480,12 @@ class Store:
     def free_reads(self) -> list[int]:
         return [k for k, f in enumerate(self.reads) if f is None or not f.held()]
 
-    def grant(self, owner: tuple[int, int], cmd: str, commit: J.Commit, number: int = 0) -> Fetch:
-        """The lowest free read, given to a connection, its first line giving `number`."""
+    def grant(self, owner: tuple[int, int], cmd: str, commit: J.Commit, number: int = 0,
+              view: View | None = None) -> Fetch:
+        """The lowest free read, given to a connection, its first line giving `number`; for OVER or
+        HDR failed at once when the header section is longer than one takes."""
         k = self.free_reads()[0]
-        f = Fetch(owner, cmd, commit, k, number=number)
+        f = Fetch(owner, cmd, commit, k, number=number, view=view, bad=view is not None and commit[3] > OVERVIEW_MAX)
         self.reads[k] = f
         return f
 

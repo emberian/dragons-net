@@ -117,7 +117,7 @@ theorem readLE_zeros (xs : Bytes) (j : Nat) : readLE (xs ++ List.replicate j 0) 
 structure Group where
   name : Bytes
   number : Nat
-  deriving DecidableEq
+  deriving DecidableEq, Repr
 
 /-- The commit of an article. -/
 structure Commit where
@@ -127,7 +127,7 @@ structure Commit where
   headerSize : Nat
   fileSize : Nat
   fileCrc : Nat
-  deriving DecidableEq
+  deriving DecidableEq, Repr
 
 /-- A record of the journal: its format, carrying the key its tags are made with, the commit of an
 article, or the start of a run of the store. -/

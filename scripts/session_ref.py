@@ -32,10 +32,11 @@ FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000,
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
 COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT", b"MODE")
 # The commands a server with a store has besides.
-STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS")
+STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS",
+          b"OVER", b"HDR", b"XOVER", b"XHDR")
 # The replies a server with a store decides as it gives them.
 DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last", "listgroup", "list-active",
-           "date", "mode-reader")
+           "date", "mode-reader", "overview")
 # The replies after which the connection closes: QUIT's, and MODE READER's 502 of a server that does not
 # advertise READER (RFC 3977 §5.3.2).
 CLOSING = ("quit", "mode-reader")
@@ -124,6 +125,12 @@ def date_digits(wall: int) -> bytes:
     return b"%04d%02d%02d%02d%02d%02d" % time.gmtime(wall // 1000)[:6]
 
 
+def is_field_name(w: bytes) -> bool:
+    """§9.8: a header's name, printable US-ASCII but for the colon, or a metadata item's, a colon before
+    one."""
+    return re.fullmatch(rb":?[\x21-\x39\x3b-\x7e]+", w) is not None
+
+
 def is_keyword(w: bytes) -> bool:
     """RFC 3977 §9.8: a letter, then two or more letters, digits, dots or hyphens."""
     return re.fullmatch(rb"[A-Za-z][A-Za-z0-9.-]{2,}", w) is not None
@@ -165,6 +172,18 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
     if name == b"LISTGROUP" and (not args or (len(args) <= 2 and is_group_name(args[0]) and
                                              (len(args) == 1 or article_range(args[1]) is not None))):
         return "listgroup"
+    if name in (b"OVER", b"XOVER") and len(args) <= 1 and \
+            (not args or article_range(args[0]) is not None or (name == b"OVER" and is_message_id(args[0]))):
+        return "overview"
+    if name in (b"HDR", b"XHDR") and 1 <= len(args) <= 2 and \
+            (len(args) == 1 or is_message_id(args[1]) or article_range(args[1]) is not None) and is_field_name(args[0]):
+        served = not args[0].startswith(b":") or args[0].lower() in (b":bytes", b":lines")
+        return "overview" if served else "field-refused"
+    if name == b"LIST" and args and args[0].upper() == b"OVERVIEW.FMT":
+        return "overview-fmt" if len(args) == 1 else "syntax"
+    if name == b"LIST" and args and args[0].upper() == b"HEADERS":
+        return "header-list" if len(args) == 1 or (len(args) == 2 and args[1].upper() in (b"MSGID", b"RANGE")) \
+            else "syntax"
     if name == b"LIST" and len(args) <= 2 and (len(args) < 2 or wildmat(args[1]) is not None):
         keyword = args[0].upper() if args else b"ACTIVE"
         if keyword in (b"ACTIVE", b"NEWSGROUPS"):
@@ -217,6 +236,13 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "syntax": b"501 Syntax error\r\n",
         "list-newsgroups": b"215 Information follows\r\n.\r\n",
         "new-groups": b"231 List of new newsgroups follows\r\n.\r\n",
+        "overview-fmt": b"215 Order of fields in overview database\r\nSubject:\r\nFrom:\r\nDate:\r\nMessage-ID:\r\n"
+        b"References:\r\nBytes:\r\nLines:\r\nXref:full\r\n.\r\n",
+        "header-list": b"215 Field list follows\r\n:\r\n:bytes\r\n:lines\r\n.\r\n",
+        "no-range": b"423 No articles in that range\r\n",
+        "field-refused": b"503 HDR not permitted on that field\r\n",
+        "none-over": b"224 Overview information follows\r\n.\r\n",
+        "none-hdr": b"221 Header follows\r\n.\r\n",
     }
 
 
@@ -316,10 +342,11 @@ class Conn:
     posts: list[tuple[int, P.Article]] = field(default_factory=list)
     waiting: bool = False
     sent340: int = 0
-    # the reads that answered its ARTICLE, HEAD and BODY; the one it waits for, with the command, the
-    # number its first line gives and the commit, until it gets it
+    # the reads that answered its ARTICLE, HEAD, BODY, OVER and HDR; the one it waits for, with the
+    # command, the number its first line gives, the commit, and for OVER and HDR what it reads, until
+    # it gets it
     fetches: list[P.Fetch] = field(default_factory=list)
-    wanted: tuple[str, int, J.Commit] | None = None
+    wanted: tuple[str, int, J.Commit, P.View | None] | None = None
     # the selected group and the current article number, None and 0 while invalid
     group: bytes | None = None
     current: int = 0
@@ -542,7 +569,15 @@ class PostJudge(Judge):
     line goes out. Such a reply goes out a part at a time, each when what went before was taken: its
     lines that follow, as many whole as one send holds, then its terminating line once it fits too;
     nothing is read and no line answered until it ends. LIST NEWSGROUPS answers 215 and NEWGROUPS
-    231, each with an empty list; DATE, 111 and the wall clock of the turn in UTC."""
+    231, each with an empty list; DATE, 111 and the wall clock of the turn in UTC.
+
+    OVER, HDR and their RFC 2980 spellings XOVER and XHDR name an article by message-id (0 its number,
+    or for XHDR the message-id itself; XOVER takes none), the selected group's articles in a range, or
+    the current article, and wait for a read as ARTICLE does: one read gives each article's line in
+    turn (`post_ref.Fetch`), making none current. With none to give: 430, 412, 420, and for a range
+    423, or for XOVER and XHDR 224 and 221 with an empty list, as INN answers. A metadata item other
+    than `:bytes` and `:lines` is answered 503. LIST OVERVIEW.FMT and LIST HEADERS answer their fixed
+    lists."""
 
     def __init__(self, revision: bytes, source: bytes, start: P.Start, checker: P.Checker) -> None:
         super().__init__(revision, source)
@@ -823,9 +858,11 @@ class PostJudge(Judge):
             line = self.due_line(c)
             if line is not None and line[0] in ("lookup", "number", "current"):
                 self.lookup_due(t, idx, gen, c, line[0], line[1])
+            elif line is not None and line[0] == "overview":
+                self.view_due(t, idx, gen, c, line[1])
         if c.wanted is not None and self.admitted_read(idx, gen):
-            cmd, number, commit = c.wanted
-            c.fetches.append(self.store.grant((idx, gen), cmd, commit, number))
+            cmd, number, commit, view = c.wanted
+            c.fetches.append(self.store.grant((idx, gen), cmd, commit, number, view))
             c.decisions.append(f"read {len(c.fetches) - 1}")
             c.wanted = None
             self.readers.remove((idx, gen))
@@ -867,20 +904,26 @@ class PostJudge(Judge):
             return True
         piece = f.out(identity)[f.given:f.given + CHUNK]
         if not piece:
+            # An article whose XHDR line is left out gives nothing: its read goes on to the next.
+            if f.whole() and f.given == len(f.out(identity)) and f.view is not None and f.view.rest:
+                f.advance(identity)
             return False
         if action is None or action.kind != "send" or action.data != piece or action.gen != gen:
             sent = action.data[:40] if action is not None else None
             raise Violation("read-out", f"{idx}/{gen} sent {sent!r} at {t.now}, not the next of its read, "
                             f"{piece[:40]!r}")
-        if f.given == 0 and f.number:
+        if f.given == 0 and f.number and f.view is None:
             # Its first line answers the command: only now is the article current (RFC 3977 §6.2.1.2).
             c.current = f.number
         f.given += len(piece)
         c.emitted += piece
         c.activity = t.now
         if f.whole() and f.given == len(f.out(identity)):
-            f.answered, f.owner = f"read {c.fetches.index(f)}", None
-            c.replies += 1
+            if f.view is not None and f.view.rest:
+                f.advance(identity)
+            else:
+                f.answered, f.owner = f"read {c.fetches.index(f)}", None
+                c.replies += 1
         if action.read != self.read_wanted(c):
             raise Violation("read", f"{idx}/{gen} asked {'' if action.read else 'not '}to read at {t.now}")
         c.reading = action.read
@@ -1015,7 +1058,50 @@ class PostJudge(Judge):
         if isinstance(found, str) or cmd == "stat":
             return
         n, commit = found
-        c.wanted = (cmd, n, commit)
+        c.wanted = (cmd, n, commit, None)
+        if c.answered is None:
+            c.answered = t.now
+        if (idx, gen) not in self.readers:
+            self.readers.append((idx, gen))
+
+    def view_of(self, c: Conn, kept: bytes) -> tuple[str, int, J.Commit, P.View] | str:
+        """The articles an OVER, XOVER, HDR or XHDR names, as the store holds them now: the first, with
+        the number its line gives, and what is read of it and of those after it; or the reply when
+        there is none (RFC 3977 §8.3.2, §8.5.2; for XOVER's and XHDR's empty range INN's empty list)."""
+        ws = words(kept)
+        legacy = ws[0].upper() in (b"XOVER", b"XHDR")
+        name = ws[1] if ws[0].upper() in (b"HDR", b"XHDR") else None
+        rest = ws[2:] if name is not None else ws[1:]
+        arg = rest[0] if rest else None
+        by_id = arg is not None and is_message_id(arg)
+        if arg is not None and by_id:
+            commit = self.store.found(arg)
+            if commit is None:
+                return "no-such-id"
+            items = [(0, commit)]
+        elif c.group is None:
+            return "no-group"
+        elif arg is not None:
+            span = article_range(arg)
+            if span is None:
+                raise Violation("syntax", f"{arg!r} taken for a range")
+            items = [x for x in self.in_group(c.group) if span[0] <= x[0] <= span[1]]
+            if not items:
+                return ("none-hdr" if name is not None else "none-over") if legacy else "no-range"
+        else:
+            items = [x for x in self.in_group(c.group) if c.current and x[0] == c.current]
+            if not items:
+                return "no-current"
+        n, commit = items[0]
+        return "hdr" if name is not None else "over", n, commit, P.View(legacy, name, by_id, items[1:])
+
+    def view_due(self, t: Turn, idx: int, gen: int, c: Conn, kept: bytes) -> None:
+        """An OVER or HDR that names articles the store holds: the connection waits for a read, which
+        gives their lines one after another and makes none of them current."""
+        found = self.view_of(c, kept)
+        if isinstance(found, str):
+            return
+        c.wanted = found
         if c.answered is None:
             c.answered = t.now
         if (idx, gen) not in self.readers:
@@ -1049,6 +1135,13 @@ class PostJudge(Judge):
         if due in ("listgroup", "list-active", "date"):
             line = self.due_line(c)
             c.decisions.append(self.listed(t, c, due, words(line[1] if line else b"")))
+            return
+        if due == "overview":
+            line = self.due_line(c)
+            found = self.view_of(c, line[1] if line else b"")
+            if not isinstance(found, str):
+                raise Violation("read", f"{idx} {found[0]} answered at once, before a read")
+            c.decisions.append(found)
             return
         if due in ("lookup", "number", "current", "group", "next", "last"):
             line = self.due_line(c)

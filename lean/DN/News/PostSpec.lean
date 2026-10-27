@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.ArticleSpec
 import DN.News.Framer
+import DN.News.Overview
 import DN.News.Recovery
 
 /-!
@@ -39,6 +40,12 @@ no NUL, a line that starts with a dot starts with two, the header section ends w
 and at the end the size and the CRC-32C are the commit's; octets that fail are never given. Given are
 the 220, 221 or 222 line, then the file — for ARTICLE and HEAD with Xref after the header fields, for
 HEAD up to it, for BODY after the empty line — then, once all of it checked, the terminating dot.
+
+A read for OVER or HDR (`View`) gives nothing until all of the file is read and checked, then the
+article's line (`DN.News.Overview`), 224, 225 or XHDR's 221 before the first article's, and after
+the last article's the terminating dot; the session gives the read the next article once it has
+given the line. A header section longer than the program's buffer for fields
+(`Rules.overviewMax`) fails the read before it opens the file.
 -/
 
 namespace DN.News.PostSpec
@@ -111,6 +118,13 @@ structure Rules where
   readJobsApart : Bool := true
   /-- 0005: a file a failed read or a connection gone leaves open closed -/
   closesAfter : Bool := true
+  /-- RFC 3977 §8.3.2, §8.5.2: how an overview line takes the article's fields -/
+  overview : Overview.Style := {}
+  /-- the longest header section an overview read takes, the program's buffer for fields: the
+  longest the store writes (`DN.News.ArticleProg.outMax`) -/
+  overviewMax : Nat := 69632
+  /-- §8.3.2: an overview line given only once all of the file is read and checked -/
+  overviewWhole : Bool := true
 
 /-- An operation of a file job. -/
 inductive Op
@@ -231,10 +245,23 @@ inductive ReadFile
   | gone
   deriving DecidableEq
 
-/-- A read of ARTICLE, HEAD or BODY: the connection it answers, until it is answered or gone; the
-command, the number its first line gives and the commit of the article; its file; the octets read
-and checked; what it gives, as `Read.output` makes it whenever the read changes (`Read.refresh`),
-and how many of those octets were given; whether a read or a check failed; its job in flight. -/
+/-- What an OVER or HDR reads besides the article: none for OVER's fields, else the field; `legacy`
+for XOVER and XHDR; whether the command named the article by its message-id; the articles after
+this one, each with the number its line gives and its commit; whether the first line, 224, 225 or
+221, is still to be given. -/
+structure View where
+  legacy : Bool
+  field : Option (List Byte)
+  byId : Bool
+  rest : List (Nat × Commit)
+  first : Bool := true
+  deriving DecidableEq, Repr
+
+/-- A read of ARTICLE, HEAD or BODY, or of an article's line for OVER or HDR (`view`): the connection
+it answers, until it is answered or gone; the command, the number its first line gives and the
+commit of the article; its file; the octets read and checked; what it gives, as `Read.output` makes
+it whenever the read changes (`Read.refresh`), and how many of those octets were given; whether a
+read or a check failed; its job in flight. -/
 structure Read where
   owner : Option (Nat × Nat)
   cmd : CommandSpec.Cmd
@@ -247,6 +274,7 @@ structure Read where
   given : Nat := 0
   bad : Bool := false
   busy : Option (Nat × Nat × Nat × ReadTask) := none
+  view : Option View := none
   deriving DecidableEq
 
 /-- What the host gives the store: the groups, the path identity, the run's value in hexadecimal
@@ -525,16 +553,53 @@ def Read.stream (rules : Rules) (identity : List Byte) (r : Read) : Array Byte :
   | .body => r.got.extract (h + 2) r.got.size
   | _ => r.got.extract 0 h ++ (if known then x ++ r.got.extract h r.got.size else #[])
 
+/-- The line an overview read gives of its article: for OVER its fields, for HDR the field's, the
+article named by its number, or by 0 — by its message-id for XHDR — when the command named its
+message-id. -/
+def Read.viewLine (rules : Rules) (identity : List Byte) (r : Read) (v : View) : List Byte :=
+  let file := r.got.toList
+  let xr := xref identity r.commit.groups
+  match v.field with
+  | none => Overview.line rules.overview identity r.commit file r.number xr
+  | some f =>
+    let label := if v.legacy && v.byId && rules.overview.labelsId then r.commit.messageId
+      else CommandSpec.decimal r.number
+    Overview.hdrLine rules.overview v.legacy label (Overview.field rules.overview identity r.commit file xr f)
+
 /-- **What a read gives**: nothing until octets are checked, then the 220, 221 or 222 line and the
-stream, and once all of the file is checked the terminating dot. -/
+stream, and once all of the file is checked the terminating dot. An overview read gives nothing
+until all of the file is checked, then the first line if it is still to be given, the article's
+line, and the terminating dot after the last article's. -/
 def Read.output (rules : Rules) (identity : List Byte) (r : Read) : Array Byte :=
-  if r.got.isEmpty && rules.statusLate then #[]
-  else (CommandSpec.found r.cmd r.number r.commit.messageId).toArray ++ r.stream rules identity ++
-    (if r.whole rules then (ascii ".\r\n").toArray else #[])
+  match r.view with
+  | some v =>
+    if !(r.whole rules) && (rules.overviewWhole || r.got.size < r.commit.headerSize + 2) then #[]
+    else ((if v.first then CommandSpec.overviewStatus v.legacy v.field else []) ++ r.viewLine rules identity v ++
+      (if v.rest.isEmpty then ascii ".\r\n" else [])).toArray
+  | none =>
+    if r.got.isEmpty && rules.statusLate then #[]
+    else (CommandSpec.found r.cmd r.number r.commit.messageId).toArray ++ r.stream rules identity ++
+      (if r.whole rules then (ascii ".\r\n").toArray else #[])
 
 /-- The read with what it gives made again. -/
 def Read.refresh (rules : Rules) (identity : List Byte) (r : Read) : Read :=
   { r with out := r.output rules identity }
+
+/-- The read given the next article of its OVER or HDR, `commit`, its line giving `number`: its file
+not yet opened, nothing read, the view after it. -/
+def Read.advance (rules : Rules) (identity : List Byte) (r : Read) (number : Nat) (commit : Commit)
+    (v : View) : Read :=
+  { r with number, commit, file := .none, got := #[], given := 0, view := some v,
+           bad := rules.overviewMax < commit.headerSize }.refresh rules identity
+
+/-- A read for the connection `owner` of the article `commit` by command `cmd`, its first line
+giving `number`, and of its line for OVER or HDR with `view`: failed at once when its header section
+is longer than an overview read takes. -/
+def Read.make (rules : Rules) (identity : List Byte) (owner : Nat × Nat) (cmd : CommandSpec.Cmd)
+    (number : Nat) (commit : Commit) (view : Option View) : Read :=
+  let r : Read := { owner := some owner, cmd, number, commit, view,
+                    bad := view.isSome && rules.overviewMax < commit.headerSize }
+  r.refresh rules identity
 
 /-- The next job of a read: open its file; once everything checked has been given, read on, a
 job's octets or, when the rest fits, one more than are left and close the file after them; close a

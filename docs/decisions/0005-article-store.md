@@ -357,6 +357,27 @@ counting the lines it could not.
 - LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
   created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1), past the year 9999 with more
   digits than §7.1's fourteen. A list goes out a send at a time.
+- OVER and HDR (§8), and XOVER and XHDR: RFC 2980's spellings, which slrn, Thunderbird, Gnus and
+  Net::NNTP send without asking.
+- They name an article by message-id, number 0, XHDR labelling its line with the message-id and XOVER
+  taking none; the selected group's articles in a range, as the store holds them when the line is
+  answered; or the current article. None is made current.
+- Their answers with nothing to give: 430, 412, 420, and 423 for an empty range, where XOVER and XHDR
+  give an empty list, as INN does. HDR of a metadata item but `:bytes` and `:lines` is 503.
+- There is no overview database: each line is made from the article's file, read and checked whole by
+  one of the eight reads, which holds it from the first article to the last. So LIST OVERVIEW.FMT's
+  fields are there for every article (§8.2), and a slow reader holds one read, as ARTICLE does.
+- OVER gives Subject, From, Date, Message-ID, References, `:bytes`, `:lines` and Xref whole; LIST
+  OVERVIEW.FMT names `:bytes` and `:lines` `Bytes:` and `Lines:`, as §8.4.2 allows, since slrn 1.0.3
+  turns XOVER off on the other form. HDR takes any header, the first of its name, and LIST HEADERS
+  says so.
+- A field's content follows the colon and one SP, unfolded, each TAB made SP (§8.3.2). `:bytes`
+  counts the article as ARTICLE gives it, Xref in it, but not the dots put before lines; `:lines` the
+  body's lines (§8.1). HDR's line for an article without the field, or with it empty, ends after its
+  SP; XHDR leaves the article out, as INN does.
+- The first line, 224, 225 or XHDR's 221, goes with the first article's line, so a read failing before
+  it is answered 403; after it, the connection is closed. A header section longer than the store
+  writes, 69,632 octets, fails the read: the program's buffer for fields holds no more.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested
