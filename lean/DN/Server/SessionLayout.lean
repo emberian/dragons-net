@@ -47,7 +47,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 13
+def version : Nat := 14
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -210,7 +210,14 @@ def ownHi : Nat := ownLo + 8
 def ownWs : Nat := ownHi + 8
 def ownWl : Nat := ownWs + 8
 def ownMask : Nat := ownWl + 8
-def ownLine : Nat := ownMask + 8
+/-- What an OVER or HDR names (the current article, a message-id, a range), where the message-id
+lies in the line and its length, and where HDR's field lies and its length. -/
+def ownVSel : Nat := ownMask + 8
+def ownVs : Nat := ownVSel + 8
+def ownVl : Nat := ownVs + 8
+def ownFs : Nat := ownVl + 8
+def ownFl : Nat := ownFs + 8
+def ownLine : Nat := ownFl + 8
 /-- The longest line of a listing: a group's name, its highest and lowest numbers and its status. -/
 def lineMax : Nat := 96
 def ownTexts : Nat := ownLine + lineMax
@@ -232,7 +239,12 @@ def texts : List (List (BitVec 8)) :=
    ascii "ACTIVE", ascii "NEWSGROUPS", ascii "GMT", text ⟨[], []⟩ (.active none),
    text ⟨[], []⟩ .newsgroups, text ⟨[], []⟩ .newGroups, ascii "111 ", ascii "MODE", ascii "READER",
    capabilitiesReaderTail, text ⟨[], []⟩ .modeReader, text ⟨[], []⟩ .readerPosting,
-   text ⟨[], []⟩ .readerNoPosting]
+   text ⟨[], []⟩ .readerNoPosting, ascii "OVER", ascii "HDR", ascii "XOVER", ascii "XHDR",
+   ascii "OVERVIEW.FMT", ascii "HEADERS", ascii "MSGID", ascii "RANGE", overviewStatus false none,
+   overviewStatus false (some []), overviewStatus true (some []), text ⟨[], []⟩ .noneOver,
+   text ⟨[], []⟩ .noneHdr, text ⟨[], []⟩ .noRange, text ⟨[], []⟩ .fieldRefused, overviewFmtText,
+   text ⟨[], []⟩ .headerList, ascii "SUBJECT", ascii "FROM", ascii "DATE", ascii "MESSAGE-ID",
+   ascii "REFERENCES", ascii ":BYTES", ascii ":LINES", ascii "XREF"]
 
 /-- Where the `k`-th text starts, from `ownTexts`. -/
 def textAt (k : Nat) : Nat := ((texts.take k).map List.length).sum
@@ -257,7 +269,10 @@ or zero, the selected group's place among the store's groups and one, or zero, t
 number, the number the read's first line gives; what is left of a reply that goes out a part at a
 time — none (zero), the numbers of a group's articles (one) or the groups (two) — with the group's
 place or that of the next group, the lowest number left, and the highest one or the groups the
-wildmat takes, a bit each; the framer's block, the held input, and the output. -/
+wildmat takes, a bit each, and for the numbers the place among the commits to look from; for an
+OVER or HDR whether it is XOVER's or XHDR's and by message-id, the range's group, lowest and
+highest numbers, and HDR's field and its length; the framer's block, the held input, and the
+output. -/
 def cLive : Nat := 0
 def cGen : Nat := 8
 def cPhase : Nat := 16
@@ -285,7 +300,16 @@ def cList : Nat := 184
 def cListA : Nat := 192
 def cListB : Nat := 200
 def cListC : Nat := 208
-def cFramer : Nat := 216
+def cListD : Nat := 216
+def cViewF : Nat := 224
+def cViewGi : Nat := 232
+def cViewLo : Nat := 240
+def cViewUpto : Nat := 248
+def cFieldLen : Nat := 256
+def cField : Nat := 264
+/-- The longest field HDR names: what a line holds. -/
+def fieldMax : Nat := News.SessionSpec.lineLimit
+def cFramer : Nat := cField + fieldMax
 def cHeld : Nat := cFramer + framerHead + News.SessionSpec.lineLimit
 def cOut : Nat := cHeld + data
 def connSlot : Nat := cOut + data
@@ -369,15 +393,14 @@ def indexOff : Nat := slotsOff + posts * slotLen
 def indexCells : Nat := 8192
 
 /-- The reads, each the state of `DN.News.PostSpec.Read` as the program keeps it: whether it is in
-use, its owner (whether it has one, its index and generation), the command (one, two or three) and
-its commit's place in recovery's area; the file (none, open, gone) and its place and generation; the
-octets read and checked, how many it has given, whether it failed; its job in flight — whether it
-has one, its job slot, generation, operations, task (open, read, close) and the octets asked; the
-header section's size, the file's size and CRC-32C; the check carried over from one read to the
-next — the CRC-32C so far, whether at a line's start, after a CR, after a dot that starts a line;
-where in the file its buffer starts and how many octets it holds; the 220, 221 or 222 line and the
-Xref field with their lengths, the number the line gives, and the buffer: the octets of the last
-read. -/
+use, its owner (whether it has one, its index and generation), the command (ARTICLE one, HEAD, BODY,
+OVER four, HDR five) and its commit's place in recovery's area; the file (none, open, gone) and its
+place and generation; the octets read and checked, how many it has given, whether it failed; its job
+in flight — whether it has one, its job slot, generation, operations, task (open, read, close) and
+the octets asked; the header section's size, the file's size and CRC-32C; the check carried over
+from one read to the next — the CRC-32C so far, whether at a line's start, after a CR, after a dot
+that starts a line; where in the file its buffer starts and how many octets it holds; the 220, 221
+or 222 line and the Xref field with their lengths, and the number the line gives. -/
 def readsOff : Nat := indexOff + indexCells * 8
 def reads : Nat := ({} : News.PostSpec.Rules).reads
 def rLive : Nat := 0
@@ -410,7 +433,59 @@ def rBufLen : Nat := 208
 def rLineLen : Nat := 216
 def rXrefLen : Nat := 224
 def rNumber : Nat := 232
-def rLine : Nat := 240
+/-- For OVER and HDR (`PostSpec.View`): what is read (zero for ARTICLE, HEAD and BODY, one for OVER's
+fields, two for HDR's field), whether XOVER or XHDR, whether named by message-id, whether the first
+line is still to give; the next article, one more than its commit's place, or zero, and its number;
+the range's group, lowest and highest numbers; for HDR what the field is (a header, `:bytes`,
+`:lines`, Xref) and its name's length; the dots put before lines and the body's lines counted so
+far; the fields' taking — where in a line it is, which names still match and how far, which field it
+takes, whether the SP after the colon is still to be left out, which fields were found, how many
+octets the buffer holds, whether a line starts — Xref's octets as ARTICLE gives it, the line's
+octets and pieces, and the lengths of the number's, `:bytes`'s, `:lines`'s digits and of the
+Message-ID. -/
+def rView : Nat := 240
+def rLegacy : Nat := 248
+def rById : Nat := 256
+def rViewFirst : Nat := 264
+def rNext : Nat := 272
+def rNextNo : Nat := 280
+def rGi : Nat := 288
+def rLo : Nat := 296
+def rUpto : Nat := 304
+def rHk : Nat := 312
+def rFLen : Nat := 320
+def rStuffed : Nat := 328
+def rBLines : Nat := 336
+def rFx : Nat := 344
+def rFMask : Nat := 352
+def rFNpos : Nat := 360
+def rFCap : Nat := 368
+def rFDrop : Nat := 376
+def rFieldsFound : Nat := 384
+def rOvLen : Nat := 392
+def rLs : Nat := 400
+def rXrefBytes : Nat := 408
+def rViewSize : Nat := 416
+def rPieceN : Nat := 424
+def rNumLen : Nat := 432
+def rByLen : Nat := 440
+def rLnLen : Nat := 448
+def rMidLen : Nat := 456
+/-- Five fields, each where in the buffer and how long; the digits of the number, of `:bytes` and of
+`:lines`; the pieces a line is given from, each where in the read and how long; the Message-ID that
+labels XHDR's line; HDR's field's name; TAB, SP, CRLF and the dot line; the 220, 221 or 222 line, or
+for OVER and HDR the 224, 225 or 221 line; the Xref field; and the buffer — the octets of the last
+read, or for OVER and HDR the fields taken. -/
+def rSegs : Nat := 464
+def rNumTxt : Nat := rSegs + 5 * 16
+def rByTxt : Nat := rNumTxt + 16
+def rLnTxt : Nat := rByTxt + 16
+def piecesMax : Nat := 24
+def rPieces : Nat := rLnTxt + 16
+def rMid : Nat := rPieces + piecesMax * 16
+def rField : Nat := rMid + 256
+def rConst : Nat := rField + fieldMax
+def rLine : Nat := rConst + 8
 /-- The longest 220, 221 or 222 line, a number of ten digits and a Message-ID, and the longest
 Xref field: the path identity and sixteen groups, each a name and a number of ten digits, folded
 at most twice. -/
@@ -418,7 +493,9 @@ def statusMax : Nat := 272
 def xrefMax : Nat := align8 (6 + identityMax + 16 * (1 + groupMax + 1 + 10) + 2 * 2 + 2)
 def rXref : Nat := rLine + statusMax
 def rBuf : Nat := rXref + xrefMax
-def readLen : Nat := rBuf + jobData
+/-- The buffer: the longest header section an overview read takes, more than a job's octets. -/
+def bufLen : Nat := ({} : News.PostSpec.Rules).overviewMax
+def readLen : Nat := rBuf + bufLen
 
 /-- The bytes of heap the program needs from `@base`. -/
 def size : Nat := readsOff + reads * readLen
@@ -570,7 +647,8 @@ theorem offsets_aligned :
       recOff % 8 = 0 ∧ drvOff % 8 = 0 ∧ ownStore % 8 = 0 ∧ ownWaits % 8 = 0 ∧ ownKey % 8 = 0 ∧
       ownId % 8 = 0 ∧ ownMsg % 8 = 0 ∧ ownCrc % 8 = 0 ∧ slotsOff % 8 = 0 ∧ slotLen % 8 = 0 ∧
       zBuf % 8 = 0 ∧ indexOff % 8 = 0 ∧ ownReaders % 8 = 0 ∧ ownIdLen % 8 = 0 ∧ readsOff % 8 = 0 ∧
-      rXref % 8 = 0 ∧ rBuf % 8 = 0 ∧ readLen % 8 = 0 := by
+      rXref % 8 = 0 ∧ rBuf % 8 = 0 ∧ readLen % 8 = 0 ∧ rSegs % 8 = 0 ∧ rPieces % 8 = 0 ∧
+      cField % 8 = 0 := by
   decide +kernel
 
 /-- The configuration lies past the article's area, which starts where that program's lane has
@@ -590,9 +668,10 @@ theorem context_fits (ctx : News.ArticleSpec.Context) (h : ctx.ok = true) :
   exact ⟨h.1.1.1.1.1.1.1.1.1.2, h.1.1.2, fun g hg => (h.2 g hg).1.1⟩
 
 /-- The sizes are those the specification is stated with: an action carries any reply a connection
-gets (`SessionSpec.reply_fits`), and a connection holds a line of the limit. -/
+gets (`SessionSpec.reply_fits`), a connection holds a line of the limit, and a read's buffer holds a
+job's octets. -/
 theorem sizes_agree :
-    data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit := by
+    data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit ∧ jobData ≤ bufLen := by
   decide +kernel
 
 /-- The layout's bounds on the identity are those of `Identity.ok`. -/

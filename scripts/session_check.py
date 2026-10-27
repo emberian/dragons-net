@@ -788,7 +788,10 @@ STORE_KEYWORDS = [*KEYWORDS[:-1], ("", "POST", ""), ("", "ARTICLE", ""), ("", "B
                   ("", "GROUP", " local.test"), ("", "NEXT", ""), ("", "LAST", ""), ("", "LISTGROUP", ""),
                   ("", "LIST", ""),
                   ("LIST ", "ACTIVE", ""), ("LIST ", "NEWSGROUPS", ""), ("", "DATE", ""),
-                  ("", "NEWGROUPS", " 20260101 000000"), ("NEWGROUPS 20260101 000000 ", "GMT", ""), KEYWORDS[-1]]
+                  ("", "NEWGROUPS", " 20260101 000000"), ("NEWGROUPS 20260101 000000 ", "GMT", ""),
+                  ("", "OVER", ""), ("", "HDR", " Subject"), ("", "XOVER", ""), ("", "XHDR", " Subject"),
+                  ("LIST ", "OVERVIEW.FMT", ""), ("LIST ", "HEADERS", ""), ("LIST HEADERS ", "MSGID", ""),
+                  ("LIST HEADERS ", "RANGE", ""), ("HDR :", "BYTES", ""), ("HDR :", "LINES", ""), KEYWORDS[-1]]
 
 
 DRAWN, DRAWN_SEED = 300, 20261002
@@ -1365,7 +1368,7 @@ def mode_scenarios() -> Iterator[PostScenario]:
 # field with a TAB and one that starts with a dot, lines of the body that start with dots; a Subject
 # named in lower case and no Date; a crosspost; and holes among the numbers.
 RICH = (b"From: a@b.example\r\nSubject: one\r\n\ttwo\r\nDate: Mon, 26 Oct 2026 10:00:00 +0000\r\n"
-        b"Message-ID: <1@old.example>\r\nReferences: <0@old.example> <00@old.example>\r\nKeywords: x\r\n"
+        b"Message-ID: <1@old.example>\r\nRef: no\r\nReferences: <0@old.example> <00@old.example>\r\nKeywords: x\r\n"
         b"Keywords: y\r\nX-Tab: a\tb\r\n..odd: dot\r\nXref-Like: z\r\nX-Fold:\r\n folded\r\nX-Tabfold:\r\n\tx\r\n"
         b"\r\nbody\r\n..dot line\r\n..\r\nlast\r\n")
 LOWER = b"from: c@d.example\r\nsubject:  two spaces\r\nReferences:\r\n\r\nshort\r\n"

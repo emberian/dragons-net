@@ -489,16 +489,17 @@ def capabilitiesHead : List Byte :=
 def helpHead : List Byte :=
   ascii "100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\n" ++
     ascii "HELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net "
-def helpMid : List Byte := ascii " is free software under the GNU AGPL; source code at "
+def helpMid : List Byte := ascii " is free software (GNU AGPL); source at "
 def blockEnd : List Byte := ascii "\r\n.\r\n"
 def greetingPostHead : List Byte := ascii "200 dragons-net "
 def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
 def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
-def capabilitiesReaderTail : List Byte := ascii "\r\nREADER\r\nLIST ACTIVE NEWSGROUPS"
+def capabilitiesReaderTail : List Byte :=
+  ascii "\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID"
 def helpPostHead : List Byte :=
   ascii "100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n" ++
-    ascii "CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\n" ++
-    ascii "NEWGROUPS\r\nNEXT\r\nPOST\r\nQUIT\r\n" ++
+    ascii "CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHDR\r\nHELP\r\nLAST\r\nLIST\r\n" ++
+    ascii "LISTGROUP\r\nNEWGROUPS\r\nNEXT\r\nOVER\r\nPOST\r\nQUIT\r\n" ++
     ascii "dragons-net "
 
 /-- LIST OVERVIEW.FMT's reply (§8.4.2): the seven fields of every overview line, `:bytes` and `:lines`
@@ -640,9 +641,9 @@ def actionData : Nat := 512
 
 theorem parts_short :
     greetingHead.length ≤ 16 ∧ greetingMid.length ≤ 35 ∧ capabilitiesHead.length ≤ 60 ∧
-      helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
+      helpHead.length ≤ 132 ∧ helpMid.length ≤ 40 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
-      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 187 ∧ capabilitiesReaderTail.length ≤ 32 ∧
+      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 198 ∧ capabilitiesReaderTail.length ≤ 72 ∧
       overviewFmtText.length ≤ 128 ∧
       ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → r ≠ .capabilitiesReader →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →

@@ -338,9 +338,10 @@ counting the lines it could not.
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
 - ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
-  number 0, or 430). HELP lists ARTICLE, BODY, DATE, GROUP, LAST, LIST, LISTGROUP, NEWGROUPS, NEXT
-  and POST; ARTICLE, BODY, HEAD and STAT share a line.
-- The capabilities name READER and `LIST ACTIVE NEWSGROUPS` (RFC 3977 §3.3.2, §7.6.2). As a server
+  number 0, or 430). HELP lists ARTICLE, BODY, DATE, GROUP, HDR, LAST, LIST, LISTGROUP, NEWGROUPS,
+  NEXT, OVER and POST; ARTICLE, BODY, HEAD and STAT share a line.
+- The capabilities name READER, HDR, `LIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT` and `OVER MSGID`
+  (RFC 3977 §3.3.2, §7.6.2, §8). As a server
   that is not mode-switching and advertises READER, it answers MODE READER 200 while the
   capabilities name POST, else 201, changing nothing (§5.3.2); HELP does not name it.
 - GROUP selects a group the store carries and makes its first article current: 211 with the count
@@ -466,6 +467,8 @@ from them are done; what needs the program or the host comes with them, as marke
 - The layout gains file jobs and their completions, the wall clock, the run's random value and a
   journal's key, the configuration, and whether a connection may post; the heap grows to 4 MiB, and
   the theorem that the layout fits the heap moves with it — done, unused yet.
+- A read's buffer holds 69,632 octets, the longest header section the store writes, for the fields OVER
+  and HDR take; the heap stays 4 MiB.
 - The host gains the worker pool, the lock, and `--spool`, `--run-dir`, `--group`,
   `--path-identity` and `--post-from` — done.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.

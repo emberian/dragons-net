@@ -1297,13 +1297,36 @@ def listings(news: Any, server: Server, ids: list[str]) -> None:
     read_expected(c, f"211 {len(ids)} 1 {len(ids)} local.test\r\n{numbers}.\r\n".encode(), "LISTGROUP")
 
 
+def overviewed(news: Any, ids: list[str]) -> None:
+    """`local.test`'s overview by `nntplib`, which asks OVER as the capabilities name it and reads the
+    fields LIST OVERVIEW.FMT names: each article's number and message-id, `:bytes` the octets ARTICLE
+    gives, a CRLF as two and no dot put before a line, `:lines` the body's lines, Xref its number; OVER
+    by message-id numbered 0; XHDR of the subjects."""
+    news.group("local.test")
+    over = news.over((1, None))[1]
+    if [n for n, _ in over] != list(range(1, len(ids) + 1)) or [o["message-id"] for _, o in over] != ids:
+        raise LaneError(f"OVER 1- gave {[(n, o.get('message-id')) for n, o in over]}")
+    for n, o in over:
+        lines = news.article(n)[1].lines
+        body = len(lines) - lines.index(b"") - 1
+        if (int(o[":bytes"]), int(o[":lines"])) != (sum(len(line) + 2 for line in lines), body) or \
+                not (o["xref"] or "").endswith(f" local.test:{n}"):
+            raise LaneError(f"OVER gave article {n} {o}")
+    by_id = news.over(ids[1])[1]
+    if [(n, o["message-id"]) for n, o in by_id] != [(0, ids[1])]:
+        raise LaneError(f"OVER {ids[1]} gave {by_id}")
+    subjects = news.xhdr("subject", "1-")[1]
+    if subjects != [(str(n), "hi") for n in range(1, len(ids) + 1)]:
+        raise LaneError(f"XHDR subject 1- gave {subjects}")
+
+
 def post_over_sockets(b: Build) -> str:
     """POST on an empty spool from loopback: 340, the article, 240; after a restart its Message-ID is
     refused, 441, and two other articles taken, 240, the last by `nntplib` with a line of a dot and past
     16,384 octets, each in a file of its own. The host's log names the address and port of each article's poster by its
     `logging-data`. After another restart `nntplib` reads each back (`read_back`), and once an octet
-    of a file is changed on the disk, its ARTICLE is answered 403; walks the group (`walk`) and lists it
-    (`listings`)."""
+    of a file is changed on the disk, its ARTICLE is answered 403; walks the group (`walk`), lists it
+    (`listings`) and reads its overview (`overviewed`)."""
     first = sessions.article(*sessions.BASIC, "Message-ID: <one@x.example>")
     second = sessions.article(*sessions.BASIC, "Message-ID: <two@x.example>")
     third = "\r\n".join((*sessions.BASIC, "Message-ID: <three@x.example>", "", ".",
@@ -1350,11 +1373,14 @@ def post_over_sockets(b: Build) -> str:
                     nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
                 capabilities = news.getcapabilities()
                 if capabilities != {"VERSION": ["2"], "IMPLEMENTATION": ["dragons-net", REVISION.decode()],
-                                    "READER": [], "LIST": ["ACTIVE", "NEWSGROUPS"], "POST": []}:
+                                    "READER": [], "HDR": [],
+                                    "LIST": ["ACTIVE", "HEADERS", "NEWSGROUPS", "OVERVIEW.FMT"], "OVER": ["MSGID"],
+                                    "POST": []}:
                     raise LaneError(f"nntplib read the capabilities {capabilities}")
                 read_back(news, nntplib, spool, ids)
                 walk(news, nntplib, ids)
                 listings(news, server, ids)
+                overviewed(news, ids)
             first_file = spool / "a0000000000000001"
             changed = bytearray(first_file.read_bytes())
             changed[-3] ^= 1
@@ -1381,7 +1407,7 @@ def post_over_sockets(b: Build) -> str:
         if f"connection {value} from 127.0.0.1 port {port}" not in logged:
             raise LaneError(f"logging-data {value[:40]!r} of the poster at port {port} is not in the log {logged}")
     return ("posted, the Message-ID refused after a restart, two others posted, their posters logged, each read "
-            "back and listed, a changed file refused")
+            "back, listed and overviewed, a changed file refused")
 
 
 def net_nntp(timeout: float, *args: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -1758,7 +1784,7 @@ DEFECTS = [
            [(r"(if \(lds 1 \(cb \+ 104\)\) & \(lds 1 \(@base \+ \d+\)\) \{\s*)r = 38;", r"\1r = 39;", 1)],
            "Net::NNTP", "not ('got', '200 Posting allowed')", program=True),
     Defect("the READER lines left out of POST's capabilities",
-           [(r"(?s)(if t == 13 \{.*?)j = 0;\s+while j < 32 \{.*?\}\s+o = o \+ 32;", r"\1", 1)],
+           [(r"(?s)(if t == 13 \{.*?)j = 0;\s+while j < 70 \{.*?\}\s+o = o \+ 70;", r"\1", 1)],
            "a post over sockets", "read the capabilities", program=True),
     Defect("the connection kept open after MODE READER's 502", [(r"\(r == 3\) \+ \(r == 37\)", "(r == 3)", 1)],
            "nntplib", "left the connection open", program=True),

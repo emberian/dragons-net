@@ -640,6 +640,17 @@ def tUnreadable : Nat := 33
 def tXref : Nat := 34
 def tDot : Nat := 35
 
+/-- The texts of OVER and HDR reads: the 224, 225 and 221 lines, OVER's five fields' names and HDR's
+metadata items' and Xref's, in upper case. -/
+def tStatusOver : Nat := 70
+def tStatusHdr : Nat := 71
+def tStatusXhdr : Nat := 72
+def tOvField : Nat := 79
+def tMetaBytes : Nat := 84
+def tMetaLines : Nat := 85
+def tXrefName : Nat := 86
+def textLen (k : Nat) : Nat := (texts.getD k []).length
+
 /-- Whether a file is open at place `p`: the journal's, an article's or a read's
 (`Store.placeTaken`). -/
 def placeTaken : PFun :=
@@ -711,36 +722,69 @@ def idOf : PFun :=
 def putX (e : PExpr) : List PStmt :=
   [keptIn (v "xo") (xrefMax - 1), .storeb (eAdd (atOff (v "rs") rXref) (v "xo")) e, inc "xo"]
 
-/-- Read `k` given to the connection `x` of generation `g`, for command `cmd`, of the commit at
-`ci`: its numbers from the commit; its 220, 221 or 222 line, the number `no` and the Message-ID;
-its Xref field (`PostSpec.xref`): the path identity, then each group and its number, a line folded
-before one that would take it past 998 octets. -/
-def readClaim : PFun :=
-  { name := "readClaim", params := [(1, "k"), (1, "x"), (1, "g"), (1, "cmd"), (1, "ci"), (1, "no")],
-    body :=
-    readOf "k" ++ [keptIn (v "cmd") 3, ifs (eEq (v "cmd") (n 0)) (stop brokenState),
-      keptIn (v "no") 2147483647] ++
+/-- An ASCII letter in upper case. -/
+def foldB (e : PExpr) : PExpr := eSub e (eMul (n 32) (eAnd (eLt (n 96) e) (eLt e (n 123))))
+
+/-- Of the commits from the place `from` on, the first that holds the `gi`-th group with a number
+from `lo` to `hi`: one more than its place, or zero; its number in `ownNum`. A group's numbers rise
+with its commits, so this is the article of the lowest such number after those before `from`. -/
+def groupFrom : PFun :=
+  { name := "groupFrom", params := [(1, "gi"), (1, "fr"), (1, "lo"), (1, "hi")], body :=
+    [.dec "cm" (rw News.RecoverProg.rCommits), keptIn (v "cm") capacity, keptIn (v "fr") capacity,
+     .dec "best" (n 0), .dec "bn" (n 0), .dec "ci" (v "fr"),
+     .while (eAnd (eLt (v "ci") (v "cm")) (eEq (v "best") (n 0)))
+       (commitAt "ci" ++
+        [.dec "gn" (eAnd (fld "sl" News.RecoverProg.slotMisc) (n 255)), keptIn (v "gn") 16,
+         .dec "g" (n 0),
+         .while (eLt (v "g") (v "gn"))
+           [.dec "gw" (ld (eAdd (atOff (v "sl") News.RecoverProg.slotGroups) (eMul (v "g") (n 8)))),
+            .dec "num" (eAnd (v "gw") (n 0xFFFFFFFF)),
+            ifs (eAnd (eEq (.shr (v "gw") (n 32)) (v "gi"))
+                (eAnd (eLe (v "lo") (v "num")) (eLe (v "num") (v "hi"))))
+              [.assign "best" (eAdd (v "ci") (n 1)), .assign "bn" (v "num")],
+            inc "g"],
+         inc "ci"]),
+     sset ownNum (v "bn")] ++
+    give (v "best") }
+
+/-- Read `rs` set to the article of the commit at `ci`, its line giving the number `no`: its numbers
+from the commit, nothing read or checked; its Xref field (`PostSpec.xref`) — for ARTICLE and HEAD
+folded before a location that would take its line past 998 octets, for OVER and HDR whole, its
+octets as ARTICLE gives it counted — the Message-ID for XHDR's label, the number's digits, and for
+OVER and HDR failed at once when its header section is longer than the buffer for fields. -/
+def readStart : PFun :=
+  { name := "readStart", params := [(1, "k"), (1, "ci"), (1, "no")], body :=
+    readOf "k" ++ [keptIn (v "no") 2147483647, .dec "vw" (rdw rView), keptIn (v "vw") 2] ++
     commitAt "ci" ++
     [keptIn (v "sn") 250,
      .dec "sz" (fld "sl" News.RecoverProg.slotSizes),
-     .dec "ms" (fld "sl" News.RecoverProg.slotMisc)] ++
-    ([(rLive, n 1), (rOwner, n 1), (rOwnIdx, v "x"), (rOwnGen, v "g"), (rCmd, v "cmd"),
-      (rCi, v "ci"), (rFile, n readNone), (rPlace, n 0), (rPGen, n 0), (rGot, n 0), (rGiven, n 0),
-      (rBad, n 0), (rBusy, n 0), (rHead, .shr (v "sz") (n 32)), (rSize, eAnd (v "sz") (n 0xFFFFFFFF)),
-      (rCrcWant, eAnd (.shr (v "ms") (n 16)) (n 0xFFFFFFFF)), (rAcc, n 0xFFFFFFFF), (rBol, n 1),
-      (rCr, n 0), (rDot, n 0), (rBufAt, n 0), (rBufLen, n 0), (rNumber, v "no")].map
-        fun (f, e) => rdset f e) ++
-    copyNew "sj" (atOff (v "rs") rLine)
-      (eAdd (textOf tStatus) (eMul (eSub (v "cmd") (n 1)) (n 4))) (n 4) ++
-    [.dec "lo" (n 4)] ++ digits "ld" (atOff (v "rs") rLine) "lo" (v "no") 16 ++
-    [.storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 32), inc "lo"] ++
-    copyNew "si" (eAdd (atOff (v "rs") rLine) (v "lo")) (atOff (v "sl") News.RecoverProg.slotId)
-      (v "sn") ++
-    [.assign "lo" (eAdd (v "lo") (v "sn")), keptIn (v "lo") (statusMax - 2),
-     .storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 13),
-     .storeb (eAdd (atOff (v "rs") (rLine + 1)) (v "lo")) (n 10),
-     rdset rLineLen (eAdd (v "lo") (n 2)),
-     .dec "xo" (n 0), .dec "xj" (n 0),
+     .dec "ms" (fld "sl" News.RecoverProg.slotMisc),
+     .dec "hd" (.shr (v "sz") (n 32))] ++
+    ([(rCi, v "ci"), (rFile, n readNone), (rPlace, n 0), (rPGen, n 0), (rGot, n 0), (rGiven, n 0),
+      (rBad, eAnd (ne (v "vw") (n 0)) (eLt (n bufLen) (v "hd"))), (rBusy, n 0), (rHead, v "hd"),
+      (rSize, eAnd (v "sz") (n 0xFFFFFFFF)), (rCrcWant, eAnd (.shr (v "ms") (n 16)) (n 0xFFFFFFFF)),
+      (rAcc, n 0xFFFFFFFF), (rBol, n 1), (rCr, n 0), (rDot, n 0), (rBufAt, n 0), (rBufLen, n 0),
+      (rNumber, v "no"), (rStuffed, n 0), (rBLines, n 0), (rFx, n 0), (rFMask, n 0), (rFNpos, n 0),
+      (rFCap, n 5), (rFDrop, n 0), (rFieldsFound, n 0), (rOvLen, n 0), (rLs, n 1), (rViewSize, n 0),
+      (rPieceN, n 0)].map fun (f, e) => rdset f e) ++
+    ((List.range 10).map fun j => rdset (rSegs + 8 * j) (n 0)) ++
+    [rdset rMidLen (v "sn")] ++
+    copyNew "si" (atOff (v "rs") rMid) (atOff (v "sl") News.RecoverProg.slotId) (v "sn") ++
+    [.dec "lo" (n 0)] ++ digits "nd" (atOff (v "rs") rNumTxt) "lo" (v "no") 16 ++
+    [rdset rNumLen (v "lo"),
+     ifs (eEq (v "vw") (n 0))
+       ([.dec "cmd" (rdw rCmd), keptIn (v "cmd") 3, ifs (eEq (v "cmd") (n 0)) (stop brokenState)] ++
+        copyNew "sj" (atOff (v "rs") rLine)
+          (eAdd (textOf tStatus) (eMul (eSub (v "cmd") (n 1)) (n 4))) (n 4) ++
+        [.assign "lo" (n 4)] ++ digits "ld" (atOff (v "rs") rLine) "lo" (v "no") 16 ++
+        [.storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 32), inc "lo"] ++
+        copyNew "sq" (eAdd (atOff (v "rs") rLine) (v "lo")) (atOff (v "sl") News.RecoverProg.slotId)
+          (v "sn") ++
+        [.assign "lo" (eAdd (v "lo") (v "sn")), keptIn (v "lo") (statusMax - 2),
+         .storeb (eAdd (atOff (v "rs") rLine) (v "lo")) (n 13),
+         .storeb (eAdd (atOff (v "rs") (rLine + 1)) (v "lo")) (n 10),
+         rdset rLineLen (eAdd (v "lo") (n 2))]),
+     .dec "xo" (n 0), .dec "xj" (n 0), .dec "folds" (n 0),
      .while (eLt (v "xj") (n 6)) (putX (.loadb (eAdd (textOf tXref) (v "xj"))) ++ [inc "xj"]),
      .dec "il" (aw News.ArticleProg.xIdLen), keptIn (v "il") identityMax, .assign "xj" (n 0),
      .while (eLt (v "xj") (v "il"))
@@ -757,7 +801,7 @@ def readClaim : PFun :=
          .while (eLt (n 9) (v "t")) [.assign "t" (div10 (v "t")), inc "nd"],
          .dec "ll" (eAdd (eAdd (v "gl") (n 1)) (v "nd")),
          ifs (eLt (n 998) (eAdd (eAdd (v "wd") (n 1)) (v "ll")))
-           (putX (n 13) ++ putX (n 10) ++ [.assign "wd" (n 0)])] ++
+           [.ite (eEq (v "vw") (n 0)) (putX (n 13) ++ putX (n 10)) [inc "folds"], .assign "wd" (n 0)]] ++
         putX (n 32) ++
         [.assign "xj" (n 0),
          .while (eLt (v "xj") (v "gl")) (putX (.loadb (eAdd (atOff (v "gp") 8) (v "xj"))) ++ [inc "xj"])] ++
@@ -769,8 +813,198 @@ def readClaim : PFun :=
               (eAdd (n 48) (eSub (v "t") (eMul (div10 (v "t")) (n 10)))),
             .assign "t" (div10 (v "t"))],
          .assign "xo" (eAdd (v "xo") (v "nd")),
-         .assign "wd" (eAdd (eAdd (v "wd") (n 1)) (v "ll")), inc "gi"])] ++
-    putX (n 13) ++ putX (n 10) ++ [rdset rXrefLen (v "xo"), done0] }
+         .assign "wd" (eAdd (eAdd (v "wd") (n 1)) (v "ll")), inc "gi"]),
+     .ite (eEq (v "vw") (n 0)) (putX (n 13) ++ putX (n 10) ++ [rdset rXrefLen (v "xo")])
+       [rdset rXrefLen (v "xo"), rdset rXrefBytes (eAdd (eAdd (v "xo") (n 2)) (eMul (v "folds") (n 2)))],
+     done0] }
+
+/-- Read `k` given to the connection `x` of generation `g`, for command `cmd` — ARTICLE (one), HEAD,
+BODY, OVER's fields (four) or HDR's field (five) — of the commit at `ci`, its line giving the number
+`no` (`Read.make`); for OVER and HDR the view the connection holds: XOVER or XHDR, by message-id, the
+range's group, lowest and highest numbers, and for HDR the field, its kind found by its name; the
+first line, TAB, SP, CRLF and the dot line; and the next article of a range. -/
+def readClaim : PFun :=
+  { name := "readClaim", params := [(1, "k"), (1, "x"), (1, "g"), (1, "cmd"), (1, "ci"), (1, "no")],
+    body :=
+    readOf "k" ++ [keptIn (v "cmd") 5, ifs (eEq (v "cmd") (n 0)) (stop brokenState), keptIn (v "x") (conns - 1),
+      .dec "cb" (eAdd (at_ tableOff) (eMul (v "x") (n connSlot))), .dec "vw" (n 0),
+      ifs (eLe (n 4) (v "cmd")) [.assign "vw" (eSub (v "cmd") (n 3))]] ++
+    ([(rLive, n 1), (rOwner, n 1), (rOwnIdx, v "x"), (rOwnGen, v "g"), (rCmd, v "cmd"), (rView, v "vw"),
+      (rLegacy, eAnd (fld "cb" cViewF) (n 1)), (rById, eAnd (.shr (fld "cb" cViewF) (n 1)) (n 1)),
+      (rViewFirst, n 1), (rNext, n 0), (rNextNo, n 0), (rGi, fld "cb" cViewGi), (rLo, fld "cb" cViewLo),
+      (rUpto, fld "cb" cViewUpto), (rHk, n 0), (rFLen, n 0)].map fun (f, e) => rdset f e) ++
+    [.storeb (atOff (v "rs") rConst) (n 9), .storeb (atOff (v "rs") (rConst + 1)) (n 32),
+     .storeb (atOff (v "rs") (rConst + 2)) (n 13), .storeb (atOff (v "rs") (rConst + 3)) (n 10),
+     .storeb (atOff (v "rs") (rConst + 4)) (n 46), .storeb (atOff (v "rs") (rConst + 5)) (n 13),
+     .storeb (atOff (v "rs") (rConst + 6)) (n 10),
+     ifs (ne (v "vw") (n 0))
+       ([.dec "sx" (n tStatusOver),
+         ifs (eEq (v "vw") (n 2)) [.assign "sx" (n tStatusHdr), ifs (rdw rLegacy) [.assign "sx" (n tStatusXhdr)]],
+         .dec "tl" (n (textLen tStatusOver)),
+         ifs (eEq (v "sx") (n tStatusHdr)) [.assign "tl" (n (textLen tStatusHdr))],
+         ifs (eEq (v "sx") (n tStatusXhdr)) [.assign "tl" (n (textLen tStatusXhdr))],
+         .dec "sa" (textOf tStatusOver),
+         ifs (eEq (v "sx") (n tStatusHdr)) [.assign "sa" (textOf tStatusHdr)],
+         ifs (eEq (v "sx") (n tStatusXhdr)) [.assign "sa" (textOf tStatusXhdr)]] ++
+        copyNew "sj" (atOff (v "rs") rLine) (v "sa") (v "tl") ++
+        [rdset rLineLen (v "tl"),
+         ifs (eEq (v "vw") (n 2))
+           ([.dec "fl" (fld "cb" cFieldLen), keptIn (v "fl") fieldMax, rdset rFLen (v "fl")] ++
+            copyNew "fj" (atOff (v "rs") rField) (atOff (v "cb") cField) (v "fl") ++
+            [.dec "hk" (n 0)] ++
+            ([(1, tMetaBytes), (2, tMetaLines), (3, tXrefName)].flatMap fun (kd, t) =>
+              [.dec s!"eq{kd}" (eEq (v "fl") (n (textLen t))), .dec s!"jq{kd}" (n 0),
+               .while (eAnd (v s!"eq{kd}") (eLt (v s!"jq{kd}") (v "fl")))
+                 [ifs (ne (foldB (.loadb (eAdd (atOff (v "rs") rField) (v s!"jq{kd}"))))
+                      (.loadb (eAdd (textOf t) (v s!"jq{kd}")))) [.assign s!"eq{kd}" (n 0)],
+                  inc s!"jq{kd}"],
+               ifs (v s!"eq{kd}") [.assign "hk" (n kd)]]) ++
+            [rdset rHk (v "hk")])])] ++
+    callS "rt" "readStart" [v "k", v "ci", v "no"] ++
+    [ifs (eAnd (ne (v "vw") (n 0)) (eLt (rdw rGi) (n groupsMax)))
+       (callS "gf" "groupFrom" [rdw rGi, eAdd (v "ci") (n 1), rdw rLo, rdw rUpto] ++
+        [rdset rNext found, rdset rNextNo (sw ownNum)]),
+     done0] }
+
+/-- Read `k`, an OVER's or HDR's, given the next article of its range (`Read.advance`): started on
+it, its first line given, and the article after it found. -/
+def readAdvance : PFun :=
+  { name := "readAdvance", params := [(1, "k")], body :=
+    readOf "k" ++
+    [.dec "nx" (rdw rNext), keptIn (v "nx") capacity, ifs (eEq (v "nx") (n 0)) (stop brokenState),
+     .dec "ci" (eSub (v "nx") (n 1)), rdset rViewFirst (n 0)] ++
+    callS "rt" "readStart" [v "k", v "ci", rdw rNextNo] ++
+    [rdset rNext (n 0), rdset rNextNo (n 0),
+     ifs (eLt (rdw rGi) (n groupsMax))
+       (callS "gf" "groupFrom" [rdw rGi, eAdd (v "ci") (n 1), rdw rLo, rdw rUpto] ++
+        [rdset rNext found, rdset rNextNo (sw ownNum)]),
+     done0] }
+
+
+/-- The `j`-th octet of the `ii`-th name read `k` looks for: of OVER's five fields' names, as the
+texts hold them in upper case, or HDR's field's name; and the length of that name. -/
+def nameByte : PFun :=
+  { name := "nameByte", params := [(1, "k"), (1, "ii"), (1, "j")], body :=
+    readOf "k" ++
+    [ifs (eEq (rdw rView) (n 2)) ([keptIn (v "j") (fieldMax - 1)] ++
+       give (.loadb (eAdd (atOff (v "rs") rField) (v "j"))))] ++
+    ((List.range 5).flatMap fun i =>
+      [ifs (eEq (v "ii") (n i)) ([keptIn (v "j") (textLen (tOvField + i) - 1)] ++
+        give (.loadb (eAdd (textOf (tOvField + i)) (v "j"))))]) ++
+    stop brokenState }
+def nameLen (ii : PExpr) : List PStmt :=
+  [.assign "nl" (rdw rFLen),
+   ifs (eEq (v "vw") (n 1)) ((List.range 5).map fun i =>
+     ifs (eEq ii (n i)) [.assign "nl" (n (textLen (tOvField + i)))])]
+
+/-- The bit of the `i`-th of five names: two to the power `i`, without a shift by a local. -/
+def bitOf (i : PExpr) : PExpr :=
+  (List.range 5).foldl (fun acc j => eAdd acc (eMul (eEq i (n j)) (n (2 ^ j)))) (n 0)
+
+/-- One octet `x` at `f` of an overview read's file taken (`DN.News.Overview`): the dots put before
+lines counted, the body's lines, and in the header section the fields its names look for, a line at a
+time: a line that does not start with SP or TAB starts a field, whose name is matched octet by
+octet, without regard to case, against those not yet found; at its colon the field found is taken
+into the buffer, the SP after the colon left out, each TAB as SP, through the lines after it that
+start with SP or TAB. -/
+def takeOctet : List PStmt :=
+  let capture : List PStmt :=
+    [.ite (eAnd (v "fd") (eEq (v "x") (n 32))) [.assign "fd" (n 0)]
+      [.assign "fd" (n 0), keptIn (v "fc") 4, keptIn (v "ol") (bufLen - 1),
+       .dec "cv" (v "x"), ifs (eEq (v "x") (n 9)) [.assign "cv" (n 32)],
+       .storeb (eAdd (atOff (v "rs") rBuf) (v "ol")) (v "cv"), inc "ol",
+       .dec "sa" (eAdd (atOff (v "rs") (rSegs + 8)) (eMul (v "fc") (n 16))),
+       .store (v "sa") (eAdd (ld (v "sa")) (n 1))]]
+  let nameStep : List PStmt :=
+    [.ite (eEq (v "x") (n 58))
+      [.assign "hit" (n 5), .assign "ii" (n 0),
+       .while (eLt (v "ii") (v "nn"))
+         (nameLen (v "ii") ++
+          [ifs (eAnd (eAnd (ne (eAnd (v "fm") (bitOf (v "ii"))) (n 0)) (eEq (v "nl") (v "fn"))) (eEq (v "hit") (n 5)))
+             [.assign "hit" (v "ii")],
+           inc "ii"]),
+       .ite (eLt (v "hit") (n 5))
+         [keptIn (v "hit") 4, .assign "fc" (v "hit"), .assign "fo" (eOr (v "fo") (bitOf (v "hit"))),
+          .assign "fd" (n 1), .assign "fx" (n 2),
+          .store (eAdd (atOff (v "rs") rSegs) (eMul (v "hit") (n 16))) (v "ol"),
+          .store (eAdd (atOff (v "rs") (rSegs + 8)) (eMul (v "hit") (n 16))) (n 0)]
+         [.assign "fx" (n 3)]]
+      [.assign "ii" (n 0),
+       .while (eLt (v "ii") (v "nn"))
+         (nameLen (v "ii") ++
+          [ifs (ne (eAnd (v "fm") (bitOf (v "ii"))) (n 0))
+             [.ite (eLe (v "nl") (v "fn")) [.assign "fm" (eAnd (v "fm") (eXor (n 31) (bitOf (v "ii"))))]
+               (callS "nb" "nameByte" [v "k", v "ii", v "fn"] ++
+                [ifs (ne (foldB (v "x")) (foldB found))
+                   [.assign "fm" (eAnd (v "fm") (eXor (n 31) (bitOf (v "ii"))))]])],
+           inc "ii"]),
+       keptIn (v "fn") 1000, inc "fn", ifs (eEq (v "fm") (n 0)) [.assign "fx" (n 3)]]]
+  [ifs (ne (v "vw") (n 0))
+    [ifs (eAnd (v "b0") (eEq (v "x") (n 46))) [inc "stf"],
+     .ite (eLt (v "f") (v "h"))
+       [ifs (eEq (v "hk") (n 0))
+         [.ite (or2 (eEq (v "x") (n 13)) (eEq (v "x") (n 10)))
+           [ifs (eEq (v "x") (n 10)) [.assign "ls" (n 1), ifs (eEq (v "fx") (n 1)) [.assign "fx" (n 3)]]]
+           [.ite (v "ls")
+             [ifs (eEq (eAnd (v "b0") (eEq (v "x") (n 46))) (n 0))
+               [.assign "ls" (n 0),
+                .ite (or2 (eEq (v "x") (n 32)) (eEq (v "x") (n 9))) [ifs (eEq (v "fx") (n 2)) capture]
+                  ([.assign "fx" (n 1), .assign "fm" (eAnd (v "all") (eXor (v "fo") (n 31))), .assign "fn" (n 0)] ++
+                   nameStep)]]
+             [.ite (eEq (v "fx") (n 1)) nameStep [ifs (eEq (v "fx") (n 2)) capture]]]]]
+       [ifs (eAnd (eLe (eAdd (v "h") (n 2)) (v "f")) (eEq (v "x") (n 10))) [inc "bl"]]]]
+/-- A piece of read `rs`'s line: `len` octets from `off` in the read, if there are any. -/
+def piece (off len : PExpr) : List PStmt :=
+  [.assign "pl" len,
+   ifs (eLt (n 0) (v "pl"))
+     [.assign "pn" (rdw rPieceN), keptIn (v "pn") (piecesMax - 1),
+      .store (eAdd (atOff (v "rs") rPieces) (eMul (v "pn") (n 16))) off,
+      .store (eAdd (atOff (v "rs") (rPieces + 8)) (eMul (v "pn") (n 16))) (v "pl"),
+      rdset rPieceN (eAdd (v "pn") (n 1)), rdset rViewSize (eAdd (rdw rViewSize) (v "pl"))]]
+
+/-- Where field `i` lies in the buffer, and its length. -/
+def segAt (i : Nat) : PExpr := eAdd (n rBuf) (rdw (rSegs + 16 * i))
+def segLen (i : Nat) : PExpr := rdw (rSegs + 16 * i + 8)
+
+/-- Read `k`'s line made, once all of its file is checked (`Read.viewLine`, `Read.output`): its
+pieces — the first line while it is still to give; for OVER the number, the five fields, `:bytes`,
+`:lines` and Xref whole, TAB between them; for HDR its label, SP and the field's content, none for an
+XHDR whose field is absent or empty; CRLF; and the dot line after the last article's. -/
+def viewPieces : PFun :=
+  let tab := piece (n rConst) (n 1)
+  { name := "viewPieces", params := [(1, "k")], body :=
+    readOf "k" ++
+    [.dec "pl" (n 0), .dec "pn" (n 0), rdset rPieceN (n 0), rdset rViewSize (n 0),
+     .dec "byt" (eSub (eAdd (rdw rSize) (rdw rXrefBytes)) (rdw rStuffed)),
+     .dec "lo" (n 0)] ++ digits "bd" (atOff (v "rs") rByTxt) "lo" (v "byt") 16 ++
+    [rdset rByLen (v "lo"), .assign "lo" (n 0)] ++
+    digits "ld" (atOff (v "rs") rLnTxt) "lo" (rdw rBLines) 16 ++
+    [rdset rLnLen (v "lo"),
+     .dec "xl" (rdw rXrefLen), keptIn (v "xl") xrefMax, keptIn (rdw rLineLen) statusMax,
+     keptIn (rdw rNumLen) 16, keptIn (rdw rMidLen) 250,
+     ifs (rdw rViewFirst) (piece (n rLine) (rdw rLineLen)),
+     .ite (eEq (rdw rView) (n 1))
+       (piece (n rNumTxt) (rdw rNumLen) ++
+        ((List.range 5).flatMap fun i =>
+          tab ++ [keptIn (rdw (rSegs + 16 * i)) bufLen, keptIn (segLen i) bufLen] ++ piece (segAt i) (segLen i)) ++
+        tab ++ piece (n rByTxt) (rdw rByLen) ++ tab ++ piece (n rLnTxt) (rdw rLnLen) ++ tab ++
+        piece (n rXref) (v "xl") ++ piece (n (rConst + 2)) (n 2))
+       [.dec "hk" (rdw rHk), keptIn (v "hk") 3,
+        .dec "va" (n rByTxt), .dec "vl" (rdw rByLen),
+        ifs (eEq (v "hk") (n 0))
+          [keptIn (rdw rSegs) bufLen, keptIn (segLen 0) bufLen, .assign "va" (segAt 0),
+           .assign "vl" (segLen 0)],
+        ifs (eEq (v "hk") (n 2)) [.assign "va" (n rLnTxt), .assign "vl" (rdw rLnLen)],
+        ifs (eEq (v "hk") (n 3))
+          [keptIn (v "xl") xrefMax, ifs (eLt (v "xl") (n 6)) (stop brokenState),
+           .assign "va" (n (rXref + 6)), .assign "vl" (eSub (v "xl") (n 6))],
+        ifs (eEq (eAnd (rdw rLegacy) (eEq (v "vl") (n 0))) (n 0))
+          ([.dec "la" (n rNumTxt), .dec "ln" (rdw rNumLen),
+            ifs (eAnd (rdw rLegacy) (rdw rById)) [.assign "la" (n rMid), .assign "ln" (rdw rMidLen)]] ++
+           piece (v "la") (v "ln") ++ piece (n (rConst + 1)) (n 1) ++ piece (v "va") (v "vl") ++
+           piece (n (rConst + 2)) (n 2))],
+     ifs (eEq (rdw rNext) (n 0)) (piece (n (rConst + 4)) (n 3)),
+     done0] }
 
 /-- Whether read `rs` is whole: its commit's size read and checked, and its file closed by the read
 past it (`Read.whole`). -/
@@ -779,10 +1013,11 @@ def readWhole : PExpr := eAnd (eEq (rdw rGot) (rdw rSize)) (eEq (rdw rFile) (n r
 /-- How many octets read `k` gives (`Read.output`): nothing before octets are checked, then its
 220, 221 or 222 line, for ARTICLE the file with Xref after the header fields once the empty line is
 read, for HEAD the header fields and Xref, for BODY what follows the empty line; and once whole the
-dot. -/
+dot. An OVER's or HDR's read gives nothing until all of its file is checked, then its pieces. -/
 def readOutSize : PFun :=
   { name := "readOutSize", params := [(1, "k")], body := readOf "k" ++
-    [.dec "gt" (rdw rGot), .dec "h" (rdw rHead), .dec "cm" (rdw rCmd),
+    [.dec "vs" (n 0), ifs readWhole [.assign "vs" (rdw rViewSize)], ifs (ne (rdw rView) (n 0)) (give (v "vs")),
+     .dec "gt" (rdw rGot), .dec "h" (rdw rHead), .dec "cm" (rdw rCmd),
      ifs (eEq (v "gt") (n 0)) (give (n 0)),
      .dec "known" (eLe (eAdd (v "h") (n 2)) (v "gt")),
      .dec "hm" (v "h"), ifs (eLt (v "gt") (v "h")) [.assign "hm" (v "gt")],
@@ -871,7 +1106,7 @@ def result (i w : Nat) : PExpr := fld "d" (doneResults + 16 * i + 8 * w)
 (`PostSpec.fileOk` a job at a time): CRLF only, no NUL, a line that starts with a dot starting with
 two, the empty line where the header section's size says — an LF before and after it, each line
 ending in CRLF — and once all are read, the last line ended, the size and the CRC-32C; checked, they
-are the read's buffer. -/
+are the read's buffer, or for an OVER's or HDR's read what it takes of them (`takeOctet`). -/
 def readCheck : List PStmt :=
   let crcStep (x : PExpr) : PStmt := .assign "acc" (eXor
     (ld (eAdd (at_ (ownOff + ownCrc)) (eMul (eAnd (eXor (v "acc") x) (n 255)) (n 8))))
@@ -889,9 +1124,15 @@ def readCheck : List PStmt :=
    .dec "bad" (or2 (eLt (v "gn") (v "mn")) (eLt (v "left") (v "gn"))),
    .dec "acc" (rdw rAcc), .dec "bol" (rdw rBol), .dec "cr" (rdw rCr), .dec "dt" (rdw rDot),
    .dec "q" (n 0),
+   .dec "vw" (rdw rView), keptIn (v "vw") 2, .dec "hk" (rdw rHk), .dec "nn" (n 1),
+   ifs (eEq (v "vw") (n 1)) [.assign "nn" (n 5)], .dec "all" (n 1), ifs (eEq (v "nn") (n 5)) [.assign "all" (n 31)],
+   .dec "fx" (rdw rFx), .dec "fm" (rdw rFMask), .dec "fn" (rdw rFNpos), .dec "fc" (rdw rFCap),
+   .dec "fd" (rdw rFDrop), .dec "fo" (rdw rFieldsFound), .dec "ol" (rdw rOvLen), .dec "ls" (rdw rLs),
+   .dec "stf" (rdw rStuffed), .dec "bl" (rdw rBLines), .dec "hit" (n 5), .dec "ii" (n 0), .dec "nl" (n 0),
    .while (eAnd (eEq (v "bad") (n 0)) (eLt (v "q") (v "gn")))
-     [.dec "x" (.loadb (eAdd (atOff (v "d") doneHead) (v "q"))), .dec "f" (eAdd (v "gt") (v "q")),
-      crcStep (v "x"),
+     ([.dec "x" (.loadb (eAdd (atOff (v "d") doneHead) (v "q"))), .dec "f" (eAdd (v "gt") (v "q")),
+       .dec "b0" (v "bol")] ++ takeOctet ++
+     [crcStep (v "x"),
       .ite (v "cr")
         [ifs (ne (v "x") (n 10)) [bad], .assign "cr" (n 0), .assign "bol" (n 1)]
         [.ite (or2 (eEq (v "x") (n 0)) (eEq (v "x") (n 10))) [bad]
@@ -902,7 +1143,7 @@ def readCheck : List PStmt :=
                 [.assign "bol" (n 0)]]]]],
       ifs (or2 (eEq (eAdd (v "f") (n 1)) (v "h")) (eEq (v "f") (eAdd (v "h") (n 1))))
         [ifs (ne (v "x") (n 10)) [bad]],
-      inc "q"],
+      inc "q"]),
    .dec "ng" (eAdd (v "gt") (v "gn")),
    ifs (eAnd (eLe (eAdd (v "h") (n 2)) (v "ng")) (eLt (v "h") (n 2))) [bad],
    ifs (eLe (v "sz") (v "ng"))
@@ -910,9 +1151,11 @@ def readCheck : List PStmt :=
       ifs (eLt (v "ng") (eAdd (v "h") (n 2))) [bad],
       ifs (ne (eXor (v "acc") (n 0xFFFFFFFF)) (rdw rCrcWant)) [bad]],
    .ite (v "bad") [rdset rBad (n 1)]
-     (copyNew "cj" (atOff (v "rs") rBuf) (atOff (v "d") doneHead) (v "gn") ++
+     ([ifs (eEq (v "vw") (n 0)) (copyNew "cj" (atOff (v "rs") rBuf) (atOff (v "d") doneHead) (v "gn"))] ++
       [rdset rBufAt (v "gt"), rdset rBufLen (v "gn"), rdset rGot (v "ng"), rdset rAcc (v "acc"),
-       rdset rBol (v "bol"), rdset rCr (v "cr"), rdset rDot (v "dt")])]
+       rdset rBol (v "bol"), rdset rCr (v "cr"), rdset rDot (v "dt"), rdset rFx (v "fx"), rdset rFMask (v "fm"),
+       rdset rFNpos (v "fn"), rdset rFCap (v "fc"), rdset rFDrop (v "fd"), rdset rFieldsFound (v "fo"),
+       rdset rOvLen (v "ol"), rdset rLs (v "ls"), rdset rStuffed (v "stf"), rdset rBLines (v "bl")])]
 
 /-- The completion in slot `j` of read `k`'s job (`Store.completeRead`): its file opened at a place
 in the table and in use by no other file, or the read failed; the octets read
@@ -938,14 +1181,38 @@ def readDone : PFun :=
        [.ite (eEq (v "tt") (n taskClose)) [rdset rFile (n readGone)]
          [.ite (eEq (v "ok") (n 0)) [rdset rBad (n 1)] readCheck,
           ifs (eAnd (eEq (v "tt") (n taskReadLast)) (eLe (n 1) (v "ok"))) [rdset rFile (n readGone)]]],
+     ifs (eAnd (ne (rdw rView) (n 0)) (eAnd readWhole (eEq (rdw rBad) (n 0))))
+       (callS "vp" "viewPieces" [v "k"]),
      done0] }
+
+/-- What `readPiece` gives of an OVER's or HDR's read: the next octets of its pieces, from where it
+has given to. -/
+def viewPiece : List PStmt :=
+  [.dec "pi" (n 0), .dec "ps" (n 0), .dec "pnn" (rdw rPieceN), keptIn (v "pnn") piecesMax,
+   -- the piece where `gv` falls
+   .dec "seek" (n 1),
+   .while (eAnd (v "seek") (eLt (v "pi") (v "pnn")))
+     [.dec "pq" (ld (eAdd (atOff (v "rs") (rPieces + 8)) (eMul (v "pi") (n 16)))), keptIn (v "pq") bufLen,
+      .ite (eLt (v "gv") (eAdd (v "ps") (v "pq"))) [.assign "seek" (n 0)]
+        [.assign "ps" (eAdd (v "ps") (v "pq")), inc "pi"]],
+   .dec "i" (n 0),
+   .while (eLt (v "i") (v "m"))
+     [keptIn (v "pi") (piecesMax - 1),
+      .dec "po" (ld (eAdd (atOff (v "rs") rPieces) (eMul (v "pi") (n 16)))),
+      .dec "pz" (ld (eAdd (atOff (v "rs") (rPieces + 8)) (eMul (v "pi") (n 16)))),
+      .dec "at" (eAdd (v "po") (eSub (eAdd (v "gv") (v "i")) (v "ps"))), keptIn (v "at") (readLen - 1),
+      .storeb (eAdd (atOff (v "cb") cOut) (v "i")) (.loadb (eAdd (v "rs") (v "at"))),
+      inc "i",
+      ifs (eEq (eAdd (v "gv") (v "i")) (eAdd (v "ps") (v "pz"))) [.assign "ps" (eAdd (v "ps") (v "pz")), inc "pi"]]]
+
 
 /-- The next octets read `k` gives, at most an action's, into the output of connection `c`, made an
 octet at a time from where the read has given to: its 220, 221 or 222 line, the file's octets from
 the buffer — or, for ARTICLE, the empty line's CRLF when the buffer starts past it — Xref, and the
 dot; with its first octets, the article made current when it was named by its number. Once it has
-given everything and is whole, the read ends: it has no owner, and the connection no read. How many
-it gave. -/
+given everything and is whole, the read ends: it has no owner, and the connection no read; an OVER's
+or HDR's read gives its pieces instead, makes nothing current, and goes on to the next article of its
+range while there is one, even when its line was empty. How many it gave. -/
 def readPiece : PFun :=
   { name := "readPiece", params := [(1, "c"), (1, "k")], body := readOf "k" ++
     [keptIn (v "c") (conns - 1), .dec "cb" (eAdd (at_ tableOff) (eMul (v "c") (n connSlot)))] ++
@@ -957,7 +1224,8 @@ def readPiece : PFun :=
      .dec "sl" (rdw rLineLen), .dec "h" (rdw rHead), .dec "xl" (rdw rXrefLen),
      .dec "sz" (rdw rSize), .dec "cm" (rdw rCmd), .dec "ba" (rdw rBufAt), .dec "bn" (rdw rBufLen),
      keptIn (v "sl") statusMax, keptIn (v "xl") xrefMax, keptIn (v "bn") jobData,
-     .dec "i" (n 0),
+     .ite (ne (rdw rView) (n 0)) viewPiece
+     [.dec "i" (n 0),
      .while (eLt (v "i") (v "m"))
        [.dec "pos" (eAdd (v "gv") (v "i")), .dec "b" (n 0), .dec "isf" (n 0), .dec "fp" (n 0),
         .dec "di" (n 0), .dec "isd" (n 0), .dec "xi" (n 0), .dec "isx" (n 0),
@@ -985,12 +1253,13 @@ def readPiece : PFun :=
              .assign "b" (.loadb (eAdd (atOff (v "rs") rBuf) (v "bi")))]
             [.ite (eEq (v "fp") (v "h")) [.assign "b" (n 13)]
               [.ite (eEq (v "fp") (eAdd (v "h") (n 1))) [.assign "b" (n 10)] (stop brokenState)]]],
-        .storeb (eAdd (atOff (v "cb") cOut) (v "i")) (v "b"), inc "i"],
-     ifs (eAnd (eEq (v "gv") (n 0)) (eLt (n 0) (v "m")))
+        .storeb (eAdd (atOff (v "cb") cOut) (v "i")) (v "b"), inc "i"]],
+     ifs (eAnd (eAnd (eEq (v "gv") (n 0)) (eLt (n 0) (v "m"))) (eEq (rdw rView) (n 0)))
        [.dec "rn" (rdw rNumber), ifs (ne (v "rn") (n 0)) [setf "cb" cCurrent (v "rn")]],
      setf "cb" cOutLen (v "m"), rdset rGiven (eAdd (v "gv") (v "m")),
      ifs (eAnd readWhole (eEq (eAdd (v "gv") (v "m")) (v "os")))
-       [rdset rOwner (n 0), setf "cb" cRead (n 0), setf "cb" cWant (n 0)]] ++
+       [.ite (eAnd (ne (rdw rView) (n 0)) (ne (rdw rNext) (n 0))) (callS "ad" "readAdvance" [v "k"])
+         [rdset rOwner (n 0), setf "cb" cRead (n 0), setf "cb" cWant (n 0)]]] ++
     give (v "m") }
 
 /-- `Store.completeAny` of the completion in slot `j`, if it holds one: the read or the slot whose
@@ -1058,7 +1327,7 @@ def postDone : PFun :=
 def functions : List PFun :=
   [crcTable, postTakes, postTidy, postTidyAll, queueAdd, queueDrop, postAdmits, readAdmits,
    postAbandon, postClaim, idHash, idFind, idAdd, idBuild, postReserved, postReserving, postAccept,
-   postFeed, postFreeJob, postFrame, postPlan, placeTaken, groupScan, idOf, readClaim, readOutSize,
-   readPlan, readDone, readPiece, postDone]
+   postFeed, postFreeJob, postFrame, postPlan, placeTaken, groupScan, groupFrom, idOf, readStart,
+   readClaim, readAdvance, nameByte, viewPieces, readOutSize, readPlan, readDone, readPiece, postDone]
 
 end DN.Server.SessionStore

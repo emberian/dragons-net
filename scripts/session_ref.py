@@ -203,16 +203,16 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "greeting-post": b"200 dragons-net " + revision + b" ready, posting allowed; source code at " + source
         + b"\r\n",
         "capabilities-post": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
-        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\nPOST\r\n.\r\n",
+        + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\nPOST\r\n.\r\n",
         "capabilities-reader": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
-        + b"\r\nREADER\r\nLIST ACTIVE NEWSGROUPS\r\n.\r\n",
+        + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\n.\r\n",
         "mode-reader": b"502 Reading service unavailable\r\n",
         "reader-posting": b"200 Posting allowed\r\n",
         "reader-no-posting": b"201 Posting prohibited\r\n",
         "help-post": b"100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n"
-        b"CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\nNEWGROUPS\r\n"
-        b"NEXT\r\nPOST\r\nQUIT\r\ndragons-net "
-        + revision + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n",
+        b"CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHDR\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\n"
+        b"NEWGROUPS\r\nNEXT\r\nOVER\r\nPOST\r\nQUIT\r\ndragons-net "
+        + revision + b" is free software (GNU AGPL); source at " + source + b"\r\n.\r\n",
         "unreadable": b"403 Article not readable\r\n",
         "post": b"340 Send article to be posted\r\n",
         "posted": b"240 Article received OK\r\n",
@@ -223,7 +223,7 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         + b"\r\n.\r\n",
         "help": b"100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\nHELP\r\n"
         b"QUIT\r\nSTAT [message-ID|number]\r\ndragons-net " + revision
-        + b" is free software under the GNU AGPL; source code at " + source + b"\r\n.\r\n",
+        + b" is free software (GNU AGPL); source at " + source + b"\r\n.\r\n",
         "quit": b"205 Bye\r\n",
         "no-group": b"412 No newsgroup selected\r\n",
         "no-such-id": b"430 No article with that message-id\r\n",
