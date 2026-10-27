@@ -42,7 +42,7 @@ Capability output includes VERSION 2 first, as required by §3.3.2. It must refl
 
 ### Commands
 
-What each command of RFC 3977 gets with a store, and what holds it: the session's lanes (`session_check.py` for the model, `session_native.py` for the program), the nntp lane over sockets with `nntplib` and Perl's Net::NNTP, and the crash, power and faults lanes. Without a store the first slice answers as above.
+What each command of RFC 3977 gets with a store, and what holds it: the session's lanes (`session_check.py` for the model, `session_native.py` for the program), the nntp lane over sockets with `nntplib`, Perl's Net::NNTP and slrn, and the crash, power and faults lanes. Without a store the first slice answers as above.
 
 | Command | RFC 3977 | Answer | Held by |
 | --- | --- | --- | --- |
@@ -61,9 +61,9 @@ What each command of RFC 3977 gets with a store, and what holds it: the session'
 | LIST, LIST ACTIVE | §7.6.1, §7.6.3 | 215, then a line a group the wildmat takes: name, highest, lowest, `y` while the store accepts, else `n` | session lanes, nntp lane, faults lane after the store stops |
 | LIST NEWSGROUPS | §7.6.6 | 215 and an empty list, as no group has a description (#21) | session lanes, `nntplib`, Net::NNTP |
 | IHAVE, NEWNEWS | §6.3.2, §7.4 | 500 (#22) | session lanes |
-| OVER, XOVER | §8.3, RFC 2980 §2.8 | 224, then each article's line from its file read and checked whole, none made current; 412, 420, 423, 430; XOVER takes no message-id and gives an empty range an empty list, as INN | session lanes, `nntplib` |
+| OVER, XOVER | §8.3, RFC 2980 §2.8 | 224, then each article's line from its file read and checked whole, none made current; 412, 420, 423, 430; XOVER takes no message-id and gives an empty range an empty list, as INN | session lanes, `nntplib`, slrn |
 | HDR, XHDR | §8.5, RFC 2980 §2.6 | 225, or XHDR's 221, then a line an article, the first field of its name; 503 for a metadata item but `:bytes` and `:lines`; XHDR labels a message-id's line with it and leaves out an article without the field | session lanes, XHDR by `nntplib` |
-| LIST OVERVIEW.FMT, HEADERS | §8.4, §8.6 | 215: the seven fields, `:bytes` and `:lines` written `Bytes:` and `Lines:` for slrn, then `Xref:full`; `:`, `:bytes` and `:lines` | session lanes, OVERVIEW.FMT by `nntplib` |
+| LIST OVERVIEW.FMT, HEADERS | §8.4, §8.6 | 215: the seven fields, `:bytes` and `:lines` written `Bytes:` and `Lines:` for slrn, then `Xref:full`; `:`, `:bytes` and `:lines` | session lanes, OVERVIEW.FMT by `nntplib` and slrn |
 | LIST ACTIVE.TIMES, DISTRIB.PATS | §7.6.4, §7.6.5 | 501; ACTIVE.TIMES with #21 | session lanes |
 
 The status of LIST ACTIVE is the group's on this server, not the client's: a client that may not post sees `y` too (§7.6.3).

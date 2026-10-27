@@ -681,11 +681,14 @@ jobs:
         run: |
           echo "$ARCHIVE  build/lean-build.tar" | sha256sum --check --strict
           python3 scripts/build_archive.py unpack build/lean-build.tar
-      - name: Strace, which records what a check reads
+      - name: Strace, which records what a check reads, and for the nntp lane the newsreader slrn
         if: steps.passed.outputs.found == ''
+        env:
+          SLRN: ${{ matrix.shard.name == 'nntp' && 'slrn=1.0.3+dfsg-6ubuntu1' || '' }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends strace
+          # shellcheck disable=SC2086 # none or one word
+          sudo apt-get install --yes --no-install-recommends strace $SLRN
       # Each check that passed on the inputs it read is not run again (scripts/once.py): the stamps of
       # the last run of this branch or the default one to record them are taken up.
       - name: The checks' last passes

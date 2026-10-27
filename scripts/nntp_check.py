@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Buffer, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 import datetime
 import fcntl
@@ -1503,6 +1503,137 @@ def with_net_nntp(b: Build) -> str:
     return "MODE READER, two posts, the listings, GROUP, LISTGROUP, STAT, NEXT, LAST and ARTICLE; 502 without a store"
 
 
+# Run by slrn as it enters the group: each header in its order with its place in the threads, then
+# the first article as slrn read it, then out.
+SLRN_MACRO = """
+define dn_dump ()
+{
+   variable fp = fopen (getenv ("DN_THREADS"), "w");
+   uncollapse_threads ();
+   while (header_up (1)) {}
+   forever
+     {
+        () = fprintf (fp, "%d\\t%s\\t%s\\t%d\\t%d\\n", get_header_number (), extract_article_header ("Message-ID"),
+                      extract_article_header ("Subject"), has_parent (), thread_size ());
+        if (0 == header_down (1)) break;
+     }
+   () = fclose (fp);
+   while (header_up (1)) {}
+   call ("article_page_down");
+   fp = fopen (getenv ("DN_ARTICLE"), "w");
+   () = fputs (raw_article_as_string (), fp);
+   () = fclose (fp);
+   quit (0);
+}
+define dn_start ()
+{
+   if (group_search ("local.test")) () = select_group ();
+}
+() = register_hook ("group_mode_startup_hook", "dn_start");
+() = register_hook ("article_mode_startup_hook", "dn_dump");
+"""
+
+
+def slrn(timeout: float, port: int, home: Path) -> tuple[list[tuple[str, str]], str, str]:
+    """slrn on a terminal of its own, run by `SLRN_MACRO`: each command it sent with the first line
+    of its answer, the headers and threads it made, and the article it read."""
+    binary = shutil.which("slrn")
+    if binary is None:
+        raise LaneError("this check needs slrn 1.0.3")
+    version = subprocess.run([binary, "--version"], capture_output=True, text=True, check=False).stdout
+    if not version.startswith("slrn 1.0.3\n"):
+        raise LaneError(f"this check needs slrn 1.0.3, not {version.splitlines()[:1]}")
+    (home / "newsrc").write_text("local.test:\n")
+    (home / "macro.sl").write_text(SLRN_MACRO)
+    # Without a host name and a user, slrn will not start: it would have them for its own posts.
+    (home / "slrnrc").write_text(f'set read_active 0\nset confirm_actions 0\nset hostname "dn.example"\n'
+                                 f'set username "reader"\ninterpret "{home / "macro.sl"}"\n')
+    env = {"HOME": str(home), "TERM": "xterm", "LANG": "C", "PATH": "/usr/bin:/bin",
+           "DN_THREADS": str(home / "threads"), "DN_ARTICLE": str(home / "article")}
+    leader, follower = os.openpty()
+    try:
+        fcntl.ioctl(follower, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        run = subprocess.Popen([binary, "--nntp", "-h", "127.0.0.1", "-p", str(port), "-f", str(home / "newsrc"),
+                                "-i", str(home / "slrnrc"), "-n", "--debug", str(home / "debug")],
+                               stdin=follower, stdout=follower, stderr=follower, env=env, start_new_session=True)
+        os.close(follower)
+        follower = -1
+        end, screen = time.monotonic() + 4 * timeout, b""
+        while run.poll() is None and time.monotonic() < end:
+            if select_ready(leader, 0.2):
+                try:
+                    screen += os.read(leader, 65536)
+                except OSError:
+                    # The terminal is gone once slrn has closed it: only its end is left to wait for.
+                    with suppress(subprocess.TimeoutExpired):
+                        run.wait(max(end - time.monotonic(), 0))
+        if run.poll() is None:
+            run.kill()
+            run.wait()
+            raise LaneError(f"slrn did not finish in {4 * timeout} s: {screen[-300:]!r}")
+    finally:
+        os.close(leader)
+        if follower >= 0:
+            os.close(follower)
+    if run.returncode != 0:
+        raise LaneError(f"slrn stopped with status {run.returncode}: {screen[-300:]!r}")
+    said: list[tuple[str, str]] = []
+    for line in (home / "debug").read_text(errors="replace").splitlines():
+        text = line[1:]
+        if line.startswith(">") and text:
+            said.append(("sent", text))
+        elif line.startswith("<") and said and said[-1][0] == "sent":
+            said.append(("got", text))
+    return said, (home / "threads").read_text(), (home / "article").read_text()
+
+
+def select_ready(fd: int, wait: float) -> bool:
+    with selectors.DefaultSelector() as ready:
+        ready.register(fd, selectors.EVENT_READ)
+        return bool(ready.select(wait))
+
+
+def with_slrn(b: Build) -> str:
+    """slrn, a newsreader written apart from the server, enters a group of a thread of three, each of
+    its own Subject, and an article alone: it asks XOVER as the capabilities and LIST OVERVIEW.FMT
+    name it, threads the articles by the References OVER gives, takes a folded Subject from it
+    unfolded, and reads the first."""
+    nntplib = import_nntplib()
+    ids = [f"<{c}@x.example>" for c in "abcd"]
+    refs = [[], ids[:1], ids[:2], []]
+    subjects = ["first", "Re: first", "third", "other\r\n\tsubject"]
+    with tempfile.TemporaryDirectory() as temp:
+        spool, run, home = Path(temp, "spool"), Path(temp, "run"), Path(temp, "home")
+        for d in (spool, run, home):
+            d.mkdir()
+        options = ("--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test")
+        with serving(b, False, *options, traced=False) as server:
+            with nntplib.NNTP("127.0.0.1", server.port, timeout=b.timeout) as news:
+                for mid, ref, subject in zip(ids, refs, subjects, strict=True):
+                    news.post((f"From: a@b.example\r\nNewsgroups: local.test\r\nSubject: {subject}\r\n"
+                              f"Message-ID: {mid}\r\n" + (f"References: {' '.join(ref)}\r\n" if ref else "")
+                              + "\r\nbody\r\n.dot\r\n").encode())
+                news.group("local.test")
+                first = news.article(1)[1].lines
+            said, threads, article = slrn(b.timeout, server.port, home)
+    as_wanted("slrn's conversation", said, [
+        ("sent", "MODE READER"), ("got", "200 Posting allowed"),
+        *[item for probe in ("XOVER", "XHDR Path") for item in (("sent", probe), ("got", "412 No newsgroup selected"))],
+        ("sent", "LIST OVERVIEW.FMT"), ("got", "215 Order of fields in overview database"),
+        *[("sent", "GROUP local.test"), ("got", "211 4 1 4 local.test")] * 2,
+        ("sent", "XOVER 1-4"), ("got", "224 Overview information follows"),
+        ("sent", "ARTICLE 1"), ("got", f"220 1 {ids[0]}"), ("sent", "QUIT")])
+    made = [f"{n}\t{mid}\t{subject}\t{parent}\t{size}" for n, mid, subject, parent, size in
+            zip(range(1, 5), ids, ["first", "Re: first", "third", "other subject"], [0, 1, 1, 0], [3, 2, 1, 1],
+                strict=True)]
+    if threads.splitlines() != made:
+        raise LaneError(f"slrn made of the overview {threads.splitlines()}, not {made}")
+    if article.split("\n") != [line.decode() for line in first] + [""]:
+        raise LaneError(f"slrn read the first article as {article!r}, not {first}")
+    return "XOVER of a group, its threads by References, a folded Subject and an article read"
+
+
 def files_of(image: str) -> list[tuple[bytes, bytes]]:
     """The files an image of the store lane names, in order."""
     if image == "-":
@@ -1633,6 +1764,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "a store recovered at start": store_start,
     "a post over sockets": post_over_sockets,
     "Net::NNTP": with_net_nntp,
+    "slrn": with_slrn,
     "the store lane's directories": store_directories,
 }
 
@@ -1796,6 +1928,8 @@ DEFECTS = [
            "Net::NNTP", "231 List of new newsgroups follows", program=True),
     Defect("LIST NEWSGROUPS answered as LIST ACTIVE", [(r"r = 33;", "r = 32;", 1)], "reader lines cut between reads",
            "reader commands sent whole read", program=True),
+    Defect("OVER's References left empty", [(r"all = 31;", "all = 15;", 1)], "slrn", "made of the overview",
+           program=True),
     Defect("the session kept after QUIT", [(r"(if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{)\s+st cb \+ 16, 1;", r"\1", 1)],
            "pipeline", "the stream did not end", program=True),
     Defect("a file's CRC-32C not compared",

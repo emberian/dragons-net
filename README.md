@@ -30,7 +30,7 @@ Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](
 
 ## Build and check
 
-Install Git, Python 3.12, Perl with its Net::NNTP 3.15, [elan](https://github.com/leanprover/elan), [rustup](https://rustup.rs/) and a C toolchain; the checks run on Linux x86-64 and fetch their pinned tools on first use (elsewhere, `bash scripts/check.sh build`).
+Install Git, Python 3.12, Perl with its Net::NNTP 3.15, slrn 1.0.3, [elan](https://github.com/leanprover/elan), [rustup](https://rustup.rs/) and a C toolchain; the checks run on Linux x86-64 and fetch their pinned tools on first use (elsewhere, `bash scripts/check.sh build`).
 
 ```sh
 git clone https://github.com/emberian/dragons-net.git dn
