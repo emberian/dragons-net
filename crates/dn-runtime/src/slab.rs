@@ -40,9 +40,9 @@ struct Slot<T> {
 /// token — both reserve index 0, both bump the slot's generation on removal,
 /// and both reject a token whose generation no longer matches — but the model
 /// is not a description of this allocator's choices, and a refinement proof
-/// would have to start by reconciling them. The generation is a `u64` here and
-/// a `Nat` there; a slot is retired when incrementing would overflow, which the
-/// model does not represent at all.
+/// would have to start by reconciling them. Both retire a slot whose generation
+/// is spent, here when incrementing a `u64` would overflow, there at `2^31`, so
+/// that the model's keys fit its completion token.
 #[derive(Debug)]
 pub struct Slab<T> {
     slots: Vec<Slot<T>>,
