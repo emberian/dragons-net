@@ -13,9 +13,9 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
   unanswered and stops the store, its sync leaving the mark; an opening or a read of the article
   answers 403 and the store goes on; a failure at the start ends it with status 4, recovery failed
   of no space. Every point but `dn/read-dir`, which a listing reaches only past `dn/open-dir`, fails
-  in some run.
+  in some run, and the stop's counters count the one failed file job, for want of space.
 - Each operation interrupted once (EINTR): where the host makes the call again, the run as without
-  it, and as a failure where it does not.
+  it, no file job failed, and as a failure where it does not, counted as failing otherwise.
 - Every write cut to one octet: the run as without it; a write of no progress: the start refused, of
   no space.
 - Each index's generations counted up to the last but one (`dn/generation`): every client opens at
@@ -236,10 +236,11 @@ def expected(base: Image, outcome: str = "none", at: int = -1) -> list[list[byte
     return rows
 
 
-def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple[str, str | None]:
+def answered(run: Run, base: Image, retried: bool, cls: str, role: str, counter: int = -1) -> tuple[str, str | None]:
     """The outcome of `run`, an operation on the file of `role` failed or interrupted at its point,
     and what of it 0005 does not allow, if anything; with `retried`, the host made the call again,
-    so nothing happened."""
+    so nothing happened. With `counter`, the stop counts one failed file job, there among those that
+    failed for want of space, on an I/O error and otherwise, or none if nothing failed."""
     failed = run.failed()
     point = failed[0] if failed else ""
     marked = run.marks == ["spool", "run"]
@@ -258,6 +259,10 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple
     what = f"{point or 'nothing'} on the {role or 'no'} file failing"
     if not outcome:
         return "", f"{what}, which 0005 does not expect"
+    if counter >= 0:
+        failures = N.counted(run.said, "at the stop")[8:]
+        if failures != [int(point != "" and not retried and k == counter) for k in range(3)]:
+            return "", f"{what}, the stop counted {failures} failed file jobs"
     if (outcome == "none") != (at < 0) or run.got[:LISTING] != expected(base, outcome, at):
         step = STEPS[max(at, 0)][0].decode().strip()
         return "", f"{what}, the client of {step} read {b''.join(run.got[max(at, 0)])[-200:]!r}, not as {outcome}"
@@ -267,10 +272,10 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple
 
 
 def judged(run: Run, base: Image, binary: Path, where: Path, retried: bool = False, cls: str = "",
-           role: str = "") -> str | None:
+           role: str = "", counter: int = -1) -> str | None:
     """What `run`, an operation on the file of `role` failed or interrupted, does otherwise than 0005
     says, if anything."""
-    outcome, why = answered(run, base, retried, cls, role)
+    outcome, why = answered(run, base, retried, cls, role, counter)
     if why:
         return why
     try:
@@ -349,7 +354,7 @@ def swept(binary: Path, base: Image, error: int, cls: str,
 
         def judge(k: int) -> str | None:
             why = judged(runs[k], base, binary, Path(temp, str(k + 1)), error == errno.EINTR and points[k] in RETRIED,
-                         cls, files[k])
+                         cls, files[k], 0 if error == errno.ENOSPC else 2)
             return f"operation {k + 1} {errno.errorcode[error]}: {why}" if why else None
 
         why = next(filter(None, pool.map(judge, range(end))), None)

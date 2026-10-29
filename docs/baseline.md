@@ -73,7 +73,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | LazyFS | Synced data survives a cache clear, unsynced does not, appends tear ([details](#lazyfs)) | Tears a write request, not a block; runs apart |
 | Session model | 402 scenarios and 3,310 turns judged by an independent reference, 145 with a store and 14,983 turns; 131 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
-| NNTP server | The server over loopback held three ways; 56 planted defects caught ([details](#nntp-server)) | Tested, not proven |
+| NNTP server | The server over loopback held three ways; 60 planted defects caught ([details](#nntp-server)) | Tested, not proven |
 | Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss below |
 | Power loss | The server on LazyFS, power lost before each operation, after a run with each failed with EIO, and at each of 10 journal writes torn; held to `store_safe`; 4 planted defects of the power lane caught ([details](#power-loss)) | Names durable at once: a missing directory sync is not shown here |
 | Faults | The server's test build, each of its 35 and 46 operations failed with ENOSPC and interrupted, writes cut short, syncs slowed; an article's file changed in 6 ways after the start; 11 planted defects of the faults lane caught ([details](#faults)) | Faults at the host's points; the load test holds 64 clients at once, not more |
@@ -202,7 +202,7 @@ It catches 103 planted defects, sixty-five in the store's side, the selected gro
 
 ### NNTP server
 
-`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. Reader commands on a spool are cut between two reads at each of their octets. It catches 56 planted defects.
+`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. Reader commands on a spool are cut between two reads at each of their octets. It catches 60 planted defects.
 
 On the virtual clock an earlier deadline brings the program's wake forward and, cleared, gives it back to the earliest left; a clock set back, or at 2^62, ends the host with status 2.
 
@@ -213,6 +213,10 @@ It posts on an empty spool, after a restart and through `nntplib`, finds each po
 Perl's Net::NNTP 3.15, the version checked, is a client written apart from both. Connecting, it sends MODE READER and is told it may post. It posts two articles, one with lines that start with a dot.
 
 It finds them by DATE, LIST, LIST ACTIVE, LIST NEWSGROUPS, NEWGROUPS of a two-digit year, GROUP, LISTGROUP, STAT, NEXT, LAST and ARTICLE. Without a store its MODE READER gets 502 and the connection closes. Each line Net::NNTP sends and each status line it reads is held, and so is what it makes of them.
+
+Its settings come from a file too: `--check-config` writes them as JSON, and an unknown setting, one without a value or one given twice refuses the start, naming the line. Started with a socket from systemd it listens there. SIGUSR1 and the stop write its counters, held against what two clients sent and were sent.
+
+Installed alone in a directory, it is started, restarted, its spool copied and the copy served with every article; a copy's journal torn in its last commit is cut at the start, the articles before it served ([runbook](runbook.md)).
 
 slrn 1.0.3, a newsreader written apart from the server, enters a group of a thread of three, each of its own Subject, and an article alone. It asks XOVER, threads the articles by References, takes a folded Subject from the overview unfolded and reads the first article. Each command it sends and the first line of its answer are held.
 
@@ -234,7 +238,7 @@ Each spool is held as in the crash lane; where an operation failed, a post may b
 
 Each of its 35 and 46 operations at a point fails once with ENOSPC, every reply as decision 0005 has it for the point and the file. An article's creation, write or rename refuses the post; its sync also stops the store and leaves the mark.
 
-The journal's write or sync leaves the post unanswered and stops the store; a read's failure answers 403. Each operation is also interrupted once with EINTR, and where the host makes the call again the run is as without it.
+The journal's write or sync leaves the post unanswered and stops the store; a read's failure answers 403. Each operation is also interrupted once with EINTR, and where the host makes the call again the run is as without it. The stop's counters count the one file job that failed, of its class.
 
 Every write cut to one octet changes nothing; a write of no progress refuses the start. With every sync slowed, a read and a STAT on other connections are answered before a post's 240, which waits for its three syncs.
 
@@ -256,7 +260,7 @@ An article's file changed after the start in 6 ways after `fn`'s table, of one b
 
 ### Test sensitivity
 
-Each lane catches its planted defects, from copy and reply kernels to the session's program and fifty-six NNTP servers (thirty-six planted in its host and twenty in its program).
+Each lane catches its planted defects, from copy and reply kernels to the session's program and sixty NNTP servers (forty planted in its host and twenty in its program).
 
 The Lean build carries no warnings (`--wfail`) and `autoImplicit` is off.
 

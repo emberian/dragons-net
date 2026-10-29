@@ -1792,6 +1792,254 @@ def store_directories(b: Build) -> str:
     return f"{recovered} spools recovered and started again, {refused} refused as the model refuses them"
 
 
+COUNTERS = re.compile(
+    r"^(counters|at the stop): (\d+) connections, (\d+) closed gracefully, (\d+) at once, (\d+) by the client "
+    r"or the network; (\d+) octets in, (\d+) out; (\d+) accept pauses; (\d+) file jobs, (\d+) failed for want "
+    r"of space, (\d+) on I/O errors, (\d+) otherwise$", re.MULTILINE)
+
+
+def counted(said: str, when: str) -> list[int]:
+    """The counters the server wrote `when`, the one time it did."""
+    found = [m for m in COUNTERS.finditer(said) if m.group(1) == when]
+    if len(found) != 1:
+        raise LaneError(f"the server wrote the counters {len(found)} times {when}: {said[-300:]!r}")
+    return [int(n) for n in found[0].groups()[1:]]
+
+
+def counters(b: Build) -> str:
+    """SIGUSR1 has the server write its counters to stderr, and the stop again: of two connections one
+    closed gracefully after QUIT, the other reset by its client; the octets read are the first's HELP
+    and QUIT, those sent all either was sent; no file job without a store."""
+    with serving(b) as server:
+        first = server.client()
+        server.conn_of(first)
+        first.sendall(b"HELP\r\nQUIT\r\n")
+        to_first = read_to_end(first)
+        server.await_close(first, "the close after QUIT")
+        second = server.client()
+        server.conn_of(second)
+        to_second = read_exactly(second, len(GREETING))
+        reset(second)
+        server.await_close(second, "the reset")
+        server.proc.send_signal(signal.SIGUSR1)
+    want = [2, 1, 0, 1, len(b"HELP\r\nQUIT\r\n"), len(to_first) + len(to_second), 0, 0, 0, 0, 0]
+    for when in ("counters", "at the stop"):
+        if (got := counted(server.said(), when)) != want:
+            raise LaneError(f"the counters {when} were {got}, not {want}")
+    return f"counters {want}"
+
+
+def settings_file(where: Path, text: str) -> Path:
+    path = where / "dragons-nntpd.conf"
+    path.write_text(text)
+    return path
+
+
+def refused_start(b: Build, *args: str) -> tuple[int, str]:
+    """How the server ended, with `args`, before it listened."""
+    try:
+        done = subprocess.run([str(b.path), *args], capture_output=True, text=True, timeout=b.timeout, check=False)
+    except subprocess.TimeoutExpired:
+        raise LaneError(f"with {args} the server did not end in {b.timeout} s") from None
+    if done.stdout:
+        raise LaneError(f"with {args} the server wrote {done.stdout[:200]!r}")
+    return done.returncode, done.stderr
+
+
+def configuration(b: Build) -> str:
+    """A file of settings: `--check-config` writes them as JSON and starts nothing, comments, blank
+    lines, white space and a carriage return at an end taken; the server started with `--config`
+    serves its store. A setting unknown, without a value, given twice where it is taken once, an
+    option only, a second file, store settings without a spool, or a spool that is no directory each
+    end the host with status 2, the line named where a file's."""
+    with tempfile.TemporaryDirectory() as temp:
+        where = Path(temp)
+        spool, run = where / "spool", where / "run"
+        spool.mkdir()
+        run.mkdir()
+        store = (f"# the store\nspool {spool}\nrun-dir {run}  \r\n\n  path-identity dn.example\n"
+                 "group local.test\ngroup local.other\npost-from 127.0.0.0/8\n")
+        full = settings_file(where, f"address 127.0.0.1\nport 0\nrevision {REVISION.decode()}\n"
+                                    f"source {SOURCE.decode()}\nsend-buffer 8192\n{store}")
+        done = subprocess.run([str(b.path), "--check-config", str(full)], capture_output=True, text=True,
+                              timeout=b.timeout, check=False)
+        want = {"address": "127.0.0.1", "port": 0, "revision": REVISION.decode(), "source": SOURCE.decode(),
+                "send_buffer": 8192, "spool": str(spool), "run_dir": str(run), "path_identity": "dn.example",
+                "groups": ["local.test", "local.other"], "post_from": ["127.0.0.0/8"]}
+        try:
+            said = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            said = done.stdout
+        if done.returncode != 0 or said != want or list(spool.iterdir()):
+            raise LaneError(f"--check-config ended with status {done.returncode}, wrote {said!r} and left "
+                            f"{sorted(f.name for f in spool.iterdir())}: {done.stderr[-200:]!r}")
+        settings_file(where, store)
+        with serving(b, False, "--config", str(where / "dragons-nntpd.conf"), traced=False, judged=False) as server:
+            read_expected(server.client(), TEXTS["greeting-post"], "the greeting of a store from a file")
+        if sorted(f.name for f in spool.iterdir()) != ["journal"]:
+            raise LaneError("the server of a file's store left no journal")
+        named = str(where / "dragons-nntpd.conf")
+        file = ("--config", named)
+        cases = [
+            ("colour blue\n", file, f"{named}:1: unknown setting --colour"),
+            (f"spool {spool}\nrun-dir\n", file, f"{named}:2: run-dir needs a value"),
+            ("address 127.0.0.1\naddress ::1\n", file, f"{named}:2: --address given twice"),
+            ("clock-fd 5\n", file, f"{named}:1: clock-fd is an option only"),
+            ("config other\n", file, f"{named}:1: config is an option only"),
+            ("", (*file, *file), "--config given twice"),
+            ("group local.test\n", file, "store options without --spool"),
+            (f"spool {spool}\nspool {spool}\n", file, f"{named}:2: --spool given twice"),
+            ("port many\n", file, f"{named}:1: --port: not a number from 0 to 65535: many"),
+            (f"spool {full}\nrun-dir {run}\n", ("--check-config", named), "Not a directory"),
+        ]
+        for text, args, sign in cases:
+            settings_file(where, text)
+            try:
+                status, err = refused_start(b, "--revision", REVISION.decode(), "--source", SOURCE.decode(), *args)
+            except LaneError as error:
+                raise LaneError(f"a file of {text!r}: {error}") from None
+            if status != 2 or sign not in err:
+                raise LaneError(f"a file of {text!r} with {args}: status {status}, {err[-200:]!r}, not {sign!r}")
+    return f"--check-config wrote {len(want)} settings; {len(cases)} refused"
+
+
+def handed(b: Build, fds: str, *more: str, unix: str = "") -> tuple[subprocess.Popen[str], int]:
+    """The server started as systemd starts a socket-activated service: a listening socket at
+    descriptor 3, of loopback or with `unix` at that path, LISTEN_PID naming the process and
+    LISTEN_FDS `fds`; and the socket's port."""
+    listener = socket.socket(socket.AF_UNIX if unix else socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(unix or ("127.0.0.1", 0))
+    listener.listen(8)
+    fd = listener.fileno()
+    # The process that takes the socket to descriptor 3 and names itself becomes the server.
+    takeover = ("import os, sys\nfd = int(sys.argv[1])\nif fd != 3:\n    os.dup2(fd, 3)\n    os.close(fd)\n"
+                "os.environ['LISTEN_PID'] = str(os.getpid())\nos.environ['LISTEN_FDS'] = sys.argv[2]\n"
+                "os.execv(sys.argv[3], sys.argv[3:])\n")
+    port = 0 if unix else listener.getsockname()[1]
+    try:
+        return subprocess.Popen([sys.executable, "-c", takeover, str(fd), fds, str(b.path), "--revision",
+                                 REVISION.decode(), "--source", SOURCE.decode(), *more], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, pass_fds=(fd,)), port
+    finally:
+        listener.close()
+
+
+def served_handed(b: Build, proc: subprocess.Popen[str], wanted: int) -> str:
+    """What the server started with the socket of port `wanted` wrote to stderr once it served a
+    client there and stopped on SIGTERM."""
+    line = lanes.Lines(Server.pipe(proc.stdout)).get(b.timeout)
+    if line is None:
+        raise LaneError(f"the server with a handed socket gave no port: {Server.pipe(proc.stderr).read()[-200:]!r}")
+    port = int(json.loads(line)["port"])
+    if port != wanted:
+        raise LaneError(f"the server said port {port}, not the handed socket's {wanted}")
+    with socket.create_connection(("127.0.0.1", port), timeout=b.timeout) as c:
+        read_expected(c, GREETING, "the greeting on the handed socket")
+    proc.send_signal(signal.SIGTERM)
+    return proc.communicate(timeout=b.timeout)[1]
+
+
+def socket_handed(b: Build) -> str:
+    """Started with a socket from systemd the server listens on it, says its port and serves; with
+    none it listens on its own; with `--port` too, two sockets or a socket of the file system, it ends
+    with status 2."""
+    proc, wanted = handed(b, "1")
+    with proc:
+        try:
+            err = served_handed(b, proc, wanted)
+        except BaseException:
+            proc.kill()
+            raise
+    if proc.returncode != 0 or "stopped: a signal" not in err:
+        raise LaneError(f"with a handed socket the server ended with status {proc.returncode}: {err[-200:]!r}")
+    none, other = handed(b, "0")
+    with none:
+        line = lanes.Lines(Server.pipe(none.stdout)).get(b.timeout)
+        none.send_signal(signal.SIGTERM)
+        none.communicate(timeout=b.timeout)
+    if line is None or int(json.loads(line)["port"]) == other or none.returncode != 0:
+        raise LaneError(f"with LISTEN_FDS 0 the server said {line!r} and ended with status {none.returncode}")
+    with tempfile.TemporaryDirectory() as temp:
+        cases = (("1", ("--port", "0"), "are the socket's", ""), ("2", (), "where the server takes one", ""),
+                 ("1", (), "not an IPv4 or IPv6 socket", str(Path(temp, "socket"))))
+        for fds, more, sign, unix in cases:
+            refused, _ = handed(b, fds, *more, unix=unix)
+            with refused:
+                try:
+                    out, err = refused.communicate(timeout=b.timeout)
+                except subprocess.TimeoutExpired:
+                    refused.kill()
+                    raise LaneError(f"LISTEN_FDS {fds} with {more}: the server did not end") from None
+            if refused.returncode != 2 or sign not in err or out:
+                raise LaneError(f"LISTEN_FDS {fds} with {more}: status {refused.returncode}, {err[-200:]!r}")
+    return f"served on the handed socket, port {wanted}; with none on its own; {len(cases)} refused"
+
+
+def posted(port: int, timeout: float, article: bytes) -> None:
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as c:
+        read_expected(c, TEXTS["greeting-post"], "the greeting")
+        c.sendall(b"POST\r\n")
+        read_expected(c, TEXTS["post"], "the reply to POST")
+        c.sendall(article)
+        read_expected(c, TEXTS["posted"], "the reply to the article")
+
+
+def articles_read(port: int, timeout: float, ids: list[str], gone: tuple[str, ...] = ()) -> None:
+    """Each of `ids` found by STAT, and each of `gone` not."""
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as c, c.makefile("rb") as f:
+        if (line := f.readline()) != TEXTS["greeting-post"]:
+            raise LaneError(f"greeted with {line!r}")
+        for mid in [*ids, *gone]:
+            c.sendall(f"STAT {mid}\r\n".encode())
+            want = f"223 0 {mid}\r\n".encode() if mid in ids else TEXTS["no-such-id"]
+            if (line := f.readline()) != want:
+                raise LaneError(f"STAT {mid} answered {line!r}, not {want!r}")
+
+
+def operations(b: Build) -> str:
+    """The runbook on a disposable instance: the server installed alone in a directory with its file
+    of settings, checked, started and stopped by SIGTERM, restarted, its spool copied while stopped
+    and the copy served in a fresh place with every article; the copy's journal torn in its last
+    commit, the start cuts it and serves the articles before it."""
+    ids = [f"<op{k}@x.example>" for k in range(3)]
+    with tempfile.TemporaryDirectory() as temp:
+        prefix = Path(temp, "prefix")
+        for d in ("bin", "etc", "spool", "run", "copy"):
+            (prefix / d).mkdir(parents=True, mode=0o700)
+        binary = prefix / "bin/dragons-nntpd"
+        shutil.copy2(b.path, binary)
+        # The server needs nothing beside it; the check's harness reads the layout it was built with.
+        shutil.copy2(b.path.parent / "dn_session_layout.h", prefix / "bin")
+        installed = Build(binary, b.stale, b.timeout)
+
+        def configured(spool: Path) -> Path:
+            return settings_file(prefix / "etc", f"spool {spool}\nrun-dir {prefix / 'run'}\n"
+                                                 "path-identity dn.example\ngroup local.test\n")
+
+        conf = configured(prefix / "spool")
+        done = subprocess.run([str(binary), "--revision", REVISION.decode(), "--source", SOURCE.decode(),
+                               "--check-config", str(conf)], capture_output=True, text=True, timeout=b.timeout,
+                              check=False)
+        if done.returncode != 0:
+            raise LaneError(f"the installed server's settings were refused: {done.stderr[-200:]!r}")
+        for posting in (ids[:2], ids[2:]):
+            with serving(installed, False, "--config", str(conf), traced=False, judged=False) as server:
+                articles_read(server.port, b.timeout, ids[:ids.index(posting[0])])
+                for mid in posting:
+                    posted(server.port, b.timeout, sessions.article(*sessions.BASIC, f"Message-ID: {mid}"))
+        shutil.copytree(prefix / "spool", prefix / "copy/whole")
+        shutil.copytree(prefix / "spool", prefix / "copy/torn")
+        journal = prefix / "copy/torn/journal"
+        journal.write_bytes(journal.read_bytes()[:-5])
+        with serving(installed, False, "--config", str(configured(prefix / "copy/whole")), traced=False,
+                     judged=False) as server:
+            articles_read(server.port, b.timeout, ids)
+        with serving(installed, False, "--config", str(configured(prefix / "copy/torn")), traced=False,
+                     judged=False) as server:
+            articles_read(server.port, b.timeout, ids[:2], (ids[2],))
+    return "installed, checked, started, restarted, copied and served again; a torn journal served without its tail"
+
+
 CHECKS: dict[str, Callable[[Build], str]] = {
     "nntplib": with_nntplib,
     "pipeline": pipeline,
@@ -1820,6 +2068,10 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "Net::NNTP": with_net_nntp,
     "slrn": with_slrn,
     "the store lane's directories": store_directories,
+    "counters": counters,
+    "a file of settings": configuration,
+    "a socket from systemd": socket_handed,
+    "operations": operations,
 }
 
 
@@ -1843,6 +2095,15 @@ class Defect:
 DEFECTS = [
     Defect("a connection not logged", [("        dn_store_log_opened(&peer);\n", "", 1)], "a post over sockets",
            "is not in the log"),
+    Defect("an unknown setting taken", [(
+        '    } else if (!dn_store_option(name, value)) dn_harness("%sunknown setting %s", setting_at, name);',
+        "    } else (void)dn_store_option(name, value);", 1)], "a file of settings", "colour blue"),
+    Defect("a setting taken twice", [("&& given[k]++) dn_harness", "&& given[k]++ < 0) dn_harness", 1)],
+           "a file of settings", "address ::1"),
+    Defect("octets read not counted", [("            counted.in += (uint64_t)n;\n", "", 1)], "counters",
+           "the counters counters were"),
+    Defect("the socket from systemd ignored", [("    return LISTEN_FD;\n", "    return -1;\n", 1)],
+           "a socket from systemd", "not the handed socket's"),
     Defect("input no longer read after a read", [(
         "            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);",
         "            c->reading = 0;\n            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);", 1)],
@@ -1874,7 +2135,8 @@ DEFECTS = [
     Defect("a graceful close that does not shut down sending", [(
         "    if (shutdown(fd, SHUT_WR) && errno != ENOTCONN) {\n        close(fd);\n        return;\n    }\n", "", 1)],
         "lingering close", "the stream did not end"),
-    Defect("a close now that lingers", [("            else close(fd);", "            else linger(fd);", 1)],
+    Defect("a close now that lingers", [("                ++counted.abrupt;\n                close(fd);",
+                                         "                ++counted.abrupt;\n                linger(fd);", 1)],
            "first command", "closed gracefully, not at once"),
     Defect("no poll for writing", [("(c->unsent ? POLLOUT : 0)", "0", 1)], "slow reader", "the stream did not end"),
     Defect("a send said taken whole", [(
@@ -1936,7 +2198,8 @@ DEFECTS = [
     Defect("an action carried out for a stale generation", [(
         "if (cn->fd < 0 || cn->gen != gen) {", "(void)gen;\n        if (cn->fd < 0) {", 1)],
         "actions for another generation", "reached the client"),
-    Defect("SIGTERM ignored", [('if (fds[0].revents) stop_serving("a signal");', "", 1)],
+    Defect("SIGTERM ignored", [('else if (r >= 0 || (errno != EAGAIN && errno != EINTR)) stop_serving("a signal");',
+                                "", 1)],
            "pipeline", "did not end on SIGTERM"),
     Defect("accepting paused for good", [(
         "accept_paused_until = now + ACCEPT_PAUSE_MS;", "accept_paused_until = UINT64_MAX + 0 * now;", 1)],

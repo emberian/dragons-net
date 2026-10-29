@@ -396,6 +396,16 @@ static void stop_begins(void) {
     }
 }
 
+/* The jobs finished, and of them those that failed for want of space, on an I/O error and otherwise;
+ * under `lock`. */
+static uint64_t finished[4];
+
+void dn_jobs_counted(uint64_t counts[4]) {
+    pthread_mutex_lock(&lock);
+    memcpy(counts, finished, sizeof finished);
+    pthread_mutex_unlock(&lock);
+}
+
 static void *worker(void *unused) {
     (void)unused;
     for (;;) {
@@ -429,6 +439,10 @@ static void *worker(void *unused) {
         }
         pthread_mutex_lock(&lock);
         j->state = DONE;
+        ++finished[0];
+        if (j->class == DN_SESSION_CLASS_NO_SPACE) ++finished[1];
+        else if (j->class == DN_SESSION_CLASS_IO) ++finished[2];
+        else if (j->class == DN_SESSION_CLASS_OTHER) ++finished[3];
         pthread_mutex_unlock(&lock);
         uint64_t one = 1;
         if (write(wake, &one, sizeof one) != sizeof one) dn_harness_now("eventfd: %s", strerror(errno));

@@ -20,6 +20,10 @@ int dn_jobs_ready(void);
 /* Hand the completions into the dn_next array `a`, inside the call. */
 void dn_jobs_give(unsigned char *a);
 
+/* How many jobs have finished, and of them how many failed for want of space, on an I/O error and
+ * on another error; an operation that finds a file there or not is not a failure. */
+void dn_jobs_counted(uint64_t counts[4]);
+
 /* At a stop: the jobs not begun dropped, those running waited for, at most `ms` milliseconds, and
  * then, none running, every file closed. `counts` takes how many were running, how many dropped and
  * how many still run; the last is returned. */

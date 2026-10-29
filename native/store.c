@@ -33,6 +33,7 @@ struct net { sa_family_t family; unsigned char addr[16]; unsigned bits; };
 static const char *spool_path, *run_path, *identity, *groups[DN_SESSION_GROUPS_MAX];
 static size_t group_count;
 static struct net nets[NETS];
+static const char *net_texts[NETS];
 static size_t net_count;
 static int spool = -1, run = -1;
 static char boot[BOOT_ID + 1];
@@ -47,6 +48,7 @@ static void add_net(const char *text) {
     if (n >= sizeof address) dn_harness("--post-from: not a network: %s", text);
     memcpy(address, text, n);
     address[n] = 0;
+    net_texts[net_count] = text;
     struct net *net = &nets[net_count++];
     if (inet_pton(AF_INET, address, net->addr) == 1) net->family = AF_INET;
     else if (inet_pton(AF_INET6, address, net->addr) == 1) net->family = AF_INET6;
@@ -106,10 +108,11 @@ static int open_dir(const char *path) {
     return fd;
 }
 
-void dn_store_start(void) {
+/* The settings together; 0 without a store. */
+static int validated(void) {
     if (!spool_path) {
         if (run_path || identity || group_count || net_count) dn_harness("store options without --spool");
-        return;
+        return 0;
     }
     if (!run_path) dn_harness("--spool needs --run-dir");
     if (identity && strlen(identity) > DN_SESSION_IDENTITY_MAX)
@@ -121,6 +124,41 @@ void dn_store_start(void) {
         add_net("127.0.0.0/8");
         add_net("::1/128");
     }
+    return 1;
+}
+
+void dn_store_check(void) {
+    if (validated()) {
+        close(open_dir(spool_path));
+        close(open_dir(run_path));
+    }
+}
+
+void dn_store_settings(FILE *out) {
+    fputs(",\"spool\":", out);
+    if (spool_path) dn_json_string(out, spool_path);
+    else fputs("null", out);
+    fputs(",\"run_dir\":", out);
+    if (run_path) dn_json_string(out, run_path);
+    else fputs("null", out);
+    fputs(",\"path_identity\":", out);
+    if (identity) dn_json_string(out, identity);
+    else fputs("null", out);
+    fputs(",\"groups\":[", out);
+    for (size_t g = 0; g < group_count; ++g) {
+        if (g) fputc(',', out);
+        dn_json_string(out, groups[g]);
+    }
+    fputs("],\"post_from\":[", out);
+    for (size_t k = 0; spool_path && k < net_count; ++k) {
+        if (k) fputc(',', out);
+        dn_json_string(out, net_texts[k]);
+    }
+    fputc(']', out);
+}
+
+void dn_store_start(void) {
+    if (!validated()) return;
     spool = open_dir(spool_path);
     if (flock(spool, LOCK_EX | LOCK_NB)) {
         if (errno == EWOULDBLOCK) refuse("%s: another process holds the spool", spool_path);

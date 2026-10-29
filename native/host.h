@@ -119,6 +119,33 @@ static inline uint64_t dn_parse_u64(const char *text, uint64_t max) {
     return value;
 }
 
+/* How many bytes from `p` make one well-formed UTF-8 character past ASCII, 0 if they do not. */
+static inline int dn_utf8_length(const unsigned char *p) {
+    int n = p[0] >= 0xf0 && p[0] <= 0xf4 ? 4 : p[0] >= 0xe0 ? 3 : p[0] >= 0xc2 && p[0] <= 0xdf ? 2 : 0;
+    if (n == 3 && p[0] > 0xef) n = 0;
+    uint32_t c = n == 2 ? p[0] & 0x1fu : n == 3 ? p[0] & 0x0fu : p[0] & 0x07u;
+    for (int k = 1; k < n; ++k) {
+        if ((p[k] & 0xc0) != 0x80) return 0;
+        c = c << 6 | (p[k] & 0x3fu);
+    }
+    if ((n == 3 && (c < 0x800 || (c >= 0xd800 && c <= 0xdfff))) || (n == 4 && (c < 0x10000 || c > 0x10ffff))) return 0;
+    return n;
+}
+
+/* `text` as a JSON string; a byte that is not part of a well-formed UTF-8 character is written as the
+ * character of its value. */
+static inline void dn_json_string(FILE *out, const char *text) {
+    fputc('"', out);
+    for (const unsigned char *p = (const unsigned char *)text; *p;) {
+        int n = *p >= 0x80 ? dn_utf8_length(p) : 1;
+        if (*p == '"' || *p == '\\') fprintf(out, "\\%c", *p);
+        else if (*p < 32 || *p == 127 || !n) fprintf(out, "\\u%04x", *p);
+        else fwrite(p, 1, (size_t)n, out);
+        p += n ? n : 1;
+    }
+    fputc('"', out);
+}
+
 static inline uint64_t dn_word(const unsigned char *p) {
     uint64_t value;
     memcpy(&value, p, sizeof value);

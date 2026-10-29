@@ -33,7 +33,20 @@
  * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`, each
  * with the index and generation), `|`, its actions (`send` with whether to read, how much the kernel
  * took and the bytes, `graceful`, `close`), `| wake` and the time the program asked to be woken at
- * — or, when the program stops the run in that turn, `| stopped` and its code. */
+ * — or, when the program stops the run in that turn, `| stopped` and its code.
+ *
+ * Settings come as options or, with `--config FILE`, from a file: a setting a line, an option's name
+ * without its dashes, white space, and its value; blank lines and those starting with `#` are
+ * skipped, and a file may not give `config`, `check-config` or the test's descriptors. A setting
+ * unknown, without a value, or given twice where it is taken once ends the host with status 2, the
+ * file's line named. `--check-config FILE` takes them as `--config` does, checks them together and
+ * that the store's directories open, writes them as JSON on standard output and ends with status 0,
+ * starting nothing. Started by systemd with one socket (LISTEN_PID naming the process, LISTEN_FDS 1),
+ * the host listens on descriptor 3 instead, so that it needs no privilege for port 119; `--address`
+ * and `--port` are then refused. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
+ * connections taken, how they ended, the octets read and sent, the pauses in accepting, the file
+ * jobs and those that failed for want of space, on an I/O error or otherwise; no address, name or
+ * octet a client sent. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "faults.h"
@@ -56,7 +69,8 @@
 #include <time.h>
 
 enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER_QUIET_MS = 5000,
-       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18, DRAIN_MS = 30000 };
+       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18, DRAIN_MS = 30000,
+       CONFIG_MAX = 1 << 16, LISTEN_FD = 3 };
 
 struct conn {
     int fd;          /* -1 when the index is free */
@@ -78,8 +92,14 @@ static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1, jobs_done
 static int accept_ready, started, awaiting_emit, carrying, listening;
 static unsigned start, listen_port;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
-static int send_buffer, pausing;
-static const char *revision, *source;
+static int send_buffer, pausing, checking;
+static const char *revision, *source, *address = "127.0.0.1";
+static unsigned port_wanted;
+/* While a file's settings are taken, where the one taken is. */
+static const char *setting_at = "";
+/* What the counters count; a connection ended by neither action was ended by its client or the
+ * network. */
+static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses; } counted;
 static char clock_text[MAX_LINE], trace[TRACE_BYTES];
 static size_t clock_len, trace_len;
 
@@ -164,6 +184,17 @@ static void say_allocated(const char *when) {
 #endif
 }
 
+static void say_counters(const char *when) {
+    uint64_t jobs[4];
+    dn_jobs_counted(jobs);
+    fprintf(stderr,
+            "%s: %" PRIu64 " connections, %" PRIu64 " closed gracefully, %" PRIu64 " at once, %" PRIu64
+            " by the client or the network; %" PRIu64 " octets in, %" PRIu64 " out; %" PRIu64 " accept pauses; %" PRIu64
+            " file jobs, %" PRIu64 " failed for want of space, %" PRIu64 " on I/O errors, %" PRIu64 " otherwise\n",
+            when, counted.accepted, counted.graceful, counted.abrupt, counted.ended - counted.graceful - counted.abrupt,
+            counted.in, counted.out, counted.pauses, jobs[0], jobs[1], jobs[2], jobs[3]);
+}
+
 /* Every socket closed, the file jobs drained, and the run ends inside the call. */
 __attribute__((noreturn)) static void stop_serving(const char *why) {
     for (int i = 0; i < CONNS; ++i)
@@ -178,11 +209,13 @@ __attribute__((noreturn)) static void stop_serving(const char *why) {
                 counts[1], counts[2]);
     }
     say_allocated("at the stop");
+    say_counters("at the stop");
     fprintf(stderr, "stopped: %s\n", why);
     exit(0);
 }
 
 static void free_index(struct conn *c) {
+    ++counted.ended;
     if (c->fd >= 0) close(c->fd);
     c->fd = -1;
     c->reading = c->unsent = c->lost = 0;
@@ -310,7 +343,12 @@ static void wait_for(uint64_t wake) {
             if (errno == EINTR) continue;
             dn_harness("poll: %s", strerror(errno));
         }
-        if (fds[0].revents) stop_serving("a signal");
+        if (fds[0].revents) {
+            struct signalfd_siginfo si;
+            ssize_t r = read(signals, &si, sizeof si);
+            if (r == (ssize_t)sizeof si && si.ssi_signo == SIGUSR1) say_counters("counters");
+            else if (r >= 0 || (errno != EAGAIN && errno != EINTR)) stop_serving("a signal");
+        }
         if (fds[2].revents) read_clock();
         for (int i = 0; i < LINGERING; ++i)
             if (linger_at[i] >= 0) drain(&lingering[i], fds[linger_at[i]].revents);
@@ -353,6 +391,7 @@ static void give_out(unsigned char *a, int i) {
         unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + turn_events * DN_SESSION_EVENT_SLOT;
         ssize_t n = recv(c->fd, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA, MSG_DONTWAIT);
         if (n > 0) {
+            counted.in += (uint64_t)n;
             event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);
         } else if (n == 0) {
             c->reading = 0;
@@ -386,6 +425,7 @@ static void take_connections(unsigned char *a, uint64_t now) {
                 if (code == EAGAIN || code == EWOULDBLOCK) accept_ready = 0;
                 continue;
             case DN_ACCEPT_PAUSE:
+                ++counted.pauses;
                 if (!pausing) fprintf(stderr, "accept: %s; pausing\n", strerror(code));
                 pausing = 1;
                 accept_ready = 0;
@@ -412,6 +452,7 @@ static void take_connections(unsigned char *a, uint64_t now) {
         in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
                                                    : ((struct sockaddr_in6 *)&peer)->sin6_port;
         conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
+        ++counted.accepted;
         if (conns[i].gen == DN_SESSION_GEN_LIMIT) fprintf(stderr, "index %d given out at its last generation\n", i);
         event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
         dn_store_log_opened(&peer);
@@ -502,6 +543,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
         if (kind == DN_SESSION_SEND) {
             ssize_t n = len ? send(cn->fd, slot + DN_SESSION_ACTION_HEAD, len, MSG_NOSIGNAL | MSG_DONTWAIT) : 0;
             uint64_t taken = n > 0 ? (uint64_t)n : 0;
+            counted.out += taken;
             if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 close(cn->fd);
                 cn->fd = -1;
@@ -515,8 +557,13 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             int fd = cn->fd;
             cn->fd = -1;
             free_index(cn);
-            if (kind == DN_SESSION_CLOSE_GRACEFULLY) linger(fd);
-            else close(fd);
+            if (kind == DN_SESSION_CLOSE_GRACEFULLY) {
+                ++counted.graceful;
+                linger(fd);
+            } else {
+                ++counted.abrupt;
+                close(fd);
+            }
         }
     }
     dn_jobs_take(a);
@@ -570,62 +617,195 @@ static void identity(const char *name, const char *value, size_t max) {
         if (value[i] < 33 || value[i] > 126) dn_harness("%s may hold visible ASCII only", name);
 }
 
+static void read_settings(const char *path);
+
+/* Settings taken once at most; the file of settings, given either way, counts as one. */
+enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_ONCE = 11 };
+static const char *const taken_once[GIVEN_ONCE] = {
+    [GIVEN_PORT] = "--port", [GIVEN_ADDRESS] = "--address", [GIVEN_SETTINGS] = "--config", "--revision", "--source",
+    "--send-buffer", "--clock-fd", "--report-fd", "--spool", "--run-dir", "--path-identity"};
+static int given[sizeof taken_once / sizeof *taken_once];
+
+/* A number of the setting `name`, the file's line named. */
+static uint64_t number(const char *name, const char *value, uint64_t max) {
+    char *end;
+    errno = 0;
+    unsigned long long n = strtoull(value, &end, 10);
+    if (value[0] < '0' || value[0] > '9' || errno || *end || n > max)
+        dn_harness("%s%s: not a number from 0 to %llu: %s", setting_at, name, (unsigned long long)max, value);
+    return n;
+}
+
+static void set(const char *name, const char *value) {
+    const char *counted_as = strcmp(name, "--check-config") ? name : taken_once[GIVEN_SETTINGS];
+    for (size_t k = 0; k < sizeof taken_once / sizeof *taken_once; ++k)
+        if (!strcmp(counted_as, taken_once[k]) && given[k]++) dn_harness("%s%s given twice", setting_at, name);
+    if (!strcmp(name, "--port")) port_wanted = (unsigned)number(name, value, 65535);
+    else if (!strcmp(name, "--address")) address = value;
+    else if (!strcmp(name, "--revision")) revision = value;
+    else if (!strcmp(name, "--source")) source = value;
+    else if (!strcmp(name, "--send-buffer")) send_buffer = (int)number(name, value, 1 << 20);
+    else if (!strcmp(name, "--clock-fd")) clock_fd = descriptor(value);
+    else if (!strcmp(name, "--report-fd")) report_fd = descriptor(value);
+    else if (!strcmp(counted_as, "--config")) {
+        checking = !strcmp(name, "--check-config");
+        read_settings(value);
+    } else if (!dn_store_option(name, value)) dn_harness("%sunknown setting %s", setting_at, name);
+}
+
+/* The settings of the file at `path`, each taken as its option would be. */
+static void read_settings(const char *path) {
+    static char text[CONFIG_MAX + 1];
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) dn_harness("%s: %s", path, strerror(errno));
+    size_t n = 0;
+    for (ssize_t got; (got = read(fd, text + n, CONFIG_MAX + 1 - n)) != 0;) {
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            dn_harness("%s: %s", path, strerror(errno));
+        }
+        n += (size_t)got;
+        if (n > CONFIG_MAX) dn_harness("%s: more than %d bytes", path, CONFIG_MAX);
+    }
+    close(fd);
+    text[n] = 0;
+    if (strlen(text) != n) dn_harness("%s: a NUL byte", path);
+    static const char *const options_only[] = {"--config", "--check-config", "--clock-fd", "--report-fd"};
+    char at[PATH_MAX + 32], option[64];
+    unsigned line = 0;
+    for (char *p = text, *next; *p; p = next) {
+        ++line;
+        char *end = strchr(p, '\n');
+        next = end ? end + 1 : p + strlen(p);
+        if (end) *end = 0;
+        p += strspn(p, " \t");
+        if (!*p || *p == '#') continue;
+        char *name = p;
+        p += strcspn(p, " \t");
+        if (*p) *p++ = 0;
+        p += strspn(p, " \t");
+        size_t len = strlen(p);
+        while (len && (p[len - 1] == ' ' || p[len - 1] == '\t' || p[len - 1] == '\r')) p[--len] = 0;
+        snprintf(at, sizeof at, "%s:%u: ", path, line);
+        setting_at = at;
+        if (strlen(name) + 3 > sizeof option) dn_harness("%sunknown setting %s", at, name);
+        snprintf(option, sizeof option, "--%s", name);
+        for (size_t k = 0; k < sizeof options_only / sizeof *options_only; ++k)
+            if (!strcmp(option, options_only[k])) dn_harness("%s%s is an option only", at, name);
+        if (!len) dn_harness("%s%s needs a value", at, name);
+        set(option, p);
+        setting_at = "";
+    }
+}
+
+/* The listening socket systemd hands over (sd_listen_fds(3)), or -1 when it hands none to this
+ * process; as there, the variables are taken out of the environment either way. */
+static int handed_listener(void) {
+    const char *pid_text = getenv("LISTEN_PID"), *fds_text = getenv("LISTEN_FDS");
+    uint64_t pid = pid_text ? dn_parse_u64(pid_text, UINT32_MAX) : 0, fds = fds_text ? dn_parse_u64(fds_text, 64) : 0;
+    unsetenv("LISTEN_PID");
+    unsetenv("LISTEN_FDS");
+    unsetenv("LISTEN_FDNAMES");
+    if (!pid_text || !fds_text || pid != (uint64_t)getpid() || !fds) return -1;
+    if (fds != 1) dn_harness("LISTEN_FDS: %" PRIu64 " sockets, where the server takes one", fds);
+    int type = 0, accepting = 0;
+    socklen_t len = sizeof type;
+    if (getsockopt(LISTEN_FD, SOL_SOCKET, SO_TYPE, &type, &len) || type != SOCK_STREAM)
+        dn_harness("LISTEN_FDS: descriptor %d is not a stream socket", LISTEN_FD);
+    struct sockaddr_storage at;
+    socklen_t at_len = sizeof at;
+    if (getsockname(LISTEN_FD, (struct sockaddr *)&at, &at_len) || (at.ss_family != AF_INET && at.ss_family != AF_INET6))
+        dn_harness("LISTEN_FDS: descriptor %d is not an IPv4 or IPv6 socket", LISTEN_FD);
+    len = sizeof accepting;
+    if (getsockopt(LISTEN_FD, SOL_SOCKET, SO_ACCEPTCONN, &accepting, &len) || !accepting)
+        dn_harness("LISTEN_FDS: descriptor %d does not listen", LISTEN_FD);
+    int flags = fcntl(LISTEN_FD, F_GETFL);
+    if (flags < 0 || fcntl(LISTEN_FD, F_SETFL, flags | O_NONBLOCK) || fcntl(LISTEN_FD, F_SETFD, FD_CLOEXEC))
+        dn_harness("LISTEN_FDS: %s", strerror(errno));
+    if (given[GIVEN_PORT] || given[GIVEN_ADDRESS])
+        dn_harness("--address and --port are the socket's when systemd hands one over");
+    return LISTEN_FD;
+}
+
+/* The address to listen at. */
+static socklen_t where_of(struct sockaddr_storage *where) {
+    *where = (struct sockaddr_storage){0};
+    struct sockaddr_in *v4 = (struct sockaddr_in *)where;
+    struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)where;
+    if (inet_pton(AF_INET, address, &v4->sin_addr) == 1) {
+        v4->sin_family = AF_INET;
+        v4->sin_port = htons((uint16_t)port_wanted);
+        return sizeof *v4;
+    }
+    if (inet_pton(AF_INET6, address, &v6->sin6_addr) == 1) {
+        v6->sin6_family = AF_INET6;
+        v6->sin6_port = htons((uint16_t)port_wanted);
+        return sizeof *v6;
+    }
+    dn_harness("not an address: %s", address);
+}
+
+/* What `--check-config` writes: the settings, as the host would take them. */
+__attribute__((noreturn)) static void say_settings(void) {
+    struct sockaddr_storage where;
+    where_of(&where);
+    dn_store_check();
+    fputs("{\"address\":", stdout);
+    dn_json_string(stdout, address);
+    printf(",\"port\":%u,\"revision\":", port_wanted);
+    dn_json_string(stdout, revision);
+    fputs(",\"source\":", stdout);
+    dn_json_string(stdout, source);
+    printf(",\"send_buffer\":%d", send_buffer);
+    dn_store_settings(stdout);
+    puts("}");
+    if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
+    exit(0);
+}
+
 int main(int argc, char **argv) {
-    const char *address = "127.0.0.1";
-    unsigned port = 0;
     for (int i = 1; i < argc; i += 2) {
         if (i + 1 == argc) dn_harness("%s needs a value", argv[i]);
-        const char *name = argv[i], *value = argv[i + 1];
-        if (!strcmp(name, "--port")) port = (unsigned)dn_parse_u64(value, 65535);
-        else if (!strcmp(name, "--address")) address = value;
-        else if (!strcmp(name, "--revision")) revision = value;
-        else if (!strcmp(name, "--source")) source = value;
-        else if (!strcmp(name, "--send-buffer")) send_buffer = (int)dn_parse_u64(value, 1 << 20);
-        else if (!strcmp(name, "--clock-fd")) clock_fd = descriptor(value);
-        else if (!strcmp(name, "--report-fd")) report_fd = descriptor(value);
-        else if (!dn_store_option(name, value)) dn_harness("unknown option %s", name);
+        set(argv[i], argv[i + 1]);
     }
     identity("--revision", revision, DN_SESSION_REV_MAX);
     identity("--source", source, DN_SESSION_SRC_MAX);
+    if (checking) say_settings();
+    int handed = handed_listener();
+    /* Blocked before anything starts, the workers too, so that a signal waits for the loop. */
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGUSR1);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL)) dn_harness("sigprocmask: %s", strerror(errno));
+    signals = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
+    if (signals < 0) dn_harness("signalfd: %s", strerror(errno));
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) dn_harness("signal: %s", strerror(errno));
     dn_store_start();
     jobs_done = dn_jobs_start(dn_store_spool());
     if (clock_fd >= 0) now_virtual = 1;
     for (int i = 0; i < CONNS; ++i) conns[i].fd = -1;
     for (int i = 0; i < LINGERING; ++i) lingering[i].fd = -1;
 
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGTERM);
-    sigaddset(&mask, SIGINT);
-    if (sigprocmask(SIG_BLOCK, &mask, NULL)) dn_harness("sigprocmask: %s", strerror(errno));
-    signals = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
-    if (signals < 0) dn_harness("signalfd: %s", strerror(errno));
-    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) dn_harness("signal: %s", strerror(errno));
-
-    struct sockaddr_storage where = {0};
-    socklen_t where_len;
+    struct sockaddr_storage where;
+    socklen_t where_len = where_of(&where);
+    if (handed >= 0) {
+        listener = handed;
+        where_len = sizeof where;
+    } else {
+        listener = socket(where.ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        if (listener < 0) dn_harness("socket: %s", strerror(errno));
+        int one = 1;
+        if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one))
+            dn_harness("setsockopt: %s", strerror(errno));
+        if (where.ss_family == AF_INET6 && setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one))
+            dn_harness("setsockopt: %s", strerror(errno));
+        if (bind(listener, (struct sockaddr *)&where, where_len)) dn_harness("bind: %s", strerror(errno));
+    }
+    if (getsockname(listener, (struct sockaddr *)&where, &where_len)) dn_harness("getsockname: %s", strerror(errno));
     struct sockaddr_in *v4 = (struct sockaddr_in *)&where;
     struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&where;
-    if (inet_pton(AF_INET, address, &v4->sin_addr) == 1) {
-        v4->sin_family = AF_INET;
-        v4->sin_port = htons((uint16_t)port);
-        where_len = sizeof *v4;
-    } else if (inet_pton(AF_INET6, address, &v6->sin6_addr) == 1) {
-        v6->sin6_family = AF_INET6;
-        v6->sin6_port = htons((uint16_t)port);
-        where_len = sizeof *v6;
-    } else {
-        dn_harness("not an address: %s", address);
-    }
-    listener = socket(where.ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (listener < 0) dn_harness("socket: %s", strerror(errno));
-    int one = 1;
-    if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one))
-        dn_harness("setsockopt: %s", strerror(errno));
-    if (where.ss_family == AF_INET6 && setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one))
-        dn_harness("setsockopt: %s", strerror(errno));
-    if (bind(listener, (struct sockaddr *)&where, where_len)) dn_harness("bind: %s", strerror(errno));
-    if (getsockname(listener, (struct sockaddr *)&where, &where_len)) dn_harness("getsockname: %s", strerror(errno));
     listen_port = ntohs(where.ss_family == AF_INET ? v4->sin_port : v6->sin6_port);
     /* Descriptors are handed out lowest first: with those open now, the table and the lingering
      * sockets have to fit under the limit. */

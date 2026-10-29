@@ -1069,8 +1069,8 @@ DEFECTS = [
     (STORE, "no mark leaving the host going on", "    if (!left)\n", "    if (0 && !left)\n"),
     (JOBS, "a worker taking signals", "    sigfillset(&all);\n", "    sigemptyset(&all);\n"),
     (JOBS, "a completion marked without the lock",
-     "        pthread_mutex_lock(&lock);\n        j->state = DONE;\n        pthread_mutex_unlock(&lock);\n",
-     "        j->state = DONE;\n"),
+     "        pthread_mutex_lock(&lock);\n        j->state = DONE;\n",
+     "        j->state = DONE;\n        pthread_mutex_lock(&lock);\n"),
 ]
 
 

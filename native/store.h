@@ -5,10 +5,19 @@
 #ifndef DN_STORE_H
 #define DN_STORE_H
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/socket.h>
 
-/* Take a store option; 0 if `name` is none. */
+/* Take a store option; 0 if `name` is none. The host refuses one given twice that is taken once. */
 int dn_store_option(const char *name, const char *value);
+
+/* After the options, without starting anything: check them together and that the spool and the run
+ * directory open as directories. */
+void dn_store_check(void);
+
+/* Once checked, the options as members of a JSON object on `out`, each after a comma, the networks
+ * that may post as given or by default. */
+void dn_store_settings(FILE *out);
 
 /* After the options: open and lock the spool, refuse a mark of this boot and remove an older one,
  * draw the random octets. */
