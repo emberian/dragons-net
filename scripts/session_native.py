@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import os
 from pathlib import Path
@@ -178,6 +177,10 @@ POST_DEFECTS = [
 ]
 DEFECTS = [
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
+    ("an index opened again at its last generation", r"\(eg <= \(lds 1 \(cb \+ 8\)\)\)", "(eg < (lds 1 (cb + 8)))", 1,
+     "breach 'an index opened again at its generation'"),
+    ("a generation past its limit taken", r"\(4611686018427387904 < eg\)", "(4611686018427387905 < eg)", 1,
+     "breach 'a generation past its limit'"),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
     ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 37, TRACE),
     ("a prefix of READER taken by MODE", r"(if cmd == 16 \{\s+if args == 1 \{\s+eqk = )l1 == 6;", r"\1l1 <= 6;", 1,
@@ -278,6 +281,8 @@ def edges() -> Iterator[tuple[str, list[str]]]:
     yield "a chunk of 512 bytes", [*begin, "turn 2", "recv 0 1 " + (b"HELP\r\n" * 85 + b"ST").hex(), "go", "took 10"]
     yield "the last index", ["turn 1", "open 63 7", "go", f"took {GREETING}", "turn 2", f"recv 63 7 {help_}", "go",
                              "took 5"]
+    yield "a generation at its limit", ["turn 1", f"open 0 {LIMIT}", "go", f"took {GREETING}", "turn 2",
+                                        f"recv 0 {LIMIT} {help_}", "go", "took 5"]
     stale = ["writable 0 1", "end 0 1", "closed 0 1"]
     yield "events of a connection gone", [
         *begin, "turn 2", "closed 0 1", "go", "took", "turn 3", f"recv 0 1 {quit_}", *stale, "go", "took",
@@ -621,7 +626,7 @@ def check(cake: str) -> Report:
     clock = time.monotonic()
     seconds: dict[str, float] = {}
     # The program and each defect are built at once, while the model answers the hosts.
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         built = pool.submit(lanes.whole_program, cake, "session", source, OUT, HOST)
         builds = [pool.submit(lanes.whole_program, cake, f"defect-{index}",
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)

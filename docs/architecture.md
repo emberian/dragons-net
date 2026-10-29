@@ -37,6 +37,21 @@ Use bounded buffers and explicit lengths at the native boundary. A buffer identi
 
 An OS-specific adapter should translate real completions into a small protocol-neutral event vocabulary. The protocol step consumes a session state and bounded input, and returns output plus explicit storage/transport requests. The vocabulary is fixed by [decision 0003](decisions/0003-nntp-slice.md) and defined in `DN.Server.Layout`, which prints it as a C header for the host; the server's loop (`DN.Server.Skeleton`) runs on it, echoing payloads, and the session's program (`DN.Server.Session`) on a layout of its own (`DN.Server.SessionLayout`). Its shape was [decided](decisions/0002-entry-and-memory.md) first: the generated program's `main` runs the loop and fetches events from the host in batches through external calls, with its buffers in its own heap, because that is the only entry CakeML's compiler theorem covers, and the memory it covers without an event in the trace for every access.
 
+## Identities
+
+What names a connection, a file, a job and a read on the server's path, what the models name, and what a stale one does. Each pair of an index and a generation is given out once.
+
+| Identity | Where | Width and exhaustion | A stale one |
+| --- | --- | --- | --- |
+| Connection | `SessionSpec` (index, generation), the program's record, `native/nntp_host.c` | Index below 64; generation 1 to 2^62, rising at its index; an index at 2^62 is not given out again | Its events are left alone, its actions not carried out, its reads abandoned (`applyEvent_opened`, `turn_gens`) |
+| File place | `PostSpec` operations, `native/jobs.c` | Place below 16; the host counts a place's generation at each close, a word | An operation naming another generation ends the host |
+| Job | `PostSpec` (slot, generation) | One job in flight a slot; one counter for every job, a word the program counts up from the spool's start | A completion of no job in flight stops the run (code 13) |
+| Read | `PostSpec` read slots, owned by a connection's index and generation | Eight slots | Its owner gone, its completion only closes the file |
+| Model key | `Io.Slab`, `Flow.Token` | Index 1 to 2^32 - 1, generation below 2^31; a slot at 2^31 is spent | Rejected by generation (`slab_stale_key_rejected_forever`); an insert with room converts (`Slab.insert_toToken`) |
+| Host library | `crates/dn-runtime` `Token` | Index and a `u64` generation; a slot whose generation would overflow is retired | Rejected by generation; a token carries no owner, as there is one slab |
+
+Deadlines are fields of a connection's record, set anew when it opens, so none outlives it. Shards and their routing come with the io_uring adapter (#13); until then one program owns every identity.
+
 ## Storage and offline exchange
 
 An immutable article body with a stable Message-ID and separate group indexes is a promising starting point. Per-group article numbers and crossposts are not equivalent to filenames in a directory. Define transaction/recovery behavior before exposing posting success. Limits, retention, and policy belong beside the store contract. [Decision 0005](decisions/0005-article-store.md) fixes the local store: its files and journal, the point before which no acceptance is reported, recovery, and what of it is proved.

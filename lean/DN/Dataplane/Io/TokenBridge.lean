@@ -12,8 +12,10 @@ well formed: its index is nonzero and below `2^32`, and its generation is below
 `2^31`. Successful conversion therefore inherits the token partition's decode
 round trip and 64-bit bound.
 
-This is a model-level conversion. It does not claim correspondence to a native
-adapter or change the allocation and exhaustion behavior of `Io.Slab`.
+`Slab.insert_toToken` ties the conversion to allocation: as `Io.Slab` spends a
+slot at `genBound`, an insert into a slab with room for another index hands back a
+key that converts and decodes as itself. This is a model-level conversion; it
+claims no correspondence to a native adapter.
 -/
 
 namespace DN.Dataplane.Io
@@ -49,6 +51,33 @@ theorem Key.toToken?_lt_tokenSpace {k : Key} {w : Nat}
     subst w
     exact DN.Dataplane.Flow.Token.encode_lt_tokenSpace _ hw
   next => simp at h
+
+/-- An insert into a slab whose slots, the reserved one among them, number below `2^32` hands
+back a key in the slab token's range. -/
+theorem Slab.insert_wf {α : Type} (s : Slab α) (v : α) (hcap : 1 ≤ s.slots.length)
+    (hroom : s.slots.length < 2 ^ 32) :
+    (DN.Dataplane.Flow.Token.slab (s.insert v).1.idx (s.insert v).1.gen).Wf := by
+  unfold Slab.insert
+  cases hf : s.freeIndex with
+  | some i =>
+    obtain ⟨hlt, h1⟩ := s.freeIndex_spec hf
+    obtain ⟨sl, hsl, hg⟩ := s.freeIndex_gen hf
+    simp only [hsl, Option.map_some, Option.getD_some]
+    exact ⟨by omega, by omega, by unfold genBound at hg; omega⟩
+  | none =>
+    dsimp only
+    exact ⟨by omega, hroom, by decide⟩
+
+/-- **Allocation and encoding together**: an insert into a slab with room hands back a key that
+converts to a token word, which decodes as that key. -/
+theorem Slab.insert_toToken {α : Type} (s : Slab α) (v : α) (hcap : 1 ≤ s.slots.length)
+    (hroom : s.slots.length < 2 ^ 32) :
+    ∃ w, (s.insert v).1.toToken? = some w ∧
+      DN.Dataplane.Flow.Token.decode w = some (.slab (s.insert v).1.idx (s.insert v).1.gen) := by
+  have hw := Slab.insert_wf s v hcap hroom
+  refine ⟨_, ?_, DN.Dataplane.Flow.Token.decode_encode _ hw⟩
+  unfold Key.toToken?
+  rw [if_pos hw]
 
 -- The wakeup-sentinel index is rejected.
 example : (Key.toToken? ⟨0, 0⟩) = none := by decide

@@ -408,8 +408,11 @@ def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
     match s.table[idx]? with
     | some (some _) => throw .reopened
     | _ =>
-      let c := freshM m i (greets s.store (mayPost || m = .greetAll)) (s.opened + 1) gen now
-      return { s with table := s.table.set idx (some c), opened := s.opened + 1 }
+      if gen ≤ s.gens.getD idx 0 || genLimit < gen then throw .reopened
+      else
+        let c := freshM m i (greets s.store (mayPost || m = .greetAll)) (s.opened + 1) gen now
+        return { s with table := s.table.set idx (some c), opened := s.opened + 1,
+                        gens := s.gens.set idx gen }
   | .received idx gen data => do
     checkIndex idx
     if chunk < data.length then throw .tooLong

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from typing import Any
 import unittest
 
@@ -55,7 +56,7 @@ class CheckScript(unittest.TestCase):
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
                  "once check-gate", "lake build --wfail DN dn-compiler",
                  '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
-                 '"$leanchecker" DN', "--export-list",
+                 'leanchecked.py "$lean" "$leanchecker"', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
@@ -199,8 +200,9 @@ class CheckScript(unittest.TestCase):
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
-                           f"python3 scripts/measured.py {toolchain}/leanchecker DN",
-                           f"toolchain leanchecker DN {checked}",
+                           (f"python3 scripts/measured.py python3 scripts/leanchecked.py {toolchain}/lean "
+                            f"{toolchain}/leanchecker"),
+                           f"python3 scripts/leanchecked.py {toolchain}/lean {toolchain}/leanchecker",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
@@ -294,6 +296,48 @@ class CheckScript(unittest.TestCase):
         for name, source in scripts.items():
             with self.subTest(lane=name):
                 self.assertEqual(taken_tools([ROOT / source]) - {"cake"}, put.get(name, set()))
+
+    def test_lean_checker_replays_only_what_changed(self) -> None:
+        """Lean's checker replays the modules whose `.olean` files, or an import's, changed since they
+        last passed, imports as the `.olean` records them, and keeps their keys only once it passed;
+        another checker or toolchain replays them all."""
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            (tree / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/leanchecked.py", tree / "scripts")
+            (tree / "lean-toolchain").write_text("leanprover/lean4:v0\n")
+            built = tree / ".lake/build/lib/lean/DN"
+            (built / "S").mkdir(parents=True)
+            # What a module imports is what its `.olean` records, here beside it for the stub of Lean.
+            for name, imports in (("A", "DN.B Lean"), ("B", "Init"), ("C", ""), ("S/D", "DN.C")):
+                (built / f"{name}.olean").write_bytes(name.encode())
+                (built / f"{name}.imports").write_text(imports)
+            lean, replayed, checker = tree / "lean", tree / "replayed", tree / "leanchecker"
+            lean.write_text("#!/bin/sh\nshift 2\n"
+                            'for f; do printf \'%s\\t%s\\n\' "$f" "$(cat "${f%.olean}.imports")"; done\n')
+            checker.write_text(f'#!/bin/sh\necho "$*" >> {replayed}\nexit "${{FAIL:-0}}"\n')
+            for stub in (lean, checker):
+                stub.chmod(0o755)
+
+            def check(fail: str = "0") -> tuple[int, list[str]]:
+                replayed.unlink(missing_ok=True)
+                done = subprocess.run([sys.executable, str(tree / "scripts/leanchecked.py"), str(lean), str(checker)],
+                                      env={**os.environ, "FAIL": fail}, capture_output=True, check=False)
+                return done.returncode, replayed.read_text().split() if replayed.exists() else []
+
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
+            self.assertEqual(check(), (0, []))
+            (built / "B.olean").write_bytes(b"B again")
+            self.assertEqual(check(fail="1"), (1, ["DN.A", "DN.B"]))
+            self.assertEqual(check(), (0, ["DN.A", "DN.B"]))
+            (built / "C.olean.server").write_bytes(b"C's server part")
+            self.assertEqual(check(), (0, ["DN.C", "DN.S.D"]))
+            (built / "S/D.imports").write_text("DN.C DN.A")
+            self.assertEqual(check(), (0, ["DN.S.D"]))
+            (tree / "lean-toolchain").write_text("leanprover/lean4:v1\n")
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
+            checker.write_text(checker.read_text() + "# another checker\n")
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
 
     def test_ci_runs_the_stages_in_one_chain(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]
@@ -391,9 +435,10 @@ class CheckScript(unittest.TestCase):
 
     def test_native_lanes_run_all_or_the_named_ones(self) -> None:
         """Without names every lane runs in its order, but those that mount FUSE; with names only
-        those, in the order named; a lane that fails stops the run with its status; a misspelt name is
-        refused before any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not
-        run again on a tree it passed on. A lane's tools are put in place before it."""
+        those, in the order named; a lane that fails stops the run with its status, and, several running
+        at once, the lanes running with it, none started after it; a misspelt name is refused before
+        any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not run again on a
+        tree it passed on. A lane's tools are put in place before it."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
                    "accept_check.py": "accept",
@@ -413,16 +458,18 @@ class CheckScript(unittest.TestCase):
             (tree / ".gitignore").write_text("build/\nran\nput\n")
             for name, lane in scripts.items():
                 (tree / "scripts" / name).write_text(
-                    f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
+                    f"import os, sys, time\nwith open({str(ran)!r}, 'a') as f:\n"
+                    f"    print({lane!r}, *sys.argv[1:], file=f)\n"
+                    f"if os.environ.get('SLOW') == {lane!r}:\n    time.sleep(50)\n"
                     f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
 
-            def lanes(*names: str, failing: str = "", once: str = "none",
-                      parallel: str = "1") -> tuple[int, str, list[str]]:
+            def lanes(*names: str, failing: str = "", once: str = "none", parallel: str = "1",
+                      slow: str = "") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
                                            "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps"),
-                                           "DN_PARALLEL": parallel},
+                                           "DN_PARALLEL": parallel, "SLOW": slow},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -452,13 +499,19 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
-            # Several at a time, every lane runs, a failing one among them, which fails the run.
+            # Several at a time, every lane runs; a failing one fails the run, stops the one still
+            # running beside it, the longest, at once, and no lane is started after it.
             every = sorted(f"{lane} --cake /pinned/cake" for lane in scripts.values() if lane != "power")
             status, said, run_lanes = lanes(parallel="3")
             self.assertEqual((status, sorted(r.replace("entry check", "entry") for r in run_lanes)), (0, every))
-            status, said, run_lanes = lanes(failing="baseline", parallel="3")
-            self.assertEqual((status, len(run_lanes)), (1, len(every)))
+            began = time.monotonic()
+            status, said, run_lanes = lanes(failing="baseline", parallel="3", slow="nntp")
+            self.assertLess(time.monotonic() - began, 40)
+            self.assertEqual(status, 1)
+            self.assertLess(len(run_lanes), len(every))
             self.assertIn("the lane baseline failed", said)
+            self.assertIn("the lane nntp was stopped", said)
+            self.assertIn("the lane native was not started", said)
 
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
         """CI skips a job whose pass an earlier run recorded: the newest such runs of this repository's

@@ -18,6 +18,8 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
   it, and as a failure where it does not.
 - Every write cut to one octet: the run as without it; a write of no progress: the start refused, of
   no space.
+- Each index's generations counted up to the last but one (`dn/generation`): every client opens at
+  the last generation of an index and the next at another, the run as without it.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
 
@@ -38,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import errno
 import json
@@ -316,7 +317,7 @@ def swept(binary: Path, base: Image, error: int, cls: str,
     a row fail nothing (a listing's close fails at no point), on the files of `ORDER`; each run
     held to 0005 for its point and the file it is on, by `roles` or as `files` gives: the point of
     each operation, and its file."""
-    with tempfile.TemporaryDirectory() as temp, ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with tempfile.TemporaryDirectory() as temp, lanes.pool() as pool:
 
         def failed_at(k: int) -> Run:
             return served(binary, base, Path(temp, str(k)), f"enable name=dn/fail,failinfo={k * 256 + error}")
@@ -357,6 +358,20 @@ def cut(binary: Path, base: Image, no_space: str) -> None:
                 f"recovery failed: a file job failed, class {no_space}\n" not in run.said:
             raise LaneError(f"a write of no progress: the server started {run.started}, status {run.status}, marks "
                             f"{run.marks}: {run.said[-200:]!r}")
+
+
+def spent(binary: Path, base: Image, limit: int) -> None:
+    """Each index's generations counted up to the last but one as a connection opens there
+    (`dn/generation`): every client opens at the last generation of an index, the next at another,
+    and the run is as without it."""
+    with tempfile.TemporaryDirectory() as temp:
+        try:
+            run = served(binary, base, Path(temp, "spent"), f"enable name=dn/generation,failinfo={limit - 1}")
+            why = judged(run, base, binary, Path(temp))
+        except LaneError as error:
+            why = str(error)
+        if why:
+            raise LaneError(f"every index at its last generation: {why}")
 
 
 def slowed(binary: Path, base: Image) -> dict[str, float]:
@@ -499,10 +514,11 @@ def passes(binary: Path, b: Bases, w: dict[str, int]) -> tuple[dict[str, float],
     """Every pass, the quick ones first: when the slowed run's replies came, and how many operations
     failed on each spool."""
     no_space, other = str(w["CLASS_NO_SPACE"]), str(w["CLASS_OTHER"])
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         list(pool.map(lambda a: corrupted(binary, b.both, other, *a),
                       [(change, C.mid_of(m)) for change in CHANGES for m in (HELD, LARGE)]))
     cut(binary, b.held, no_space)
+    spent(binary, b.held, w["GEN_LIMIT"])
     took = slowed(binary, b.held)
     counts: list[int] = []
     fired: set[str] = set()
@@ -540,6 +556,8 @@ DEFECTS = [
              "on the journal file failing"),
     C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
              "LIST ACTIVE read"),
+    C.Defect("an index used past its last generation", " && conns[i].gen < DN_SESSION_GEN_LIMIT;", ";", 1,
+             "the program stopped the run: code 6", program=False, loop=True),
 ]
 
 
@@ -550,7 +568,7 @@ def check(cake: str) -> Report:
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     w = session_native.layout(OUT)
     source = lanes.emit("emit-session")
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         base = pool.submit(C.test_build, cake, OUT, "faults", source)
         builds = [pool.submit(C.test_build, cake, OUT, f"defect-{k}", source, d) for k, d in enumerate(DEFECTS)
                   if d.program]

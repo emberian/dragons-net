@@ -47,6 +47,8 @@ opaque to the kernel, which reserves no value.
   of `DN.Dataplane.Ring.recycle_at_most_once`);
 * `slab_insert_idx_ne_zero` / `slab_index0_reserved` — the wakeup-sentinel index
   0 is never allocated and never names a live operation;
+* `Slab.allocAt_spent` / `Slab.freeIndex_gen` — a slot whose generation reached
+  `genBound` is never handed out again, and every slot handed out is below it;
 * `Slab.genAt_run` / `slab_stale_key_rejected_forever` — along a whole trace of
   inserts and removes a slot's generation never decreases, so a key whose slot
   has been freed is rejected by every later state, not only by the one right
@@ -57,10 +59,11 @@ opaque to the kernel, which reserves no value.
 
 The stale-key and single-remove theorems are candidate specifications for a
 native slot table, but no refinement theorem currently connects this model to
-the Rust implementation. The active runtime also has finite machine fields and
-an exhaustion policy absent from this unbounded model. A native caller must use
-the checked token bridge rather than treating every `Key.pack` value as a valid
-`u64` correlator.
+the Rust implementation. A slot whose generation reaches `genBound` is spent and
+never handed out again, as the active runtime retires a slot at overflow, so a
+key `insert` hands back always fits the token's range (`Slab.insert_toToken` in
+the token bridge). A native caller must still use the checked token bridge
+rather than treating every `Key.pack` value as a valid `u64` correlator.
 -/
 
 namespace DN.Dataplane.Io
@@ -128,17 +131,22 @@ def Slab.get (s : Slab α) (k : Key) : Option α :=
   | some slot => if slot.gen = k.gen then slot.payload else none
   | none => none
 
+/-- A slot whose generation reached this is spent: below it every key fits a slab
+token (`DN.Dataplane.Flow.Token.slab`). -/
+def genBound : Nat := 2 ^ 31
+
 /-- The allocation predicate: index `i` is allocatable iff it is ≥ 1 (index 0 is
-reserved) and its slot is present and free. -/
+reserved) and its slot is present, free and not spent. -/
 def Slab.allocAt (s : Slab α) (i : Nat) : Bool :=
-  decide (1 ≤ i) && (match s.slots[i]? with | some sl => !sl.occupied | none => false)
+  decide (1 ≤ i) &&
+    (match s.slots[i]? with | some sl => !sl.occupied && decide (sl.gen < genBound) | none => false)
 
 /-- The lowest allocatable slot index, if any. -/
 def Slab.freeIndex (s : Slab α) : Option Nat :=
   (List.range s.slots.length).find? s.allocAt
 
-/-- Insert a value: reuse the lowest free slot (keeping its current generation)
-or grow by one fresh slot. Returns the generation-tagged key and the new slab. -/
+/-- Insert a value: reuse the lowest free slot that is not spent (keeping its
+current generation) or grow by one fresh slot. Returns the generation-tagged key and the new slab. -/
 def Slab.insert (s : Slab α) (v : α) : Key × Slab α :=
   match s.freeIndex with
   | some i =>
@@ -182,6 +190,27 @@ theorem Slab.freeIndex_spec (s : Slab α) {i : Nat} (h : s.freeIndex = some i) :
   unfold Slab.allocAt at hpred
   simp only [Bool.and_eq_true] at hpred
   exact of_decide_eq_true hpred.1
+
+/-- `freeIndex` yields a slot whose generation is not spent. -/
+theorem Slab.freeIndex_gen (s : Slab α) {i : Nat} (h : s.freeIndex = some i) :
+    ∃ sl, s.slots[i]? = some sl ∧ sl.gen < genBound := by
+  unfold Slab.freeIndex at h
+  have hpred := List.find?_some h
+  unfold Slab.allocAt at hpred
+  simp only [Bool.and_eq_true] at hpred
+  split at hpred
+  · rename_i sl hsl
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hpred
+    exact ⟨sl, hsl, hpred.2.2⟩
+  · exact absurd hpred.2 (by simp)
+
+/-- **A spent slot is retired**: it is not allocatable, so `insert`, which takes an
+allocatable slot or a new one, does not hand it out. -/
+theorem Slab.allocAt_spent (s : Slab α) {i : Nat} {sl : Slot α} (h : s.slots[i]? = some sl)
+    (hg : genBound ≤ sl.gen) : s.allocAt i = false := by
+  unfold Slab.allocAt
+  rw [h]
+  simp [Nat.not_lt.mpr hg]
 
 /-- **Fresh insert is retrievable**: the value just inserted is returned by
 `get` under the key `insert` handed back. -/
@@ -418,6 +447,9 @@ private def abaSlab : Option Bool :=
 -- The whole ABA scenario evaluates to `some true`.
 def regression_406 : Bool := decide (abaSlab == some true
   )
+
+-- A spent slot is passed over: the next insert takes the free slot after it.
+example : ((⟨[⟨0, none⟩, ⟨genBound, none⟩, ⟨3, none⟩]⟩ : Slab Nat).insert 7).1 = ⟨2, 3⟩ := by decide
 
 -- The wakeup-sentinel key is dead on a fresh slab.
 def regression_409 : Bool := decide ((Slab.empty Nat 4).get ⟨0, 0⟩ == none

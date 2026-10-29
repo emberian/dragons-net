@@ -10,7 +10,9 @@ A check that refuses raises `LaneError`. `lane_main` ends the lane with that one
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from dataclasses import dataclass, field
 import fcntl
 import hashlib
@@ -30,6 +32,19 @@ from typing import IO, Any
 ROOT = Path(__file__).resolve().parents[1]
 # Processes or threads a check runs at once, so many lanes or groups of tests may run side by side.
 WORKERS = max(1, min(4, len(os.sched_getaffinity(0))))
+
+
+@contextlib.contextmanager
+def pool(workers: int = WORKERS) -> Iterator[ThreadPoolExecutor]:
+    """A pool whose work not begun is dropped once its block fails, so that a lane that finds a
+    difference says so without waiting for every program it queued to be built."""
+    executor = ThreadPoolExecutor(workers)
+    try:
+        yield executor
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    executor.shutdown(wait=True)
 NATIVE = ROOT / "native"
 DN_COMPILER = ROOT / ".lake/build/bin/dn-compiler"
 RECORD = ROOT / "backend/bootstrap-record.json"

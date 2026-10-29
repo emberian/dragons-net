@@ -103,6 +103,9 @@ def clockLimit : Nat := 2 ^ 62
 /-- The host's wall clock, in milliseconds, stays below this: an article's dates are read for
 seconds below 2^40, past the year 36,000. -/
 def wallLimit : Nat := 1000 * 2 ^ 40
+/-- A connection's generation, which the host counts up at each index, stays at or below this: past
+it the host no longer uses the index. -/
+def genLimit : Nat := 2 ^ 62
 
 inductive Phase
   /-- greeted, no command yet or commands being answered -/
@@ -196,7 +199,8 @@ inductive Breach
   | unasked
   /-- more bytes taken than a send carried, or a count for no send -/
   | overTaken
-  /-- a connection opened at an index still in use -/
+  /-- a connection opened at an index still in use, at a generation not past the last there, or past
+  `genLimit` -/
   | reopened
   /-- a clock earlier than the last batch's, or not below `clockLimit`; a wall clock not below
   `wallLimit` -/
@@ -214,13 +218,14 @@ abbrev Table := List (Option Conn)
 
 def Table.empty : Table := List.replicate conns none
 
-/-- The table, the host's clock at the last batch, the store if there is one, and how many
-connections have opened. -/
+/-- The table, the host's clock at the last batch, the store if there is one, how many connections
+have opened, and the last generation opened at each index. -/
 structure Server where
   table : Table := Table.empty
   clock : Nat := 0
   store : Option Store := none
   opened : Nat := 0
+  gens : List Nat := List.replicate conns 0
 
 /-- The connection at `idx` if it is the one of generation `gen`. -/
 def Table.live (t : Table) (idx gen : Nat) : Option Conn :=
@@ -249,8 +254,11 @@ def applyEvent (i : Identity) (now : Nat) (s : Server) : Event → Except Breach
     match s.table[idx]? with
     | some (some _) => throw .reopened
     | _ =>
-      let c := Conn.fresh i (greets s.store mayPost) (s.opened + 1) gen now
-      return { s with table := s.table.set idx (some c), opened := s.opened + 1 }
+      if gen ≤ s.gens.getD idx 0 || genLimit < gen then throw .reopened
+      else
+        let c := Conn.fresh i (greets s.store mayPost) (s.opened + 1) gen now
+        return { s with table := s.table.set idx (some c), opened := s.opened + 1,
+                        gens := s.gens.set idx gen }
   | .received idx gen data => do
     checkIndex idx
     if chunk < data.length then throw .tooLong
@@ -1676,8 +1684,10 @@ theorem applyEvent_quitRest {i : Identity} {now : Nat} {s s' : Server} {e : Even
       simp only [hc, bind, Except.bind] at h
       split at h
       · cases h
-      · cases h
-        exact quitRest_set hs fun c hc' => by cases hc'; intro hq; cases hq
+      · split at h
+        · cases h
+        · cases h
+          exact quitRest_set hs fun c hc' => by cases hc'; intro hq; cases hq
   | received idx gen data =>
     unfold applyEvent at h
     cases hc : checkIndex idx with
@@ -1930,6 +1940,151 @@ theorem quit_rest {i : Identity} {s s' s'' : Server} {now wall : Nat} {es : List
   · rename_i t ht
     cases h'
     exact settleTable_quitRest _ _ _ _ ht h1
+
+theorem getD_set_le {l : List Nat} {idx gen : Nat} (h : l.getD idx 0 < gen) (k : Nat) :
+    l.getD k 0 ≤ (l.set idx gen).getD k 0 := by
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_set]
+  split
+  · rename_i hk
+    subst hk
+    split
+    · simp only [Option.getD_some]
+      simp only [List.getD_eq_getElem?_getD] at h
+      exact Nat.le_of_lt h
+    · rename_i hl
+      simp [List.getElem?_eq_none (Nat.le_of_not_lt hl)]
+  · exact Nat.le_refl _
+
+/-- An event leaves the last generation opened at each index where it was, or above it. -/
+theorem applyEvent_gens {i : Identity} {now : Nat} {s s' : Server} {e : Event}
+    (h : applyEvent i now s e = .ok s') (k : Nat) : s.gens.getD k 0 ≤ s'.gens.getD k 0 := by
+  cases e with
+  | opened idx gen mp =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · cases h
+      · split at h
+        · cases h
+        · rename_i hg
+          cases h
+          simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_le] at hg
+          exact getD_set_le hg.1 k
+  | received idx gen data =>
+    unfold applyEvent at h
+    simp only [bind, Except.bind] at h
+    repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
+  | writable idx gen =>
+    unfold applyEvent at h
+    simp only [bind, Except.bind] at h
+    repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
+  | inputEnded idx gen =>
+    unfold applyEvent at h
+    simp only [bind, Except.bind] at h
+    repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
+  | closed idx gen =>
+    unfold applyEvent at h
+    simp only [bind, Except.bind] at h
+    repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
+
+/-- **An index's generations only rise**: an open is taken only at a generation past the last one
+opened at its index and not past `genLimit`, and becomes the last; so a pair of an index and a
+generation names at most one connection of a run, and what is left of a connection gone, an
+event, a send or a read it owned, names none that follows it. -/
+theorem applyEvent_opened {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat} {mp : Bool}
+    (h : applyEvent i now s (.opened idx gen mp) = .ok s') :
+    s.gens.getD idx 0 < gen ∧ gen ≤ genLimit ∧ s'.gens = s.gens.set idx gen := by
+  unfold applyEvent at h
+  cases hc : checkIndex idx with
+  | error b => simp [hc, bind, Except.bind] at h
+  | ok u =>
+    simp only [hc, bind, Except.bind] at h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i hg
+        cases h
+        simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_le] at hg
+        exact ⟨hg.1, Nat.not_lt.mp hg.2, rfl⟩
+
+theorem events_gens {i : Identity} {now : Nat} :
+    ∀ (es : List Event) (s s' : Server), es.foldlM (applyEvent i now) s = .ok s' →
+      ∀ k, s.gens.getD k 0 ≤ s'.gens.getD k 0
+  | [], s, s', h, k => by
+    simp only [List.foldlM, pure, Except.pure, Except.ok.injEq] at h
+    exact h ▸ Nat.le_refl _
+  | e :: es, s, s', h, k => by
+    simp only [List.foldlM, bind, Except.bind] at h
+    split at h
+    · cases h
+    · rename_i s1 h1
+      exact Nat.le_trans (applyEvent_gens h1 k) (events_gens es s1 s' h k)
+
+/-- A turn, and what the host took of its sends, leave each index's last generation where it was or
+above. -/
+theorem turn_gens {i : Identity} {s s' : Server} {now wall : Nat} {es : List Event}
+    {ds : List Done} {actions : List Action} {js : List Job}
+    (h : turn i s now wall es ds = .ok (s', actions, js)) (k : Nat) :
+    s.gens.getD k 0 ≤ s'.gens.getD k 0 := by
+  unfold turn at h
+  simp only [bind, Except.bind, pure, Except.pure] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i s1 hs1
+        split at h
+        · cases h
+        · cases h
+          exact events_gens es s s1 hs1 k
+
+theorem settle_gens {s s' : Server} {actions : List Action} {taken : List Nat}
+    (h : settle s actions taken = .ok s') : s'.gens = s.gens := by
+  unfold settle at h
+  simp only [bind, Except.bind, pure, Except.pure] at h
+  split at h
+  · cases h
+  · cases h; rfl
+
+/-- A run: turns, and what the host took of their sends, one after another. -/
+inductive Reaches (i : Identity) : Server → Server → Prop
+  | refl (s : Server) : Reaches i s s
+  | turn {s s' s'' : Server} {now wall : Nat} {es : List Event} {ds : List Done} {actions : List Action}
+      {js : List Job} : turn i s now wall es ds = .ok (s', actions, js) → Reaches i s' s'' → Reaches i s s''
+  | settle {s s' s'' : Server} {actions : List Action} {taken : List Nat} :
+      settle s actions taken = .ok s' → Reaches i s' s'' → Reaches i s s''
+
+/-- **Along a run no index's last generation falls**; with `applyEvent_opened`, each open a run
+takes at an index is past every one it took there before. -/
+theorem reaches_gens {i : Identity} {s s' : Server} (h : Reaches i s s') (k : Nat) :
+    s.gens.getD k 0 ≤ s'.gens.getD k 0 := by
+  induction h with
+  | refl => exact Nat.le_refl _
+  | turn ht _ ih => exact Nat.le_trans (turn_gens ht k) ih
+  | settle hs _ ih => exact (settle_gens hs) ▸ ih
+
+/-- The premise holds of a real run: a turn of the empty server that opens index 0 at generation 1,
+which becomes the index's last. -/
+theorem reaches_witness : ∃ s', Reaches ⟨[], []⟩ {} s' ∧ s'.gens.getD 0 0 = 1 := by
+  have hv : (match turn ⟨[], []⟩ {} 1 0 [.opened 0 1 false] [] with
+      | .ok (s', _, _) => s'.gens.getD 0 0 == 1
+      | .error _ => false) = true := by decide
+  split at hv
+  · rename_i s' _ _ h
+    exact ⟨s', .turn h (.refl _), by simpa using hv⟩
+  · cases hv
+
+/-- An index opened again at its last generation is a breach. -/
+theorem reopened_witness :
+    (match applyEvent ⟨[], []⟩ 0 { gens := [1] } (.opened 0 1 false) with
+      | .error b => b == .reopened
+      | .ok _ => false) = true := by decide
 
 /-- The premise holds of a connection that has just answered QUIT, and of the empty table. -/
 theorem quitRest_witness :

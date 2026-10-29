@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import functools
 import json
@@ -474,7 +473,7 @@ def one(binary: Path, phase: Phase, base: dict[bytes, bytes], stop: int) -> tupl
 def sweep(phase: Phase, stopped_at: Callable[[int], tuple[bool, dict[bytes, bytes]]]) -> tuple[int, dict[bytes, bytes]]:
     """The phase stopped before each of its operations by `stopped_at`, `WORKERS` runs at a time,
     until a run is not stopped: how many operations it makes, and the spool the run not stopped left."""
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         first = 1
         while True:
             batch = list(range(first, first + lanes.WORKERS))
@@ -507,15 +506,17 @@ def phases(binary: Path, bases: list[dict[bytes, bytes]] | None = None) -> tuple
 
 @dataclass
 class Defect:
-    """A defect planted in the program (a pattern) or in native/jobs.c (exact text), with how many
-    times the text occurs, and a part of what the lane has to say of it: one of several, where what
-    it breaks first depends on the order the workers take the operations in."""
+    """A defect planted in the program (a pattern) or in native/jobs.c, or with `loop` in
+    native/nntp_host.c (exact text), with how many times the text occurs, and a part of what the lane
+    has to say of it: one of several, where what it breaks first depends on the order the workers
+    take the operations in."""
     name: str
     pattern: str
     becomes: str
     times: int
     sign: str | tuple[str, ...]
     program: bool = True
+    loop: bool = False
 
     def said(self, error: str) -> bool:
         return any(sign in error for sign in ((self.sign,) if isinstance(self.sign, str) else self.sign))
@@ -549,7 +550,7 @@ def fiu() -> Path:
 def test_build(cake: str, out: Path, name: str, source: str, defect: Defect | None = None,
                base: Path | None = None) -> Path:
     """The server's test build of the program `source`, as `name` in `out`, which holds the layout's
-    header; with `defect`, planted in the program, or in native/jobs.c linked with `base`'s program."""
+    header; with `defect`, planted in the program, or in the host linked with `base`'s program."""
     flags = ["-DFIU_ENABLE=1", f"-I{fiu()}", f"-L{fiu()}", "-lfiu", f"-Wl,-rpath,{fiu()}"]
     if defect is None or defect.program:
         text = source if defect is None else lanes.plant(source, defect.pattern, defect.becomes, defect.times,
@@ -557,10 +558,11 @@ def test_build(cake: str, out: Path, name: str, source: str, defect: Defect | No
         return lanes.whole_program(cake, name, text, out, N.HOST, N.STORE, flags)
     if base is None:
         raise LaneError(f"{defect.name}: a defect of the host needs a program")
-    jobs = out / f"{name}-jobs.c"
-    jobs.write_text(lanes.plant(JOBS.read_text(), defect.pattern, defect.becomes, defect.times,
-                                f"the host, for {defect.name},", exact=True))
-    return lanes.link(out / name, [N.HOST, NATIVE / "store.c", jobs, NATIVE / "cake_header.c",
+    planted = out / f"{name}-{'loop' if defect.loop else 'jobs'}.c"
+    planted.write_text(lanes.plant((N.HOST if defect.loop else JOBS).read_text(), defect.pattern, defect.becomes,
+                                   defect.times, f"the host, for {defect.name},", exact=True))
+    host, jobs = (planted, JOBS) if defect.loop else (N.HOST, planted)
+    return lanes.link(out / name, [host, NATIVE / "store.c", jobs, NATIVE / "cake_header.c",
                                    NATIVE / "cake_runtime.c", base.with_suffix(".S")],
                       includes=[out], flags=flags, check=False)
 
@@ -571,7 +573,7 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         base = pool.submit(test_build, cake, OUT, "crash", source)
         builds = [pool.submit(test_build, cake, OUT, f"defect-{k}", source, d) for k, d in enumerate(DEFECTS)
                   if d.program]

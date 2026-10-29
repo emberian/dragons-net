@@ -182,7 +182,7 @@ def passes(binary: Path, bases: list[Image] | None = None, only: str = "",
     with tempfile.TemporaryDirectory(prefix="dn-power-") as work:
         mounts = Mounts(Path(work))
         try:
-            with ThreadPoolExecutor(lanes.WORKERS) as pool:
+            with lanes.pool() as pool:
                 try:
                     for k, phase in enumerate(C.PHASES):
                         base = bases[k] if bases else C.crashed(left) if phase is C.PHASES[-1] else left
@@ -230,7 +230,7 @@ def check(cake: str) -> Report:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     source = lanes.emit("emit-session")
-    with ThreadPoolExecutor(1 + len(DEFECTS)) as pool:
+    with lanes.pool(1 + len(DEFECTS)) as pool:
         base = pool.submit(C.test_build, cake, OUT, "power", source)
         builds = [pool.submit(C.test_build, cake, OUT, f"defect-{k}", source, d) for k, (d, _) in enumerate(DEFECTS)
                   if d.program]
