@@ -67,7 +67,7 @@ OTHER_BOOT = b"00000000-0000-4000-8000-000000000000\n"
 
 
 # The points of native/jobs.c that fail nothing but carry a number.
-PARAMETERS = {"dn/write-short", "dn/sync-slow", "dn/stop", "dn/fail"}
+PARAMETERS = {"dn/write-short", "dn/sync-slow", "dn/stop", "dn/fail", "dn/term"}
 
 
 def points() -> set[str]:

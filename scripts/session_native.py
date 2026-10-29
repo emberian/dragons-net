@@ -632,7 +632,8 @@ def check(cake: str) -> Report:
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
-        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios(),
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.abandon_scenarios(),
+                 *sessions.group_scenarios(),
                  *sessions.list_scenarios(), *sessions.mode_scenarios(), *sessions.over_scenarios()]
         model = sessions.model_command()
         scripts = [(name, script, code) for name, script, code in

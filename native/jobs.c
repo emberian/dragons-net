@@ -14,7 +14,9 @@
  * every operation before has ended, the loop stops the process at the end of its turn, for a test to
  * kill it with those operations and everything the program did in place. `dn/fail`, given the number
  * of an operation, so counted, times 256 and an error number, fails that operation at its first point
- * with the error, once, and names the point on stderr. */
+ * with the error, once, and names the point on stderr; `dn/term` sends the process SIGTERM as the
+ * operation it numbers begins, which then waits for the stop to begin. At a stop the jobs not begun are dropped and those running waited
+ * for (dn_jobs_drain). */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -37,7 +39,7 @@
 
 enum { JOBS = DN_SESSION_JOBS, OPS = DN_SESSION_JOB_OPS, DATA = DN_SESSION_JOB_DATA, PLACES = DN_SESSION_HANDLES,
        WORKERS = 2, NAME = 32 };
-enum { FREE, QUEUED, DONE };
+enum { FREE, QUEUED, RUNNING, DONE };
 
 struct op { uint64_t code, place, gen, name, number, to_name, to_number, offset, length, at; };
 
@@ -58,7 +60,7 @@ struct file {
 
 static struct job jobs[JOBS];
 static struct file files[PLACES];
-static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs;
+static int spool = -1, wake = -1, queue[JOBS], queued, dir_syncs, stopping;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t work = PTHREAD_COND_INITIALIZER;
 static atomic_uint_fast64_t begun, ended, held;
@@ -383,26 +385,39 @@ static void hold(uint64_t at) {
     for (;;) pause();
 }
 
+/* `dn/term`: SIGTERM sent, the operation waits for the stop to begin, so that it runs at it. */
+static void stop_begins(void) {
+    kill(getpid(), SIGTERM);
+    for (int begun_stop = 0; !begun_stop;) {
+        pthread_mutex_lock(&lock);
+        begun_stop = stopping;
+        pthread_mutex_unlock(&lock);
+        if (!begun_stop) nanosleep(&(struct timespec){.tv_nsec = 1000000}, NULL);
+    }
+}
+
 static void *worker(void *unused) {
     (void)unused;
     for (;;) {
         pthread_mutex_lock(&lock);
-        while (!queued) pthread_cond_wait(&work, &lock);
+        while (!queued || stopping) pthread_cond_wait(&work, &lock);
         int k = queue[0];
         memmove(queue, queue + 1, (size_t)--queued * sizeof queue[0]);
+        jobs[k].state = RUNNING;
         pthread_mutex_unlock(&lock);
         struct job *j = &jobs[k];
         memset(j->results, 0, sizeof j->results);
         j->done = j->count;
         j->class = 0;
         for (uint64_t i = 0; i < j->count; ++i) {
-            uint64_t stop, number = 0;
-            int stopping = DN_FAULT_INFO("dn/stop", stop);
-            if (stopping || fiu_fail("dn/fail")) number = atomic_fetch_add(&begun, 1) + 1;
-            if (stopping && number >= stop) hold(stop);
+            uint64_t stop, term, number = 0;
+            int holding = DN_FAULT_INFO("dn/stop", stop), terming = DN_FAULT_INFO("dn/term", term);
+            if (holding || terming || fiu_fail("dn/fail")) number = atomic_fetch_add(&begun, 1) + 1;
+            if (holding && number >= stop) hold(stop);
+            if (terming && number == term) stop_begins();
             numbered(number);
             int failed = run(j, i);
-            if (stopping) atomic_fetch_add(&ended, 1);
+            if (holding) atomic_fetch_add(&ended, 1);
             if (failed) {
                 j->done = i;
                 j->class = class_of(errno);
@@ -444,6 +459,28 @@ int dn_jobs_start(int dir) {
     }
     if (pthread_sigmask(SIG_SETMASK, &old, NULL)) dn_harness("pthread_sigmask");
     return wake;
+}
+
+int dn_jobs_drain(uint64_t ms, int counts[3]) {
+    pthread_mutex_lock(&lock);
+    stopping = 1;
+    counts[1] = queued;
+    for (int q = 0; q < queued; ++q) jobs[queue[q]].state = FREE;
+    queued = 0;
+    counts[0] = 0;
+    for (int k = 0; k < JOBS; ++k) counts[0] += jobs[k].state == RUNNING;
+    pthread_mutex_unlock(&lock);
+    for (uint64_t waited = 0;; waited += 5) {
+        pthread_mutex_lock(&lock);
+        counts[2] = 0;
+        for (int k = 0; k < JOBS; ++k) counts[2] += jobs[k].state == RUNNING;
+        if (!counts[2])
+            for (int p = 0; p < PLACES; ++p)
+                if (files[p].open && !files[p].listing) close(files[p].fd);
+        pthread_mutex_unlock(&lock);
+        if (!counts[2] || waited >= ms) return counts[2];
+        nanosleep(&(struct timespec){.tv_nsec = 5000000}, NULL);
+    }
 }
 
 void dn_jobs_take(const unsigned char *a) {

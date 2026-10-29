@@ -20,6 +20,8 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
   no space.
 - Each index's generations counted up to the last but one (`dn/generation`): every client opens at
   the last generation of an index and the next at another, the run as without it.
+- SIGTERM as each operation begins (`dn/term`): the job running it run out before the server ends,
+  with status 0, the spool held as after a crash and served again.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
 
@@ -46,6 +48,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import socket
 import subprocess
@@ -374,6 +377,34 @@ def spent(binary: Path, base: Image, limit: int) -> None:
             raise LaneError(f"every index at its last generation: {why}")
 
 
+def terminated(binary: Path, base: Image, count: int) -> None:
+    """SIGTERM as each of the run's `count` operations begins (`dn/term`): the server ends with status
+    0 once the job running that operation has run out, none left running; the spool recovers, not
+    corrupt, with the article held before and each one answered 240, as sent; started again, it
+    serves them."""
+    posted = {C.mid_of(p): p for p in (HELD, *POSTS)}
+    for n in range(1, count + 1):
+        with tempfile.TemporaryDirectory() as temp:
+            run = served(binary, base, Path(temp, "term"), f"enable name=dn/term,failinfo={n}")
+            stop = re.search(r"at the stop: (\d+) jobs run out, (\d+) dropped before they began, (\d+) still running",
+                             run.said)
+            if stop is None or stop[1] == "0" or stop[3] != "0":
+                raise LaneError(f"SIGTERM at operation {n}: the server said {run.said[-300:]!r}")
+            try:
+                commits = R.recover(C.KEY, C.GROUPS, list(run.image.items()))[3]
+            except R.Corrupt as error:
+                raise LaneError(f"SIGTERM at operation {n}: corrupt {error}") from None
+            taken = {C.mid_of(post) for (_, post), got in zip(STEPS, run.got, strict=False)
+                     if post and got[2:3] == [TEXTS["posted"]]}
+            held = {c[1] for c in commits}
+            why = (next((f"{m.decode()}, answered 240, is not held" for m in taken | {C.mid_of(HELD)} if m not in held),
+                        None)
+                   or next(filter(None, (C.unlike(c, run.image, posted) for c in commits)), None)
+                   or C.restarted(binary, run.image, Path(temp, "again"), posted))
+            if why:
+                raise LaneError(f"SIGTERM at operation {n}: {why}")
+
+
 def slowed(binary: Path, base: Image) -> dict[str, float]:
     """Every sync slowed by `SLOW` s: a read and a STAT on other connections answered before a post's
     240, which comes after its three syncs; when each came."""
@@ -528,6 +559,7 @@ def passes(binary: Path, b: Bases, w: dict[str, int]) -> tuple[dict[str, float],
             raise LaneError("EINTR fails operations at other points than ENOSPC")
         counts.append(sum(map(bool, points)))
         fired |= set(points)
+    terminated(binary, b.held, counts[0])
     unfailed = C.points() - fired - {"dn/read-dir"}
     if unfailed:
         raise LaneError(f"dn/fail never failed {sorted(unfailed)}")

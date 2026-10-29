@@ -16,6 +16,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.News.CommandSpec` | Of the specification: each command line's reply, each rule mattering (`mutants_differ`); every reply and the greeting fit one action, any a connection gets among them (`text_fits`, `greeting_fits`, `reply_fits`); with no rule broken, the lane's mutated session is this one (`turnM_none`) | That it is decision 0003's session (tested); for `reply_fits`, that the store's articles have article numbers and message-ids, its groups names it may carry, and the wall clock is below the host's limit |
 | `DN.News.SessionSpec` | A turn acts at most once a connection (`turn_ordered`), resends only once ready (`act_resends`, `act_blocked`), adds at most one reply (`serve_one`), keeps a line's deadline (`act_keeps_line`), and after QUIT or 502 only sends its rest or closes (`serve_quit`, `quit_rest`, `act_quitting`) | That the program is it (tested) |
 | `DN.News.SessionSpec`, generations | An open is taken only past its index's last generation and not past 2^62, and no turn or settle of a run lowers that (`applyEvent_opened`, `turn_gens`, `settle_gens`, `reaches_gens`) | That the host keeps it (tested) |
+| `DN.Dataplane.Io.Lifecycle` | An operation's lease is released at most once, only by the event that ends it, never by a cancellation or its answer, and a zero-copy send's only after both its completions (`run_releases_le_one`, `step_release_ended`, `cancel_never_releases`, `sendZc_release`) | That the host follows it (its file jobs are tested in the faults lane) |
 | `SessionSpec.part_progress` | A listing's part fits one action, is not empty, and ends the listing or leaves less of it, so a listing ends | That the program is it (tested) |
 | `DN.News.PostSpec` | Of the specification: a read keeps only octets that pass the file's check (`readDone_checked`) | That it is decision 0005's (tested against `scripts/post_ref.py`); that the program is it |
 | `Certificate.witness` | A packaged precondition has a satisfying state | Adequacy for real callers |
@@ -64,7 +65,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 20,627 declarations, including 9,225 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 20,808 declarations, including 9,285 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 

@@ -19,7 +19,8 @@
  * Every action is checked against the layout; one that breaks it ends the process with status 1.
  * A run the program stops because the host broke the contract ends it with status 3; one it stops
  * because recovery refused the store, or a file job of recovery failed, with status 4. SIGTERM or
- * SIGINT closes every socket and ends the run inside a call, with status 0. `--spool` and the other
+ * SIGINT closes every socket, drops the file jobs not begun, waits for those running, 30 s at most,
+ * and ends the run inside a call, with status 0. `--spool` and the other
  * options of store.c give the store; a store refused at start ends the host with status 4.
  *
  * `--address A` and `--port N` choose where it listens: by default 127.0.0.1 and a port the kernel
@@ -54,7 +55,7 @@
 #include <time.h>
 
 enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER_QUIET_MS = 5000,
-       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18 };
+       LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18, DRAIN_MS = 30000 };
 
 struct conn {
     int fd;          /* -1 when the index is free */
@@ -144,13 +145,19 @@ static void report(uint64_t wake) {
     report_line();
 }
 
-/* Every socket closed, and the run ends inside the call. */
+/* Every socket closed, the file jobs drained, and the run ends inside the call. */
 __attribute__((noreturn)) static void stop_serving(const char *why) {
     for (int i = 0; i < CONNS; ++i)
         if (conns[i].fd >= 0) close(conns[i].fd);
     for (int i = 0; i < LINGERING; ++i)
         if (lingering[i].fd >= 0) close(lingering[i].fd);
     close(listener);
+    if (jobs_done >= 0) {
+        int counts[3];
+        dn_jobs_drain(DRAIN_MS, counts);
+        fprintf(stderr, "at the stop: %d jobs run out, %d dropped before they began, %d still running\n", counts[0],
+                counts[1], counts[2]);
+    }
     fprintf(stderr, "stopped: %s\n", why);
     exit(0);
 }

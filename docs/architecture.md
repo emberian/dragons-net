@@ -50,7 +50,23 @@ What names a connection, a file, a job and a read on the server's path, what the
 | Model key | `Io.Slab`, `Flow.Token` | Index 1 to 2^32 - 1, generation below 2^31; a slot at 2^31 is spent | Rejected by generation (`slab_stale_key_rejected_forever`); an insert with room converts (`Slab.insert_toToken`) |
 | Host library | `crates/dn-runtime` `Token` | Index and a `u64` generation; a slot whose generation would overflow is retired | Rejected by generation; a token carries no owner, as there is one slab |
 
-Deadlines are fields of a connection's record, set anew when it opens, so none outlives it. Shards and their routing come with the io_uring adapter (#13); until then one program owns every identity.
+Deadlines are fields of a connection's record, set anew when it opens, so none outlives it.
+
+### Operations and their leases
+
+An operation's lease — a buffer, a read slot, a file — goes back only at the last completion the operation owes, never at a cancellation or its answer (`DN.Dataplane.Io.Lifecycle`). What each event of that model is:
+
+| Model event | io_uring | The server's host |
+| --- | --- | --- |
+| `done false` | A completion without `IORING_CQE_F_MORE` | A file job's completion, handed in `dn_next` |
+| `done true` | A multishot completion with `IORING_CQE_F_MORE` | Not used |
+| `notif` | A zero-copy send's `IORING_CQE_F_NOTIF` | Not used |
+| `cancel` | `IORING_OP_ASYNC_CANCEL` submitted | At a stop, every job; a connection's close, for its read's owner |
+| `answer canceled` | The cancellation's `0`, the operation's `-ECANCELED` still to come | A job not begun, dropped: it owes nothing |
+| `answer already` | `-EALREADY`: found running, its completion still to come | A job running at a stop, waited for |
+| `answer notFound` | `-ENOENT`: completed already, or never submitted | A close after the read's completion |
+
+A connection gone while its read's job runs leaves the read slot taken until that job completes; the next connection at its index gets nothing of it. Shards and their routing come with the io_uring adapter (#13); until then one program owns every identity.
 
 ## Storage and offline exchange
 

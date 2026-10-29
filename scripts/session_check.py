@@ -1348,6 +1348,40 @@ MARKS_SPOOL = spool_holding([(stored(b"n"), [(b"local.test", 12)]),
                              (stored(b"r"), [(b"local.ten", 100)])])
 
 
+# Each kind of operation a post's jobs run, and a read's, as the simulated host labels them.
+POSTED_OPS = ("create", "write", "datasync", "close", "rename", "syncdir", "journal-write", "journal-sync")
+READ_OPS = ("open", "read", "close")
+
+
+def abandon_scenarios() -> Iterator[PostScenario]:
+    """A connection gone while a job runs an operation of each kind it began, that kind slowed: the
+    store goes on, and a later client posts, or reads, as if it had not been."""
+    later = article(*BASIC, "Message-ID: <later@x.example>")
+    for label in POSTED_OPS:
+        yield f"a poster gone during its job's {label}", [
+            poster(reset=300), Client(1, [(3_000, ascii_lines("POST")), (3_001, later), (3_002, QUIT)], post=True)], \
+            Spool(GROUPS, delays={label: 1_000})
+    for label in READ_OPS:
+        yield f"a reader gone during its job's {label}", [
+            reader(f"ARTICLE {ID2}", reset=300), reader(f"ARTICLE {ID1}", at=3_000)], \
+            Spool(GROUPS, image=TWO, delays={label: 1_000})
+
+
+def gone_while_running(trace: list[Turn], spool: Spool, label: str) -> bool:
+    """Whether connection 0 closed while a job with an operation `label` names was in flight."""
+    host = Host(spool)
+    issued: dict[int, tuple[int, list[P.Op]]] = {}
+    for t in trace:
+        for done in t.dones:
+            if done[0] in issued and issued[done[0]][0] == done[1]:
+                del issued[done[0]]
+        if any(e.kind == "closed" and e.idx == 0 for e in t.events):
+            return any(host.label(op) == label for _, ops in issued.values() for op in ops)
+        for slot, job_gen, ops in t.jobs:
+            issued[slot] = (job_gen, ops)
+    return False
+
+
 def mode_scenarios() -> Iterator[PostScenario]:
     yield "MODE READER of a client that may post", [
         Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "mode reader", "QUIT"))], post=True)], Spool(GROUPS)
@@ -1788,8 +1822,8 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios(), *mode_scenarios(),
-             *over_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *abandon_scenarios(), *group_scenarios(), *list_scenarios(),
+             *mode_scenarios(), *over_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}
@@ -1820,6 +1854,9 @@ def check() -> Report:
             except Violation as error:
                 raise LaneError(f"scenario {name!r}: {error}") from None
             post_traces[name] = trace
+            label = name.rpartition("its job's ")[2]
+            if name.endswith(f"its job's {label}") and not gone_while_running(trace, spool, label):
+                raise LaneError(f"scenario {name!r}: no job with its {label} ran as the connection closed")
         caught = [pool.submit(caught_apart, m, all_scenarios, posts) for m in MUTANTS]
         mutants = {m: found.result() for m, found in zip(MUTANTS, caught, strict=True)}
         planted = {}
