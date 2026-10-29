@@ -56,7 +56,7 @@ class CheckScript(unittest.TestCase):
         steps = ["LAKE_ARTIFACT_CACHE=false", "tracked=$(tracked_outputs)", "before=$(snapshot)",
                  "once check-gate", "lake build --wfail DN dn-compiler",
                  '"$(snapshot)" != "$before"', "LEAN_ABORT_ON_PANIC=1", "check_structure.py outputs",
-                 'leanchecked.py "$leanchecker"', "--export-list",
+                 'leanchecked.py "$lean" "$leanchecker"', "--export-list",
                  '"$nanoda" scripts/nanoda.json', f"--regressions {regressions()}"]
         positions = [CHECK.find(step) for step in steps]
         self.assertNotIn(-1, positions, dict(zip(steps, positions, strict=True)))
@@ -200,8 +200,9 @@ class CheckScript(unittest.TestCase):
                 "proofs": ["toolchain lean --print-prefix [ ]", "python3 scripts/bootstrap_tool.py lean4export",
                            "python3 scripts/bootstrap_tool.py nanoda",
                            "python3 scripts/check_structure.py outputs",
-                           f"python3 scripts/measured.py python3 scripts/leanchecked.py {toolchain}/leanchecker",
-                           f"python3 scripts/leanchecked.py {toolchain}/leanchecker",
+                           (f"python3 scripts/measured.py python3 scripts/leanchecked.py {toolchain}/lean "
+                            f"{toolchain}/leanchecker"),
+                           f"python3 scripts/leanchecked.py {toolchain}/lean {toolchain}/leanchecker",
                            f"toolchain lean --run scripts/Audit.lean --export-list {checked}",
                            f"lean4export M -- N /sysroot {checked}", "nanoda scripts/nanoda.json export",
                            f"toolchain lean --run scripts/Audit.lean --regressions {regressions()} {checked}"],
@@ -297,38 +298,46 @@ class CheckScript(unittest.TestCase):
                 self.assertEqual(taken_tools([ROOT / source]) - {"cake"}, put.get(name, set()))
 
     def test_lean_checker_replays_only_what_changed(self) -> None:
-        """Lean's checker replays the modules whose `.olean`, or an import's, changed since they last
-        passed, and keeps their keys only once it passed."""
+        """Lean's checker replays the modules whose `.olean` files, or an import's, changed since they
+        last passed, imports as the `.olean` records them, and keeps their keys only once it passed;
+        another checker or toolchain replays them all."""
         with tempfile.TemporaryDirectory() as temp:
             tree = Path(temp)
             (tree / "scripts").mkdir()
             shutil.copy(ROOT / "scripts/leanchecked.py", tree / "scripts")
             (tree / "lean-toolchain").write_text("leanprover/lean4:v0\n")
-            sources, built = tree / "lean/DN", tree / ".lake/build/lib/lean/DN"
-            sources.mkdir(parents=True)
-            built.mkdir(parents=True)
-            for name, imports in (("A", "import DN.B\n"), ("B", "import Lean\n"), ("C", "")):
-                (sources / f"{name}.lean").write_text(imports)
+            built = tree / ".lake/build/lib/lean/DN"
+            (built / "S").mkdir(parents=True)
+            # What a module imports is what its `.olean` records, here beside it for the stub of Lean.
+            for name, imports in (("A", "DN.B Lean"), ("B", "Init"), ("C", ""), ("S/D", "DN.C")):
                 (built / f"{name}.olean").write_bytes(name.encode())
-            replayed, checker = tree / "replayed", tree / "leanchecker"
+                (built / f"{name}.imports").write_text(imports)
+            lean, replayed, checker = tree / "lean", tree / "replayed", tree / "leanchecker"
+            lean.write_text("#!/bin/sh\nshift 2\n"
+                            'for f; do printf \'%s\\t%s\\n\' "$f" "$(cat "${f%.olean}.imports")"; done\n')
             checker.write_text(f'#!/bin/sh\necho "$*" >> {replayed}\nexit "${{FAIL:-0}}"\n')
-            checker.chmod(0o755)
+            for stub in (lean, checker):
+                stub.chmod(0o755)
 
             def check(fail: str = "0") -> tuple[int, list[str]]:
                 replayed.unlink(missing_ok=True)
-                done = subprocess.run([sys.executable, str(tree / "scripts/leanchecked.py"), str(checker)],
+                done = subprocess.run([sys.executable, str(tree / "scripts/leanchecked.py"), str(lean), str(checker)],
                                       env={**os.environ, "FAIL": fail}, capture_output=True, check=False)
                 return done.returncode, replayed.read_text().split() if replayed.exists() else []
 
-            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C"]))
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
             self.assertEqual(check(), (0, []))
             (built / "B.olean").write_bytes(b"B again")
             self.assertEqual(check(fail="1"), (1, ["DN.A", "DN.B"]))
             self.assertEqual(check(), (0, ["DN.A", "DN.B"]))
-            (built / "C.olean").write_bytes(b"C again")
-            self.assertEqual(check(), (0, ["DN.C"]))
+            (built / "C.olean.server").write_bytes(b"C's server part")
+            self.assertEqual(check(), (0, ["DN.C", "DN.S.D"]))
+            (built / "S/D.imports").write_text("DN.C DN.A")
+            self.assertEqual(check(), (0, ["DN.S.D"]))
+            (tree / "lean-toolchain").write_text("leanprover/lean4:v1\n")
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
             checker.write_text(checker.read_text() + "# another checker\n")
-            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C"]))
+            self.assertEqual(check(), (0, ["DN.A", "DN.B", "DN.C", "DN.S.D"]))
 
     def test_ci_runs_the_stages_in_one_chain(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().partition("\njobs:\n")[2]

@@ -145,8 +145,8 @@ def Slab.allocAt (s : Slab α) (i : Nat) : Bool :=
 def Slab.freeIndex (s : Slab α) : Option Nat :=
   (List.range s.slots.length).find? s.allocAt
 
-/-- Insert a value: reuse the lowest free slot (keeping its current generation)
-or grow by one fresh slot. Returns the generation-tagged key and the new slab. -/
+/-- Insert a value: reuse the lowest free slot that is not spent (keeping its
+current generation) or grow by one fresh slot. Returns the generation-tagged key and the new slab. -/
 def Slab.insert (s : Slab α) (v : α) : Key × Slab α :=
   match s.freeIndex with
   | some i =>
@@ -204,7 +204,8 @@ theorem Slab.freeIndex_gen (s : Slab α) {i : Nat} (h : s.freeIndex = some i) :
     exact ⟨sl, hsl, hpred.2.2⟩
   · exact absurd hpred.2 (by simp)
 
-/-- **A spent slot is retired**: no insert hands it out again. -/
+/-- **A spent slot is retired**: it is not allocatable, so `insert`, which takes an
+allocatable slot or a new one, does not hand it out. -/
 theorem Slab.allocAt_spent (s : Slab α) {i : Nat} {sl : Slot α} (h : s.slots[i]? = some sl)
     (hg : genBound ≤ sl.gen) : s.allocAt i = false := by
   unfold Slab.allocAt

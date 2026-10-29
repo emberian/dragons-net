@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Lean's checker on the library's modules that changed: `leanchecker` replays each module's
-declarations into the environment its imports make, so a module whose `.olean` and whose imports'
-are those it last passed with is not replayed again. A module's key is the digest of the checker,
-the toolchain's name, its `.olean` and its imports' keys; the keys of a pass are kept in
-`build/proofs/leanchecked.json`, written only once the checker passed.
+declarations into the environment its imports make, so a module whose `.olean` files and whose
+imports' are those it last passed with is not replayed again. A module's key is the digest of the
+checker, the toolchain's name, its `.olean` files and the keys of the library's modules its header
+imports, read from the `.olean` as the checker reads it (`scripts/ModuleImports.lean`); the keys
+of a pass are kept in `build/proofs/leanchecked.json`, written only once the checker passed.
 
-`leanchecked.py CHECKER` runs from the repository's root, the build in `.lake/build/lib/lean`."""
+`leanchecked.py LEAN CHECKER` runs from the repository's root, the build in `.lake/build/lib/lean`."""
 from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "lean"
 BUILT = ROOT / ".lake/build/lib/lean"
 KEPT = ROOT / "build/proofs/leanchecked.json"
 
 
-def modules() -> dict[str, list[str]]:
-    """Each module of the library with the library's modules it imports."""
+def modules(lean: Path) -> dict[str, list[str]]:
+    """Each module of the build with the library's modules it imports."""
+    files = sorted(BUILT.glob("DN/**/*.olean"))
+    said = subprocess.run([str(lean), "--run", str(ROOT / "scripts/ModuleImports.lean"), *map(str, files)],
+                          cwd=ROOT, capture_output=True, text=True, check=True).stdout
     found = {}
-    for source in sorted(SOURCES.glob("DN/**/*.lean")):
-        name = ".".join(source.relative_to(SOURCES).with_suffix("").parts)
-        found[name] = re.findall(r"^import\s+(DN(?:\.\w+)+)\s*$", source.read_text(), re.MULTILINE)
+    for line in said.splitlines():
+        file, _, imported = line.partition("\t")
+        name = ".".join(Path(file).relative_to(BUILT).with_suffix("").parts)
+        found[name] = [m for m in imported.split() if m == "DN" or m.startswith("DN.")]
+    if len(found) != len(files):
+        sys.exit(f"leanchecked.py: the imports of {len(files)} modules read as {len(found)}")
     return found
 
 
@@ -38,7 +43,11 @@ def keys(graph: dict[str, list[str]], checker: Path) -> dict[str, str]:
     def key(name: str) -> str:
         if name not in done:
             olean = BUILT / Path(*name.split(".")).with_suffix(".olean")
-            parts = [base, hashlib.sha256(olean.read_bytes()).hexdigest(), *(key(m) for m in sorted(graph[name]))]
+            # The parts of a module's data beside its `.olean`, which the checker reads too.
+            files = [olean, *(f for f in (olean.with_suffix(".olean.server"), olean.with_suffix(".olean.private"))
+                              if f.exists())]
+            parts = [base, *(hashlib.sha256(f.read_bytes()).hexdigest() for f in files),
+                     *(key(m) for m in sorted(graph[name]))]
             done[name] = hashlib.sha256("\n".join(parts).encode()).hexdigest()
         return done[name]
 
@@ -48,10 +57,10 @@ def keys(graph: dict[str, list[str]], checker: Path) -> dict[str, str]:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        sys.exit("usage: leanchecked.py CHECKER")
-    checker = Path(sys.argv[1])
-    graph = modules()
+    if len(sys.argv) != 3:
+        sys.exit("usage: leanchecked.py LEAN CHECKER")
+    lean, checker = Path(sys.argv[1]), Path(sys.argv[2])
+    graph = modules(lean)
     now = keys(graph, checker)
     try:
         kept = json.loads(KEPT.read_text())

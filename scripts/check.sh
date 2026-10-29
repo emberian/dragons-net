@@ -103,7 +103,7 @@ proofs() {
   local -x LEAN_PATH="$prefix/lib/lean:.lake/build/lib/lean" LEAN_ABORT_ON_PANIC=1
   python3 scripts/check_structure.py outputs
   if [[ $part != nanoda ]]; then
-    python3 scripts/measured.py python3 scripts/leanchecked.py "$leanchecker"
+    python3 scripts/measured.py python3 scripts/leanchecked.py "$lean" "$leanchecker"
   fi
   if [[ $part != leanchecker ]]; then
     # The independent kernel checks the library's declarations and everything they use.

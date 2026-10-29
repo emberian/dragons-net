@@ -77,8 +77,10 @@ fi
 set -m
 stop_all() {
   local job
-  for job in $(jobs -p); do kill -TERM -- "-$job" 2>/dev/null || true; done
-  wait 2>/dev/null || true
+  {
+    for job in $(jobs -p); do kill -TERM -- "-$job" || true; done
+    wait || true
+  } 2>/dev/null
 }
 trap 'trap - INT TERM; stop_all; exit 130' INT
 trap 'trap - INT TERM; stop_all; exit 143' TERM

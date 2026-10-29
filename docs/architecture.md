@@ -45,7 +45,7 @@ What names a connection, a file, a job and a read on the server's path, what the
 | --- | --- | --- | --- |
 | Connection | `SessionSpec` (index, generation), the program's record, `native/nntp_host.c` | Index below 64; generation 1 to 2^62, rising at its index; an index at 2^62 is not given out again | Its events are left alone, its actions not carried out, its reads abandoned (`applyEvent_opened`, `turn_gens`) |
 | File place | `PostSpec` operations, `native/jobs.c` | Place below 16; the host counts a place's generation at each close, a word | An operation naming another generation ends the host |
-| Job | `PostSpec` (slot, generation) | One job in flight a slot; the program counts generations up from the spool's start | A completion of no job in flight stops the run (code 13) |
+| Job | `PostSpec` (slot, generation) | One job in flight a slot; one counter for every job, a word the program counts up from the spool's start | A completion of no job in flight stops the run (code 13) |
 | Read | `PostSpec` read slots, owned by a connection's index and generation | Eight slots | Its owner gone, its completion only closes the file |
 | Model key | `Io.Slab`, `Flow.Token` | Index 1 to 2^32 - 1, generation below 2^31; a slot at 2^31 is spent | Rejected by generation (`slab_stale_key_rejected_forever`); an insert with room converts (`Slab.insert_toToken`) |
 | Host library | `crates/dn-runtime` `Token` | Index and a `u64` generation; a slot whose generation would overflow is retired | Rejected by generation; a token carries no owner, as there is one slab |
