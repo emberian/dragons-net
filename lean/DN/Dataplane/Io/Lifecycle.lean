@@ -8,8 +8,8 @@ operation may still touch. The lease may go back only once every completion the 
 come, and a request to cancel it is not one: the cancellation's own answer says only whether the
 operation was found, and its completion still comes (io_uring's `-ECANCELED`), or came already
 (`-ENOENT`), or may come with its result (`-EALREADY`). A multishot operation owes completions until
-one without `IORING_CQE_F_MORE`; a zero-copy send owes its data completion and its notification,
-in either order.
+one without `IORING_CQE_F_MORE`; a zero-copy send owes its data completion and, when that completion
+carries `IORING_CQE_F_MORE`, its notification too, in either order; one without it owes none.
 
 `step` is that discipline for one operation: an event, the operation after it, and whether its
 lease is released by it. What is proven:
@@ -17,7 +17,13 @@ lease is released by it. What is proven:
 * `run_releases_le_one` — a lease is released at most once, whatever the events;
 * `step_release_ended` — it is released only by the event that ends the operation;
 * `cancel_never_releases` — neither a cancellation nor its answer releases it;
-* `sendZc_release` — a zero-copy send's lease goes back only once both its completions came.
+* `sendZc_release` — a zero-copy send's lease goes back only once its data completion came and,
+  if that completion said more, its notification;
+* `once_released` — one completion, however many cancellations and answers come before it,
+  releases its lease once; `multishot_released` — completions that say more, then the final one,
+  do: nothing leaks.
+
+`cancelling` records that a cancellation was asked; nothing waits on it, as nothing may.
 
 Concrete traces witness the cases the reactor meets, and two broken disciplines, one releasing at
 the cancellation's answer and one at a zero-copy send's data, release a lease the operation may
@@ -47,8 +53,9 @@ inductive Answer
   | already
   deriving DecidableEq, Repr
 
-/-- An event of one operation: a completion (`more` for a multishot one that goes on), a
-zero-copy send's notification, a cancellation submitted, its answer. -/
+/-- An event of one operation: a completion (`more` for a multishot one that goes on, or a
+zero-copy send's data completion a notification follows), a zero-copy send's notification, a
+cancellation submitted, its answer. -/
 inductive Event
   | done (more : Bool)
   | notif
@@ -56,8 +63,9 @@ inductive Event
   | answer (a : Answer)
   deriving DecidableEq, Repr
 
-/-- An operation: its kind, whether a cancellation was asked, whether its last data completion and
-its notification came, and whether it has ended. -/
+/-- An operation: its kind, whether a cancellation was asked, whether its last data completion came,
+whether no notification is owed any more (one came, or a zero-copy send's data completion said
+none follows), and whether it has ended. -/
 structure Op where
   kind : Kind
   cancelling : Bool := false
@@ -81,6 +89,7 @@ def step (o : Op) : Event → Op × Bool
   | .done more =>
     if o.ended then (o, false)
     else if o.kind == .multishot && more then finish o
+    else if o.kind == .sendZc && !more then finish { o with data := true, notified := true }
     else finish { o with data := true }
   | .notif => if o.ended || o.kind != .sendZc then (o, false) else finish { o with notified := true }
   | .cancel => ({ o with cancelling := true }, false)
@@ -147,12 +156,45 @@ theorem run_releases_le_one : ∀ (o : Op) (es : List Event), o.ended = false �
 theorem cancel_never_releases (o : Op) (a : Answer) :
     (step o .cancel).2 = false ∧ (step o (.answer a)).2 = false := ⟨rfl, rfl⟩
 
-/-- **A zero-copy send's lease** goes back only once its data completion and its notification
-both came. -/
+/-- **A zero-copy send's lease** goes back only once its data completion came and either its
+notification came or that completion said none follows. -/
 theorem sendZc_release {o : Op} {e : Event} (hk : o.kind = .sendZc) (h : (step o e).2 = true) :
     (step o e).1.data = true ∧ (step o e).1.notified = true := by
   have := (step_release_ended h).2.2
   simpa [Op.owesNothing, step_kind, hk] using this
+
+/-- A cancellation or its answer, which change nothing a completion depends on. -/
+def Event.asks : Event → Bool
+  | .cancel | .answer _ => true
+  | _ => false
+
+theorem asks_keep {o : Op} {e : Event} (h : e.asks = true) :
+    (step o e).2 = false ∧ (step o e).1.kind = o.kind ∧ (step o e).1.data = o.data ∧
+      (step o e).1.notified = o.notified ∧ (step o e).1.ended = o.ended := by
+  cases e <;> simp_all [Event.asks, step]
+
+/-- **No leak, one completion**: an operation of one completion, however many cancellations and
+answers come before it, is released once, by it. -/
+theorem once_released : ∀ (o : Op) (es : List Event), o.kind = .once → o.ended = false →
+    o.data = false → (∀ e ∈ es, e.asks = true) → (run o (es ++ [.done false])).2 = 1
+  | o, [], hk, he, hd, _ => by simp [run, step, finish, Op.owesNothing, hk, he]
+  | o, e :: es, hk, he, hd, ha => by
+    have hs := asks_keep (o := o) (ha e (List.mem_cons_self ..))
+    have := once_released (step o e).1 es (hs.2.1.trans hk) (hs.2.2.2.2.trans he) (hs.2.2.1.trans hd)
+      (fun e' h' => ha e' (List.mem_cons_of_mem _ h'))
+    simp only [List.cons_append, run, hs.1, this]
+    rfl
+
+/-- **No leak, multishot**: completions that say more, then the final one, release the lease once. -/
+theorem multishot_released : ∀ (o : Op) (n : Nat), o.kind = .multishot → o.ended = false → o.data = false →
+    (run o (List.replicate n (.done true) ++ [.done false])).2 = 1
+  | o, 0, hk, he, hd => by simp [run, step, finish, Op.owesNothing, hk, he]
+  | o, n + 1, hk, he, hd => by
+    have hs : step o (.done true) = ({ o with ended := false }, false) := by
+      simp [step, finish, Op.owesNothing, hk, he, hd]
+    have := multishot_released { o with ended := false } n hk rfl hd
+    simp only [List.replicate_succ, List.cons_append, run, hs, this]
+    rfl
 
 /-! ## The cases a reactor meets -/
 
@@ -170,10 +212,12 @@ example : released .once [.cancel, .answer .already, .done false] = 1 := by deci
 -- Multishot: MORE, MORE, then the final completion.
 example : released .multishot [.done true, .done true] = 0 := by decide
 example : released .multishot [.done true, .done true, .done false] = 1 := by decide
--- A zero-copy send, its notification after the data or before it.
-example : released .sendZc [.done false] = 0 := by decide
-example : released .sendZc [.done false, .notif] = 1 := by decide
-example : released .sendZc [.notif, .done false] = 1 := by decide
+-- A zero-copy send: its data completion says a notification follows, which comes after it or
+-- before; one that failed says none follows.
+example : released .sendZc [.done true] = 0 := by decide
+example : released .sendZc [.done true, .notif] = 1 := by decide
+example : released .sendZc [.notif, .done true] = 1 := by decide
+example : released .sendZc [.done false] = 1 := by decide
 -- A late completion after the end releases nothing more.
 example : released .once [.done false, .done false] = 1 := by decide
 
@@ -184,7 +228,7 @@ def stepReleaseOnAnswer (o : Op) : Event → Op × Bool
   | .answer _ => if o.cancelling && !o.ended then ({ o with ended := true }, true) else (o, false)
   | e => step o e
 
-/-- Broken: a zero-copy send's lease goes back at its data completion. -/
+/-- Broken: a zero-copy send's lease goes back at its data completion, notification or none. -/
 def stepReleaseOnData (o : Op) : Event → Op × Bool
   | .done more => if o.kind == .sendZc && !o.ended then ({ o with data := true, ended := true }, true)
     else step o (.done more)
@@ -200,7 +244,7 @@ theorem releaseOnAnswer_early :
 /-- The second releases a zero-copy send's buffer before the kernel's notification that it is done
 with it. -/
 theorem releaseOnData_early :
-    (stepReleaseOnData { kind := .sendZc } (.done false)).2 = true ∧
-      (stepReleaseOnData { kind := .sendZc } (.done false)).1.notified = false := by decide
+    (stepReleaseOnData { kind := .sendZc } (.done true)).2 = true ∧
+      (stepReleaseOnData { kind := .sendZc } (.done true)).1.notified = false := by decide
 
 end DN.Dataplane.Io.Lifecycle

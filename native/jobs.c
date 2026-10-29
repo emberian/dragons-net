@@ -15,8 +15,8 @@
  * kill it with those operations and everything the program did in place. `dn/fail`, given the number
  * of an operation, so counted, times 256 and an error number, fails that operation at its first point
  * with the error, once, and names the point on stderr; `dn/term` sends the process SIGTERM as the
- * operation it numbers begins, which then waits for the stop to begin. At a stop the jobs not begun are dropped and those running waited
- * for (dn_jobs_drain). */
+ * operation it numbers begins, which then waits for the stop to begin. At a stop the jobs not begun
+ * are dropped and those running waited for (dn_jobs_drain). */
 #define _GNU_SOURCE
 #include "jobs.h"
 #include "dn_session_layout.h"
@@ -470,7 +470,12 @@ int dn_jobs_drain(uint64_t ms, int counts[3]) {
     counts[0] = 0;
     for (int k = 0; k < JOBS; ++k) counts[0] += jobs[k].state == RUNNING;
     pthread_mutex_unlock(&lock);
-    for (uint64_t waited = 0;; waited += 5) {
+    struct timespec from, now;
+    clock_gettime(CLOCK_MONOTONIC, &from);
+    for (;;) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        uint64_t elapsed = (uint64_t)(now.tv_sec - from.tv_sec) * 1000 + (uint64_t)(now.tv_nsec / 1000000) -
+                           (uint64_t)(from.tv_nsec / 1000000);
         pthread_mutex_lock(&lock);
         counts[2] = 0;
         for (int k = 0; k < JOBS; ++k) counts[2] += jobs[k].state == RUNNING;
@@ -478,7 +483,7 @@ int dn_jobs_drain(uint64_t ms, int counts[3]) {
             for (int p = 0; p < PLACES; ++p)
                 if (files[p].open && !files[p].listing) close(files[p].fd);
         pthread_mutex_unlock(&lock);
-        if (!counts[2] || waited >= ms) return counts[2];
+        if (!counts[2] || elapsed >= ms) return counts[2];
         nanosleep(&(struct timespec){.tv_nsec = 5000000}, NULL);
     }
 }

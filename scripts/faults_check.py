@@ -22,6 +22,10 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
   the last generation of an index and the next at another, the run as without it.
 - SIGTERM as each operation begins (`dn/term`): the job running it run out before the server ends,
   with status 0, the spool held as after a crash and served again.
+- Every index taken at once, a 65th connection waiting; slow reads of the large article, posts with
+  slowed syncs and HELP on the rest: all answered, nothing allocated once the server serves, at most
+  `RESIDENT` kB resident and `GROWTH` more than as it began to serve.
+- A poll that fails (`dn/poll`): the host ends with status 2.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
 
@@ -44,6 +48,7 @@ import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
 import errno
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -51,9 +56,12 @@ import queue
 import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
+import threading
 import time
 from typing import BinaryIO
 
@@ -143,10 +151,11 @@ class Run:
 
 
 def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list[Step] = STEPS,
-           during: Callable[[int, Path], list[list[bytes]]] | None = None, laid: bool = True) -> Run:
-    """The server with the points `enable` names on a spool holding `base`, or, not `laid`, on the
-    spool `where` holds, its clients taking `steps` in turn, or `during` doing what it does given the
-    port and the spool; ended by SIGTERM once done."""
+           during: Callable[[int, Path], list[list[bytes]]] | None = None, laid: bool = True,
+           more: tuple[str, ...] = ()) -> Run:
+    """The server with the points `enable` names and the options `more` on a spool holding `base`,
+    or, not `laid`, on the spool `where` holds, its clients taking `steps` in turn, or `during` doing
+    what it does given the port and the spool; ended by SIGTERM once done."""
     spool, run = C.laid(where, base) if laid else (where / "spool", where / "run")
     env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
     if enable:
@@ -154,7 +163,7 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
     err = where / "stderr"
     got: list[list[bytes]] = []
     port: str | None = None
-    with err.open("w") as said, subprocess.Popen([str(binary), *C.options(spool, run)], stdout=subprocess.PIPE,
+    with err.open("w") as said, subprocess.Popen([str(binary), *C.options(spool, run), *more], stdout=subprocess.PIPE,
                                                  stderr=said, text=True, env=env) as proc:
         try:
             try:
@@ -167,7 +176,8 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
                 # A refused post's temporary file goes by a job its 441 does not wait for: the store's
                 # last jobs are given their time before the stop, and a file still there is held.
                 settled = time.monotonic() + C.TIMEOUT
-                while any(f.name.startswith("t") for f in spool.iterdir()) and time.monotonic() < settled:
+                while any(f.name.startswith("t") for f in spool.iterdir()) and time.monotonic() < settled and \
+                        proc.poll() is None:
                     time.sleep(0.01)
                 proc.send_signal(signal.SIGTERM)
             status = proc.wait(C.TIMEOUT)
@@ -405,6 +415,152 @@ def terminated(binary: Path, base: Image, count: int) -> None:
                 raise LaneError(f"SIGTERM at operation {n}: {why}")
 
 
+# The most a load may add, in kB, to what the server held resident as it began to serve, about 4 MB:
+# the program's heap and stack, 5 MiB allocated at start and touched as it runs, and a megabyte more.
+GROWTH = 6_144
+# The server's send buffer and a slow reader's receive buffer: the large article does not fit in both,
+# so the server holds the rest until the reader takes more.
+SEND_BUFFER, RECEIVE_BUFFER = 4_096, 4_096
+
+
+def poll_fails(binary: Path, base: Image) -> None:
+    """A poll that fails but by a signal (`dn/poll`, ENOMEM), the first as the start waits for its
+    jobs: the host ends with status 2, as a fault of what it runs on, naming the poll, rather than
+    wait on without its timer."""
+    with tempfile.TemporaryDirectory() as temp:
+        run = served(binary, base, Path(temp), f"enable name=dn/poll,failinfo={errno.ENOMEM}")
+    if run.started or run.status != 2 or "poll: Cannot allocate memory" not in run.said:
+        raise LaneError(f"a poll that fails: the server started {run.started}, ended with status {run.status}: "
+                        f"{run.said[-200:]!r}")
+
+
+def spool_files(spool: Path) -> list[str]:
+    """The descriptors any process of this user holds on a file of the spool but the journal."""
+    held = []
+    for fd in Path("/proc").glob("[0-9]*/fd/*"):
+        try:
+            target = str(fd.readlink())
+        except OSError:
+            continue
+        if target.startswith(f"{spool}/") and not target.endswith("/journal"):
+            held.append(target)
+    return held
+
+
+def bounded(binary: Path, base: Image) -> dict[str, int]:
+    """Every index taken at once: a 65th connection is greeted only once one of them closes; then
+    eight reads of the large article taken slowly through small buffers, so that the server holds what
+    they have not taken, one reset midway, whose file the server then closes; eight posts with every
+    sync slowed, and HELP on the rest, all answered. The allocator holds no more once the server
+    serves than as it began to, and the server holds at most `GROWTH` kB more resident."""
+    large = b"ARTICLE " + C.mid_of(LARGE) + b"\r\n"
+    held: list[list[str]] = []
+    queued: list[int] = []
+
+    def connected(port: int, k: int) -> socket.socket:
+        c = socket.socket()
+        if k < 8:
+            c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER)
+        c.settimeout(C.TIMEOUT)
+        c.connect(("127.0.0.1", port))
+        return c
+
+    def during(port: int, spool: Path) -> list[list[bytes]]:
+        conns = [connected(port, k) for k in range(64)]
+        files = [c.makefile("rb") for c in conns]
+        greeted = [f.readline() for f in files]
+        extra = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+        try:
+            early = extra.recv(1)
+        except TimeoutError:
+            early = b""
+        files[63].close()
+        conns[63].close()
+        extra.settimeout(C.TIMEOUT)
+        conns[63], files[63] = extra, extra.makefile("rb")
+        greeted[63] = files[63].readline()
+        got: list[list[bytes]] = [[g] for g in greeted]
+
+        def client(k: int) -> None:
+            c, f = conns[k], files[k]
+            if k == 7:
+                # A reader gone mid-article, its connection reset: its read's job runs on.
+                c.sendall(large)
+                got[k] += [f.readline(), b".\r\n"]
+                c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                # The socket closes only once its file object, which holds it too, is closed.
+                f.close()
+                c.close()
+                return
+            if k < 8:
+                c.sendall(large)
+                lines = [f.readline()]
+                time.sleep(0.2)
+                # What the kernel queued for the reader once the server has sent all it could.
+                queued.append(int(struct.unpack("i", fcntl.ioctl(c.fileno(), termios.FIONREAD, b"\0" * 4))[0]))
+                while lines[-1] not in (b".\r\n", b""):
+                    lines.append(f.readline())
+                    if len(lines) % 16 == 0:
+                        time.sleep(0.01)
+                got[k] += [lines[0], lines[-1]]
+            elif k < 16:
+                c.sendall(b"POST\r\n")
+                got[k].append(f.readline())
+                c.sendall(C.article(f"<bound{k}@x.example>", "local.a"))
+                got[k].append(f.readline())
+            else:
+                c.sendall(b"HELP\r\n")
+                lines = [f.readline()]
+                while lines[-1] not in (b".\r\n", b""):
+                    lines.append(f.readline())
+                got[k].append(lines[0])
+            c.sendall(b"QUIT\r\n")
+            got[k].append(f.readline())
+            c.close()
+
+        threads = [threading.Thread(target=client, args=(k,)) for k in range(64)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        settled = time.monotonic() + C.TIMEOUT
+        while spool_files(spool) and time.monotonic() < settled:
+            time.sleep(0.01)
+        held.append(spool_files(spool))
+        return [[early], *got]
+
+    with tempfile.TemporaryDirectory() as temp:
+        run = served(binary, base, Path(temp), "enable name=dn/sync-slow,failinfo=100", during=during,
+                     more=("--send-buffer", str(SEND_BUFFER)))
+    if run.got[0] != [b""]:
+        raise LaneError(f"a 65th connection was greeted while 64 were open: {run.got[0]}")
+    for k, lines in enumerate(run.got[1:]):
+        if k == 7:
+            if [line[:3] for line in lines[:2]] != [TEXTS["greeting-post"][:3], b"220"]:
+                raise LaneError(f"the reader that reset read {lines}")
+            continue
+        want = (TEXTS["greeting-post"][:3],
+                b"220" if k < 8 else b"340" if k < 16 else b"100",
+                b".\r\n" if k < 8 else TEXTS["posted"] if k < 16 else None, b"205")
+        seen = (lines[0][:3], lines[1][:3], lines[2] if k < 16 else None, lines[-1][:3])
+        if seen != want:
+            raise LaneError(f"client {k} of 64 read {lines}")
+    found = [re.search(rf"^{when}: (\d+) octets allocated, (\d+) kB resident at most$", run.said, re.MULTILINE)
+             for when in ("serving", "at the stop")]
+    if None in found:
+        raise LaneError(f"the server did not say what it allocated: {run.said[-300:]!r}")
+    (serving, began), (stop, resident) = ((int(m[1]), int(m[2])) for m in found if m)
+    if stop != serving or resident > began + GROWTH:
+        raise LaneError(f"the server allocated {serving} octets serving and {stop} at the stop, and held "
+                        f"{began} kB resident as it began to serve and {resident} kB at most")
+    article = len(LARGE)
+    if len(queued) != 7 or max(queued) >= article:
+        raise LaneError(f"the slow readers had {queued} octets queued of an article of {article}: the server held none")
+    if held != [[]]:
+        raise LaneError(f"after every client the server holds {held} of the spool open")
+    return {"allocated": serving, "resident_kB": resident, "queued_max": max(queued)}
+
+
 def slowed(binary: Path, base: Image) -> dict[str, float]:
     """Every sync slowed by `SLOW` s: a read and a STAT on other connections answered before a post's
     240, which comes after its three syncs; when each came."""
@@ -588,6 +744,8 @@ DEFECTS = [
              "on the journal file failing"),
     C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
              "LIST ACTIVE read"),
+    C.Defect("a stop that does not wait for the jobs running", "if (!counts[2] || elapsed >= ms) return counts[2];",
+             "if (!counts[2] || elapsed + ms >= ms) return counts[2];", 1, "still running", program=False),
     C.Defect("an index used past its last generation", " && conns[i].gen < DN_SESSION_GEN_LIMIT;", ";", 1,
              "the program stopped the run: code 6", program=False, loop=True),
 ]
@@ -607,6 +765,8 @@ def check(cake: str) -> Report:
         clock = time.monotonic()
         b = bases(base.result())
         took, counts = passes(base.result(), b, w)
+        limits = bounded(base.result(), b.both)
+        poll_fails(base.result(), b.held)
         seconds = {"runs": round(time.monotonic() - clock, 1)}
         found = {}
         programs = iter(builds)
@@ -626,7 +786,7 @@ def check(cake: str) -> Report:
         f"each of its {counts[0]} and {counts[1]} operations", f"{len(CHANGES)} ways",
         f"{len(DEFECTS)} planted defects of the faults lane"]})
     return Report("checked", cake, [N.HOST, *N.STORE], {
-        "executable_sha256": lanes.digest(base.result()), "operations": counts, "slowed": took,
+        "executable_sha256": lanes.digest(base.result()), "operations": counts, "slowed": took, "bounds": limits,
         "seconds_by_step": seconds,
         "planted_defects_caught": found})
 

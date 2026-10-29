@@ -2052,6 +2052,79 @@ theorem settle_gens {s s' : Server} {actions : List Action} {taken : List Nat}
   · cases h
   · cases h; rfl
 
+theorem soonest_le_left {a b : Nat} (h : a ≠ 0) : soonest a b ≤ a := by
+  unfold soonest; split <;> (try split) <;> omega
+
+theorem soonest_le_right {a b : Nat} (h : b ≠ 0) : soonest a b ≤ b := by
+  unfold soonest; split <;> (try split) <;> omega
+
+theorem soonest_ne_zero {a b : Nat} (h : a ≠ 0 ∨ b ≠ 0) : soonest a b ≠ 0 := by
+  unfold soonest; split <;> (try split) <;> omega
+
+theorem soonest_cases (a b : Nat) : soonest a b = a ∨ soonest a b = b := by
+  unfold soonest; split <;> (try split) <;> omega
+
+/-- The earliest running deadline of the connections `l`, from `d` on, zero for none. -/
+def earliestOf (l : List Conn) (d : Nat) : Nat := l.foldl (fun d c => soonest d c.earliest) d
+
+theorem earliestOf_start : ∀ (l : List Conn) (d : Nat), d ≠ 0 → earliestOf l d ≤ d ∧ earliestOf l d ≠ 0
+  | [], d, h => ⟨Nat.le_refl _, h⟩
+  | c :: l, d, h => by
+    have h1 := soonest_ne_zero (b := c.earliest) (.inl h)
+    have ih := earliestOf_start l _ h1
+    exact ⟨Nat.le_trans ih.1 (soonest_le_left h), ih.2⟩
+
+theorem earliestOf_le : ∀ (l : List Conn) (d : Nat) (c : Conn), c ∈ l → c.earliest ≠ 0 →
+    earliestOf l d ≤ c.earliest ∧ earliestOf l d ≠ 0
+  | [], _, _, h, _ => absurd h (List.not_mem_nil)
+  | c' :: l, d, c, h, hc => by
+    rcases List.mem_cons.mp h with rfl | h
+    · have h1 := soonest_ne_zero (a := d) (.inr hc)
+      have := earliestOf_start l _ h1
+      exact ⟨Nat.le_trans this.1 (soonest_le_right hc), this.2⟩
+    · exact earliestOf_le l _ c h hc
+
+theorem earliestOf_mem : ∀ (l : List Conn) (d : Nat), earliestOf l d = d ∨ ∃ c ∈ l, earliestOf l d = c.earliest
+  | [], _ => .inl rfl
+  | c :: l, d => by
+    rcases earliestOf_mem l (soonest d c.earliest) with h | ⟨c', hc', h⟩
+    · rcases soonest_cases d c.earliest with h' | h'
+      · exact .inl (h.trans h')
+      · exact .inr ⟨c, List.mem_cons_self .., h.trans h'⟩
+    · exact .inr ⟨c', List.mem_cons_of_mem _ hc', h⟩
+
+/-- **The program wakes at the earliest deadline**: when no connection can go on at once, the turn it
+asks to be woken for is not after any running deadline of a live connection, and, if any runs, is one
+of them; so a deadline set earlier than the others brings the wake forward, and once the earliest is
+cleared the wake is the earliest of those left. -/
+theorem deadline_earliest (s : Server)
+    (h : s.table.zipIdx.any (fun (x, idx) => x.any (Conn.ready s.store idx)) = false) :
+    (∀ c ∈ s.table.filterMap id, c.earliest ≠ 0 → deadline s ≤ c.earliest ∧ deadline s ≠ 0) ∧
+      (deadline s = 0 ∨ ∃ c ∈ s.table.filterMap id, deadline s = c.earliest) := by
+  have hd : deadline s = earliestOf (s.table.filterMap id) 0 := by
+    unfold deadline earliestOf; simp [h]
+  rw [hd]
+  exact ⟨fun c hc he => earliestOf_le _ 0 c hc he, earliestOf_mem _ 0⟩
+
+/-- **A new connection's deadlines are its own**: what the one before at its index had set is gone
+with it, so none of it can end this one. -/
+theorem applyEvent_opened_fresh {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat} {mp : Bool}
+    (hi : idx < s.table.length) (h : applyEvent i now s (.opened idx gen mp) = .ok s') :
+    ∃ c, s'.table[idx]? = some (some c) ∧ c.gen = gen ∧ c.first = now + firstCommand ∧
+      c.idle = now + inactivity ∧ c.lineDue = 0 ∧ c.articleDue = 0 := by
+  unfold applyEvent at h
+  cases hc : checkIndex idx with
+  | error b => simp [hc, bind, Except.bind] at h
+  | ok u =>
+    simp only [hc, bind, Except.bind] at h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · cases h
+        exact ⟨Conn.fresh i (greets s.store mp) (s.opened + 1) gen now, by simp [List.getElem?_set_self hi],
+          rfl, rfl, rfl, rfl, rfl⟩
+
 /-- A run: turns, and what the host took of their sends, one after another. -/
 inductive Reaches (i : Identity) : Server → Server → Prop
   | refl (s : Server) : Reaches i s s

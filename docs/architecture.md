@@ -59,14 +59,53 @@ An operation's lease — a buffer, a read slot, a file — goes back only at the
 | Model event | io_uring | The server's host |
 | --- | --- | --- |
 | `done false` | A completion without `IORING_CQE_F_MORE` | A file job's completion, handed in `dn_next` |
-| `done true` | A multishot completion with `IORING_CQE_F_MORE` | Not used |
+| `done true` | A completion with `IORING_CQE_F_MORE`: a multishot one that goes on, a zero-copy send's data completion a notification follows | Not used |
 | `notif` | A zero-copy send's `IORING_CQE_F_NOTIF` | Not used |
-| `cancel` | `IORING_OP_ASYNC_CANCEL` submitted | At a stop, every job; a connection's close, for its read's owner |
-| `answer canceled` | The cancellation's `0`, the operation's `-ECANCELED` still to come | A job not begun, dropped: it owes nothing |
+| `cancel` | `IORING_OP_ASYNC_CANCEL` submitted | At a stop, every job |
+| `answer canceled` | The cancellation's `0`, the operation's `-ECANCELED` still to come | A job not begun, dropped: dropping it is its cancelled completion, and the process ends |
 | `answer already` | `-EALREADY`: found running, its completion still to come | A job running at a stop, waited for |
-| `answer notFound` | `-ENOENT`: completed already, or never submitted | A close after the read's completion |
+| `answer notFound` | `-ENOENT`: completed already, or never submitted | Does not arise: the host cancels only at a stop |
 
-A connection gone while its read's job runs leaves the read slot taken until that job completes; the next connection at its index gets nothing of it. Shards and their routing come with the io_uring adapter (#13); until then one program owns every identity.
+A connection gone cancels nothing: its read's job runs on, and the read slot stays taken until that job completes; the next connection at its index gets nothing of it. Shards and their routing come with the io_uring adapter (#13); until then one program owns every identity.
+
+### Bounds
+
+Each bound is a constant of the specification, which the layout hands the program and the host's header alike, so the three cannot disagree; what is held beyond one is refused at the boundary, and what is given back is given back on every path.
+
+| Resource | Bound and where it is set | Held to it by | Tested by |
+| --- | --- | --- | --- |
+| Connections | 64 (`SessionSpec.conns`); the host stops polling the listener at 64 | The program's table; the host's `usable` | `sixty-five clients` (nntp lane), every index taken at once (faults lane) |
+| Reads in flight | 8 (`PostSpec.Rules.reads`); a ninth waits | The program's read slots | Nine readers at once (session lanes) |
+| Posts in flight | 4 (`PostSpec.Rules.posts`); a fifth waits | The program's slots | Five posts at once (session lanes) |
+| File jobs | 12 slots (`PostSpec.jobs`), one job a slot | The host: a job in a slot in flight ends it; the program: a completion of no job, breach 13 | Session breaches 13 and 14; the host lane's breaches of files |
+| Open files | 16 places (`PostSpec.places`) | The host: an operation on a place not open, of an old generation or of another job, or a seventeenth file, ends it | The host lane's breaches; session breaches 14 |
+| Input and output | 512 octets an event (`SessionSpec.chunk`), one send a slot | The program: a longer event, breach 2; the host: a longer send ends it | Session breaches; `a chunk of 512 bytes` |
+| Memory | The program's heap of 4 MiB and stack of 1 MiB (`SessionLayout.size_fits`); the host's tables static | The allocator holds no more once the server serves than as it began to | The faults lane: under load, allocation unchanged and at most 6 MiB more resident than at start |
+
+At the boundary what #11 names is refused as a breach of the contract, each held by a test:
+
+| Refused | On the server's path | Tested by |
+| --- | --- | --- |
+| A double recycle | A completion of no job in flight; an operation on a file closed, or closed earlier in its job | Session breach 13; the host lane's breaches |
+| A return to a foreign pool | An operation on a file another job in flight names | The host lane's breaches |
+| An invalid identifier | An index, a place or a slot past its table; a file's old generation | Session breaches 3 and 14; the host lane's breaches |
+| A length over capacity | An event past 512 octets; a job's data past its end; more read than asked | Session breaches 2 and 14; the host lane's breaches |
+
+Every read and file the store takes is given back on whatever path its connection left: the judge follows each, every turn, and at the end of every scenario with a store finds them all given back, the connections all gone.
+
+On the real host a reader reset mid-article leaves no file of the spool open (the faults lane). The kernel's socket buffers are its own, outside these bounds.
+
+### Deadlines
+
+A connection's deadlines — its first command's, a line's, an article's, inactivity — are fields of its record, set anew when it opens (`applyEvent_opened_fresh`). So a deadline of a connection gone cannot end the one that takes its index.
+
+With no connection able to go on, the program asks to be woken at the earliest deadline that runs, and none runs before it (`deadline_earliest`). A deadline set earlier brings the wake forward; one cleared leaves the earliest of the rest.
+
+The host's clock is `CLOCK_MONOTONIC` in milliseconds, or the checks' virtual clock. Each turn the host polls until the wake, recomputed from it; the program's deadlines lie at most 30 minutes ahead, far below the clamp at `INT_MAX` milliseconds.
+
+A poll that fails but by a signal ends the host with status 2, a fault of what it runs on (the faults lane's `dn/poll`), and so does a clock set back, or at 2^62 (the nntp lane). A host that passed such a clock on would see the program stop the run with code 7 (the session lanes).
+
+A deadline is acted on at the first turn at or after it; how late that turn comes is the scheduler's, and nothing here claims it. At a stop no deadline runs on.
 
 ## Storage and offline exchange
 

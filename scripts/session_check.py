@@ -884,6 +884,11 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
     yield "a line begun while output is untaken", [
         Client(1, [(5, b"HELP\r\nHE")], take=10, slow=5, pace=60_000)], False
     yield "a reset", [Client(1, [(5, HELP)], reset=6, take=10)], False
+    # A's first command was due at 10001; B, at A's index since 2000, is due at 12000 and sends one at
+    # 11000. A line deadline left over is never seen: a whole line clears it, and before one the first
+    # command's deadline comes sooner.
+    yield "a deadline of a connection gone, its index taken", [
+        Client(1, [], reset=1_000), Client(2_000, [(11_000, HELP), (12_500, QUIT)])], False
     yield "a crowd", [Client(1 + k % 3, [(5, ascii_lines("HELP", "QUIT"))], take=None if k % 2 else 50)
                       for k in range(70)], False
     yield "seventy clients holding sixty-four connections", [Client(1, [(5, HELP)]) for _ in range(70)], False

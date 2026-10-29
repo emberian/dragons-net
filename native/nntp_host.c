@@ -49,6 +49,7 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <signal.h>
+#include <malloc.h>
 #include <sys/resource.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
@@ -145,6 +146,24 @@ static void report(uint64_t wake) {
     report_line();
 }
 
+/* The test build says how many octets the heap allocator has given out, and the most the process
+ * has held resident since it began (VmHWM: getrusage's maximum takes in what its parent held before
+ * exec): nothing is allocated once it serves. */
+static void say_allocated(const char *when) {
+#ifdef FIU_ENABLE
+    long peak = -1;
+    FILE *status = fopen("/proc/self/status", "re");
+    if (!status) dn_harness("/proc/self/status: %s", strerror(errno));
+    char line[256];
+    while (fgets(line, sizeof line, status))
+        if (sscanf(line, "VmHWM: %ld kB", &peak) == 1) break;
+    fclose(status);
+    fprintf(stderr, "%s: %zu octets allocated, %ld kB resident at most\n", when, mallinfo2().uordblks, peak);
+#else
+    (void)when;
+#endif
+}
+
 /* Every socket closed, the file jobs drained, and the run ends inside the call. */
 __attribute__((noreturn)) static void stop_serving(const char *why) {
     for (int i = 0; i < CONNS; ++i)
@@ -158,6 +177,7 @@ __attribute__((noreturn)) static void stop_serving(const char *why) {
         fprintf(stderr, "at the stop: %d jobs run out, %d dropped before they began, %d still running\n", counts[0],
                 counts[1], counts[2]);
     }
+    say_allocated("at the stop");
     fprintf(stderr, "stopped: %s\n", why);
     exit(0);
 }
@@ -284,7 +304,8 @@ static void wait_for(uint64_t wake) {
                                                                           : lingering[i].quiet_until;
             timeout = until(end, timeout);
         }
-        int got = poll(fds, (nfds_t)n, timeout);
+        /* The test build's `dn/poll` fails the poll with the error number it was enabled with. */
+        int got = DN_FAULT("dn/poll") ? -1 : poll(fds, (nfds_t)n, timeout);
         if (got < 0) {
             if (errno == EINTR) continue;
             dn_harness("poll: %s", strerror(errno));
@@ -437,6 +458,7 @@ static void start_listening(void) {
     listening = 1;
     printf("{\"port\":%u,\"conns\":%d}\n", listen_port, CONNS);
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
+    say_allocated("serving");
 }
 
 /* The actions of the turn, with what the kernel took of each send. */

@@ -1202,7 +1202,9 @@ def judge(revision: bytes, source: bytes, turns: list[Turn], start: P.Start | No
             j.turn(t)
         except (Violation, P.Violation) as error:
             raise Violation(error.kind, f"turn {index} at {t.now}: {error}") from None
-    if isinstance(j, PostJudge) and not j.conns:
+    if isinstance(j, PostJudge):
+        if j.conns:
+            raise Violation("leak", f"at the end connections {sorted(j.conns)} are still open, the store unchecked")
         try:
             j.store.finish()
         except P.Violation as error:

@@ -176,6 +176,9 @@ POST_DEFECTS = [
      "if (h <= f) & (x == 10) {", 1, "scenario 'overview"),
 ]
 DEFECTS = [
+    ("a connection's first command's deadline kept from the one before at its index",
+     r"st cb \+ 40, now \+ 10000;", "if eg == 1 { st cb + 40, now + 10000; }", 1,
+     "scenario 'a deadline of a connection gone, its index taken'"),
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("an index opened again at its last generation", r"\(eg <= \(lds 1 \(cb \+ 8\)\)\)", "(eg < (lds 1 (cb + 8)))", 1,
      "breach 'an index opened again at its generation'"),

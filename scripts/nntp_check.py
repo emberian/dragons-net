@@ -935,6 +935,61 @@ def deadline(b: Build, name: str, sends: list[tuple[int, bytes]], after: int) ->
     return f"closed at {due}"
 
 
+def rearmed(b: Build) -> str:
+    """On the virtual clock: a connection that sent a command asks to be woken at its inactivity
+    deadline; a second that opens brings the wake forward to its first command's, and once that one
+    sends a command, its deadline cleared, the wake is the first connection's again, the earliest
+    left."""
+    with serving(b, True) as server:
+        first = server.client()
+        server.conn_of(first)
+        read_expected(first, GREETING, "the greeting")
+        server.advance(5)
+        first.sendall(b"HELP\r\n")
+        server.await_input(first, 6)
+        read_expected(first, expected(b"HELP\r\n")[len(GREETING):], "the reply to HELP")
+        due = server.last.now + ref.INACTIVITY
+        if server.last.wake != due:
+            raise LaneError(f"after HELP the program asked to be woken at {server.last.wake}, not {due}")
+        server.advance(100)
+        second = server.client()
+        server.conn_of(second)
+        read_expected(second, GREETING, "the second greeting")
+        sooner = server.last.now + ref.FIRST_COMMAND
+        if server.last.wake != sooner:
+            raise LaneError(f"a second connection's first command due at {sooner} left the wake at {server.last.wake}")
+        server.advance(200)
+        second.sendall(b"HELP\r\n")
+        server.await_input(second, 6)
+        read_expected(second, expected(b"HELP\r\n")[len(GREETING):], "the second reply to HELP")
+        if server.last.wake != due:
+            raise LaneError(f"its first command's deadline cleared, the wake is {server.last.wake}, not {due}")
+    return f"woken at {due}, then {sooner}, then {due} again"
+
+
+def clock_bounds(b: Build) -> str:
+    """On the virtual clock, a fault of what the host runs on ends it with status 2: a clock set back,
+    and one that reaches 2^62, which the host does not pass to the program (whose own refusal of it,
+    breach 7, the session lanes hold)."""
+    for then, said in ((50, "the clock went back"), (2 ** 62, f"not a number from 0 to {2 ** 62 - 1}")):
+        server = Server(b.path, b.timeout, True, False, False, ())
+        try:
+            s = server.client()
+            read_expected(s, GREETING, "the greeting")
+            server.advance(100)
+            server.advance(then)
+            try:
+                server.proc.wait(timeout=b.timeout)
+            except subprocess.TimeoutExpired:
+                raise LaneError(f"the clock set to {then} after 100 left the server running") from None
+            if server.proc.returncode != 2 or said not in server.said():
+                raise LaneError(f"the clock set to {then} after 100 ended the server with status "
+                                f"{server.proc.returncode}: {server.said()[-200:]!r}")
+        finally:
+            server.close()
+    return "the clock set back, or at 2^62: status 2"
+
+
 def real_deadline(b: Build) -> str:
     """On the real clock: the first command's deadline closes at ten seconds and not before; a
     client that quits and stays silent has its socket held for 5 s and then closed; and the server
@@ -1750,6 +1805,8 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "first command": lambda b: deadline(b, "the first command", [], ref.FIRST_COMMAND),
     "a line": lambda b: deadline(b, "a line", [(5, b"HELP\r\nHEL")], ref.LINE_TIME),
     "inactivity": lambda b: deadline(b, "inactivity", [(5, b"HELP\r\n")], ref.INACTIVITY),
+    "an earlier deadline": rearmed,
+    "the clock's bounds": clock_bounds,
     "the real clock": real_deadline,
     "lingering close": lingering,
     "descriptors": descriptors_kept,
@@ -1927,6 +1984,10 @@ DEFECTS = [
            "reader commands sent whole read", program=True),
     Defect("OVER's References left empty", [(r"all = 31;", "all = 15;", 1)], "slrn", "made of the overview",
            program=True),
+    Defect("the first command's deadline left out of the wake",
+           [((r"if \(\(\(lds 1 \(cb \+ 40\)\) == 0\) == 0\) & "
+              r"\(0 < \(\(ea == 0\) \+ \(\(lds 1 \(cb \+ 40\)\) < ea\)\)\) \{"), "if 0 {", 1)],
+           "an earlier deadline", "left the wake", program=True),
     Defect("the session kept after QUIT", [(r"(if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{)\s+st cb \+ 16, 1;", r"\1", 1)],
            "pipeline", "the stream did not end", program=True),
     Defect("a file's CRC-32C not compared",
