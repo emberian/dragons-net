@@ -321,7 +321,7 @@ theorem seq_ok {x y : Except Reason Unit} (h : (do x; y) = .ok ()) :
 
 
 /-- An external call with other than four arguments is refused, whatever its name. -/
-private theorem ffi_other_rejected {p : Profile} {scope : List String} {name : String}
+theorem ffi_other_rejected {p : Profile} {scope : List String} {name : String}
     {args : List PExpr} (hshape : ∀ c cl a al, args = [c, cl, a, al] → False) :
     statement p scope (.ffi name args) ≠ .ok () := by
   match args, hshape with

@@ -34,6 +34,8 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.Server.SessionSafe`, `DN.News.RecoverSafe` | No run of the session's program, its functions and recovery included, fails for any host, clock or heap from code holding its functions (`SessionSafe.never_fails`, `printed_never_fails`), nor recovery's step, whatever its call writes (`RecoverSafe.never_fails`); `premises_witness` and `covers_witness` hold the premises | As above; that declaring the functions puts them in the code |
 | `DN.Compiler.AnalyzerSound`, calls | In the model, a program whose functions the analysis accepts in the order defined, each from any arguments calling only earlier ones, and whose `main` it accepts never fails from code holding them (`program_never_fails`) | Item 1, including that declaring the functions puts them in the code |
 | `DN.Compiler.Safe` | No run changes the code, the memory's domain, the byte order or `@base` (`sem_same`) | Anything about the memory's contents |
+| `DN.Compiler.Preservation` | In the model, a function `Abi.emitWord` or `emitWordWith` takes lowers, its rewrite to that lowering with returns made slot stores; a run not failing ends the same rewritten, its value at the slot (`emitWord_rewrites`, `rewrites_run`, `wordResult_witness`, `rewritesWith_witness`) | Items 1, 2, 3 and 7; a slot the C caller owns lies outside the memory domain the theorem assumes it in (item 8); runs that fail |
+| `DN.Compiler.Preservation`, memory | A run that does not fail ends the same way where more memory is addressable and locals it never reads differ (`wider_run`) | Item 1 |
 | `DN.Compiler.Wp` | In the model, from `wp c Q` a run of `c` ends as a run may or finishes in `Q`, once `Q` and the invariants ignore the clock and loops keep them (`wp_sound`) | Item 1; termination |
 | `DN.News.SipHashCode`, `DN.News.CrcCode` | The printed programs compute `SipHash.tag` under a sixteen-octet key (`sip_safe`), the CRC table (`fill_safe`) and a buffer's CRC-32C (`crc_safe`); `sipPre_witness`, `fillGiven_witness`, `crcPre_witness` hold the premises | Item 1; termination |
 | Session program (`scripts/session_native.py`) | The compiled session answers as the model on its scenarios and 200 drawn hosts, and stops on hosts the model cannot describe | That it is the specification on every run |
@@ -66,7 +68,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 20,862 declarations, including 9,323 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 21,343 declarations, including 9,645 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -88,7 +90,7 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
 4. **Shift distances.** `Checked.emit` takes only a literal distance below 64, since the release accepts larger ones the semantics gives no value.
 
-5. **Native ABI and memory.** The export returns 32 bits to C, so full words go through `Abi.wordResult`'s output slots; heap and stack sizes are tested, not proven.
+5. **Native ABI and memory.** The export returns 32 bits to C, so full words go through `Abi.wordResult`'s output slots. In the model a run that does not fail ends the same rewritten, the slot in the memory domain (`DN.Compiler.Preservation`); a C host's slot is outside it (item 8). Heap and stack sizes are tested, not proven.
 
 6. **Host refinement.** No theorem connects the Rust primitives or the hosts to the Lean dataplane models, whose statements are about the models.
 
