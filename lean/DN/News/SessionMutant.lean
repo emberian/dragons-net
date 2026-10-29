@@ -215,6 +215,71 @@ inductive Mutant
   | refusedStaysOpen
   /-- MODE READER answered 200 to a connection greeted with 201 -/
   | modeUngreeted
+  /-- XOVER takes a message-id, as OVER does -/
+  | xoverById
+  /-- HDR gives any metadata item, as empty -/
+  | metadataServed
+  /-- HDR takes a field whose name holds a colon -/
+  | fieldColon
+  /-- LIST OVERVIEW.FMT answered with an argument -/
+  | overviewFmtArgs
+  /-- LIST HEADERS answered with any argument -/
+  | headersAnyArg
+  /-- OVER and HDR by message-id give the article's number in the selected group -/
+  | idNumbered
+  /-- the last number of an OVER's or HDR's range left out -/
+  | overRangeExclusive
+  /-- XOVER and XHDR of an empty range answered 423 -/
+  | legacyEmptyRefused
+  /-- OVER and HDR of an empty range answered with an empty list -/
+  | overEmptyListed
+  /-- OVER and HDR make the article current -/
+  | overMoves
+  /-- a field's lines kept apart -/
+  | foldsKept
+  /-- a TAB in a field kept -/
+  | tabsKept
+  /-- fields named with regard to case -/
+  | fieldsCased
+  /-- the last field of a name taken -/
+  | lastField
+  /-- the SP after a field's colon kept -/
+  | spaceKept
+  /-- `:bytes` counting the dots put before lines -/
+  | bytesStuffed
+  /-- `:bytes` without Xref -/
+  | bytesWithoutXref
+  /-- `:lines` counting the header section's lines too -/
+  | linesWhole
+  /-- the overview line without Xref -/
+  | overviewWithoutXref
+  /-- no HDR line for an article that lacks the field -/
+  | absentDropped
+  /-- an XHDR line for an article that lacks the field -/
+  | absentListed
+  /-- XHDR's line of an article named by its message-id labelled 0 -/
+  | xhdrNumbered
+  /-- an overview read taking a header section one octet longer than the program's buffer -/
+  | overviewLonger
+  /-- an overview line given once the header section is read, before the rest is checked -/
+  | overviewEarly
+  /-- 224, 225 or 221 before each article's line -/
+  | statusRepeated
+  /-- an overview read failing at a later article answered 403 -/
+  | viewFailureAnswered
+  /-- a range of OVER or HDR taking the group's articles above its last, those the store takes after
+  the line is answered among them -/
+  | rangeLater
+  /-- the dot put before a header line that starts with one kept in its name -/
+  | headerStuffed
+  /-- Xref in the overview line folded as ARTICLE gives it -/
+  | xrefFolded
+  /-- metadata items named with regard to case -/
+  | metadataCased
+  /-- an overview read failing at its first article closing the connection -/
+  | firstFailureClosed
+  /-- HDR of a metadata item it does not give answered 412 with no group selected -/
+  | refusedAfterGroup
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -263,7 +328,20 @@ def names : List (String × Mutant) :=
    ("group-line-dropped", .groupLineDropped), ("end-forced", .endForced), ("date-unpadded", .dateUnpadded),
    ("line-while-listing", .lineWhileListing), ("reader-unadvertised", .readerUnadvertised),
    ("reader-without-store", .readerWithoutStore), ("mode-stale", .modeStale), ("mode-deselects", .modeDeselects),
-   ("refused-stays-open", .refusedStaysOpen), ("mode-ungreeted", .modeUngreeted)]
+   ("refused-stays-open", .refusedStaysOpen), ("mode-ungreeted", .modeUngreeted),
+   ("xover-by-id", .xoverById), ("metadata-served", .metadataServed), ("field-colon", .fieldColon),
+   ("overview-fmt-args", .overviewFmtArgs), ("headers-any-arg", .headersAnyArg), ("id-numbered", .idNumbered),
+   ("over-range-exclusive", .overRangeExclusive), ("legacy-empty-refused", .legacyEmptyRefused),
+   ("over-empty-listed", .overEmptyListed), ("over-moves", .overMoves), ("folds-kept", .foldsKept),
+   ("tabs-kept", .tabsKept), ("fields-cased", .fieldsCased), ("last-field", .lastField),
+   ("space-kept", .spaceKept), ("bytes-stuffed", .bytesStuffed), ("bytes-without-xref", .bytesWithoutXref),
+   ("lines-whole", .linesWhole), ("overview-without-xref", .overviewWithoutXref),
+   ("absent-dropped", .absentDropped), ("absent-listed", .absentListed), ("xhdr-numbered", .xhdrNumbered),
+   ("overview-longer", .overviewLonger), ("overview-early", .overviewEarly),
+   ("status-repeated", .statusRepeated), ("view-failure-answered", .viewFailureAnswered),
+   ("range-later", .rangeLater), ("header-stuffed", .headerStuffed), ("xref-folded", .xrefFolded),
+   ("metadata-cased", .metadataCased), ("first-failure-closed", .firstFailureClosed),
+   ("refused-after-group", .refusedAfterGroup)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -295,6 +373,23 @@ def rulesOf : Mutant → Rules
   | .headerUnchecked => { checksHeader := false }
   | .jobsShared => { readJobsApart := false }
   | .leftOpen => { closesAfter := false }
+  | .foldsKept => { overview := { unfolds := false } }
+  | .tabsKept => { overview := { spaces := false } }
+  | .fieldsCased => { overview := { caseless := false } }
+  | .lastField => { overview := { firstField := false } }
+  | .spaceKept => { overview := { dropsSpace := false } }
+  | .bytesStuffed => { overview := { unstuffed := false } }
+  | .bytesWithoutXref => { overview := { countsXref := false } }
+  | .linesWhole => { overview := { bodyOnly := false } }
+  | .overviewWithoutXref => { overview := { xrefField := false } }
+  | .absentDropped => { overview := { keepsAbsent := false } }
+  | .absentListed => { overview := { skipsAbsent := false } }
+  | .xhdrNumbered => { overview := { labelsId := false } }
+  | .overviewLonger => { overviewMax := 69633 }
+  | .overviewEarly => { overviewWhole := false }
+  | .headerStuffed => { overview := { unstuffsHeader := false } }
+  | .xrefFolded => { overview := { unfoldsXref := false } }
+  | .metadataCased => { overview := { metaCaseless := false } }
   | _ => {}
 
 def freshM (m : Mutant) (i : Identity) (greeted : Bool) (number gen now : Nat) : Conn :=
@@ -338,7 +433,7 @@ def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
         if m = .endIgnored then return s
         else
           let c' := { c with phase := .ending, lineDue := 0, post := none, articleDue := 0,
-                             want := none, read := none }
+                             want := none, read := none, view := none }
           return { s with
             table := s.table.set idx (some c'),
             store := s.store.map (Store.abandon idx gen) }
@@ -368,12 +463,39 @@ def wildmatFirstNegated (w : List Byte) : Option Wildmat := do
   | first :: rest => return (← patternOf true first) :: (← rest.mapM (patternOf true))
   | [] => none
 
-/-- LIST's and NEWGROUPS's arguments as the mutant's rule takes them. -/
+/-- What HDR's or XHDR's arguments after the field name, if they name articles. -/
+def selOfArgs : List (List Byte) → Option Sel
+  | [] => some .current
+  | [a] => if isMessageId a then some (.id a) else (range? a).map fun (lo, hi) => .range lo hi
+  | _ => none
+
+/-- LIST's, NEWGROUPS's, XOVER's and HDR's arguments as the mutant's rule takes them. -/
 def readerReplyM (m : Mutant) (r : Reply) (c : Option Cmd) (args : List (List Byte)) : Reply :=
   match c, args with
   | some .list, [] => if m = .listDefaultNewsgroups then .newsgroups else r
-  | some .list, k :: rest =>
-    if m = .listKeywordCased && k != ascii "ACTIVE" && k != ascii "NEWSGROUPS" then .syntax
+  | some .list, [k, _] =>
+    if m = .overviewFmtArgs && k.map upper = ascii "OVERVIEW.FMT" then .overviewFmt
+    else if m = .headersAnyArg && k.map upper = ascii "HEADERS" then .headerList
+    else readerListM m r k [args.getLast!]
+  | some .list, k :: rest => readerListM m r k rest
+  | some .xover, [a] => if m = .xoverById && isMessageId a then .over true (.id a) else r
+  | some .hdr, f :: rest | some .xhdr, f :: rest =>
+    match selOfArgs rest with
+    | some sel =>
+      if (m = .metadataServed && r = .fieldRefused) ||
+          (m = .fieldColon && r = .syntax && f.head? != some 58#8 && f.all fun b => isNotColon b || b == 58#8) then
+        .hdr (c == some .xhdr) f sel
+      else r
+    | none => r
+  | some .newgroups, d :: t :: rest =>
+    if m = .newgroupsUnchecked && r = .syntax && d.all isDigit && (d.length == 6 || d.length == 8) &&
+        t.all isDigit && t.length == 6 && (rest.isEmpty || rest.map (·.map upper) == [ascii "GMT"])
+    then .newGroups else r
+  | _, _ => r
+where
+  readerListM (m : Mutant) (r : Reply) (k : List Byte) (rest : List (List Byte)) : Reply :=
+    if m = .listKeywordCased && k != ascii "ACTIVE" && k != ascii "NEWSGROUPS" && k != ascii "OVERVIEW.FMT" &&
+        k != ascii "HEADERS" then .syntax
     else if m = .firstNegated && r = .syntax then
       match rest with
       | [x] =>
@@ -384,11 +506,6 @@ def readerReplyM (m : Mutant) (r : Reply) (c : Option Cmd) (args : List (List By
         | none => r
       | _ => r
     else r
-  | some .newgroups, d :: t :: rest =>
-    if m = .newgroupsUnchecked && r = .syntax && d.all isDigit && (d.length == 6 || d.length == 8) &&
-        t.all isDigit && t.length == 6 && (rest.isEmpty || rest.map (·.map upper) == [ascii "GMT"])
-    then .newGroups else r
-  | _, _ => r
 
 /-- A GROUP's name taken without its check, or with octets past US-ASCII unchecked; LIST's and
 NEWGROUPS's arguments as `readerReplyM` takes them. -/
@@ -402,6 +519,23 @@ def replyInM (m : Mutant) (offered : Bool) (l : Line) : Reply :=
     else .syntax
   | r, w :: args => if offered && l.kind == .command then readerReplyM m r (commandIn offered w) args else r
   | r, [] => r
+
+/-- `viewOf`, an article named by its message-id given its number in the selected group by
+`idNumbered`, a range's last number left out by `overRangeExclusive`, an empty range of XOVER and XHDR
+answered 423 by `legacyEmptyRefused`, and of OVER and HDR with an empty list by `overEmptyListed`. -/
+def viewOfM (m : Mutant) (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) (s : Sel) : Reply :=
+  let s := match s with
+    | .range lo hi => if m = .overRangeExclusive then .range lo (hi - 1) else .range lo hi
+    | s => s
+  let r := viewOf p c lg f s
+  match r with
+  | .overview lg' f' true [(0, mid)] =>
+    if m = .idNumbered then
+      .overview lg' f' true [(((c.group.bind fun g => (numbered p.held g).find? (·.2 == mid)).map (·.1)).getD 0, mid)]
+    else r
+  | .noneOver | .noneHdr => if m = .legacyEmptyRefused then .noRange else r
+  | .noRange => if m = .overEmptyListed then (if f.isSome then .noneHdr else .noneOver) else r
+  | _ => r
 
 def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
@@ -439,6 +573,9 @@ def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
         else (((if fwd then nextAfter p.held g (c.current - 1) else prevBefore p.held g (c.current + 1))).map
           fun (n, id) => .stat n id).getD (if fwd then .noNext else .noPrevious)
     else resolve p c (.move fwd)
+  | .over lg s => viewOfM m p c lg none s
+  | .hdr lg f s => viewOfM m p c lg (some f) s
+  | .fieldRefused => if m = .refusedAfterGroup && c.group.isNone then .noGroup else .fieldRefused
   | r => resolve p c r
 
 /-- The selected group and the current article after a reply, as `Reply.groupAfter` and
@@ -512,10 +649,11 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
           else if r = .post then
             if m = .waitDeadlines then { c1 with waiting := true }
             else { c1 with waiting := true, first := 0, idle := 0 }
-          else if let .lookup k n id := r then
+          else if let some (k, n, id, v) := readOf p r then
             serveM m i p now fuel
-              { c1 with want := some (k, n, id), first := 0, idle := 0,
-                        current := currentAfterM m p c1 asked (.lookup k n id) }
+              { c1 with want := some (k, n, id), view := v, first := 0, idle := 0,
+                        current := if m = .idMoves || m = .unreadMoves then currentAfterM m p c1 asked r
+                          else c1.current }
           else
             let first := if m = .firstNotCleared then c1.first else 0
             let c2 := { c1 with out := text i r, first := first, idle := now + inactivity,
@@ -549,13 +687,67 @@ def claimM (m : Mutant) (i : Identity) (now idx : Nat) (st : Option Store) (c : 
     ({ k.1 with articleDue := 0 }, k.2)
   else k
 
+/-- The store with each overview read given the next article and nothing yet giving its first line
+again. -/
+def repeatFirst (s : Store) : Store :=
+  { s with reads := s.reads.map (·.map fun r => match r.view with
+    | some v => if r.given = 0 && !v.first then ({ r with view := some { v with first := true } }).refresh s.rules
+        s.cfg.identity else r
+    | none => r) }
+
+/-- The store with the read of connection `c`, at the last article of a range it has gone on in,
+given those of the selected group the store holds now above it too. -/
+def laterArticles (c : Conn) (s : Store) : Store :=
+  match c.read, c.group with
+  | some k, some g =>
+    match s.readSlot k with
+    | some r =>
+      match r.view with
+      | some v =>
+        let more := (((numbered s.articles g).filter (r.number < ·.1)).mergeSort fun a b => a.1 ≤ b.1).filterMap
+          fun (n, id) => (s.find id).map (n, ·)
+        if v.rest.isEmpty && !v.first && !more.isEmpty then
+          s.setRead k (some ({ r with view := some { v with rest := more } }.refresh s.rules s.cfg.identity))
+        else s
+      | none => s
+    | none => s
+  | _, _ => s
+
 /-- `progressRead`, inactivity left running while the read has nothing to give by
-`idleWhileFetching`; an article read by its number not made current by `numberKeepsCurrent`. -/
+`idleWhileFetching`; an article read by its number not made current by `numberKeepsCurrent`; an
+article of an OVER or HDR made current with its line by `overMoves`; the first line given before each
+article's by `statusRepeated`; a read failing at a later article of an OVER or HDR answered 403 by
+`viewFailureAnswered`, and at its first closing the connection by `firstFailureClosed`; a range
+taking the articles the store takes meanwhile by `rangeLater`. -/
 def progressReadM (m : Mutant) (i : Identity) (now : Nat) (st : Option Store) (c : Conn) :
     Conn × Option Store × Bool :=
+  let st := if m = .rangeLater then st.map (laterArticles c) else st
+  let r0 := match c.read, st with
+    | some k, some s => s.readSlot k
+    | _, _ => none
   let g := progressRead i now st c
   if m = .idleWhileFetching && g.1.read.isSome && g.1.idle == 0 then ({ g.1 with idle := c.idle }, g.2)
   else if m = .numberKeepsCurrent then ({ g.1 with current := c.current }, g.2)
+  else if m = .overMoves then
+    match r0 with
+    | some r =>
+      if r.view.isSome && r.given = 0 && !r.bad && r.number != 0 && c.out.isEmpty && !g.1.out.isEmpty then
+        ({ g.1 with current := r.number }, g.2)
+      else g
+    | none => g
+  else if m = .statusRepeated then (g.1, g.2.1.map repeatFirst, g.2.2)
+  else if m = .viewFailureAnswered then
+    match c.read, st, r0 with
+    | some k, some s, some r =>
+      if g.2.2 && r.bad && r.given = 0 then
+        ({ c with out := text i .unreadable, read := none, want := none, view := none, idle := now + inactivity },
+         some (s.setRead k (some { r with owner := none })).tidy, false)
+      else g
+    | _, _, _ => g
+  else if m = .firstFailureClosed then
+    match r0 with
+    | some r => if r.view.isSome && r.bad && c.out.isEmpty && g.1.out == text i .unreadable then (c, st, true) else g
+    | none => g
   else g
 
 /-- `reach`, `*` taking one character or more by `starNonEmpty`, a character matched without regard
@@ -738,19 +930,33 @@ theorem wantsWithM_none : wantsWithM .none = Conn.wantsWith := by
   funext st c
   simp [wantsWithM]
 
+theorem readerListM_none (r : Reply) (k : List Byte) (rest : List (List Byte)) :
+    readerReplyM.readerListM .none r k rest = r := by
+  unfold readerReplyM.readerListM
+  simp
+
 theorem readerReplyM_none (r : Reply) (c : Option Cmd) (args : List (List Byte)) :
     readerReplyM .none r c args = r := by
   unfold readerReplyM
-  split <;> simp
+  split <;> simp [readerListM_none] <;> split <;> simp
 
 theorem replyInM_none : replyInM .none = replyIn := by
   funext offered l
   unfold replyInM
   split <;> simp_all [readerReplyM_none]
 
+theorem viewOfM_none (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) (s : Sel) :
+    viewOfM .none p c lg f s = viewOf p c lg f s := by
+  have hs : (match s with
+      | .range lo hi => if Mutant.none = .overRangeExclusive then Sel.range lo (hi - 1) else .range lo hi
+      | s => s) = s := by
+    cases s <;> rfl
+  simp only [viewOfM, hs]
+  split <;> simp_all
+
 theorem resolveM_none : resolveM .none = resolve := by
   funext p c r
-  cases r <;> simp [resolveM, resolve]
+  cases r <;> simp [resolveM, resolve, viewOfM_none]
 
 theorem groupAfterM_none : groupAfterM .none = Reply.groupAfter := by
   funext r g

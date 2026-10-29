@@ -86,14 +86,21 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "first-negated", "date-monotonic", "date-units", "newgroups-unchecked", "part-longer", "listing-reads",
            "star-non-empty", "wildmat-unanchored", "wildmat-caseless", "group-line-dropped", "end-forced",
            "date-unpadded", "line-while-listing", "reader-unadvertised", "reader-without-store", "mode-stale",
-           "mode-deselects", "refused-stays-open", "mode-ungreeted")
+           "mode-deselects", "refused-stays-open", "mode-ungreeted", "xover-by-id", "metadata-served", "field-colon",
+           "overview-fmt-args", "headers-any-arg", "id-numbered", "over-range-exclusive", "legacy-empty-refused",
+           "over-empty-listed", "over-moves", "folds-kept", "tabs-kept", "fields-cased", "last-field", "space-kept",
+           "bytes-stuffed", "bytes-without-xref", "lines-whole", "overview-without-xref", "absent-dropped",
+           "absent-listed", "xhdr-numbered", "overview-longer", "overview-early", "status-repeated",
+           "view-failure-answered", "range-later", "header-stuffed", "xref-folded", "metadata-cased",
+           "first-failure-closed", "refused-after-group")
 # Those of reading, tried on the scenarios that read first, those of the selected group, on the
-# scenarios that select one, those of the listings, on the scenarios that list, and those of READER
-# and MODE READER, on the scenarios that ask for them.
+# scenarios that select one, those of the listings, on the scenarios that list, those of READER
+# and MODE READER, on the scenarios that ask for them, and those of OVER and HDR, on theirs.
 READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):MUTANTS.index("group-keeps-current")]
 GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):MUTANTS.index("listgroup-keeps-current")]
 LIST_MUTANTS = MUTANTS[MUTANTS.index("listgroup-keeps-current"):MUTANTS.index("reader-unadvertised")]
-MODE_MUTANTS = MUTANTS[MUTANTS.index("reader-unadvertised"):]
+MODE_MUTANTS = MUTANTS[MUTANTS.index("reader-unadvertised"):MUTANTS.index("xover-by-id")]
+VIEW_MUTANTS = MUTANTS[MUTANTS.index("xover-by-id"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -781,7 +788,10 @@ STORE_KEYWORDS = [*KEYWORDS[:-1], ("", "POST", ""), ("", "ARTICLE", ""), ("", "B
                   ("", "GROUP", " local.test"), ("", "NEXT", ""), ("", "LAST", ""), ("", "LISTGROUP", ""),
                   ("", "LIST", ""),
                   ("LIST ", "ACTIVE", ""), ("LIST ", "NEWSGROUPS", ""), ("", "DATE", ""),
-                  ("", "NEWGROUPS", " 20260101 000000"), ("NEWGROUPS 20260101 000000 ", "GMT", ""), KEYWORDS[-1]]
+                  ("", "NEWGROUPS", " 20260101 000000"), ("NEWGROUPS 20260101 000000 ", "GMT", ""),
+                  ("", "OVER", ""), ("", "HDR", " Subject"), ("", "XOVER", ""), ("", "XHDR", " Subject"),
+                  ("LIST ", "OVERVIEW.FMT", ""), ("LIST ", "HEADERS", ""), ("LIST HEADERS ", "MSGID", ""),
+                  ("LIST HEADERS ", "RANGE", ""), ("HDR :", "BYTES", ""), ("HDR :", "LINES", ""), KEYWORDS[-1]]
 
 
 DRAWN, DRAWN_SEED = 300, 20261002
@@ -1244,7 +1254,7 @@ def list_scenarios() -> Iterator[PostScenario]:
         Spool(READER_GROUPS, image=READER_SPOOL)
     lines = (b"LIST ACTIVE !local.test", b"LIST NEWSGROUPS !local.test", b"LIST ACTIVE a,,b", b"LIST ACTIVE a,",
              b"LIST ACTIVE a,!", b"LIST ACTIVE [a]", b"LIST ACTIVE a\\b", b"LIST ACTIVE l\xc3", b"LIST ACTIVE.TIMES",
-             b"LIST OVERVIEW.FMT", b"LIST ACTIVE a b", b"LIST 1x", b"LISTGROUP a*", b"LISTGROUP local.test -3",
+             b"LIST ACTIVE a b", b"LIST 1x", b"LISTGROUP a*", b"LISTGROUP local.test -3",
              b"LISTGROUP local.test 3-7-9", b"LISTGROUP local.test 2147483648", b"LISTGROUP local.test 1 2",
              b"LISTGROUP " + b"a" * 65 + b" 1", b"DATE x", b"QUIT")
     yield "arguments of the listings", [Client(1, [(5, b"".join(line + b"\r\n" for line in lines))])], \
@@ -1296,9 +1306,8 @@ def list_scenarios() -> Iterator[PostScenario]:
     yield "every octet in an article's number", [Client(1, [(5, number_octets())])], \
         Spool(READER_GROUPS, image=READER_SPOOL)
     yield "commands and keywords a store does not have", [
-        reader("OVER", "HDR Subject", "IHAVE <a@b.example>", "NEWNEWS * 20260101 000000", "XOVER 1-2",
-               "LIST ACTIVE.TIMES", "LIST DISTRIB.PATS", "LIST OVERVIEW.FMT", "LIST HEADERS", "MODE STREAM")], \
-        Spool(READER_GROUPS, image=READER_SPOOL)
+        reader("IHAVE <a@b.example>", "NEWNEWS * 20260101 000000", "LIST ACTIVE.TIMES", "LIST DISTRIB.PATS",
+               "MODE STREAM")], Spool(READER_GROUPS, image=READER_SPOOL)
     yield "marks of two digits and three", [
         reader("LIST ACTIVE", "GROUP local.test", "LISTGROUP local.other", "LIST ACTIVE local.o*", "STAT 12", "LAST",
                "NEXT", "NEXT", "GROUP local.ten", "GROUP local.nine")], \
@@ -1353,6 +1362,68 @@ def mode_scenarios() -> Iterator[PostScenario]:
         Spool(GROUPS)
     yield "MODE READER of a store with no group", [
         Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "QUIT"))], post=True)], Spool([])
+
+
+# Articles whose fields test what OVER and HDR take of them: a Subject folded with a TAB, two Keywords, a
+# field with a TAB and one that starts with a dot, lines of the body that start with dots; a Subject
+# named in lower case and no Date; a crosspost; and holes among the numbers.
+RICH = (b"From: a@b.example\r\nSubject: one\r\n\ttwo\r\nDate: Mon, 26 Oct 2026 10:00:00 +0000\r\n"
+        b"Message-ID: <1@old.example>\r\nRef: no\r\nReferences: <0@old.example> <00@old.example>\r\nKeywords: x\r\n"
+        b"Keywords: y\r\nX-Tab: a\tb\r\n..odd: dot\r\nXref-Like: z\r\nX-Fold:\r\n folded\r\nX-Tabfold:\r\n\tx\r\n"
+        b"\r\nbody\r\n..dot line\r\n..\r\nlast\r\n")
+LOWER = b"from: c@d.example\r\nsubject:  two spaces\r\nReferences:\r\n\r\nshort\r\n"
+OVER_GROUPS = [b"local.test", b"local.other", b"local.empty"]
+OVER_SPOOL = spool_holding([(RICH, [(b"local.test", 1), (b"local.other", 3)]), (LOWER, [(b"local.test", 2)]),
+                            (BIG, [(b"local.test", 4)]), (stored(b"five"), [(b"local.test", 6), (b"local.other", 4)])])
+
+
+def over_scenarios() -> Iterator[PostScenario]:
+    # First, so that a range taking articles the store takes after the line is answered is caught here.
+    yield "overview while an article is posted to its group", [
+        reader("GROUP local.test", "OVER 1-", take=100, slow=5), poster(at=6)], Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "overview of a group", [
+        reader("OVER", "XOVER", "XHDR Path", "HDR Subject", "HDR :x-foo", "GROUP local.test", "OVER", "OVER 1-",
+               "XOVER 1-2",
+               "over 2-4", "OVER 3", "OVER 5-5", "OVER 7-", "XOVER 7-", "OVER 4-2", "XOVER 4-2", "STAT",
+               "LIST OVERVIEW.FMT", "LIST HEADERS", "list headers range", "LIST HEADERS MSGID", "GROUP local.empty",
+               "OVER", "XOVER", "HDR Subject", "XHDR Subject", "OVER 1-")], Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "overview by message-id", [
+        reader(f"OVER {ID1}", f"HDR Subject {ID1}", f"XHDR Subject {ID1}", f"XHDR Date {ID2}", f"HDR Date {ID2}",
+               "OVER <none@x.example>", "HDR Subject <none@x.example>", "XHDR Subject <none@x.example>",
+               "GROUP local.test", f"OVER {ID1}", f"HDR :bytes {ID2}", "STAT")], Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "fields of a range", [
+        reader("GROUP local.test", "HDR Subject 1-", "XHDR Subject 1-", "HDR subject 2", "HDR Date 1-", "XHDR Date 1-",
+               "HDR Keywords 1", "HDR X-Tab 1", "HDR .odd 1", "HDR Xref 1-", "HDR :BYTES 1-", "HDR :lines 1-",
+               "HDR Message-ID 1-", "HDR References 1-2", "HDR Xref-Like 1", "XHDR References 2", "HDR Nothing 1-",
+               "XHDR Date 2-", "XHDR Nothing 1-", "HDR X-Fold 1", "HDR X-Tabfold 1",
+               "HDR :x-foo 1", "HDR :x-foo", "HDR a:b 1", "HDR : 1", "HDR", "XHDR", "XOVER <1@old.example>",
+               "OVER 1 2", "LIST OVERVIEW.FMT x", "LIST HEADERS x", "GROUP local.other", "XHDR Subject 3-4",
+               "OVER 1-", "XOVER 1-3")], Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "overview of a big group to a slow reader", [reader("GROUP local.big", "XOVER 1-", take=300, slow=5)], \
+        Spool([b"local.big"], image=BIG_SPOOL)
+    yield "overview while others read", [
+        reader("GROUP local.test", "OVER 1-", take=100, slow=5), *(reader(f"ARTICLE {ID1}", take=50, slow=5)
+                                                                   for _ in range(7)),
+        reader("GROUP local.test", "HDR Subject 1-", at=6), reader(f"BODY {ID2}", at=7)], \
+        Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "overview reset while it is read", [reader("GROUP local.test", "OVER 1-", take=100, slow=5, reset=30)], \
+        Spool(OVER_GROUPS, image=OVER_SPOOL)
+    yield "overview of a file that fails its check first", [reader("GROUP local.test", "OVER 1-2", "HDR Subject 1")], \
+        Spool(OVER_GROUPS, image=spool_holding([(RICH, [(b"local.test", 1)]), (LOWER, [(b"local.test", 2)])],
+                                               wrong_crc=(1,)))
+    yield "overview of a file that fails its check later", [reader("GROUP local.test", "OVER 1-2")], \
+        Spool(OVER_GROUPS, image=spool_holding([(RICH, [(b"local.test", 1)]), (LOWER, [(b"local.test", 2)])],
+                                               wrong_crc=(2,)))
+    yield "overview of header sections at the buffer and past it", [
+        reader("GROUP local.test", "HDR :lines 1", "OVER 2", "OVER 1-2")], \
+        Spool(OVER_GROUPS, image=spool_holding([(stored_header(69_632), [(b"local.test", 1)]),
+                                                (stored_header(69_633), [(b"local.test", 2)])]))
+    long_groups = [b"local." + bytes([97 + k]) * 58 for k in range(16)]
+    yield "overview of a folded Xref", [reader("GROUP " + long_groups[0].decode(), "OVER", "HDR Xref", "HDR :bytes")], \
+        Spool(long_groups, image=spool_holding([(SMALL, [(g, 1) for g in long_groups])]))
+    yield "overview once the store has stopped", [
+        poster(), Client(1, [(500, ascii_lines("GROUP local.test", "OVER 1-", "QUIT"))])], \
+        Spool(GROUPS, image=TWO, failures=[Failure("datasync")])
 
 
 def read_breaches() -> Iterator[tuple[str, list[str], int]]:
@@ -1674,6 +1745,9 @@ def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario]
     if mutant in MODE_MUTANTS:
         modes = {name for name, _, _ in mode_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in modes)
+    if mutant in VIEW_MUTANTS:
+        views = {name for name, _, _ in over_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in views)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1704,7 +1778,8 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios(), *mode_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios(), *mode_scenarios(),
+             *over_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}

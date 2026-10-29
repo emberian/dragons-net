@@ -52,4 +52,4 @@ Add peering, authenticated access, offline bundles, and a human UI after the sto
 
 `migration/` preserves original source bytes. Port into active modules rather than editing that snapshot. Retain provenance and update the documentation when a reference component becomes active. Old deployment scripts are historical evidence, not instructions to run against a machine.
 
-Known gaps: there is no general source-language CLI, overview commands (OVER, HDR), feeds, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. The native lanes run the release compiler, and no theorem covers either it or the one built from the patched source (`backend/bootstrap-record.json`). These are concrete next tasks, not hidden dependencies of the green baseline.
+Known gaps: there is no general source-language CLI, feeds, TLS/authentication adapter, optimized OS reactor, or end-to-end compiler theorem. The native lanes run the release compiler, and no theorem covers either it or the one built from the patched source (`backend/bootstrap-record.json`). These are concrete next tasks, not hidden dependencies of the green baseline.

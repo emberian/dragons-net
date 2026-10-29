@@ -4,7 +4,7 @@ The server answers over sockets on loopback: [decision 0003](decisions/0003-nntp
 
 Article storage ([#17](https://github.com/emberian/dragons-net/issues/17)): [decision 0005](decisions/0005-article-store.md) fixes the store, how the host reaches the disk, which articles POST accepts, what the slice answers from the store, and what of it is proved. The store is proven in the model and held against independent references ([journal](baseline.md#journal), [file system](baseline.md#file-system), [store](baseline.md#store), [store runs](baseline.md#store-runs), [session](baseline.md#session-model)); the server is tested under [crashes](baseline.md#crashes), [power loss](baseline.md#power-loss) and [faults](baseline.md#faults).
 
-Reading — ARTICLE, HEAD, BODY and STAT by message-id, and by number in the group GROUP selects, with NEXT and LAST — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
+Reading — ARTICLE, HEAD, BODY and STAT by message-id, and by number in the group GROUP selects, with NEXT and LAST, and the overview, OVER and HDR — is in the program ([session program](baseline.md#session-program)), and the server answers it over sockets ([NNTP server](baseline.md#nntp-server)).
 
 POST is in the program ([session program](baseline.md#session-program)), and the server takes it from the networks `--post-from` names, loopback by default ([NNTP server](baseline.md#nntp-server)). With a spool the host logs each connection on stderr as `connection RUN.N from ADDRESS port PORT`, `RUN.N` being the `logging-data` its articles carry; a line stderr cannot take at once is counted, not waited for.
 
@@ -31,8 +31,8 @@ A line naming one of these commands that is malformed — an argument the comman
 | READER | ARTICLE, BODY, DATE, GROUP, LAST, LISTGROUP, NEWGROUPS, NEXT | Done (#17, #18) |
 | LIST | LIST, LIST ACTIVE, LIST NEWSGROUPS | Done (#18) |
 | POST | POST | Done (#17) |
-| OVER | OVER, LIST OVERVIEW.FMT | Practical reader compatibility (#19) |
-| HDR | HDR, LIST HEADERS | Practical reader compatibility (#19) |
+| OVER | OVER, LIST OVERVIEW.FMT | Done, `OVER MSGID` (#19) |
+| HDR | HDR, LIST HEADERS | Done, any header (#19) |
 | IHAVE | IHAVE | Peer ingestion (#22) |
 | NEWNEWS | NEWNEWS | Incremental peer/client discovery (#22) |
 | LIST extensions in RFC 3977 | LIST ACTIVE.TIMES, LIST DISTRIB.PATS | ACTIVE.TIMES with the groups' creation dates (#21); DISTRIB.PATS not planned |
@@ -42,11 +42,11 @@ Capability output includes VERSION 2 first, as required by §3.3.2. It must refl
 
 ### Commands
 
-What each command of RFC 3977 gets with a store, and what holds it: the session's lanes (`session_check.py` for the model, `session_native.py` for the program), the nntp lane over sockets with `nntplib` and Perl's Net::NNTP, and the crash, power and faults lanes. Without a store the first slice answers as above.
+What each command of RFC 3977 gets with a store, and what holds it: the session's lanes (`session_check.py` for the model, `session_native.py` for the program), the nntp lane over sockets with `nntplib`, Perl's Net::NNTP and slrn, and the crash, power and faults lanes. Without a store the first slice answers as above.
 
 | Command | RFC 3977 | Answer | Held by |
 | --- | --- | --- | --- |
-| CAPABILITIES | §5.2 | `VERSION 2`, `IMPLEMENTATION`, READER, `LIST ACTIVE NEWSGROUPS`, and POST while the client may post | session lanes, nntp lane, faults lane after the store stops |
+| CAPABILITIES | §5.2 | `VERSION 2`, `IMPLEMENTATION`, READER, HDR, `LIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT`, `OVER MSGID`, and POST while the client may post | session lanes, nntp lane, faults lane after the store stops |
 | MODE READER | §5.3 | 200 while the client may post, else 201, changing nothing | session lanes, Net::NNTP |
 | QUIT | §5.4 | 205, then the connection closes | session lanes, nntp lane |
 | GROUP | §6.1.1 | 211 with the count and the lowest and highest numbers, the first article current; 411 | session lanes, `nntplib`, Net::NNTP |
@@ -61,8 +61,10 @@ What each command of RFC 3977 gets with a store, and what holds it: the session'
 | LIST, LIST ACTIVE | §7.6.1, §7.6.3 | 215, then a line a group the wildmat takes: name, highest, lowest, `y` while the store accepts, else `n` | session lanes, nntp lane, faults lane after the store stops |
 | LIST NEWSGROUPS | §7.6.6 | 215 and an empty list, as no group has a description (#21) | session lanes, `nntplib`, Net::NNTP |
 | IHAVE, NEWNEWS | §6.3.2, §7.4 | 500 (#22) | session lanes |
-| OVER, HDR | §8.3, §8.5 | 500 (#19) | session lanes |
-| LIST ACTIVE.TIMES, DISTRIB.PATS, OVERVIEW.FMT, HEADERS | §7.6.4, §7.6.5, §8.4, §8.6 | 501; OVERVIEW.FMT and HEADERS with #19, ACTIVE.TIMES with #21 | session lanes |
+| OVER, XOVER | §8.3, RFC 2980 §2.8 | 224, then each article's line from its file read and checked whole, none made current; 412, 420, 423, 430; XOVER takes no message-id and gives an empty range an empty list, as INN | session lanes, `nntplib`, slrn |
+| HDR, XHDR | §8.5, RFC 2980 §2.6 | 225, or XHDR's 221, then a line an article, the first field of its name; 503 for a metadata item but `:bytes` and `:lines`; XHDR labels a message-id's line with it and leaves out an article without the field | session lanes, XHDR by `nntplib` |
+| LIST OVERVIEW.FMT, HEADERS | §8.4, §8.6 | 215: the seven fields, `:bytes` and `:lines` written `Bytes:` and `Lines:` for slrn, then `Xref:full`; `:`, `:bytes` and `:lines` | session lanes, OVERVIEW.FMT by `nntplib` and slrn |
+| LIST ACTIVE.TIMES, DISTRIB.PATS | §7.6.4, §7.6.5 | 501; ACTIVE.TIMES with #21 | session lanes |
 
 The status of LIST ACTIVE is the group's on this server, not the client's: a client that may not post sees `y` too (§7.6.3).
 

@@ -338,9 +338,10 @@ counting the lines it could not.
   may post; the greeting is then 200, and 201 otherwise. Once the store stops accepting, new
   connections are greeted with 201 and are not offered POST; those greeted before get 403.
 - ARTICLE, HEAD, BODY and STAT by message-id answer from the store (220, 221, 222, 223, with the
-  number 0, or 430). HELP lists ARTICLE, BODY, DATE, GROUP, LAST, LIST, LISTGROUP, NEWGROUPS, NEXT
-  and POST; ARTICLE, BODY, HEAD and STAT share a line.
-- The capabilities name READER and `LIST ACTIVE NEWSGROUPS` (RFC 3977 §3.3.2, §7.6.2). As a server
+  number 0, or 430). HELP lists ARTICLE, BODY, DATE, GROUP, HDR, LAST, LIST, LISTGROUP, NEWGROUPS,
+  NEXT, OVER and POST; ARTICLE, BODY, HEAD and STAT share a line.
+- The capabilities name READER, HDR, `LIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT` and `OVER MSGID`
+  (RFC 3977 §3.3.2, §7.6.2, §8). As a server
   that is not mode-switching and advertises READER, it answers MODE READER 200 while the
   capabilities name POST, else 201, changing nothing (§5.3.2); HELP does not name it.
 - GROUP selects a group the store carries and makes its first article current: 211 with the count
@@ -357,6 +358,27 @@ counting the lines it could not.
 - LIST NEWSGROUPS and NEWGROUPS answer empty lists: no group has a description or a time it was
   created (§7.6.6, §7.3.2). DATE gives the wall clock in UTC (§7.1), past the year 9999 with more
   digits than §7.1's fourteen. A list goes out a send at a time.
+- OVER and HDR (§8), and XOVER and XHDR: RFC 2980's spellings, which slrn, Thunderbird, Gnus and
+  Net::NNTP send without asking.
+- They name an article by message-id, number 0, XHDR labelling its line with the message-id and XOVER
+  taking none; the selected group's articles in a range, as the store holds them when the line is
+  answered; or the current article. None is made current.
+- Their answers with nothing to give: 430, 412, 420, and 423 for an empty range, where XOVER and XHDR
+  give an empty list, as INN does. HDR of a metadata item but `:bytes` and `:lines` is 503.
+- There is no overview database: each line is made from the article's file, read and checked whole by
+  one of the eight reads, which holds it from the first article to the last. So LIST OVERVIEW.FMT's
+  fields are there for every article (§8.2), and a slow reader holds one read, as ARTICLE does.
+- OVER gives Subject, From, Date, Message-ID, References, `:bytes`, `:lines` and Xref whole; LIST
+  OVERVIEW.FMT names `:bytes` and `:lines` `Bytes:` and `Lines:`, as §8.4.2 allows, since slrn 1.0.3
+  turns XOVER off on the other form. HDR takes any header, the first of its name, and LIST HEADERS
+  says so.
+- A field's content follows the colon and one SP, unfolded, each TAB made SP (§8.3.2). `:bytes`
+  counts the article as ARTICLE gives it, Xref in it, but not the dots put before lines; `:lines` the
+  body's lines (§8.1). HDR's line for an article without the field, or with it empty, ends after its
+  SP; XHDR leaves the article out, as INN does.
+- The first line, 224, 225 or XHDR's 221, goes with the first article's line, so a read failing before
+  it is answered 403; after it, the connection is closed. A header section longer than the store
+  writes, 69,632 octets, fails the read: the program's buffer for fields holds no more.
 - A server started without a spool answers as 0003 fixes.
 
 ### What is proved and what is tested
@@ -445,6 +467,8 @@ from them are done; what needs the program or the host comes with them, as marke
 - The layout gains file jobs and their completions, the wall clock, the run's random value and a
   journal's key, the configuration, and whether a connection may post; the heap grows to 4 MiB, and
   the theorem that the layout fits the heap moves with it — done, unused yet.
+- A read's buffer holds 69,632 octets, the longest header section the store writes, for the fields OVER
+  and HDR take; the heap stays 4 MiB.
 - The host gains the worker pool, the lock, and `--spool`, `--run-dir`, `--group`,
   `--path-identity` and `--post-from` — done.
 - 0003's answers change as above: the greeting, CAPABILITIES, HELP, and HEAD and STAT by message-id.

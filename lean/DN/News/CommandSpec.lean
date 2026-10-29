@@ -18,12 +18,14 @@ there says nothing of the rest. Keywords are compared without regard to case (§
 follow the grammar of §9.8 and the range of article numbers in §6.
 
 With a store (docs/decisions/0005-article-store.md), POST, ARTICLE, BODY, GROUP, NEXT, LAST,
-LISTGROUP, LIST, DATE and NEWGROUPS are commands too (`replyIn`), and the session decides what a
-well-formed POST gets, what an ARTICLE, HEAD, BODY or STAT finds — by message-id (`lookup`), by
-number (`byNumber`) or the current article (`current`) — which group a GROUP or a LISTGROUP selects
-(`select`, `listGroup`), where a NEXT or LAST moves (`move`), and what DATE gives (`date`). A
-wildmat (§4) matches a name as `wildmatch` says. MODE READER is a command of every server, and the
-session decides what it gets (`modeReader`, §5.3.2).
+LISTGROUP, LIST, DATE, NEWGROUPS, OVER and HDR are commands too (`replyIn`), and so are XOVER and
+XHDR, RFC 2980's spellings of OVER and HDR that readers send without asking. The session decides
+what a well-formed POST gets, what an ARTICLE, HEAD, BODY or STAT finds — by message-id (`lookup`),
+by number (`byNumber`) or the current article (`current`) — which group a GROUP or a LISTGROUP
+selects (`select`, `listGroup`), where a NEXT or LAST moves (`move`), what DATE gives (`date`), and
+which articles an OVER or HDR names (`over`, `hdr`). A wildmat (§4) matches a name as `wildmatch`
+says. MODE READER is a command of every server, and the session decides what it gets (`modeReader`,
+§5.3.2).
 
 Each rule is shown to matter: a version with it broken (`Mutant`) answers some line otherwise.
 -/
@@ -54,7 +56,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
 inductive Cmd | capabilities | help | quit | head | stat | post | article | body | group | next | last
-  | listgroup | list | date | newgroups | mode
+  | listgroup | list | date | newgroups | mode | over | hdr | xover | xhdr
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -68,8 +70,8 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "MODE" then some .mode
   else none
 
-/-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST, DATE and NEWGROUPS
-among them when the server has a store. -/
+/-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST, DATE, NEWGROUPS,
+OVER, HDR, XOVER and XHDR among them when the server has a store. -/
 def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
   let u := w.map upper
   if offered && u = ascii "POST" then some .post
@@ -82,6 +84,10 @@ def commandIn (offered : Bool) (w : List Byte) : Option Cmd :=
   else if offered && u = ascii "LIST" then some .list
   else if offered && u = ascii "DATE" then some .date
   else if offered && u = ascii "NEWGROUPS" then some .newgroups
+  else if offered && u = ascii "OVER" then some .over
+  else if offered && u = ascii "HDR" then some .hdr
+  else if offered && u = ascii "XOVER" then some .xover
+  else if offered && u = ascii "XHDR" then some .xhdr
   else command? w
 
 def isDigit (b : Byte) : Bool := 48 ≤ b.toNat && b.toNat ≤ 57
@@ -175,6 +181,28 @@ def range? (w : List Byte) : Option (Nat × Nat) :=
   | [a, []] => if isArticleNumber a then some (value a, numberMax) else none
   | [a, b] => if isArticleNumber a && isArticleNumber b then some (value a, value b) else none
   | _ => none
+
+/-- `A-NOTCOLON` of §9.8: a printable US-ASCII byte other than `:`. -/
+def isNotColon (b : Byte) : Bool := (33 ≤ b.toNat && b.toNat ≤ 57) || (59 ≤ b.toNat && b.toNat ≤ 126)
+
+/-- HDR's `header-meta-name` (§9.8): a header's name, `1*A-NOTCOLON`, or a metadata item's, `":"`
+before it. -/
+def isFieldName : List Byte → Bool
+  | b :: rest => if b == 58#8 then !rest.isEmpty && rest.all isNotColon else isNotColon b && rest.all isNotColon
+  | [] => false
+
+/-- The fields HDR gives: every header, and of the metadata `:bytes` and `:lines` (§8.1), names
+compared without regard to case. -/
+def isServedField (f : List Byte) : Bool :=
+  f.head? != some 58#8 || f.map upper = ascii ":BYTES" || f.map upper = ascii ":LINES"
+
+/-- What an OVER or HDR names: an article by its message-id, the articles of the selected group in a
+range of numbers, or the current article (§8.3.2, §8.5.2). -/
+inductive Sel
+  | id (mid : List Byte)
+  | range (lo hi : Nat)
+  | current
+  deriving DecidableEq, Repr
 
 /-- The number the two digits at `k` write. -/
 def twoAt (w : List Byte) (k : Nat) : Nat := value ((w.drop k).take 2)
@@ -318,6 +346,25 @@ inductive Reply
   | date
   /-- 111 and the date and time these digits write -/
   | time (digits : List Byte)
+  /-- an OVER, or with `legacy` an XOVER, and an HDR or XHDR of field `f`, of the articles `s` names;
+  the session decides -/
+  | over (legacy : Bool) (s : Sel)
+  | hdr (legacy : Bool) (f : List Byte) (s : Sel)
+  /-- a read of the overview, or of field `f`, of the articles, each with its number in the selected
+  group or 0 and its message-id, `byId` when the command named one: 224, or 225 and XHDR's 221, with
+  the first of them -/
+  | overview (legacy : Bool) (f : Option (List Byte)) (byId : Bool) (items : List (Nat × List Byte))
+  /-- 224, and XHDR's 221, with an empty list: no article in an XOVER's or XHDR's range, as INN
+  answers -/
+  | noneOver
+  | noneHdr
+  /-- 423: no article in the range (§8.3.2, §8.5.2) -/
+  | noRange
+  /-- 503: a metadata item HDR does not give (§8.5.2) -/
+  | fieldRefused
+  /-- 215 and the fields of the overview (§8.4), 215 and the fields HDR gives (§8.6) -/
+  | overviewFmt
+  | headerList
   deriving DecidableEq, Repr
 
 /-- The reply to a command with these arguments, on a well-formed line. -/
@@ -333,12 +380,20 @@ def answer : Cmd → List (List Byte) → Reply
   | .post, [] => .post
   | _, _ => .syntax
 
+/-- An HDR, or with `.xhdr` an XHDR, of field `f` of the articles `s` names: 501 for a field of no
+name, 503 for a metadata item it does not give. -/
+def hdrOf (c : Cmd) (f : List Byte) (s : Sel) : Reply :=
+  if !isFieldName f then .syntax else if isServedField f then .hdr (c == .xhdr) f s else .fieldRefused
+
 /-- The reply with a store: ARTICLE and BODY take an argument as HEAD does; a message-id is looked up,
 a number in the selected group, and no argument means the current article. A GROUP or LISTGROUP of a
 name no group the store carries can have is answered 411 at once. LISTGROUP's range is one of
 `range?`; LIST's keyword ACTIVE, the one it takes without any, or NEWSGROUPS, in any case and each
-with a wildmat or none; NEWGROUPS's date and time are `isDate` and `isTime`, `GMT` after them or not,
-in any case (§3.1, §7.3, §7.6). -/
+with a wildmat or none, OVERVIEW.FMT with nothing after it, or HEADERS with MSGID, RANGE or nothing;
+NEWGROUPS's date and time are `isDate` and `isTime`, `GMT` after them or not, in any case (§3.1, §7.3,
+§7.6, §8.4, §8.6). OVER takes a message-id, a range or nothing, and XOVER a range or nothing (RFC
+2980 §2.8); HDR and XHDR a field and one of those, a metadata item but `:bytes` and `:lines` answered
+503 (§8.5). -/
 def answerIn (c : Cmd) (args : List (List Byte)) : Reply :=
   match c, args with
   | .article, [] | .body, [] | .head, [] | .stat, [] => .current c
@@ -358,11 +413,29 @@ def answerIn (c : Cmd) (args : List (List Byte)) : Reply :=
     | none => .syntax
   | .list, [] => .active none
   | .list, k :: rest =>
+    if k.map upper = ascii "OVERVIEW.FMT" then (if rest.isEmpty then .overviewFmt else .syntax)
+    else if k.map upper = ascii "HEADERS" then
+      (if rest.all (fun a => a.map upper = ascii "MSGID" || a.map upper = ascii "RANGE") && rest.length ≤ 1
+       then .headerList else .syntax)
+    else
     match (match rest with | [] => some none | [w] => (wildmat? w).map some | _ => none) with
     | some w =>
       if k.map upper = ascii "ACTIVE" then .active w else if k.map upper = ascii "NEWSGROUPS" then .newsgroups
       else .syntax
     | none => .syntax
+  | .over, [] => .over false .current
+  | .xover, [] => .over true .current
+  | .over, [a] | .xover, [a] =>
+    if isMessageId a && c == .over then .over false (.id a)
+    else match range? a with
+      | some (lo, hi) => .over (c == .xover) (.range lo hi)
+      | none => .syntax
+  | .hdr, [f] | .xhdr, [f] => hdrOf c f .current
+  | .hdr, [f, a] | .xhdr, [f, a] =>
+    if isMessageId a then hdrOf c f (.id a)
+    else match range? a with
+      | some (lo, hi) => hdrOf c f (.range lo hi)
+      | none => .syntax
   | .date, [] => .date
   | .newgroups, d :: t :: rest =>
     if isDate d && isTime t && (rest.isEmpty || rest.map (·.map upper) == [ascii "GMT"]) then .newGroups
@@ -416,17 +489,30 @@ def capabilitiesHead : List Byte :=
 def helpHead : List Byte :=
   ascii "100 Help text follows\r\nCAPABILITIES [keyword]\r\nHEAD [message-ID|number]\r\n" ++
     ascii "HELP\r\nQUIT\r\nSTAT [message-ID|number]\r\ndragons-net "
-def helpMid : List Byte := ascii " is free software under the GNU AGPL; source code at "
+def helpMid : List Byte := ascii " is free software (GNU AGPL); source at "
 def blockEnd : List Byte := ascii "\r\n.\r\n"
 def greetingPostHead : List Byte := ascii "200 dragons-net "
 def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
 def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
-def capabilitiesReaderTail : List Byte := ascii "\r\nREADER\r\nLIST ACTIVE NEWSGROUPS"
+def capabilitiesReaderTail : List Byte :=
+  ascii "\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID"
 def helpPostHead : List Byte :=
   ascii "100 Help text follows\r\nARTICLE, BODY, HEAD, STAT [message-ID|number]\r\n" ++
-    ascii "CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHELP\r\nLAST\r\nLIST\r\nLISTGROUP\r\n" ++
-    ascii "NEWGROUPS\r\nNEXT\r\nPOST\r\nQUIT\r\n" ++
+    ascii "CAPABILITIES [keyword]\r\nDATE\r\nGROUP newsgroup\r\nHDR\r\nHELP\r\nLAST\r\nLIST\r\n" ++
+    ascii "LISTGROUP\r\nNEWGROUPS\r\nNEXT\r\nOVER\r\nPOST\r\nQUIT\r\n" ++
     ascii "dragons-net "
+
+/-- LIST OVERVIEW.FMT's reply (§8.4.2): the seven fields of every overview line, `:bytes` and `:lines`
+written `Bytes:` and `Lines:` as §8.4.2 allows for older readers — slrn 1.0.3 turns XOVER off on the
+other form — then the Xref field, whole. -/
+def overviewFmtText : List Byte :=
+  ascii "215 Order of fields in overview database\r\nSubject:\r\nFrom:\r\nDate:\r\nMessage-ID:\r\n" ++
+    ascii "References:\r\nBytes:\r\nLines:\r\nXref:full\r\n.\r\n"
+
+/-- The first line of an overview read: OVER's and XOVER's 224, HDR's 225 and XHDR's 221. -/
+def overviewStatus (legacy : Bool) : Option (List Byte) → List Byte
+  | none => ascii "224 Overview information follows\r\n"
+  | some _ => ascii (if legacy then "221 Header follows\r\n" else "225 Headers follow\r\n")
 
 /-- The greeting (§5.1): posting is not allowed, and the source is offered. -/
 def greeting (i : Identity) : List Byte :=
@@ -473,8 +559,16 @@ def text (i : Identity) : Reply → List Byte
   | .noPrevious => ascii "422 No previous article in this group\r\n"
   | .noNumber => ascii "423 No article with that number\r\n"
   | .select _ => ascii "411 No such newsgroup\r\n"
-  | .byNumber _ _ | .current _ | .move _ | .listGroup .. => ascii "412 No newsgroup selected\r\n"
+  | .byNumber _ _ | .current _ | .move _ | .listGroup .. | .over .. | .hdr .. =>
+    ascii "412 No newsgroup selected\r\n"
   | .date => ascii "500 Unknown command\r\n"
+  | .overview legacy f _ _ => overviewStatus legacy f
+  | .noneOver => ascii "224 Overview information follows\r\n.\r\n"
+  | .noneHdr => ascii "221 Header follows\r\n.\r\n"
+  | .noRange => ascii "423 No articles in that range\r\n"
+  | .fieldRefused => ascii "503 HDR not permitted on that field\r\n"
+  | .overviewFmt => overviewFmtText
+  | .headerList => ascii "215 Field list follows\r\n:\r\n:bytes\r\n:lines\r\n.\r\n"
 
 /-- The first line of an article sent (§6.2): 220, 221 or 222, its number in the selected group or
 0, and the message-id. -/
@@ -503,11 +597,25 @@ def Reply.bounded : Reply → Bool
   | .selected count low high g | .listed count low high g _ _ =>
     count ≤ numberMax && low ≤ numberMax && high ≤ numberMax && g.length ≤ groupNameMax
   | .time d => d.length ≤ 60
+  | .over _ (.id mid) | .hdr _ _ (.id mid) => mid.length ≤ 250
+  | .overview _ _ _ items => items.all fun x => x.1 ≤ numberMax && x.2.length ≤ 250
   | _ => true
 
 theorem answer_bounded (c : Cmd) (args : List (List Byte)) : (answer c args).bounded = true := by
   unfold answer
   repeat (first | rfl | split)
+
+theorem hdrOf_bounded (c : Cmd) (f : List Byte) (s : Sel) (h : ∀ mid, s = .id mid → mid.length ≤ 250) :
+    (hdrOf c f s).bounded = true := by
+  unfold hdrOf
+  split
+  · rfl
+  · split
+    · cases s with
+      | id mid => simp [Reply.bounded, h mid rfl]
+      | range => rfl
+      | current => rfl
+    · rfl
 
 /-- A message-id looked up is one, 250 octets at most; a number, an article number; a group's name,
 one a store may carry. -/
@@ -521,7 +629,10 @@ theorem replyIn_bounded (offered : Bool) (l : Line) : (replyIn offered l).bounde
       · split
         · unfold answerIn
           split <;> (repeat' split) <;>
-            first | exact answer_bounded .. | simp_all [Reply.bounded, isMessageId, isArticleNumber, numberMax]
+            first
+              | exact answer_bounded ..
+              | exact hdrOf_bounded _ _ _ (by simp_all [isMessageId])
+              | simp_all [Reply.bounded, isMessageId, isArticleNumber, numberMax]
         · exact answer_bounded ..
       · rfl
 
@@ -530,22 +641,24 @@ def actionData : Nat := 512
 
 theorem parts_short :
     greetingHead.length ≤ 16 ∧ greetingMid.length ≤ 35 ∧ capabilitiesHead.length ≤ 60 ∧
-      helpHead.length ≤ 132 ∧ helpMid.length ≤ 53 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
+      helpHead.length ≤ 132 ∧ helpMid.length ≤ 40 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
-      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 187 ∧ capabilitiesReaderTail.length ≤ 32 ∧
+      capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 198 ∧ capabilitiesReaderTail.length ≤ 72 ∧
+      overviewFmtText.length ≤ 128 ∧
       ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → r ≠ .capabilitiesReader →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →
         (∀ count low high g lo hi, r ≠ .listed count low high g lo hi) → (∀ d, r ≠ .time d) →
-        ∀ i, (text i r).length ≤ 40 := by
+        r ≠ .overviewFmt → ∀ i, (text i r).length ≤ 64 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
-  intro r h1 h2 h3 h4 h9 h5 h6 h7 h8 i
+    by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  intro r h1 h2 h3 h4 h9 h5 h6 h7 h8 h10 i
   cases r <;> first
     | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
-    | exact absurd rfl h9
+    | exact absurd rfl h9 | exact absurd rfl h10
     | exact absurd rfl (h5 _ _) | exact absurd rfl (h6 _ _ _ _) | exact absurd rfl (h7 _ _ _ _ _ _)
     | exact absurd rfl (h8 _) | (simp only [text]; decide +kernel)
+    | (rename_i l f _ _; cases l <;> cases f <;> (simp only [text, overviewStatus]; decide +kernel))
 
 /-- **Every reply, and the greeting, fits one action** when the identity fits. -/
 theorem greeting_fits (i : Identity) (h : i.ok = true) :
@@ -558,7 +671,7 @@ theorem greeting_fits (i : Identity) (h : i.ok = true) :
 theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded = true) :
     (text i r).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
-  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h13, h12⟩ := parts_short
+  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h13, h14, h12⟩ := parts_short
   have hd : ∀ n, n ≤ numberMax → (decimal n).length ≤ 10 := fun n hn =>
     decimal_length n (by simp only [numberMax] at hn; omega)
   by_cases hl : ∃ count low high g lo hi, r = .listed count low high g lo hi
@@ -608,7 +721,9 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded =
   · subst hhp; simp only [text, List.length_append, actionData]; omega
   by_cases hcr : r = .capabilitiesReader
   · subst hcr; simp only [text, List.length_append, actionData]; omega
-  have := h12 r hc hh hcp hhp hcr hs hg hl ht i
+  by_cases ho : r = .overviewFmt
+  · subst ho; simp only [text, actionData]; omega
+  have := h12 r hc hh hcp hhp hcr hs hg hl ht ho i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -864,7 +979,7 @@ theorem list_examples :
 /-- LIST's keywords but ACTIVE and NEWSGROUPS, and their arguments, are refused; DATE takes nothing,
 NEWGROUPS a date, a time and `GMT` or not (§7.1, §7.3). -/
 theorem dated_examples :
-    replyIn true (line "LIST ACTIVE.TIMES") = .syntax ∧ replyIn true (line "LIST OVERVIEW.FMT") = .syntax ∧
+    replyIn true (line "LIST ACTIVE.TIMES") = .syntax ∧ replyIn true (line "LIST DISTRIB.PATS") = .syntax ∧
     replyIn true (line "LIST ACTIVE a b") = .syntax ∧ replyIn true (line "LIST 1x") = .syntax ∧
     replyIn true (line "DATE") = .date ∧ replyIn true (line "DATE 1") = .syntax ∧ reply (line "DATE") = .unknown ∧
     replyIn true (line "NEWGROUPS 19990624 000000 GMT") = .newGroups ∧
@@ -881,6 +996,54 @@ theorem newgroups_examples :
     replyIn true (line "NEWGROUPS 20261024 120000 UTC") = .syntax ∧ replyIn true (line "NEWGROUPS 20261024") = .syntax ∧
     replyIn true (line "NEWGROUPS 20261024 120000 GMT x") = .syntax ∧
     replyIn true (line "NEWGROUPS +0261024 120000") = .syntax := by
+  decide +kernel
+
+/-- The message-id and the range a `Sel` names, if it names one. -/
+def Sel.idOf : Sel → Option (List Byte)
+  | .id mid => some mid
+  | _ => none
+def Sel.rangeOf : Sel → Option (Nat × Nat)
+  | .range lo hi => some (lo, hi)
+  | _ => none
+
+/-- What an OVER or HDR asks for, in plain values for the kernel to compare: whether it is XOVER's or
+XHDR's, the field, and the message-id or the range, neither for the current article. -/
+def Reply.askedOf : Reply → Option (Bool × Option (List Byte) × Option (List Byte) × Option (Nat × Nat))
+  | .over lg s => some (lg, none, s.idOf, s.rangeOf)
+  | .hdr lg f s => some (lg, some f, s.idOf, s.rangeOf)
+  | _ => none
+
+/-- With a store: OVER takes a message-id, a range or nothing, XOVER a range or nothing (§8.3, RFC 2980
+§2.8). -/
+theorem over_examples :
+    ((replyIn true (line "OVER")).askedOf == some (false, none, none, none) &&
+      (replyIn true (line "over <a@b>")).askedOf == some (false, none, some (ascii "<a@b>"), none) &&
+      (replyIn true (line "OVER 3-")).askedOf == some (false, none, none, some (3, numberMax)) &&
+      (replyIn true (line "XOVER 3-7")).askedOf == some (true, none, none, some (3, 7)) &&
+      (replyIn true (line "xover")).askedOf == some (true, none, none, none) &&
+      replyIn true (line "XOVER <a@b>") == .syntax && replyIn true (line "OVER 1 2") == .syntax &&
+      replyIn true (line "OVER 3-x") == .syntax && reply (line "OVER") == .unknown) = true := by
+  decide +kernel
+
+/-- HDR and XHDR take a field and a message-id, a range or nothing, a metadata item but `:bytes` and
+`:lines` refused with 503 (§8.5, RFC 2980 §2.6). -/
+theorem hdr_examples :
+    (replyIn true (line "HDR") == .syntax &&
+      (replyIn true (line "HDR Subject")).askedOf == some (false, some (ascii "Subject"), none, none) &&
+      (replyIn true (line "xhdr subject <a@b>")).askedOf ==
+        some (true, some (ascii "subject"), some (ascii "<a@b>"), none) &&
+      (replyIn true (line "HDR :BYTES 1-2")).askedOf == some (false, some (ascii ":BYTES"), none, some (1, 2)) &&
+      replyIn true (line "HDR :x-foo") == .fieldRefused && replyIn true (line "HDR :x-foo 1-x") == .syntax &&
+      replyIn true (line "HDR a:b") == .syntax && replyIn true (line "HDR : 1") == .syntax &&
+      replyIn true (line "HDR Subject 1 2") == .syntax && reply (line "XHDR Subject") == .unknown) = true := by
+  decide +kernel
+
+/-- LIST OVERVIEW.FMT takes nothing after it, LIST HEADERS MSGID, RANGE or nothing (§8.4, §8.6). -/
+theorem list_overview_examples :
+    replyIn true (line "LIST OVERVIEW.FMT") = .overviewFmt ∧ replyIn true (line "LIST overview.fmt x") = .syntax ∧
+    replyIn true (line "LIST HEADERS") = .headerList ∧ replyIn true (line "LIST headers range") = .headerList ∧
+    replyIn true (line "LIST HEADERS MSGID") = .headerList ∧ replyIn true (line "LIST HEADERS x") = .syntax ∧
+    replyIn true (line "LIST HEADERS MSGID RANGE") = .syntax := by
   decide +kernel
 
 /-- A wildmat of ASCII. -/
