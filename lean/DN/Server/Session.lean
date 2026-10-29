@@ -1128,9 +1128,11 @@ def act : List PStmt :=
 /-! ## A turn -/
 
 /-- A new connection, greeted: with 200 when it may post, the store accepts and carries a
-group. -/
+group. Its record keeps the generation of the last connection at its index, which the new one has
+to pass. -/
 def openConn : List PStmt :=
-  [.ite (fld "cb" cLive) (breach .reopened)
+  [.ite (or2 (fld "cb" cLive)
+      (or2 (eLe (v "eg") (fld "cb" cGen)) (eLt (n News.SessionSpec.genLimit) (v "eg")))) (breach .reopened)
     ([.dec "op" (eAdd (ownW ownOpened) (n 1)), .store (at_ (ownOff + ownOpened)) (v "op"),
       .dec "gr" (eAnd (eAnd (ne (fld "ev" eventPost) (n 0)) hasStore)
         (eAnd (ownW ownAccepting)
@@ -1644,6 +1646,7 @@ def main : PFun :=
     [.dec "zt" (n 0),
      .while (eLt (v "zt") (n conns))
        [.store (atOff (record (v "zt")) cLive) (n 0), .store (atOff (record (v "zt")) cActed) (n 0),
+        .store (atOff (record (v "zt")) cGen) (n 0),
         .store (atOff (actionAt (v "zt")) actionKind) (n 0), inc "zt"]] ++
     (List.range jobs).map (fun k =>
       .store (at_ (emitOff + emitJobs + k * jobSlot + jobKind)) (n 0)) ++

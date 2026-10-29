@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import itertools
 import os
@@ -364,7 +363,7 @@ def check(cake: str) -> Report:
     for c, e in zip(cases, expected, strict=True):
         by_program[program(c)][0].append(c)
         by_program[program(c)][1].append(e)
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         planted = list(pool.map(lambda k: build(cake, f"defect-{k}", plant(source, DEFECTS[k])), range(len(DEFECTS))))
     seen = {d.name: caught(p, d, by_program) for p, d in zip(planted, DEFECTS, strict=True)}
     lanes.require_quoted({"docs/baseline.md": [f"{len(cases):,} cases"]})

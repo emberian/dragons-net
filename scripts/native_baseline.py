@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -209,7 +208,7 @@ def refused_all(cake: str, host: Path, planted: list[tuple[str, str, int, str | 
                 stdin: str | None = None) -> None:
     """Each kernel of `planted` (its name, its source, and the status and message it has to be
     refused with) built and run on its own, several at once."""
-    with ThreadPoolExecutor(max_workers=lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         for done in [pool.submit(refuses, cake, name, source, host, status, message, *args, stdin=stdin)
                      for name, source, status, message in planted]:
             done.result()

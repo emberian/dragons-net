@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from typing import Any
 import unittest
 
@@ -391,9 +392,10 @@ class CheckScript(unittest.TestCase):
 
     def test_native_lanes_run_all_or_the_named_ones(self) -> None:
         """Without names every lane runs in its order, but those that mount FUSE; with names only
-        those, in the order named; a lane that fails stops the run with its status; a misspelt name is
-        refused before any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not
-        run again on a tree it passed on. A lane's tools are put in place before it."""
+        those, in the order named; a lane that fails stops the run with its status, and, several running
+        at once, the lanes running with it, none started after it; a misspelt name is refused before
+        any lane runs, or it would run nothing and pass. A lane that mounts FUSE is not run again on a
+        tree it passed on. A lane's tools are put in place before it."""
         scripts = {"native_check.py": "native", "native_baseline.py": "baseline", "entry_bench.py": "entry",
                    "server_check.py": "server", "framing_check.py": "framing", "grammar_check.py": "grammar",
                    "accept_check.py": "accept",
@@ -413,16 +415,18 @@ class CheckScript(unittest.TestCase):
             (tree / ".gitignore").write_text("build/\nran\nput\n")
             for name, lane in scripts.items():
                 (tree / "scripts" / name).write_text(
-                    f"import os, sys\nwith open({str(ran)!r}, 'a') as f:\n    print({lane!r}, *sys.argv[1:], file=f)\n"
+                    f"import os, sys, time\nwith open({str(ran)!r}, 'a') as f:\n"
+                    f"    print({lane!r}, *sys.argv[1:], file=f)\n"
+                    f"if os.environ.get('SLOW') == {lane!r}:\n    time.sleep(50)\n"
                     f"print({lane!r})\nsys.exit(3 if os.environ.get('FAILING') == {lane!r} else 0)\n")
 
-            def lanes(*names: str, failing: str = "", once: str = "none",
-                      parallel: str = "1") -> tuple[int, str, list[str]]:
+            def lanes(*names: str, failing: str = "", once: str = "none", parallel: str = "1",
+                      slow: str = "") -> tuple[int, str, list[str]]:
                 ran.unlink(missing_ok=True)
                 done = subprocess.run(["bash", str(tree / "scripts/native_lanes.sh"), *names], text=True,
                                       env={**os.environ, "CAKE": "/pinned/cake", "FAILING": failing,
                                            "DN_ONCE": once, "DN_STAMPS": str(tree / "build/stamps"),
-                                           "DN_PARALLEL": parallel},
+                                           "DN_PARALLEL": parallel, "SLOW": slow},
                                       capture_output=True, check=False, timeout=60)
                 return done.returncode, done.stderr, ran.read_text().splitlines() if ran.exists() else []
 
@@ -452,13 +456,19 @@ class CheckScript(unittest.TestCase):
             status, said, run_lanes = lanes("native", "parsre")
             self.assertEqual((status, run_lanes), (2, []))
             self.assertIn("no lane named 'parsre'", said)
-            # Several at a time, every lane runs, a failing one among them, which fails the run.
+            # Several at a time, every lane runs; a failing one fails the run, stops the one still
+            # running beside it, the longest, at once, and no lane is started after it.
             every = sorted(f"{lane} --cake /pinned/cake" for lane in scripts.values() if lane != "power")
             status, said, run_lanes = lanes(parallel="3")
             self.assertEqual((status, sorted(r.replace("entry check", "entry") for r in run_lanes)), (0, every))
-            status, said, run_lanes = lanes(failing="baseline", parallel="3")
-            self.assertEqual((status, len(run_lanes)), (1, len(every)))
+            began = time.monotonic()
+            status, said, run_lanes = lanes(failing="baseline", parallel="3", slow="nntp")
+            self.assertLess(time.monotonic() - began, 40)
+            self.assertEqual(status, 1)
+            self.assertLess(len(run_lanes), len(every))
             self.assertIn("the lane baseline failed", said)
+            self.assertIn("the lane nntp was stopped", said)
+            self.assertIn("the lane native was stopped", said)
 
     def test_a_prior_pass_is_taken_only_from_this_repository(self) -> None:
         """CI skips a job whose pass an earlier run recorded: the newest such runs of this repository's

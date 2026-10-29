@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Buffer, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 import datetime
@@ -1733,7 +1732,7 @@ def store_directories(b: Build) -> str:
                                 f"{store_check.image(sorted(again.items()))[:300]}: {err[-300:]!r}")
             return True
 
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         results = list(pool.map(lambda kc: one(kc[0], *kc[1]), enumerate(cases)))
     recovered = sum(results)
     refused = len(results) - recovered
@@ -1804,10 +1803,10 @@ DEFECTS = [
            "first command", "gave no turn"),
     Defect("woken a millisecond late", [("(wake && now_ms() >= wake)", "(wake && now_ms() > wake)", 1)],
            "first command", "gave no turn"),
-    Defect("a new connection put at index 0", [("        while (conns[i].fd >= 0 || conns[i].lost) ++i;\n", "", 1)],
+    Defect("a new connection put at index 0", [("        while (!usable(i)) ++i;\n", "", 1)],
            "sixty-five clients", "stopped the run: code 6"),
     Defect("an index given out again with its generation", [(".gen = conns[i].gen + 1,", ".gen = 1,", 1)],
-           "lines cut between reads", "given out again with generation"),
+           "lines cut between reads", "the program stopped the run with code 6"),
     Defect("a lingering socket never closed", [(
         "if (now >= l->until || now >= l->quiet_until) {", "if (now == UINT64_MAX) {", 1)],
         "lingering close", "still open after"),
@@ -1999,17 +1998,12 @@ def check(cake: str) -> Report:
     source = lanes.emit("emit-session")
     stale = lanes.plant(source, *STALE, "the program, for acting for the generation before,", exact=True)
     texts = [planted(source, d) for d in DEFECTS]
-    # Every program is compiled before any check runs, so that none of them shares the machine with
-    # a compiler, the checks of real time least of all.
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    # The server is checked before the defects are built, so that a difference shows without waiting
+    # for them; and no check runs beside a compiler, the checks of real time least of all.
+    with lanes.pool() as pool:
         base, old = (pool.submit(lanes.whole_program, cake, name, text, OUT, HOST, STORE)
                      for name, text in (("nntp", source), ("stale", stale)))
-        made = {k: pool.submit(lanes.whole_program, cake, f"defect-{k}", texts[k], OUT, HOST, STORE)
-                for k, d in enumerate(DEFECTS) if d.program}
         build = Build(base.result(), old.result())
-        linked = {k: pool.submit(hosted, k, d, texts[k], build) for k, d in enumerate(DEFECTS) if not d.program}
-        builds = [Build(made[k].result(), build.stale, DEFECT_TIMEOUT) if k in made else linked[k].result()
-                  for k in range(len(DEFECTS))]
     results = {}
     for name, run in CHECKS.items():
         try:
@@ -2018,6 +2012,12 @@ def check(cake: str) -> Report:
             raise LaneError(f"{name}: {error!r}") from None
         except LaneError as error:
             raise LaneError(f"{name}: {error}") from None
+    with lanes.pool() as pool:
+        made = {k: pool.submit(lanes.whole_program, cake, f"defect-{k}", texts[k], OUT, HOST, STORE)
+                for k, d in enumerate(DEFECTS) if d.program}
+        linked = {k: pool.submit(hosted, k, d, texts[k], build) for k, d in enumerate(DEFECTS) if not d.program}
+        builds = [Build(made[k].result(), build.stale, DEFECT_TIMEOUT) if k in made else linked[k].result()
+                  for k in range(len(DEFECTS))]
     found = caught(builds)
     cuts = sum(len(sent) - 1 for sent, _ in transcripts().values())
     program = sum(d.program for d in DEFECTS)

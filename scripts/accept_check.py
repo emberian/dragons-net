@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -135,7 +134,7 @@ def check(cake: str) -> Report:
             raise LaneError(f"a wall clock past the program's ended the run with {done.returncode}: {past[:60]}")
     steps["program"], mark = round(time.monotonic() - mark, 1), time.monotonic()
     caught = {}
-    with ThreadPoolExecutor(lanes.WORKERS) as pool:
+    with lanes.pool() as pool:
         mutants = list(pool.map(lambda m: build(cake, f"article-{m}", lanes.emit("emit-article-mutant", m)), MUTANTS))
     for mutant, planted in zip(MUTANTS, mutants, strict=True):
         # The articles alone: the dates written and read back reach no code the mutants change.

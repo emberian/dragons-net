@@ -1124,6 +1124,9 @@ def read_scenarios() -> Iterator[PostScenario]:
     yield "a read that fails after a first", [reader(f"ARTICLE {ID2}")], \
         Spool(GROUPS, image=TWO, failures=[Failure("read", nth=2)])
     yield "a reset during a read", [reader(f"ARTICLE {ID2}", take=100, slow=5, reset=40)], Spool(GROUPS, image=TWO)
+    yield "a read done after its reader is gone and another took its index", [
+        reader(f"ARTICLE {ID2}", reset=20), Client(50, [(60, ascii_lines(f"ARTICLE {ID1}", "QUIT"))])], \
+        Spool(GROUPS, image=TWO, delays={"read": 1_000})
     yield "a reader that stops during a read", [reader(f"ARTICLE {ID2}", take=100, slow=5, pause=(30, 10 ** 9))], \
         Spool(GROUPS, image=TWO)
     yield "reads slower than the inactivity deadline", [reader(f"ARTICLE {ID2}")], \
@@ -1464,6 +1467,13 @@ def breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "more taken than sent", ["turn 1", "open 0 1", "go", f"took {GREETING + 1}"], 5
     yield "a count for no send", ["turn 1", "go", "took 1"], 5
     yield "an index opened twice", [*begin, "turn 2", "open 0 2", "go"], 6
+    gone = [*begin, "turn 2", "closed 0 1", "go", "took", "turn 3"]
+    yield "an index opened again at its generation", [*gone, "open 0 1", "go"], 6
+    yield "an index opened at an earlier generation", [*gone, "open 1 2", "go", f"took {GREETING}", "turn 4",
+                                                       "closed 1 2", "go", "took", "turn 5", "open 1 1", "go"], 6
+    yield "a generation of zero", ["turn 1", "open 0 0", "go"], 6
+    yield "a generation past its limit", ["turn 1", f"open 0 {2 ** 62 + 1}", "go"], 6
+    yield "a generation past a signed word", ["turn 1", f"open 0 {2 ** 63}", "go"], 6
     yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
     yield "a clock past its limit", [f"turn {2 ** 62}", "go"], 7
     yield "a wall clock past its limit", [f"turn 1 {WALL_LIMIT}", "go"], 7

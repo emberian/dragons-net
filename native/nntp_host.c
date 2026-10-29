@@ -35,6 +35,7 @@
  * — or, when the program stops the run in that turn, `| stopped` and its code. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
+#include "faults.h"
 #include "jobs.h"
 #include "session_calls.h"
 #include "store.h"
@@ -57,7 +58,8 @@ enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER
 
 struct conn {
     int fd;          /* -1 when the index is free */
-    uint64_t gen;    /* the generation last given out at this index */
+    uint64_t gen;    /* the generation last given out at this index; at DN_SESSION_GEN_LIMIT the index
+                        is used no more */
     int reading;     /* the last send asked to read and was taken whole; kept until the next send or
                         the end of input */
     int unsent;      /* the last send left bytes: poll for writing */
@@ -160,9 +162,13 @@ static void free_index(struct conn *c) {
     c->ready = 0;
 }
 
+static int usable(int i) {
+    return conns[i].fd < 0 && !conns[i].lost && conns[i].gen < DN_SESSION_GEN_LIMIT;
+}
+
 static int free_indexes(void) {
     int n = 0;
-    for (int i = 0; i < CONNS; ++i) n += conns[i].fd < 0 && !conns[i].lost;
+    for (int i = 0; i < CONNS; ++i) n += usable(i);
     return n;
 }
 
@@ -370,7 +376,11 @@ static void take_connections(unsigned char *a, uint64_t now) {
             continue;
         }
         int i = 0;
-        while (conns[i].fd >= 0 || conns[i].lost) ++i;
+        while (!usable(i)) ++i;
+        /* The test build's `dn/generation` takes the index's count of generations up to its number. */
+        uint64_t past;
+        if (DN_FAULT_INFO("dn/generation", past) && conns[i].gen < past && past < DN_SESSION_GEN_LIMIT)
+            conns[i].gen = past;
         in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
                                                    : ((struct sockaddr_in6 *)&peer)->sin6_port;
         conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};

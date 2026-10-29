@@ -69,31 +69,53 @@ if ((${DN_PARALLEL:-1} < 2 || ${#chosen[@]} < 2)); then
   for name in "${chosen[@]}"; do lane "$name"; done
   exit 0
 fi
-# DN_PARALLEL lanes at a time, the longest first, each one's output shown whole once all are done;
-# an interrupt ends every lane running.
-trap 'trap - INT TERM; kill 0' INT TERM
+# DN_PARALLEL lanes at a time, the longest first, each one's output shown whole once all are done.
+# Each runs as a job of its own process group, so that the first lane to fail stops the others
+# whole: what fixes it is a change the others take as their input too, and an interrupt does the same.
+set -m
+stop_all() {
+  local job
+  for job in $(jobs -p); do kill -TERM -- "-$job" 2>/dev/null || true; done
+  wait || true
+}
+trap 'trap - INT TERM; stop_all; exit 130' INT TERM
 longest=(nntp session parser framing grammar baseline fuzz accept faults power crash server entry native)
 ordered=()
 for name in "${longest[@]}" "${chosen[@]}"; do
   if [[ " ${chosen[*]} " == *" $name "* && " ${ordered[*]} " != *" $name "* ]]; then ordered+=("$name"); fi
 done
 chosen=("${ordered[@]}")
+for name in "${chosen[@]}"; do rm -f "build/evidence/$name.out" "build/evidence/$name.status"; done
 started=0
+red=""
 for name in "${chosen[@]}"; do
   # Once as many run as may, each next one waits for one of them to end.
-  if ((started >= DN_PARALLEL)); then wait -n || true; fi
+  if ((started >= DN_PARALLEL)) && ! wait -n; then
+    red=1
+    break
+  fi
   started=$((started + 1))
   (
     set +e
     (set -e; lane "$name") >"build/evidence/$name.out" 2>&1
-    echo $? >"build/evidence/$name.status"
+    code=$?
+    echo "$code" >"build/evidence/$name.status"
+    exit "$code"
   ) &
 done
-wait
+running=$(jobs -rp)
+while [[ -z $red && -n $running ]]; do
+  if ! wait -n; then red=1; fi
+  running=$(jobs -rp)
+done
+if [[ -n $red ]]; then stop_all; fi
 status=0
 for name in "${chosen[@]}"; do
-  cat "build/evidence/$name.out"
-  if [[ $(<"build/evidence/$name.status") != 0 ]]; then
+  if [[ -f "build/evidence/$name.out" ]]; then cat "build/evidence/$name.out"; fi
+  if [[ ! -f "build/evidence/$name.status" ]]; then
+    [[ -z $red ]] || echo "native_lanes.sh: the lane $name was stopped" >&2
+    status=1
+  elif [[ $(<"build/evidence/$name.status") != 0 ]]; then
     echo "native_lanes.sh: the lane $name failed" >&2
     status=1
   fi
