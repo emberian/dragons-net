@@ -151,11 +151,13 @@ closes. A reset or a failed send closes at once.
 ### The vocabulary between program and host
 
 As [0002](0002-entry-and-memory.md) set out: the program's `main` loops, and each turn makes two
-external calls on arrays in its heap. A connection is named by an index below the connection
-limit and a generation the host increases each time it gives the index to a new connection, from 1
-to 2^62 at most; an index whose generation reached 2^62 is not given out again. So the host never
-gives out an index and generation it gave out before, and what is left of a connection gone — an
-action, an event, a read's completion — names no other.
+external calls on arrays in its heap.
+
+A connection is named by an index below the connection limit and a generation the host increases
+each time it gives the index to a new connection, from 1 to 2^62 at most; an index whose
+generation reached 2^62 is not given out again, and the host says so once. So the host never gives
+out an index and generation it gave out before, and what is left of a connection gone — an action,
+an event, a read's completion — names no other.
 
 - `@dn_next` takes the time the program needs its next turn at, written into the first word of
   its array before the call, in the host's clock: the earliest deadline it waits for, or the
@@ -183,15 +185,19 @@ action, an event, a read's completion — names no other.
   the heap, sends with `MSG_NOSIGNAL`, and writes the heap header before `cml_main`. It carries
   out an action only if the generation in it is the connection's current one; the program ignores
   an event whose generation is not the one it holds for that index.
-- A host that breaks this contract — more events than a batch, more bytes than a slot, an index past
-  the table, input the program did not ask for, more taken than sent, an index opened while in use or at a
-generation not past its last or past 2^62, a clock
-  that goes back or reaches 2^62, an event of no kind the layout has, an identity that does not fit
-  the replies, a word of the program's own area the program finds out of the range it keeps it in
-  (no test has seen a host that writes only into its arrays cause this) — stops the run: the program
-  writes the code of the breach into a word of its own area and returns from `main`, and the host,
-  whose runtime ends the run there, reads the code. The model also refuses a count for no send,
-  which the layout cannot express: each count lies in its send's slot.
+- A host that breaks this contract stops the run: the program writes the code of the breach into a
+  word of its own area and returns from `main`, and the host, whose runtime ends the run there,
+  reads the code. The breaches:
+  - more events than a batch, more bytes than a slot, an index past the table;
+  - input the program did not ask for, more taken than sent;
+  - an index opened while in use, at a generation not past its last, or past 2^62;
+  - a clock that goes back or reaches 2^62, an event of no kind the layout has;
+  - an identity that does not fit the replies;
+  - a word of the program's own area out of the range the program keeps it in (no test has seen a
+    host that writes only into its arrays cause this).
+
+  The model also refuses a count for no send, which the layout cannot express: each count lies in
+  its send's slot.
 
 The layout — offsets down to the fields of an event and an action, `K`, slot size, the version,
 the codes of events, of actions and of the stops the host has to know — is defined once in Lean

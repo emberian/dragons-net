@@ -513,8 +513,6 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
         inputs: set[Conn] = set()
         for e in t.events:
             if e.kind == "open":
-                if e.gen <= generation.get(e.idx, 0):
-                    raise LaneError(f"index {e.idx} was given out again with generation {e.gen}")
                 if (e.idx, generation.get(e.idx, 0)) in client_of and (e.idx, generation[e.idx]) not in gone:
                     raise LaneError(f"at {t.now} index {e.idx} was given out while its connection was open")
                 if not waiting.get(e.port):

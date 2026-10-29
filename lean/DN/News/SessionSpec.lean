@@ -2052,6 +2052,34 @@ theorem settle_gens {s s' : Server} {actions : List Action} {taken : List Nat}
   · cases h
   · cases h; rfl
 
+/-- A run: turns, and what the host took of their sends, one after another. -/
+inductive Reaches (i : Identity) : Server → Server → Prop
+  | refl (s : Server) : Reaches i s s
+  | turn {s s' s'' : Server} {now wall : Nat} {es : List Event} {ds : List Done} {actions : List Action}
+      {js : List Job} : turn i s now wall es ds = .ok (s', actions, js) → Reaches i s' s'' → Reaches i s s''
+  | settle {s s' s'' : Server} {actions : List Action} {taken : List Nat} :
+      settle s actions taken = .ok s' → Reaches i s' s'' → Reaches i s s''
+
+/-- **Along a run no index's last generation falls**; with `applyEvent_opened`, each open a run
+takes at an index is past every one it took there before. -/
+theorem reaches_gens {i : Identity} {s s' : Server} (h : Reaches i s s') (k : Nat) :
+    s.gens.getD k 0 ≤ s'.gens.getD k 0 := by
+  induction h with
+  | refl => exact Nat.le_refl _
+  | turn ht _ ih => exact Nat.le_trans (turn_gens ht k) ih
+  | settle hs _ ih => exact (settle_gens hs) ▸ ih
+
+/-- The premise holds of a real run: a turn of the empty server that opens index 0 at generation 1,
+which becomes the index's last. -/
+theorem reaches_witness : ∃ s', Reaches ⟨[], []⟩ {} s' ∧ s'.gens.getD 0 0 = 1 := by
+  have hv : (match turn ⟨[], []⟩ {} 1 0 [.opened 0 1 false] [] with
+      | .ok (s', _, _) => s'.gens.getD 0 0 == 1
+      | .error _ => false) = true := by decide
+  split at hv
+  · rename_i s' _ _ h
+    exact ⟨s', .turn h (.refl _), by simpa using hv⟩
+  · cases hv
+
 /-- An index opened again at its last generation is a breach. -/
 theorem reopened_witness :
     (match applyEvent ⟨[], []⟩ 0 { gens := [1] } (.opened 0 1 false) with

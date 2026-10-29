@@ -1473,7 +1473,7 @@ def breaches() -> Iterator[tuple[str, list[str], int]]:
                                                        "closed 1 2", "go", "took", "turn 5", "open 1 1", "go"], 6
     yield "a generation of zero", ["turn 1", "open 0 0", "go"], 6
     yield "a generation past its limit", ["turn 1", f"open 0 {2 ** 62 + 1}", "go"], 6
-    yield "a generation past a signed word", ["turn 1", f"open 0 {2 ** 63}", "go"], 6
+    yield "a generation of a negative word", ["turn 1", f"open 0 {2 ** 63}", "go"], 6
     yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
     yield "a clock past its limit", [f"turn {2 ** 62}", "go"], 7
     yield "a wall clock past its limit", [f"turn 1 {WALL_LIMIT}", "go"], 7

@@ -384,6 +384,7 @@ static void take_connections(unsigned char *a, uint64_t now) {
         in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
                                                    : ((struct sockaddr_in6 *)&peer)->sin6_port;
         conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
+        if (conns[i].gen == DN_SESSION_GEN_LIMIT) fprintf(stderr, "index %d given out at its last generation\n", i);
         event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
         dn_store_log_opened(&peer);
         dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,

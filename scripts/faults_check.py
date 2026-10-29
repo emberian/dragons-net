@@ -557,7 +557,7 @@ DEFECTS = [
     C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
              "LIST ACTIVE read"),
     C.Defect("an index used past its last generation", " && conns[i].gen < DN_SESSION_GEN_LIMIT;", ";", 1,
-             "every index at its last generation", program=False, loop=True),
+             "the program stopped the run: code 6", program=False, loop=True),
 ]
 
 
