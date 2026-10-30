@@ -27,6 +27,7 @@ gen_keywords = script("gen_keywords")
 lanes = script("lanes")
 native_baseline = script("native_baseline")
 native_fuzz = script("native_fuzz")
+parse_check = script("parse_check")
 parser_contract = script("parser_contract")
 state_check = script("state_check")
 
@@ -69,6 +70,21 @@ class Emitted(unittest.TestCase):
         done = subprocess.run([str(DN_COMPILER), "analyze-grammar"], text=True, capture_output=True,
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
+
+    def test_the_lean_parser_reads_each_printed_program_as_lowered(self) -> None:
+        """DN.Compiler.Parse, the Lean copy of CakeML's parser, reads every printed program as its
+        lowering in the canonical form, and each cell of the precedence table as the table says.
+        scripts/check_parse.sh holds the same trees and refusals to HOL4's own parser."""
+        programs = json.loads(run([str(DN_COMPILER), "emit-trees"]).stdout)
+        trees = json.loads(run([str(DN_COMPILER), "parse-trees"]).stdout)
+        self.assertEqual(len(trees), len(programs))
+        for program, tree in zip(programs, trees, strict=True):
+            with self.subTest(program=program["name"]):
+                self.assertIsNotNone(tree)
+                parse_check.compared(program, tree)
+        cells = json.loads(run([str(DN_COMPILER), "emit-cells"]).stdout)
+        readings = json.loads(run([str(DN_COMPILER), "parse-cells"]).stdout)
+        self.assertEqual(parse_check.cells_read(cells, readings), len(cells))
 
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator

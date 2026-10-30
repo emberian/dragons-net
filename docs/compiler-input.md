@@ -15,7 +15,7 @@ The file is one JSON object of version 1. It has the fields `dn_input`, the vers
 
 A field the format does not have is refused, so that a misspelt name is not silently dropped; a key given twice takes its last value.
 
-A function is `{"name": N, "params": [names], "body": [statements]}`; every parameter and value is a 64-bit word, and arithmetic wraps. The exported function's name starts with `dn_`; every name is an identifier that is no keyword of either pinned lexer.
+A function is `{"name": N, "params": [names], "body": [statements]}`; every parameter and value is a 64-bit word, and arithmetic wraps. The exported function's name starts with `dn_`; every name is an identifier that is no keyword of either pinned lexer, nor `__add_with_carry__`, which the parser reads as a primitive.
 
 | Form | Meaning |
 | --- | --- |

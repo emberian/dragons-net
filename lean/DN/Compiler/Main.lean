@@ -17,11 +17,13 @@ import DN.News.StoreCases
 import DN.Compiler.Analyzer
 import DN.Compiler.AnalyzerCertGen
 import DN.Compiler.Input
+import DN.Compiler.Parse
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
 with its host, runs the framing, grammar, article, journal, recovery, file system, store and session
 models, prints the differential fixtures, the programs and precedence cells the parser contract
-compares, generated programs and their recorded cases, and the corpus of stopping states. Printing
+compares, and what the Lean copy of CakeML's parser reads them as, generated programs and their recorded
+cases, and the corpus of stopping states. Printing
 is not a correctness certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
@@ -39,7 +41,7 @@ private def commands : List String :=
    "emit-article-layout", "emit-article-mutant NAME",
    "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
-   "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples", "compile FILE",
+   "emit-trees", "parse-trees", "emit-cells", "parse-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples", "compile FILE",
    "emit-corpus", "dump-states"]
 
 /-- The most lines `session-model` reads. -/
@@ -262,7 +264,14 @@ def table : List (String × (List String → IO UInt32)) :=
     | _ => usageError),
    ("emit-trees", plain fun _ => (output ((DN.Printed.all ()).map fun ps =>
       (Lean.Json.arr (ps.map (·.tree)).toArray).compress))),
+   ("parse-trees", plain fun _ => (output ((DN.Printed.all ()).map fun ps =>
+      (Lean.Json.arr (ps.map (Parse.programJson ·.source)).toArray).compress))),
    ("emit-cells", plain fun _ => (output (Precedence.cells.map (·.compress)))),
+   ("parse-cells", plain fun _ => (output (Precedence.cells.map fun cs =>
+      (Lean.Json.arr ((cs.getArr?.toOption.getD #[]).map fun c =>
+        match ((c.getObjValD "tree").getObjValD "source").getStr? with
+        | .ok source => Parse.programJson source
+        | .error _ => .null)).compress))),
    ("emit-fuzz", fun
     | [seed, count, vectors] =>
       match seed.toNat?, count.toNat?, vectors.toNat? with

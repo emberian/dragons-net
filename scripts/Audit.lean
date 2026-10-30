@@ -114,7 +114,7 @@ def compilerModules : Array Name :=
     `DN.Compiler.Bytes, `DN.Compiler.Canon, `DN.Compiler.Checked, `DN.Compiler.Clock,
     `DN.Compiler.Decimal, `DN.Compiler.Div10, `DN.Compiler.Gen, `DN.Compiler.GenCorpus, `DN.Compiler.Input,
     `DN.Compiler.Kernels, `DN.Compiler.Keywords, `DN.Compiler.Lower, `DN.Compiler.Main,
-    `DN.Compiler.NatToDec, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
+    `DN.Compiler.NatToDec, `DN.Compiler.Parse, `DN.Compiler.Precedence, `DN.Compiler.Region, `DN.Compiler.Semantics,
     `DN.Compiler.SplitMix, `DN.Compiler.StateCorpus, `DN.Compiler.StaticCheck, `DN.Compiler.Syntax,
     `DN.Compiler.SyntaxJson, `DN.Dsl.Action, `DN.Dsl.Correct, `DN.Dsl.Example, `DN.News.Abnf,
     `DN.News.AbnfModel, `DN.News.AbnfMutant, `DN.News.AbnfProg, `DN.News.AbnfRules,

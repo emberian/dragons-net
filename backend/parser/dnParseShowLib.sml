@@ -78,21 +78,44 @@ fun write out tm =
          TextIO.output (out, "]"))
     end
 
-(* The tree of the theorem into `path`; the theorem has to be the equation of `parse`, the parser
-   applied to the text, with no hypothesis, say the parse succeeded, and rest on no oracle but the
-   theories it was evaluated from. *)
-fun show path parse th =
+(* What the parser gives: the theorem has to be the equation of `parse`, the parser applied to the
+   text, with no hypothesis, and rest on no oracle but the theories it was evaluated from. *)
+fun given parse th =
   let
     val _ = null (hyp th) andalso aconv (lhs (concl th)) parse
       orelse raise ERR "show" "not the parser's equation for the text"
-    val r = rhs (concl th)
-    val _ = sumSyntax.is_inl r orelse raise ERR "show" "the parser refused the program"
     val tag = Thm.tag th
     val _ = Tag.isEmpty tag orelse Tag.isDisk tag orelse raise ERR "show" "the theorem rests on an oracle"
+  in
+    rhs (concl th)
+  end
+
+(* The tree of the theorem into `path`; the parse has to have succeeded. *)
+fun show path parse th =
+  let
+    val r = given parse th
+    val _ = sumSyntax.is_inl r orelse raise ERR "show" "the parser refused the program"
     val out = TextIO.openOut path
   in
     write out (sumSyntax.dest_inl r |> fst);
     TextIO.output (out, "\n");
+    TextIO.closeOut out
+  end
+
+(* The trees of several equations into `path`, as a JSON list, `null` for a text refused. *)
+fun showEach path pairs =
+  let
+    val rs = map (fn (parse, th) => given parse th) pairs
+    val out = TextIO.openOut path
+    fun one r =
+      if sumSyntax.is_inl r then write out (sumSyntax.dest_inl r |> fst)
+      else if sumSyntax.is_inr r then TextIO.output (out, "null")
+      else raise ERR "showEach" "neither a tree nor a refusal"
+  in
+    TextIO.output (out, "[");
+    ignore (List.foldl (fn (r, first) => (if first then () else TextIO.output (out, ","); one r; false))
+                       true rs);
+    TextIO.output (out, "]\n");
     TextIO.closeOut out
   end
 

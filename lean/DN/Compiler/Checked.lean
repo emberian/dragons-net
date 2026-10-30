@@ -29,7 +29,7 @@ inductive Reason
   | callEffect          -- a call of a function the program does not have
   | callArity           -- a call with other than the function's number of arguments
   | functionName        -- a function of a program not named as an identifier, or `main`, or twice
-  | externalEffect      -- an external call to a name the profile does not allow
+  | externalEffect      -- an external call to a name the profile does not allow, or no dn_ name
   | externalArity       -- an external call with other than four arguments
   | notExported         -- the function is not marked for export
   | entryShape          -- a whole program whose entry is not a main without parameters
@@ -56,7 +56,7 @@ def Reason.message : Reason → String
   | .callEffect => "call of a function the program does not have"
   | .callArity => "call with other than the function's number of arguments"
   | .functionName => "a function's name is not an identifier, is main, or is given twice"
-  | .externalEffect => "external call to a name the profile does not allow"
+  | .externalEffect => "external call to a name the profile does not allow, or not a dn_ name"
   | .externalArity => "an external call takes exactly four arguments"
   | .notExported => "function is not exported"
   | .entryShape => "a whole program is a main without parameters, not exported"
@@ -65,8 +65,9 @@ def Reason.message : Reason → String
   | .recursion => "call of a function not before the caller, which could recurse"
 
 /-- A word the lexer of any pinned revision reads as a keyword cannot be a name:
-the emitted source has to parse under both. -/
-def reserved : List String := Keywords.all
+the emitted source has to parse under both. Nor can the name whose call the parser reads as the
+primitive `AddCarry` (`is_add_with_carry`, `pancake/parser/panPtreeConversionScript.sml`). -/
+def reserved : List String := Keywords.all ++ ["__add_with_carry__"]
 
 def identifier (s : String) : Bool :=
   let letters (c : Char) := ('a' ≤ c && c ≤ 'z') || ('A' ≤ c && c ≤ 'Z') || c == '_'
@@ -154,9 +155,10 @@ def statement (p : Profile) (scope : List String) : PStmt → Except Reason Unit
   | .ret e => expression p scope e
   | .ite e a b => do expression p scope e; statements p scope a; statements p scope b
   | .while e b => do expression p scope e; statements p scope b
-  -- The configuration array and its length, then the array the host reads and writes back.
+  -- The configuration array and its length, then the array the host reads and writes back. The
+  -- name follows `@` in the text, where only an identifier of the namespace reads as one name.
   | .ffi name [c, cl, a, al] =>
-    if p.externals.contains name then do
+    if p.externals.contains name && identifier name && inNamespace name then do
       expression p scope c; expression p scope cl; expression p scope a; expression p scope al
     else .error .externalEffect
   | .ffi name _ =>
@@ -178,6 +180,20 @@ def paramScope : List (Nat × String) → List String → Except Reason (List St
     else if !identifier name then .error .parameterName
     else if scope.contains name then .error .duplicateParameter
     else paramScope rest (name :: scope)
+
+/-- No parameters open no names. Stated here so that the equations of `paramScope` are
+elaborated in the module that defines it. -/
+theorem paramScope_nil (scope : List String) : paramScope [] scope = .ok scope := by
+  simp only [paramScope]
+
+theorem paramScope_cons (shape : Nat) (name : String) (rest : List (Nat × String))
+    (scope : List String) :
+    paramScope ((shape, name) :: rest) scope =
+      if shape != 1 then .error .parameterShape
+      else if !identifier name then .error .parameterName
+      else if scope.contains name then .error .duplicateParameter
+      else paramScope rest (name :: scope) := by
+  rw [paramScope.eq_def]
 
 /-- Exported scalar functions with at most four parameters and an explicit final
 return. This is our initial host ABI profile, not a restriction of all Pancake. -/
@@ -765,6 +781,14 @@ theorem shift_left_distance :
       (emit (scalar [.ret (.shl (.var "a") (.const 63))])).isOk = true := by decide
 
 theorem injected_name_rejected : identifier "x); return 9; //" = false := by decide
+theorem add_with_carry_rejected : identifier "__add_with_carry__" = false := by decide
+
+/-- An external the program is given is still refused unless it is an identifier of the
+namespace: `@base(..)` would read as `@base`. -/
+theorem odd_external_rejected :
+    (match statement (mainProfile ["base"]) [] (.ffi "base" [.base, .const 0, .base, .const 8]) with
+     | .error r => r == .externalEffect
+     | .ok _ => false) = true := by decide
 theorem keyword_rejected : identifier "while" = false := by decide
 
 /-- The lexer reads `@base`, `@top` and `@biw` as keywords only with the `@`, which the

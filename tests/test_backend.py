@@ -2,6 +2,8 @@
 """The backend lanes on disposable trees with stand-ins for the prover; nothing here builds a proof."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -637,3 +639,52 @@ class ParseCheck(unittest.TestCase):
 
     def test_the_text_is_read_as_octets(self) -> None:
         self.assertIn('BinIO.openIn "dnParse3.pnk"', parse_check.script(3, "x"))
+
+    def test_only_places_are_left_out(self) -> None:
+        place = [self.P + "Annot", "location", "(1:1 1:2)"]
+        comment = [self.P + "Annot", "@", "a comment"]
+        skip = [self.P + "Skip"]
+        self.assertEqual(parse_check.unplaced([self.P + "Seq", place, skip]), skip)
+        kept = [self.P + "Seq", comment, skip]
+        self.assertEqual(parse_check.unplaced(kept), kept)
+
+    def compare(self, hol: list[Any], copy: list[Any], cells: list[dict[str, Any]], readings: list[Any],
+                held: list[Any]) -> str:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = {"trees.json": [self.program], "lean.json": [copy], "cells.json": cells,
+                     "readings.json": readings, "dnParse0.json": hol, "dnParseCells.json": held}
+            for name, value in files.items():
+                (root / name).write_text(json.dumps(value))
+            (root / "targets").write_text("dnParse0Theory.uo\ndnParseCellsTheory.uo\n")
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                parse_check.compare(root / "trees.json", root, False, root / "cells.json",
+                                    (root / "lean.json", root / "readings.json"))
+            return out.getvalue()
+
+    def test_the_lean_parser_is_held_to_each_tree_and_refusal(self) -> None:
+        place = [self.P + "Annot", "location", "(2:3 2:11)"]
+        returned = [self.P + "Return", self.var()]
+        hol = [self.function([self.P + "Seq", place, returned])]
+        copy = [self.function(returned)]
+        cell = {"tree": self.program, "reads": True, "cell": "top/left: a"}
+        self.assertIn("1 cells", self.compare(hol, copy, [cell], [copy], [hol]))
+        other = [self.function([self.P + "Return", self.var("Global")])]
+        cases: dict[str, tuple[list[Any], list[Any]]] = {
+            "a program": (other, [copy]), "a cell": (copy, [other]), "a refusal": (copy, [None])}
+        for name, (program, readings) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(parse_check.LaneError, "Lean parser reads it otherwise"):
+                self.compare(hol, program, [cell], readings, [hol])
+
+    def test_cells_are_read_as_the_table_says(self) -> None:
+        read = [self.function([self.P + "Return", self.var()])]
+        misread = [self.function([self.P + "Return", [self.P + "Const", 0]])]
+        cell = {"tree": self.program, "cell": "top/left: a"}
+        self.assertEqual(parse_check.cells_read([{**cell, "reads": False}, {**cell, "reads": False}],
+                                                [None, misread]), 2)
+        with self.assertRaisesRegex(parse_check.LaneError, "refused, which the table says is read"):
+            parse_check.cells_read([{**cell, "reads": True}], [None])
+        with self.assertRaisesRegex(parse_check.LaneError, "which the table says it is not"):
+            parse_check.cells_read([{**cell, "reads": False}], [read])
+        with self.assertRaisesRegex(parse_check.LaneError, "the parser's tree is not the lowered one"):
+            parse_check.cells_read([{**cell, "reads": True}], [misread])

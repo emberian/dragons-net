@@ -28,7 +28,9 @@ Each row separates what is proven from what is tested, so that partial work does
 | `backend/semantics/dnModelProofScript.sml` | The model written again in HOL equals `panSem`'s `evaluate` at `ed31510` on the subset with literal shifts: expressions (`dn_eval_thm`) and runs, in related states (`dn_sem_thm`); the prover reports no oracle | That the HOL text is the Lean text: read, and equal on the corpus |
 | State corpus in HOL4 (`scripts/check_semantics.sh`) | On the same cases and 6 write-backs, `panSem`'s own `evaluate` at `ed31510` under `EVAL` ends where the model does, field by field; a planted defect is seen | A proof; cases off the corpus; the clauses where `e8eca63` differs |
 | `scripts/parser_contract.py` | Each of the 245 programs the compiler prints is read by the pinned parsers as exactly its lowering, and both agree with every cell of the precedence table | Every possible printed program |
-| CakeML's parser in HOL4 (`scripts/check_parse.sh`) | For each of them a theorem, its only tag the theories' disk tag: `parse_topdecs_to_ast` at `ed31510`, which `compile_pancake` reads its input with, takes the text to a tree; the tree's canonical form is the lowering's, a planted defect seen | That comparison and the tree's printer, which are not proved; every program the gate accepts; the release compiler's parser (`e8eca63`) |
+| `DN.Compiler.Parse` (`tests/test_native.py`) | CakeML's parser in Lean, a token the gate never prints refused, reads each printed program as lowered in canonical form and each table cell as the table says; in `check_parse.sh` its tree, places aside, or refusal is HOL4's on each | That it is CakeML's parser off those texts |
+| `DN.Compiler.ParseCorrect` | Proved: for every program the gate accepts, `Parse` reads the printed text as its functions, every name local, each body read in the model with its lowering's expressions in canonical form | That `Parse` is CakeML's parser, tested only; that the reading in the model is `panSem`'s; the release parser |
+| CakeML's parser in HOL4 (`scripts/check_parse.sh`) | A theorem a program and a table cell, only the disk tag: `parse_topdecs_to_ast` at `ed31510`, `compile_pancake`'s parser, takes the text to a tree; a program's is its lowering, canonically, a cell's as the table says, a planted defect seen | That comparison and the tree's printer, which are not proved; every program the gate accepts; the release compiler's parser (`e8eca63`) |
 | `scripts/native_fuzz.py` | On 300 generated programs, model, interpreter and compiled code agree on the result and memory | Programs outside the generator's reach |
 | Native region check | Generated machine code agrees with a C reference on 99,240 cases | A compiler theorem |
 | Native differential and TCP checks | 35,520 arithmetic/control cases; CRC-32C on 311 buffers, SipHash-2-4 on 370 messages, the journal scanner on 28,704 readings, recovery on 2,036 directories, the reply table on 5,790 calls | Compiler preservation, a verified host |
@@ -73,7 +75,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 22,084 declarations, including 10,028 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 24,382 declarations, including 11,413 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -91,7 +93,7 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
 2. **Source representation.** The programs `dn-compiler` prints, 245 in all, are each read by the pinned parser as its lowering in canonical form, which `Canon.canon_eval` proves keeps evaluation. `printed_well` relies on 62 of that table's 320 cells, and the differential suite runs 35,520 cases.
 
-   For each printed program HOL4 proves what CakeML's own parser makes of its text (`check_parse.sh`); the theorem for every program the gate accepts is open.
+   For each printed program HOL4 proves what CakeML's own parser makes of its text (`check_parse.sh`). For every program the gate accepts, Lean proves it of the parser written again in Lean (`ParseCorrect`), which is held to HOL4's on the printed texts only.
 
 3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 245 programs the same way, but no theorem covers the binary.
 
