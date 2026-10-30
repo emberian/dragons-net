@@ -465,6 +465,20 @@ def generated : List Case :=
         (.seq (.extCall "read" (.const (word 0)) (.const (word 2)) (.const (word 9)) (.const (word 3)))
           (.ret (.loadWord (.const (word 8)))))
     , gen "gen-sub" (.ret (.op .sub (.const (word 3)) (.const (word 5)))) ]
+  -- Bytes with the high bit set, loaded and overwritten, so that a byte is neither sign-extended
+  -- nor merged with what it replaces.
+  let high := word 0xff80000000007fff
+  let ones := word 0xffffffffffffffff
+  let bits := ([(0, false), (1, false), (6, false), (7, true), (0, true)] : List (Nat × Bool)).map
+    (fun (a, be) =>
+      { gen s!"gen-loadb-high-{a}{if be then "-be" else ""}" (.ret (.loadByte (.const (word a)))) with
+        memory := [(word 0, high)], be := be })
+  let over := ([(0, 0x00, false), (3, 0x01, false), (7, 0x00, true), (2, 0x01, true)] :
+      List (Nat × Nat × Bool)).map fun (a, b, be) =>
+    { gen s!"gen-storeb-over-{a}-{b}{if be then "-be" else ""}"
+        (.seq (.storeByte (.const (word a)) (.const (word b))) (.ret (.loadWord (.const (word 0))))) with
+      memory := [(word 0, ones)], be := be }
+  let order := order ++ bits ++ over
   memory ++ shifts ++ bitwise ++ comparisons ++ clocks ++ replies ++ arithmetic ++ novalue ++ order
 
 /-! ## Calls
@@ -489,7 +503,8 @@ private def funs : List (String × List String × PancakeProg) :=
   , ("outer", ["x"], .decCall "y" "inc" [.var "x"] (.ret (.var "y")))
   , ("slow", ["k"], .seq (.while_ (.var "k") (.assign "k" (.op .sub (.var "k") (.const (word 1)))))
       (.ret (.var "k")))
-  , ("pair", ["a", "b"], .ret (.op .sub (.var "a") (.var "b"))) ]
+  , ("pair", ["a", "b"], .ret (.op .sub (.var "a") (.var "b")))
+  , ("fails", ["x"], .assign "q" (.var "x")) ]
 
 /-- A call case: the small world of the generated ones, with the functions above. -/
 private def call (name : String) (prog : PancakeProg) : Case :=
@@ -520,6 +535,7 @@ def calls : List Case :=
   , call "call-nested" (.decCall "r" "outer" [.const (word 1)] (.ret (.var "r")))
   , { call "call-spends-the-clock" (.decCall "r" "slow" [.const (word 2)] (.ret (.var "r"))) with
       clock := 5 }
+  , call "call-body-error-empties-locals" (.decCall "r" "fails" [.const (word 1)] .skip)
   , call "call-pairs-arguments-with-parameters"
       (.decCall "r" "pair" [.const (word 5), .const (word 3)] (.ret (.var "r")))
   , { call "call-restores-a-bound-name-after-a-return"
@@ -568,7 +584,9 @@ def writes : List WriteCase :=
   , { name := "write-big-endian", memaddrs := dom, be := true, addr := word 1,
       bytes := [0xaa, 0xbb], memory := [(word 0, packed)] }
   , { name := "write-nothing", memaddrs := dom, be := false, addr := word 32,
-      bytes := [], memory := [(word 0, packed)] } ]
+      bytes := [], memory := [(word 0, packed)] }
+  , { name := "write-over-set-bits", memaddrs := dom, be := false, addr := word 2,
+      bytes := [0x00, 0x01], memory := [(word 0, word 0xffffffffffffffff)] } ]
 
 /-- What a write case leaves in memory. -/
 def runWrite (w : WriteCase) : Word → Word :=

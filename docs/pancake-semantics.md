@@ -153,8 +153,9 @@ leaves every local, the memory domain, the byte order, the base address and the
 clock as they were.
 
 The correspondence itself — that each clause above matches the HOL text — rests
-on reading the recorded files at the recorded digests and on the run below. Neither
-is a proof, and a bridge to HOL4 remains the open item.
+on reading the recorded files at the recorded digests, on the run below, and on a
+HOL copy of the model proven equal to `panSem`. The step from the Lean text to that
+copy is read and run on the corpus, not proved.
 
 ## Run by HOL4
 
@@ -168,9 +169,35 @@ answer left out. HOL's answer is a theorem about that term, printed in the dump'
 form by `backend/semantics/dnShowScript.sml`.
 
 A second run reads subtraction as addition and must disagree, and only where a
-case subtracts. The backend workflow runs the lane: 136 cases and 5 write-backs
+case subtracts. The backend workflow runs the lane: 146 cases and 6 write-backs
 agree, with each way a call of the subset ends, in its body and after it.
 
 Where `e8eca63` and `ed31510` differ, the model follows `e8eca63` and is not run
 by HOL: a shift is compared at literal distances only, and the return-shape check
 of a call, vacuous here, is `ed31510`'s.
+
+## Proved in HOL4
+
+`backend/semantics/dnModelScript.sml` is the model written again in HOL, clause by
+clause: the same constructors, helpers and matches, words as `word64`. On the
+subset with literal shift distances, the only ones the gate accepts,
+`dnModelProofScript.sml` proves it equal to `panSem`'s `evaluate` at `ed31510`,
+from every panSem state related to a model state:
+
+- `dn_set_byte_thm` and its kin: the byte helpers are HOL's own;
+- `dn_eval_thm`: an expression has the same word in both, or none in both;
+- `dn_sem_thm`: a run ends with the same result, in related states: the same
+  locals, memory, domain, byte order, base address, clock, oracle state and code.
+
+The lane builds the proof, asks the prover that it rests on no oracle, and runs
+the HOL copy on the corpus beside `panSem`: the same 146 cases and 6 write-backs
+agree. That run and reading the two side by side tie the HOL text to the Lean one;
+neither is a proof.
+
+A related state holds words only in memory and locals, finite maps of locals and
+code, and only subset bodies; its oracle is the model's on external calls and
+fails a shared-memory call.
+
+The relation leaves out `io_events`, the oracle's record of calls, which the Lean
+model does not keep, and the fields the subset never reads. The proof covers
+`Break` and `Continue`, which no subset program reaches.

@@ -287,6 +287,8 @@ class Backend(unittest.TestCase):
             base |= {"DN_BUILD_JOBS": "3", "DN_POLY_MINHEAP": "4G", "DN_TEST_CALLS": str(calls)}
             proofs, x64 = cakeml / "pancake/proofs", cakeml / "compiler/bootstrap/compilation/x64/64"
             semantics, states = cakeml / "pancake/semantics", tree / "backend/semantics/states.txt"
+            evaluated = ("dnShowTheory.uo dnModelTheory.uo dnModelShowTheory.uo dnStatesTheory.uo "
+                         "dnModelStatesTheory.uo")
             build = tree / "build"
             expected = {
                 "check_backend.sh": [
@@ -316,21 +318,19 @@ class Backend(unittest.TestCase):
                     f"Holmake -j 3 panSemTheory.uo | {semantics} | ",
                     (f"check_holmake --output {build}/semantics-holmake.log --tree {cakeml} --jobs 3 "
                      f"--built {semantics}/panSemTheory.uo --since T"),
-                    f"semantics_check write {states} {build}/semantics/dnStatesScript.sml",
-                    f"Holmake -j 1 --no_prereqs dnStatesTheory.uo | {build}/semantics | ",
+                    f"semantics_check write {states} {build}/semantics",
+                    f"Holmake -j 1 --no_prereqs dnModelProofTheory.uo {evaluated} | {build}/semantics | ",
                     (f"check_holmake --output {build}/semantics-eval.log --tree {build}/semantics --jobs 1 "
-                     f"--built {build}/semantics/dnStatesTheory.uo --since T"),
+                     f"--built {build}/semantics/dnModelStatesTheory.uo --since T"),
                     f"semantics_check compare {states} {build}/semantics-eval.log",
-                    f"semantics_check write {states} {build}/semantics-defect/dnStatesScript.sml --defect",
-                    f"Holmake -j 1 --no_prereqs dnStatesTheory.uo | {build}/semantics-defect | ",
+                    f"semantics_check write {states} {build}/semantics-defect --defect",
+                    f"Holmake -j 1 --no_prereqs {evaluated} | {build}/semantics-defect | ",
                     (f"check_holmake --output {build}/semantics-defect.log --tree {build}/semantics-defect "
-                     f"--jobs 1 --built {build}/semantics-defect/dnStatesTheory.uo --since T"),
+                     f"--jobs 1 --built {build}/semantics-defect/dnModelStatesTheory.uo --since T"),
                     f"semantics_check compare {states} {build}/semantics-defect.log --expect-differences"],
             }
             for lane, steps in expected.items():
-                # The semantics lane's answer is what the comparison reads, not a sentence the
-                # prover prints; the comparison has its own tests below.
-                for silent in (False, True) if lane != "check_semantics.sh" else (False,):
+                for silent in (False, True):
                     with self.subTest(lane=lane, silent=silent):
                         (proofs / "stale.uo").write_text("")
                         calls.write_text("")
@@ -338,7 +338,12 @@ class Backend(unittest.TestCase):
                         result = subprocess.run(["bash", f"scripts/{lane}"], cwd=tree, env=env, text=True,
                                                 capture_output=True, check=False, timeout=60)
                         made = re.sub(r"--(since|seconds) \d+", r"--\1 T", calls.read_text()).splitlines()
-                        if silent:
+                        if silent and lane == "check_semantics.sh":
+                            # The proof's theory reports on its own tags, and the lane needs that.
+                            self.assertEqual(result.returncode, 2, result.stderr)
+                            self.assertIn("did not report on its tags", result.stderr)
+                            self.assertEqual(made, steps[:len(made)])
+                        elif silent:
                             self.assertEqual(result.returncode, 1, result.stderr)
                             self.assertIn("the tag check did not report on the theorem", result.stderr)
                             self.assertEqual(made, steps[:len(made)])
@@ -450,14 +455,15 @@ class Semantics(unittest.TestCase):
 
     @staticmethod
     def log(cases: list[dict[str, str]]) -> str:
-        """What the theory prints when HOL agrees with the model on every case."""
+        """What both theories print when panSem and dnModel agree with the model on every case."""
         out = []
-        for case in cases:
-            if "WRITE" in case:
-                out += [f"DNCASE WRITE {case['WRITE']}", f"WRESULT {case['WRESULT']}"]
-            else:
-                out += [f"DNCASE CASE {case['CASE']}", *(f"{f} {case[f]}" for f in semantics_check.FIELDS)]
-            out.append("DNEND")
+        for mark in (semantics_check.PANSEM, semantics_check.MODEL):
+            for case in cases:
+                if "WRITE" in case:
+                    out += [f"{mark} WRITE {case['WRITE']}", f"WRESULT {case['WRESULT']}"]
+                else:
+                    out += [f"{mark} CASE {case['CASE']}", *(f"{f} {case[f]}" for f in semantics_check.FIELDS)]
+                out.append("DNEND")
         return "<<HOL message>>\n" + "\n".join(out) + "\nExporting theory\n"
 
     @staticmethod
@@ -483,27 +489,34 @@ class Semantics(unittest.TestCase):
         answers = (*semantics_check.FIELDS, "WRESULT")
         for case in self.corpus:
             inputs = semantics_check.WRITE_INPUTS if "WRITE" in case else semantics_check.INPUTS
-            term = semantics_check.case_term(case, semantics_check.BINOPS)
-            blanked = {k: ("" if k in answers else v) for k, v in case.items()}
-            self.assertEqual(semantics_check.case_term(blanked, semantics_check.BINOPS), term)
-            for field in inputs:
-                with self.subTest(case=case.get("CASE") or case.get("WRITE"), field=field):
-                    moved = {**case, field: self.moved(case, field)}
-                    self.assertNotEqual(semantics_check.case_term(moved, semantics_check.BINOPS), term)
+            for convert, ops in ((semantics_check.case_term, semantics_check.BINOPS),
+                                 (semantics_check.model_case_term, semantics_check.MODEL_BINOPS)):
+                term = convert(case, ops)
+                blanked = {k: ("" if k in answers else v) for k, v in case.items()}
+                self.assertEqual(convert(blanked, ops), term)
+                for field in inputs:
+                    with self.subTest(case=case.get("CASE") or case.get("WRITE"), field=field, by=convert.__name__):
+                        moved = {**case, field: self.moved(case, field)}
+                        self.assertNotEqual(convert(moved, ops), term)
 
     def test_every_case_is_evaluated_once(self) -> None:
-        script = semantics_check.script(self.corpus, semantics_check.BINOPS)
-        keys = re.findall(r'^val _ = answer \("([^"]*)"', script, re.MULTILINE)
-        self.assertEqual(len(keys), len(self.corpus))
-        self.assertEqual(len(set(keys)), len(keys))
-        # The corpus reaches every statement and both kinds of case, calls among them.
-        for form in ("DecCall", "ExtCall", "While", "StoreByte", "write_bytearray", "Oracle_final"):
-            self.assertIn(form, script)
-        # The defect changes what is evaluated, and only where subtraction is.
-        defect = semantics_check.script(self.corpus, semantics_check.DEFECT)
-        self.assertNotEqual(defect, script)
-        self.assertEqual(defect.replace("asm$Add", "asm$Sub").count("asm$Sub"),
-                         script.replace("asm$Add", "asm$Sub").count("asm$Sub"))
+        for model, ops, defect_ops, forms, add, sub in (
+                (False, semantics_check.BINOPS, semantics_check.DEFECT,
+                 ("DecCall", "ExtCall", "While", "StoreByte", "write_bytearray", "Oracle_final"), "asm$Add", "asm$Sub"),
+                (True, semantics_check.MODEL_BINOPS, semantics_check.MODEL_DEFECT,
+                 ("PDecCall", "PExtCall", "PWhile", "PStoreByte", "dn_write_byte_array", "OFinal"), "BAdd", "BSub")):
+            with self.subTest(model=model):
+                script = semantics_check.script(self.corpus, ops, model=model)
+                keys = re.findall(r'^val _ = answer \("([^"]*)"', script, re.MULTILINE)
+                self.assertEqual(len(keys), len(self.corpus))
+                self.assertEqual(len(set(keys)), len(keys))
+                # The corpus reaches every statement and both kinds of case, calls among them.
+                for form in forms:
+                    self.assertIn(form, script)
+                # The defect changes what is evaluated, and only where subtraction is.
+                defect = semantics_check.script(self.corpus, defect_ops, model=model)
+                self.assertNotEqual(defect, script)
+                self.assertEqual(defect.replace(add, sub).count(sub), script.replace(add, sub).count(sub))
 
     def test_comparison_refuses_each_disagreement(self) -> None:
         agreeing = self.log(self.corpus)
@@ -523,6 +536,34 @@ class Semantics(unittest.TestCase):
         with self.assertRaises(SystemExit):
             semantics_check.differences(self.corpus, agreeing + block)
 
+    def test_compare_reads_both_theories(self) -> None:
+        """A case wrong in either theory's answers fails the comparison, and names that theory."""
+        agreeing = self.log(self.corpus)
+        first = next(c for c in self.corpus if "CASE" in c)
+        with tempfile.TemporaryDirectory() as temp:
+            corpus, log = Path(temp) / "states.txt", Path(temp) / "log"
+            corpus.write_text((ROOT / "backend/semantics/states.txt").read_text())
+
+            def compare(text: str) -> subprocess.CompletedProcess[str]:
+                log.write_text(text)
+                return subprocess.run(["python3", "-P", str(ROOT / "scripts/semantics_check.py"), "compare",
+                                       str(corpus), str(log)], capture_output=True, text=True, check=False)
+
+            self.assertEqual(compare(agreeing).returncode, 0)
+            for mark, who in ((semantics_check.PANSEM, "panSem's evaluate"),
+                              (semantics_check.MODEL, "dnModel's dn_sem")):
+                key = f"{mark} CASE {first['CASE']}\n"
+                start = agreeing.index(key)
+                block = agreeing[start:agreeing.index("DNEND\n", start) + 6]
+                wrong = agreeing.replace(key + f"RESULT {first['RESULT']}", key + "RESULT unreachable", 1)
+                for what, text in {"wrong": wrong, "missing": agreeing.replace(block, ""),
+                                   "twice": agreeing + block}.items():
+                    with self.subTest(mark=mark, what=what):
+                        result = compare(text)
+                        self.assertEqual(result.returncode, 1, result.stdout)
+                        if what != "twice":
+                            self.assertIn(who, result.stderr)
+
     def test_defect_has_to_show_where_subtraction_is(self) -> None:
         agreeing = self.log(self.corpus)
 
@@ -539,6 +580,8 @@ class Semantics(unittest.TestCase):
         subtracting = next(c for c in states if "(sub " in c["PROG"])
         other = next(c for c in states if "(sub " not in c["PROG"] + c["CODE"])
         self.assertIsNone(semantics_check.defect_unseen(self.corpus, changed(subtracting)))
+        # The changes above are to the panSem theory's answers; dnModel's are untouched.
+        self.assertIsNotNone(semantics_check.defect_unseen(self.corpus, changed(subtracting), semantics_check.MODEL))
         for what, log in {"no difference": agreeing, "a difference without subtraction": changed(other),
                           "a case unanswered": dropped(subtracting)}.items():
             with self.subTest(what=what):

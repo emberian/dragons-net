@@ -176,34 +176,155 @@ def case_term(case: dict[str, str], ops: dict[str, str]) -> tuple[str, str]:
     return ("CASE " + case["CASE"], shown)
 
 
-PREAMBLE = """(* Written by scripts/semantics_check.py from backend/semantics/states.txt. *)
-open HolKernel boolLib bossLib wordsLib panLangTheory panSemTheory ffiTheory dnShowTheory;
+# The same cases as terms of dnModel, the Lean model written in HOL, which dnModelProof proves
+# equal to panSem's evaluate: this run shows the transliteration answers as the Lean model does.
+MODEL_BINOPS = {"add": "BAdd", "and": "BAnd", "sub": "BSub", "xor": "BXor", "or": "BOr"}
+MODEL_DEFECT = {**MODEL_BINOPS, "sub": "BAdd"}
+MODEL_CMPS = {"less": "CLess", "equal": "CEqual", "notless": "CNotLess"}
+MODEL_UNARY = {"loadb": "ELoadByte", "loadw": "ELoadWord"}
+MODEL_BINARY = {"mul": "EMul", "shr": "EShiftR", "shl": "EShiftL"}
 
-val _ = new_theory "dnStates";
+
+def hol_string(x: str) -> str:
+    return f'"{plain(x)}"'
+
+
+def model_exp(e: Any, ops: dict[str, str]) -> str:
+    head = e[0]
+    if head == "const":
+        return f"(EConst {word(e[1])})"
+    if head == "var":
+        return f"(EVar {hol_string(e[1])})"
+    if head == "base":
+        return "EBase"
+    if head in ops:
+        return f"(EOp {ops[head]} {model_exp(e[1], ops)} {model_exp(e[2], ops)})"
+    if head in MODEL_BINARY:
+        return f"({MODEL_BINARY[head]} {model_exp(e[1], ops)} {model_exp(e[2], ops)})"
+    if head in MODEL_CMPS:
+        return f"(ECmp {MODEL_CMPS[head]} {model_exp(e[1], ops)} {model_exp(e[2], ops)})"
+    if head in MODEL_UNARY:
+        return f"({MODEL_UNARY[head]} {model_exp(e[1], ops)})"
+    raise SystemExit(f"semantics check: no dnModel form for the expression {e}")
+
+
+def model_prog(p: Any, ops: dict[str, str]) -> str:
+    head = p[0]
+    if head == "skip":
+        return "PSkip"
+    if head == "dec":
+        return f"(PDec {hol_string(p[1])} {model_exp(p[2], ops)} {model_prog(p[3], ops)})"
+    if head == "assign":
+        return f"(PAssign {hol_string(p[1])} {model_exp(p[2], ops)})"
+    if head in ("store", "storeb"):
+        return f"({'PStore' if head == 'store' else 'PStoreByte'} {model_exp(p[1], ops)} {model_exp(p[2], ops)})"
+    if head == "extcall":
+        args = " ".join(model_exp(a, ops) for a in p[2:6])
+        return f"(PExtCall {hol_string('' if p[1] == '_' else p[1])} {args})"
+    if head == "seq":
+        return f"(PSeq {model_prog(p[1], ops)} {model_prog(p[2], ops)})"
+    if head == "if":
+        return f"(PCond {model_exp(p[1], ops)} {model_prog(p[2], ops)} {model_prog(p[3], ops)})"
+    if head == "while":
+        return f"(PWhile {model_exp(p[1], ops)} {model_prog(p[2], ops)})"
+    if head == "ret":
+        return f"(PRet {model_exp(p[1], ops)})"
+    if head == "deccall":
+        args = "; ".join(model_exp(a, ops) for a in p[3])
+        args = f"[{args}]" if p[3] else "([] : dn_exp list)"
+        return f"(PDecCall {hol_string(p[1])} {hol_string(p[2])} {args} {model_prog(p[4], ops)})"
+    raise SystemExit(f"semantics check: no dnModel form for the statement {p}")
+
+
+def model_oracle(answers: list[str]) -> str:
+    """`oracleOf`: the world is the call count and the record of every call it answered."""
+    record = 'name ++ ":" ++ dn_hexs conf ++ ":" ++ dn_hexs arr'
+    body = "ORet (i + 1, trace ++ [rec]) arr"
+    for k in reversed(range(len(answers))):
+        a = answers[k]
+        if a.startswith("ret:"):
+            reply = f"ORet (i + 1, trace ++ [rec]) {bytes_of(a[4:])}"
+        elif a == "short":
+            reply = "ORet (i + 1, trace ++ [rec]) (DROP 1 arr)"
+        elif a in ("final:failed", "final:diverged"):
+            reply = f"OFinal {'OFailed' if a == 'final:failed' else 'ODiverged'}"
+        else:
+            raise SystemExit(f"semantics check: no dnModel form for the answer {a}")
+        body = f"(if i = {k} then {reply} else {body})"
+    return (f"(\\((i : num), (trace : string list)) (name : string) (conf : word8 list) (arr : word8 list)."
+            f" let rec = {record} in {body})")
+
+
+def predicate(text: str) -> str:
+    """The domain as dnModel reads it: a predicate on addresses, as Lean's `memaddrs`."""
+    dom = [word(a) for a in text.split(",") if a]
+    return "(\\a. " + (" \\/ ".join(f"a = {a}" for a in dom) if dom else "F") + ")"
+
+
+def model_case_term(case: dict[str, str], ops: dict[str, str]) -> tuple[str, str]:
+    """The key of a case and the dnModel term whose value is its printed answer."""
+    if "WRITE" in case:
+        dom_set, dom_list = predicate(case["WDOM"]), domain(case["WDOM"])[1]
+        be = "T" if case["WBE"] == "1" else "F"
+        written = (f"dn_model_written {dom_list} (dn_write_byte_array {dom_set} {be} {word(case['WADDR'])}"
+                   f" {bytes_of(case['WBYTES'])} {memory(case['WMEM'])})")
+        return ("WRITE " + case["WRITE"], written)
+    program, _ = parse_sexp(case["PROG"])
+    functions, _ = parse_sexp(case["CODE"])
+    dom_set, dom_list = predicate(case["DOM"]), domain(case["DOM"])[1]
+    locals_ = "NONE"
+    for k, v in reversed(pairs(case["LOCALS"])):
+        locals_ = f"(if k = {hol_string(k)} then SOME {word(v)} else {locals_})"
+    code = "NONE"
+    for f, params, body in reversed(functions):
+        names = "[" + "; ".join(hol_string(x) for x in params) + "]" if params else "([] : string list)"
+        code = f"(if f = {hol_string(f)} then SOME ({names}, {model_prog(body, ops)}) else {code})"
+    answers = [a for a in case["ANSWERS"].split(";") if a]
+    state = (f"<| locals := (\\k. {locals_}); memory := {memory(case['MEM'])}; memaddrs := {dom_set};"
+             f" be := {'T' if case['BE'] == '1' else 'F'}; clock := {int(case['CLOCK'])};"
+             f" ffi := ((0 : num), ([] : string list)); baseAddr := {word(case['BASE'])};"
+             f" code := (\\f. {code}) |>")
+    names = "[" + "; ".join(hol_string(n) for n in case["NAMES"].split(",") if n) + "]"
+    if names == "[]":
+        names = "([] : string list)"
+    shown = (f"dn_model_show {names} {dom_list} (dn_sem {model_oracle(answers)} {model_prog(program, ops)}"
+             f" ({state} : (num # string list) dn_state))")
+    return ("CASE " + case["CASE"], shown)
+
+
+PREAMBLE = """(* Written by scripts/semantics_check.py from backend/semantics/states.txt. *)
+open HolKernel boolLib bossLib wordsLib panLangTheory panSemTheory ffiTheory dnShowTheory THEORIES;
+
+val _ = new_theory "NAME";
 
 (* A term that does not reduce to a string prints as such, and is compared and refused. *)
 fun answer (key, tm) =
   let
     val text = stringSyntax.fromHOLstring (rhs (concl (EVAL tm))) handle HOL_ERR _ => "UNREDUCED"
   in
-    print ("DNCASE " ^ key ^ "\\n" ^ text ^ "\\nDNEND\\n")
+    print ("MARK " ^ key ^ "\\n" ^ text ^ "\\nDNEND\\n")
   end;
 """
+# Each theory prints under its own word, so that one build log carries both.
+PANSEM, MODEL = "DNCASE", "DNMODEL"
 
 
-def script(cases: list[dict[str, str]], ops: dict[str, str]) -> str:
-    lines = [PREAMBLE]
+def script(cases: list[dict[str, str]], ops: dict[str, str], model: bool = False) -> str:
+    """The theory that evaluates every case: by panSem, or by dnModel."""
+    name, mark, extra = ("dnModelStates", MODEL, "dnModelTheory dnModelShowTheory") if model else (
+        "dnStates", PANSEM, "")
+    lines = [PREAMBLE.replace("NAME", name).replace("MARK", mark).replace(" THEORIES", (" " + extra) if extra else "")]
     for case in cases:
-        key, term = case_term(case, ops)
+        key, term = (model_case_term if model else case_term)(case, ops)
         lines.append(f'val _ = answer ("{plain(key, r"[A-Za-z0-9_ -]+")}", ``{term}``);\n')
     lines.append("val _ = export_theory ();\n")
     return "".join(lines)
 
 
-def answered(log: str) -> dict[str, list[str]]:
-    """What the theory printed, by case; a case printed twice is refused."""
+def answered(log: str, mark: str = PANSEM) -> dict[str, list[str]]:
+    """What a theory printed under its word, by case; a case printed twice is refused."""
     out: dict[str, list[str]] = {}
-    for match in re.finditer(r"^DNCASE (.*)\n((?:(?!DNEND).*\n)*?)DNEND$", log, re.MULTILINE):
+    for match in re.finditer(rf"^{mark} (.*)\n((?:(?!DNEND).*\n)*?)DNEND$", log, re.MULTILINE):
         key = match.group(1)
         if key in out:
             raise SystemExit(f"semantics check: {key} was printed twice")
@@ -211,9 +332,9 @@ def answered(log: str) -> dict[str, list[str]]:
     return out
 
 
-def differences(cases: list[dict[str, str]], log: str) -> list[tuple[str, str]]:
+def differences(cases: list[dict[str, str]], log: str, mark: str = PANSEM) -> list[tuple[str, str]]:
     """Every case whose fields HOL printed differently, or did not print, with what is wrong."""
-    hol = answered(log)
+    hol = answered(log, mark)
     found = []
     keys = set()
     for case in cases:
@@ -232,12 +353,12 @@ def differences(cases: list[dict[str, str]], log: str) -> list[tuple[str, str]]:
     return found
 
 
-def defect_unseen(cases: list[dict[str, str]], log: str) -> str | None:
+def defect_unseen(cases: list[dict[str, str]], log: str, mark: str = PANSEM) -> str | None:
     """Why the planted defect's run does not show the comparison working, or None if it does: HOL
     answered every case, some differ, and each that differs has a subtraction to differ by."""
-    found = differences(cases, log)
+    found = differences(cases, log, mark)
     if not found:
-        return "the planted defect changed no answer"
+        return f"the planted defect changed no answer of {mark}"
     subtracting = {"CASE " + c["CASE"] for c in cases if "CASE" in c and "(sub " in c["PROG"] + c["CODE"]}
     for key, problem in found:
         # A theory that answered nothing for a case would differ there and show nothing.
@@ -261,38 +382,45 @@ def corpus(path: Path) -> list[dict[str, str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    write = sub.add_parser("write", help="write the HOL theory that evaluates every case")
+    write = sub.add_parser("write", help="write the HOL theories that evaluate every case")
     write.add_argument("corpus", type=Path)
-    write.add_argument("script", type=Path)
+    write.add_argument("dir", type=Path, help="where dnStatesScript.sml and dnModelStatesScript.sml go")
     write.add_argument("--defect", action="store_true", help="read subtraction as addition")
-    compare = sub.add_parser("compare", help="compare what the theory printed with the model")
+    compare = sub.add_parser("compare", help="compare what the theories printed with the model")
     compare.add_argument("corpus", type=Path)
     compare.add_argument("log", type=Path)
     compare.add_argument("--expect-differences", action="store_true",
-                         help="succeed only if some case differs: the planted defect's run")
+                         help="succeed only if the planted defect is seen: its run")
     args = parser.parse_args()
     cases = corpus(args.corpus)
     if args.command == "write":
-        args.script.write_text(script(cases, DEFECT if args.defect else BINOPS))
+        (args.dir / "dnStatesScript.sml").write_text(script(cases, DEFECT if args.defect else BINOPS))
+        (args.dir / "dnModelStatesScript.sml").write_text(
+            script(cases, MODEL_DEFECT if args.defect else MODEL_BINOPS, model=True))
         return 0
     log = args.log.read_text(errors="replace")
-    found = differences(cases, log)
     states = sum(1 for c in cases if "CASE" in c)
     if args.expect_differences:
-        unseen = defect_unseen(cases, log)
-        if unseen is not None:
-            print(f"DN SEMANTICS: {unseen}; the comparison is not shown to compare", file=sys.stderr)
-            return 1
-        print(f"DN SEMANTICS: the planted defect is seen in {len(found)} cases, each with a subtraction")
+        for mark in (PANSEM, MODEL):
+            unseen = defect_unseen(cases, log, mark)
+            if unseen is not None:
+                print(f"DN SEMANTICS: {unseen}; the comparison is not shown to compare", file=sys.stderr)
+                return 1
+        print("DN SEMANTICS: the planted defect is seen by panSem and by dnModel, each time where a case"
+              " subtracts")
         return 0
-    for key, problem in found:
-        print(f"DN SEMANTICS: {key}: {problem}", file=sys.stderr)
-    if found:
-        print(f"DN SEMANTICS: {len(found)} of {len(cases)} cases disagree with panSem", file=sys.stderr)
-        return 1
-    print(f"DN SEMANTICS: {states} cases and {len(cases) - states} write-backs agree with panSem's evaluate"
-          " on every field")
-    return 0
+    failed = False
+    for mark, what in ((PANSEM, "panSem's evaluate"), (MODEL, "dnModel's dn_sem")):
+        found = differences(cases, log, mark)
+        for key, problem in found:
+            print(f"DN SEMANTICS: {what}: {key}: {problem}", file=sys.stderr)
+        if found:
+            print(f"DN SEMANTICS: {len(found)} of {len(cases)} cases disagree with {what}", file=sys.stderr)
+            failed = True
+        else:
+            print(f"DN SEMANTICS: {states} cases and {len(cases) - states} write-backs agree with {what}"
+                  " on every field")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

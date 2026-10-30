@@ -8,7 +8,8 @@ name: backend
 # chain, from a clean tree up to `pan_to_target_compile_semantics` and its tag check, took 46
 # minutes on twelve jobs of a fast machine, so the weekly run builds all of it; a change to the
 # lane itself builds the narrow target the patch touches, which took three minutes on two.
-# Before the proof, the Lean model's state corpus runs through panSem (scripts/check_semantics.sh).
+# Before the proof, scripts/check_semantics.sh proves the HOL copy of the Lean model equal to panSem
+# and runs the state corpus through both.
 on:
   schedule:
     - cron: "23 5 * * 0"

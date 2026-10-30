@@ -2202,9 +2202,180 @@ FTRACE
 FCLOCK 4
 FBASE 16
 END
+CASE gen-loadb-high-0
+PROG (ret (loadb (const 0)))
+CODE ()
+LOCALS n=2
+MEM 0=18410715276690620415,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:255
+FLOCALS n=
+FMEM 0=18410715276690620415,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-loadb-high-1
+PROG (ret (loadb (const 1)))
+CODE ()
+LOCALS n=2
+MEM 0=18410715276690620415,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:127
+FLOCALS n=
+FMEM 0=18410715276690620415,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-loadb-high-6
+PROG (ret (loadb (const 6)))
+CODE ()
+LOCALS n=2
+MEM 0=18410715276690620415,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:128
+FLOCALS n=
+FMEM 0=18410715276690620415,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-loadb-high-7-be
+PROG (ret (loadb (const 7)))
+CODE ()
+LOCALS n=2
+MEM 0=18410715276690620415,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 1
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:255
+FLOCALS n=
+FMEM 0=18410715276690620415,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-loadb-high-0-be
+PROG (ret (loadb (const 0)))
+CODE ()
+LOCALS n=2
+MEM 0=18410715276690620415,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 1
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:255
+FLOCALS n=
+FMEM 0=18410715276690620415,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-storeb-over-0-0
+PROG (seq (storeb (const 0) (const 0)) (ret (loadw (const 0))))
+CODE ()
+LOCALS n=2
+MEM 0=18446744073709551615,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:18446744073709551360
+FLOCALS n=
+FMEM 0=18446744073709551360,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-storeb-over-3-1
+PROG (seq (storeb (const 3) (const 1)) (ret (loadw (const 0))))
+CODE ()
+LOCALS n=2
+MEM 0=18446744073709551615,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:18446744069448138751
+FLOCALS n=
+FMEM 0=18446744069448138751,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-storeb-over-7-0-be
+PROG (seq (storeb (const 7) (const 0)) (ret (loadw (const 0))))
+CODE ()
+LOCALS n=2
+MEM 0=18446744073709551615,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 1
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:18446744073709551360
+FLOCALS n=
+FMEM 0=18446744073709551360,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
+CASE gen-storeb-over-2-1-be
+PROG (seq (storeb (const 2) (const 1)) (ret (loadw (const 0))))
+CODE ()
+LOCALS n=2
+MEM 0=18446744073709551615,8=0,16=0,24=0
+DOM 0,8,16,24
+BE 1
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n
+RESULT return:18446464797756096511
+FLOCALS n=
+FMEM 0=18446464797756096511,8=0,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 4
+FBASE 16
+END
 CASE call-returns
 PROG (deccall r inc ((const 41)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2212,9 +2383,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:42
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2223,7 +2394,7 @@ FBASE 16
 END
 CASE call-restores-the-result-name
 PROG (seq (deccall r inc ((const 1)) (skip)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2,r=7
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2231,9 +2402,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:7
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2242,7 +2413,7 @@ FBASE 16
 END
 CASE call-unbinds-a-fresh-result-name
 PROG (deccall r inc ((const 1)) (assign q (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2261,7 +2432,7 @@ FBASE 16
 END
 CASE call-arity
 PROG (deccall r inc ((const 1) (const 2)) (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2269,9 +2440,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2280,7 +2451,7 @@ FBASE 16
 END
 CASE call-unknown
 PROG (deccall r none () (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2288,9 +2459,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2299,7 +2470,7 @@ FBASE 16
 END
 CASE call-repeated-parameter
 PROG (deccall r twice ((const 1) (const 2)) (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2307,9 +2478,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=2,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2318,7 +2489,7 @@ FBASE 16
 END
 CASE call-argument-no-value
 PROG (deccall r inc ((var missing)) (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2326,9 +2497,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,missing,x,t,a,y,k,b
+NAMES n,r,missing,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=2,r=,missing=,x=,t=,a=,y=,k=,b=
+FLOCALS n=2,r=,missing=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2337,7 +2508,7 @@ FBASE 16
 END
 CASE call-falls-off-the-end
 PROG (deccall r loose () (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2345,9 +2516,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2356,7 +2527,7 @@ FBASE 16
 END
 CASE call-falls-off-keeps-the-body-locals
 PROG (deccall r leaves ((const 1)) (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2364,9 +2535,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=,r=,x=1,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=1,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2375,7 +2546,7 @@ FBASE 16
 END
 CASE call-no-clock
 PROG (deccall r inc ((const 1)) (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2383,9 +2554,9 @@ BE 0
 CLOCK 0
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT timeout
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2394,7 +2565,7 @@ FBASE 16
 END
 CASE call-body-times-out
 PROG (deccall r spin () (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2402,9 +2573,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT timeout
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2413,7 +2584,7 @@ FBASE 16
 END
 CASE call-body-ends-the-run
 PROG (deccall r halt () (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2421,9 +2592,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS final:failed
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT final:halt:-:00:failed
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2432,7 +2603,7 @@ FBASE 16
 END
 CASE call-body-sees-only-its-parameters
 PROG (deccall r peek () (skip))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2440,9 +2611,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT error
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2451,7 +2622,7 @@ FBASE 16
 END
 CASE call-shares-memory
 PROG (deccall r poke ((const 8)) (ret (loadw (const 8))))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2459,9 +2630,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:7
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=7,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2470,7 +2641,7 @@ FBASE 16
 END
 CASE call-nested
 PROG (deccall r outer ((const 1)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2478,9 +2649,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:2
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2489,7 +2660,7 @@ FBASE 16
 END
 CASE call-spends-the-clock
 PROG (deccall r slow ((const 2)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2497,18 +2668,18 @@ BE 0
 CLOCK 5
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:0
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
 FCLOCK 2
 FBASE 16
 END
-CASE call-pairs-arguments-with-parameters
-PROG (deccall r pair ((const 5) (const 3)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CASE call-body-error-empties-locals
+PROG (deccall r fails ((const 1)) (skip))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2516,9 +2687,28 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
+RESULT error
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
+FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
+FCALLS 0
+FTRACE
+FCLOCK 3
+FBASE 16
+END
+CASE call-pairs-arguments-with-parameters
+PROG (deccall r pair ((const 5) (const 3)) (ret (var r)))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
+LOCALS n=2
+MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
+DOM 0,8,16,24
+BE 0
+CLOCK 4
+BASE 16
+ANSWERS
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:2
-FLOCALS n=,r=,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2527,7 +2717,7 @@ FBASE 16
 END
 CASE call-restores-a-bound-name-after-a-return
 PROG (deccall r inc ((const 1)) (ret (var r)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2,r=7
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2535,9 +2725,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT return:2
-FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2546,7 +2736,7 @@ FBASE 16
 END
 CASE call-continuation-times-out
 PROG (deccall r inc ((const 1)) (while (const 1) (skip)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2,r=7
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2554,9 +2744,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT timeout
-FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2565,7 +2755,7 @@ FBASE 16
 END
 CASE call-continuation-ends-the-run
 PROG (deccall r inc ((const 1)) (extcall halt (const 0) (const 0) (const 0) (const 1)))
-CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))))
+CODE ((inc (x) (ret (add (var x) (const 1)))) (loose () (skip)) (twice (x x) (ret (var x))) (leaves (x) (dec t (const 5) (skip))) (spin () (while (const 1) (skip))) (halt () (extcall halt (const 0) (const 0) (const 0) (const 1))) (peek () (ret (var n))) (poke (a) (seq (store (var a) (const 7)) (ret (const 0)))) (outer (x) (deccall y inc ((var x)) (ret (var y)))) (slow (k) (seq (while (var k) (assign k (sub (var k) (const 1)))) (ret (var k)))) (pair (a b) (ret (sub (var a) (var b)))) (fails (x) (assign q (var x))))
 LOCALS n=2,r=7
 MEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 DOM 0,8,16,24
@@ -2573,9 +2763,9 @@ BE 0
 CLOCK 4
 BASE 16
 ANSWERS final:diverged
-NAMES n,r,x,t,a,y,k,b
+NAMES n,r,x,t,a,y,k,b,q
 RESULT final:halt:-:00:diverged
-FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=
+FLOCALS n=,r=7,x=,t=,a=,y=,k=,b=,q=
 FMEM 0=506097522914230528,8=506097522914230528,16=0,24=0
 FCALLS 0
 FTRACE
@@ -2621,4 +2811,12 @@ WADDR 32
 WBYTES -
 WMEM 0=506097522914230528,8=0,16=0,24=0
 WRESULT 0=506097522914230528,8=0,16=0,24=0
+END
+WRITE write-over-set-bits
+WDOM 0,8,16,24
+WBE 0
+WADDR 2
+WBYTES 0001
+WMEM 0=18446744073709551615,8=0,16=0,24=0
+WRESULT 0=18446744069431427071,8=0,16=0,24=0
 END
