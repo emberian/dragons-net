@@ -1935,8 +1935,10 @@ def served_handed(b: Build, proc: subprocess.Popen[str], wanted: int) -> str:
         raise LaneError(f"the server said port {port}, not the handed socket's {wanted}")
     with socket.create_connection(("127.0.0.1", port), timeout=b.timeout) as c:
         read_expected(c, GREETING, "the greeting on the handed socket")
+    # Standard output has its reader: wait, then take what stderr holds.
     proc.send_signal(signal.SIGTERM)
-    return proc.communicate(timeout=b.timeout)[1]
+    proc.wait(timeout=b.timeout)
+    return Server.pipe(proc.stderr).read()
 
 
 def socket_handed(b: Build) -> str:
@@ -1956,7 +1958,7 @@ def socket_handed(b: Build) -> str:
     with none:
         line = lanes.Lines(Server.pipe(none.stdout)).get(b.timeout)
         none.send_signal(signal.SIGTERM)
-        none.communicate(timeout=b.timeout)
+        none.wait(timeout=b.timeout)
     if line is None or int(json.loads(line)["port"]) == other or none.returncode != 0:
         raise LaneError(f"with LISTEN_FDS 0 the server said {line!r} and ended with status {none.returncode}")
     with tempfile.TemporaryDirectory() as temp:

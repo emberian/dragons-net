@@ -630,6 +630,13 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     for name, command in FIXTURES:
         data = (supplied / name).read_bytes() if supplied else lanes.emit(command, timeout=60).encode()
         (OUT / name).write_bytes(data)
+    # The copy kernel run natively is the one a contributor's input gives, the example of
+    # docs/compiler-input.md, which has to print as the built-in kernel too.
+    if not supplied:
+        given = lanes.emit("compile", str(ROOT / "examples/echo.json"), timeout=60)
+        if given != (OUT / "echo.pnk").read_text():
+            raise LaneError("examples/echo.json does not print as the built-in copy kernel")
+        (OUT / "echo.pnk").write_text(given)
     measured = differential(cake)
     render = build(cake, "render", NATIVE / "render_check.c")
     measured.update(measured_by(render))

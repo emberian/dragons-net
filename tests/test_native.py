@@ -112,6 +112,50 @@ class Emitted(unittest.TestCase):
             result = subprocess.run([str(DN_COMPILER), "unknown"], capture_output=True, check=False)
             self.assertEqual(result.returncode, 2)
 
+    def compiled(self, text: str | bytes) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "input.json")
+            path.write_bytes(text if isinstance(text, bytes) else text.encode())
+            return subprocess.run([str(DN_COMPILER), "compile", str(path)], text=True, capture_output=True,
+                                  check=False, timeout=60)
+
+    def test_compile_prints_the_examples_as_the_built_in_programs(self) -> None:
+        for name in ("region", "echo"):
+            done = subprocess.run([str(DN_COMPILER), "compile", str(ROOT / f"examples/{name}.json")], text=True,
+                                  capture_output=True, check=True, timeout=60)
+            self.assertEqual(done.stdout, run([str(DN_COMPILER), f"emit-{name}"]).stdout, name)
+
+    def test_compile_refuses_with_stable_codes(self) -> None:
+        def program(body: list[Any], params: list[str] | None = None, name: str = "dn_x", **more: Any) -> str:
+            function = {"name": name, "params": ["a"] if params is None else params, "body": body}
+            return json.dumps({"dn_input": 1, "function": function, **more})
+
+        deep: Any = "a"
+        for _ in range(300):
+            deep = ["+", deep, 1]
+        cases: list[tuple[str | bytes, str, int]] = [
+            ("{", "DN0001", 3),
+            (b"\xff\xfe", "DN0001", 3),
+            (json.dumps({"dn_input": 2, "function": {}}), "DN0002", 3),
+            ('{"dn_input": 1.0, "function": {}}', "DN0002", 3),
+            ('{"dn_input": 1e1000000, "function": {}}', "DN0002", 3),
+            (" " * (1 << 20) + "{}", "DN0003", 3),
+            (program([["return", deep]]), "DN0004", 3),
+            (program([["return", "a"]], colour="blue"), "DN0005", 3),
+            (json.dumps({"dn_input": 1, "function": {"name": "dn_x", "params": [], "body": [], "spare": 1}}),
+             "DN0005", 3),
+            (program([["jump", "a"]]), "DN0006", 3),
+            (json.dumps({"function": {}}), "DN0006", 3),
+            (program([["return", "a"]], name="x"), "DN0101", 1),
+            (program([["return", "a"]], params=["a", "a"]), "DN0105", 1),
+            (program([["return", "b"]]), "DN0107", 1),
+            (program([["set", "a", 1]]), "DN0122", 1),
+        ]
+        for text, code, status in cases:
+            done = self.compiled(text)
+            self.assertEqual((done.returncode, done.stdout), (status, ""), (code, done.stderr))
+            self.assertTrue(done.stderr.startswith(f"error[{code}]: "), (code, done.stderr))
+
     def test_keyword_table_is_generated_from_the_pinned_lexers(self) -> None:
         lock = json.loads((ROOT / "backend/lock.json").read_text())
         recorded = {source["revision"] for source in lock["lexer_sources"]}
