@@ -48,7 +48,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | Nested memory expressions | Four byte/word load nestings through the real compiler | Inner-byte absolute pointers are model cases only |
 | Control-flow differential tests | 384 cases over two workloads of branches, loops and returns | Two workloads |
 | Generated programs | 300 generated programs, some with functions of their own, 1,200 calls from a fixed seed, each held by the model, an independent interpreter and the compiled code ([details](#generated-programs)) | Sampling; no program faults |
-| Printed source against the parser | 241 printed programs, each read by the pinned parser as exactly its lowering, and 320 cells of the precedence table ([details](#printed-source-against-the-parser)) | Checked per program, not proved |
+| Printed source against the parser | 245 printed programs, each read by the pinned parser as exactly its lowering, and 320 cells of the precedence table ([details](#printed-source-against-the-parser)) | Checked per program, not proved |
 | Three-way comparison | Python reference, Lean model and native code agree on 35,520 cases | Shared assumptions about word semantics |
 | ABI adapter | Full-word output slots in the model and natively, with guard words | Pointer validity is the caller's |
 | Region kernel | 99,240 native/reference comparisons | The caller reports the real allocation |
@@ -94,6 +94,8 @@ A program may call two functions of its own, of up to three parameters: data and
 ### Printed source against the parser
 
 `cake --explore` reads each program as its lowering in canonical form, helpers included, and the parser the precedence table as written, of which `printed_well` relies on 62; `--bootstrapped` checks the bootstrapped compiler too.
+
+`scripts/check_parse.sh`, in the backend workflow, evaluates the parser of the CakeML source, `parse_topdecs_to_ast`, on each program's text in HOL4, a theory and a theorem a program, and requires the tree to be the lowering in the same canonical form; a subtraction regrouped is seen.
 
 ### Reply table
 

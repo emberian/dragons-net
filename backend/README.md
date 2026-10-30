@@ -47,6 +47,8 @@ Rebuilding the chain establishes the compiler's correctness theorem for the patc
 
 It also builds `semantics/dnModelProofScript.sml`, which proves the model written again in HOL equal to `evaluate`, and runs that copy on the same cases.
 
+`scripts/check_parse.sh` builds the Pancake parser of the same tree and, for each program `dn-compiler emit-trees` prints, a theory outside both trees (`parser/`) that evaluates `parse_topdecs_to_ast` on the program's text and saves the equation. The tree it gives is held to the lowering in the canonical form of `scripts/parser_contract.py`.
+
 ## Bootstrap the compiler
 
 From the repository root, after `build hol` above:

@@ -9,7 +9,9 @@ name: backend
 # minutes on twelve jobs of a fast machine, so the weekly run builds all of it; a change to the
 # lane itself builds the narrow target the patch touches, which took three minutes on two.
 # Before the proof, scripts/check_semantics.sh proves the HOL copy of the Lean model equal to panSem
-# and runs the state corpus through both.
+# and runs the state corpus through both. The parser job evaluates CakeML's own parser on every
+# program dn-compiler prints (scripts/check_parse.sh), weekly and when the lane changes; its inputs
+# take in the Lean tree, so a week whose programs changed runs it again.
 on:
   schedule:
     - cron: "23 5 * * 0"
@@ -25,6 +27,8 @@ on:
       - scripts/check_semantics.sh
       - scripts/semantics_check.py
       - scripts/state_corpus.py
+      - scripts/check_parse.sh
+      - scripts/parse_check.py
       - tools.lock.json
       - .github/workflows/backend.yml
   pull_request:
@@ -38,6 +42,8 @@ on:
       - scripts/check_semantics.sh
       - scripts/semantics_check.py
       - scripts/state_corpus.py
+      - scripts/check_parse.sh
+      - scripts/parse_check.py
       - tools.lock.json
       - .github/workflows/backend.yml
   workflow_dispatch:
@@ -87,6 +93,7 @@ jobs:
           key=$(git rev-parse HEAD:backend HEAD:scripts/backend.py HEAD:scripts/bootstrap_tool.py \
             HEAD:scripts/backend_lane.sh HEAD:scripts/check_backend.sh HEAD:scripts/check_holmake.py \
             HEAD:scripts/check_semantics.sh HEAD:scripts/semantics_check.py HEAD:scripts/state_corpus.py \
+            HEAD:scripts/check_parse.sh HEAD:scripts/parse_check.py \
             HEAD:tools.lock.json HEAD:.github/workflows/backend.yml | sha256sum | cut -d' ' -f1)
           echo "key=backend-${TARGET%.uo}-$key" >> "$GITHUB_OUTPUT"
       - name: A pass recorded on the same inputs
@@ -165,3 +172,100 @@ jobs:
           path: |
             build/backend-*.log
             build/semantics-*.log
+
+  parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # The session's program takes one evaluation 11 GB, of the runner's 16.
+      DN_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The printed programs come from the Lean tree, so it is among the inputs.
+      - name: The job's inputs
+        id: inputs
+        run: |
+          key=$(git rev-parse HEAD:backend HEAD:lean HEAD:lakefile.lean HEAD:lean-toolchain HEAD:scripts/backend.py \
+            HEAD:scripts/bootstrap_tool.py HEAD:scripts/backend_lane.sh HEAD:scripts/check_holmake.py \
+            HEAD:scripts/check_parse.sh HEAD:scripts/parse_check.py HEAD:scripts/parser_contract.py \
+            HEAD:scripts/lanes.py HEAD:tools.lock.json HEAD:.github/workflows/backend.yml | sha256sum | cut -d' ' -f1)
+          echo "key=parser-$key" >> "$GITHUB_OUTPUT"
+      - name: A pass recorded on the same inputs
+        id: passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 -P scripts/prior_pass.py "passed-$KEY" >> "$GITHUB_OUTPUT"
+      - name: Install the pinned Lean manager
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          python3 -P scripts/bootstrap_tool.py elan
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Link the digest-pinned Lean toolchain
+        if: steps.passed.outputs.run-id == ''
+        run: python3 -P scripts/bootstrap_tool.py lean
+      - name: Build dn-compiler
+        if: steps.passed.outputs.run-id == ''
+        run: lake build dn-compiler
+      - name: Build the pinned ML compiler
+        if: steps.passed.outputs.run-id == ''
+        run: python3 -P scripts/bootstrap_tool.py polyml
+      - name: What the prover is built from
+        id: pins
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          hol = json.load(open("backend/lock.json"))["hol"]["revision"]
+          poly = json.load(open("tools.lock.json"))["polyml"]["sha256"]
+          print(f"key=prover-ubuntu-24.04-{hol}-{poly}")
+          PY
+      - name: Restore the prover
+        id: prover
+        if: steps.passed.outputs.run-id == ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps/hol
+          key: ${{ steps.pins.outputs.key }}
+      - name: Build the prover
+        if: steps.passed.outputs.run-id == '' && steps.prover.outputs.cache-hit != 'true'
+        run: |
+          python3 -P scripts/backend.py fetch hol
+          python3 -P scripts/backend.py build hol
+      - name: Keep the prover
+        if: steps.passed.outputs.run-id == '' && steps.prover.outputs.cache-hit != 'true' &&
+          github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps/hol
+          key: ${{ steps.pins.outputs.key }}
+      - name: Fetch the patched compiler source
+        if: steps.passed.outputs.run-id == ''
+        run: python3 -P scripts/backend.py fetch cakeml
+      - name: Read every printed program with CakeML's parser
+        if: steps.passed.outputs.run-id == ''
+        run: bash scripts/check_parse.sh
+      - name: The time of the pass
+        if: steps.passed.outputs.run-id == ''
+        run: |
+          mkdir -p build/stamps
+          date -u +%Y-%m-%dT%H:%M:%SZ > build/stamps/job
+      - name: Record passed-${{ steps.inputs.outputs.key }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.passed.outputs.run-id == ''
+        with:
+          name: passed-${{ steps.inputs.outputs.key }}
+          path: build/stamps/job
+          if-no-files-found: error
+          retention-days: 90
+      - name: Keep what the run reported
+        if: always() && steps.passed.outputs.run-id == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parser-logs
+          path: build/parse-*.log

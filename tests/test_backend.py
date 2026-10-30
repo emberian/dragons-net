@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from typing import Any, ClassVar
 import unittest
 
 from gatekit import ROOT, script, sha256
@@ -39,6 +39,7 @@ if not os.environ.get("DN_TEST_SILENT_PROVER"):
 bootstrap_tool = script("bootstrap_tool")
 check_holmake = script("check_holmake")
 semantics_check = script("semantics_check")
+parse_check = script("parse_check")
 
 
 class Backend(unittest.TestCase):
@@ -367,10 +368,15 @@ class Backend(unittest.TestCase):
                 self.assertTrue(list(ROOT.glob(path)), f"{path} matches nothing in the tree")
         self.assertIn("bash scripts/check_backend.sh", workflow)
         self.assertIn("bash scripts/check_semantics.sh", workflow)
+        self.assertIn("bash scripts/check_parse.sh", workflow)
         self.assertIn("scripts/backend.py build hol", workflow)
-        # A target that passed on the same inputs is not built again: its key reads what the paths name.
-        keyed = re.findall(r"HEAD:(\S+)", workflow)
+        # A target that passed on the same inputs is not built again: the proof's key reads what the
+        # paths name, and the parser's what its lane reads, the Lean tree that prints the programs too.
+        proof, parser = workflow.split("\n  parser:\n", 1)
+        keyed = re.findall(r"HEAD:(\S+)", proof)
         self.assertEqual(sorted(keyed), sorted(p.removesuffix("/**") for p in listed[0]))
+        self.assertLessEqual({"backend", "lean", "scripts/check_parse.sh", "scripts/parse_check.py",
+                              "scripts/parser_contract.py", "scripts/lanes.py"}, set(re.findall(r"HEAD:(\S+)", parser)))
         # The compiler is verified against its pin on every run, not restored with the prover.
         self.assertNotIn(".deps/tools", workflow)
         cached = re.search(r"path: (\S+)\n\s+key: \$\{\{ steps\.pins\.outputs\.key \}\}", workflow)
@@ -586,3 +592,48 @@ class Semantics(unittest.TestCase):
                           "a case unanswered": dropped(subtracting)}.items():
             with self.subTest(what=what):
                 self.assertIsNotNone(semantics_check.defect_unseen(self.corpus, log))
+
+
+class ParseCheck(unittest.TestCase):
+    """What scripts/parse_check.py makes of the trees the parser's theorems give, with no prover."""
+
+    P = "panLang$"
+    program: ClassVar[dict[str, Any]] = {"name": "dn_f", "params": ["a"], "body": [["return", ["Var", "a"]]],
+                                         "functions": [], "source": "export fun dn_f(1 a) {\n  return a;\n}\n"}
+
+    def function(self, body: list[Any], export: bool = True) -> list[Any]:
+        return [self.P + "Function", {"name": "dn_f", "inline": False, "export": export,
+                                       "params": [["pair$,", "a", [self.P + "One"]]], "body": body,
+                                       "return": [self.P + "One"]}]
+
+    def var(self, kind: str = "Local") -> list[Any]:
+        return [self.P + "Var", [self.P + kind], "a"]
+
+    def test_the_lowered_tree_is_taken(self) -> None:
+        self.assertEqual(parse_check.compared(self.program, [self.function([self.P + "Return", self.var()])]), 1)
+
+    def test_other_trees_are_refused(self) -> None:
+        returned = {
+            "a global": self.var("Global"),
+            "one operand": [self.P + "Op", ["asm$Add"], [self.var()]],
+            "an operator of another theory": [self.P + "Op", ["other$Add"], [self.var(), self.var()]],
+            "a sum": [self.P + "Op", ["asm$Add"], [self.var(), self.var()]],
+            "a load of two words": [self.P + "Load", [self.P + "Comb", []], self.var()],
+        }
+        for name, e in returned.items():
+            with self.subTest(name), self.assertRaises(parse_check.LaneError):
+                parse_check.compared(self.program, [self.function([self.P + "Return", e])])
+
+    def test_export_follows_the_text(self) -> None:
+        with self.assertRaisesRegex(parse_check.LaneError, "which its text does not say"):
+            parse_check.compared(self.program, [self.function([self.P + "Return", self.var()], export=False)])
+
+    def test_a_field_twice_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "t.json")
+            path.write_text('[{"name": "a", "name": "b"}]')
+            with self.assertRaisesRegex(parse_check.LaneError, "a key twice"):
+                parse_check.tree(path)
+
+    def test_the_text_is_read_as_octets(self) -> None:
+        self.assertIn('BinIO.openIn "dnParse3.pnk"', parse_check.script(3, "x"))
