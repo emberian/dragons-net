@@ -26,7 +26,7 @@ is not a correctness certificate: see docs/assurance.md for the remaining connec
 open DN.Compiler
 
 private def commands : List String :=
-  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-crc",
+  ["emit-region", "emit-echo", "emit-render", "emit-stamp", "emit-reply", "emit-skeleton", "emit-crc",
    "emit-sip", "emit-scan", "emit-recover", "emit-grammar", "emit-article", "emit-frame-line", "emit-frame-line-4",
    "emit-frame-block-64", "emit-frame-block-4",
    "frame-model",

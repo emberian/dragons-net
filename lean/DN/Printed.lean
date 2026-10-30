@@ -89,7 +89,8 @@ def framers : List (String × (Unit → Except String Program)) :=
 the executable starts, whatever its command. -/
 def named : List (String × (Unit → Except String Program)) :=
   [("region", fun _ => checked region), ("echo", fun _ => checked Kernels.echo),
-   ("render", fun _ => checked Kernels.render), ("reply", reply), ("skeleton", skeleton),
+   ("render", fun _ => checked Kernels.render), ("stamp", fun _ => checked Kernels.stampCopy), ("reply", reply),
+   ("skeleton", skeleton),
    ("session", session), ("crc", fun _ => checked News.CrcProg.crcKernel),
    ("sip", fun _ => checked News.SipProg.sipKernel),
    ("scan", fun _ => checked News.ScanProg.scanKernel),

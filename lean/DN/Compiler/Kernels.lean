@@ -66,4 +66,23 @@ theorem copy_loop_lowering : Lower.lowerStmt1 copyLoop = some ByteCopy.copyByteW
 
 theorem echo_is_checked : (Checked.emit echo).isOk = true := by decide
 
+/-- Each byte of `bs` stored at the pointer in `p`, from `k` past it, in order. -/
+def stampStmts (p : String) : Nat → List (BitVec 8) → List PStmt
+  | _, [] => []
+  | k, b :: bs => .storeb (eAdd (v p) (n k)) (n b.toNat) :: stampStmts p (k + 1) bs
+
+/-- What `dn_stamp_copy` stamps: "dragons". -/
+def stampLiteral : List (BitVec 8) := [0x64, 0x72, 0x61, 0x67, 0x6f, 0x6e, 0x73]
+
+/-- Stamp the literal at `src`, copy it to `dst` and return its length: two components with memory
+composed (`DN.Compiler.Components.stampCopy_run`). The buffers' room and disjointness are the
+caller's. -/
+def stampCopy : PFun :=
+  { name := "dn_stamp_copy", exported := true, params := [(1, "src"), (1, "dst")],
+    body := [.dec "i" (n 0), .dec "len" (n stampLiteral.length)] ++ stampStmts "src" 0 stampLiteral ++
+      [copyLoop, .ret (v "len")] }
+
+-- As with the render, the gate runs as an executable check rather than during elaboration.
+def regression_stamp_checked : Bool := (Checked.emit stampCopy).isOk
+
 end DN.Compiler.Kernels

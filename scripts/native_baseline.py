@@ -25,11 +25,13 @@ from words import MASK, signed, word_op
 
 OUT = ROOT / "build/baseline"
 FIXTURES = [("baseline.json", "emit-baseline"), ("echo.pnk", "emit-echo"), ("render.pnk", "emit-render"),
+            ("stamp.pnk", "emit-stamp"),
             ("crc.pnk", "emit-crc"), ("sip.pnk", "emit-sip"), ("scan.pnk", "emit-scan"),
             ("dn_scan_layout.h", "emit-scan-layout"), ("recover.pnk", "emit-recover"),
             ("dn_recover_layout.h", "emit-recover-layout"),
             ("reply.pnk", "emit-reply"), ("reply-cases.json", "emit-reply-cases")]
-HOSTS = [NATIVE / "echo_check.c", NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
+HOSTS = [NATIVE / "echo_check.c", NATIVE / "stamp_check.c",
+         NATIVE / "render_check.c", NATIVE / "reply_check.c", NATIVE / "crc_check.c",
          NATIVE / "sip_check.c", NATIVE / "scan_check.c", NATIVE / "recover_check.c",
          NATIVE / "echo_server.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 
@@ -155,6 +157,7 @@ def documented(measured: dict[str, Any]) -> None:
     """The counts the documents quote must be the ones this run measured."""
     quoted = {"differential_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "copy_cases": ("README.md", "docs/baseline.md"),
+              "stamp_cases": ("docs/baseline.md",),
               "render_cases": ("docs/baseline.md",),
               "crc_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
               "sip_cases": ("README.md", "docs/assurance.md", "docs/baseline.md"),
@@ -332,6 +335,41 @@ def replies(cake: str) -> dict[str, Any]:
     refused_all(cake, host, [(name, source, status, "reply mismatch" if status == 1 else None)
                              for name, (source, status) in mutants.items()], str(max_len), stdin=stdin)
     measured["reply_mutants_rejected"] = len(mutants)
+    return measured
+
+
+def stamp(cake: str) -> dict[str, Any]:
+    """The kernel that stamps a literal and copies it, the composition of
+    `DN.Compiler.Components.stampCopy_run`, at every pair of offsets of two buffers and at the ends of
+    two pages; and kernels that break it, each refused for the reason it breaks."""
+    host = NATIVE / "stamp_check.c"
+    measured = measured_by(build(cake, "stamp", host))
+    if measured["stamp_cases"] != 58 * 58 + 1:
+        raise LaneError("incomplete native stamp execution")
+    text = (OUT / "stamp.pnk").read_text()
+    stores = [line for line in text.splitlines(keepends=True) if line.lstrip().startswith("st8 src + ")]
+    loop = "while i < len {"
+    if len(stores) != 7 or text.count(loop) != 1:
+        raise LaneError("the stamp mutations no longer find the lines they change")
+    returned = "return len;"
+    mutants = {
+        # a byte of the literal not stamped
+        "stamp-short": (text.replace(stores[3], ""), "stamp/frame mismatch"),
+        # a byte of the literal changed
+        "stamp-byte": (text.replace(stores[3], stores[3].replace(", 103;", ", 104;")), "stamp/frame mismatch"),
+        # a byte stamped past the literal
+        "stamp-past": (text.replace(stores[-1], stores[-1] + "  st8 src + 7, 0;\n"), "stamp/frame mismatch"),
+        # the copy a byte short
+        "copy-short": (text.replace(loop, "while i < len - 1 {"), "copy/frame mismatch"),
+        # the copy a byte long
+        "copy-past": (text.replace(loop, "while i < len + 1 {"), "copy/frame mismatch"),
+        # another length returned
+        "stamp-length": (text.replace(returned, "return len + 1;"), "stamp length mismatch"),
+    }
+    if any(source == text for source, _ in mutants.values()):
+        raise LaneError("a stamp mutation no longer changes the kernel")
+    refused_all(cake, host, [(name, source, 1, message) for name, (source, message) in mutants.items()])
+    measured["stamp_mutants_rejected"] = len(mutants)
     return measured
 
 
@@ -601,6 +639,7 @@ def baseline(cake: str, supplied: Path | None) -> Report:
     measured.update(recover(cake))
     measured.update(replies(cake))
     measured.update(echo(cake))
+    measured.update(stamp(cake))
     measured["gate_sensitivity_cases"] = gates(cake)
     measured["network"] = network()
     documented(measured)
@@ -622,6 +661,8 @@ def baseline(cake: str, supplied: Path | None) -> Report:
         "reply_assembly_sha256": lanes.digest(OUT / "reply.S"),
         "reply_executable_sha256": lanes.digest(OUT / "reply-check"),
         "echo_executable_sha256": lanes.digest(OUT / "dn-echo"),
+        "stamp_source_sha256": lanes.digest(OUT / "stamp.pnk"),
+        "stamp_executable_sha256": lanes.digest(OUT / "stamp-check"),
         "measurements": measured}, printed_by_dn_compiler=supplied is None)
 
 

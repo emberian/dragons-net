@@ -21,11 +21,11 @@ Each row separates what is proven from what is tested, so that partial work does
 | `SessionSpec.part_progress` | A listing's part fits one action, is not empty, and ends the listing or leaves less of it, so a listing ends | That the program is it (tested) |
 | `DN.News.PostSpec` | Of the specification: a read keeps only octets that pass the file's check (`readDone_checked`) | That it is decision 0005's (tested against `scripts/post_ref.py`); that the program is it |
 | `Certificate.witness` | A packaged precondition has a satisfying state | Adequacy for real callers |
-| 264 executable examples | Those computations return their expected values | Universal proofs |
+| 265 executable examples | Those computations return their expected values | Universal proofs |
 | Rust unit tests | Selected host primitives | Model refinement or OS integration |
 | 30 Loom tests | Selected algorithms under schedule exploration, three driving `dn-runtime` | Unbounded executions, weak memory Loom does not model |
 | State corpus (`scripts/state_check.py`) | On 110 cases of the ways a run stops, the model and an independent implementation of the same clauses agree field by field | Not a proof against HOL |
-| `scripts/parser_contract.py` | Each of the 240 programs the compiler prints is read by the pinned parsers as exactly its lowering, and both agree with every cell of the precedence table | Every possible printed program |
+| `scripts/parser_contract.py` | Each of the 241 programs the compiler prints is read by the pinned parsers as exactly its lowering, and both agree with every cell of the precedence table | Every possible printed program |
 | `scripts/native_fuzz.py` | On 300 generated programs, model, interpreter and compiled code agree on the result and memory | Programs outside the generator's reach |
 | Native region check | Generated machine code agrees with a C reference on 99,240 cases | A compiler theorem |
 | Native differential and TCP checks | 35,520 arithmetic/control cases; CRC-32C on 311 buffers, SipHash-2-4 on 370 messages, the journal scanner on 28,704 readings, recovery on 2,036 directories, the reply table on 5,790 calls | Compiler preservation, a verified host |
@@ -36,6 +36,8 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.Compiler.Safe` | No run changes the code, the memory's domain, the byte order or `@base` (`sem_same`) | Anything about the memory's contents |
 | `DN.Compiler.Preservation` | In the model, a function `Abi.emitWord` or `emitWordWith` takes lowers, its rewrite to that lowering with returns made slot stores; a run not failing ends the same rewritten, its value at the slot (`emitWord_rewrites`, `rewrites_run`, `wordResult_witness`, `rewritesWith_witness`) | Items 1, 2, 3 and 7; a slot the C caller owns lies outside the memory domain the theorem assumes it in (item 8); runs that fail |
 | `DN.Compiler.Preservation`, memory | A run that does not fail ends the same way where more memory is addressable and locals it never reads differ (`wider_run`) | Item 1 |
+| `DN.Compiler.Components` | A contract names what a component reads, writes, needs of the clock and promises; contracts compose (`seq_keeps`). A stamp and a copy compose, each with a state it admits (`stampThenCopyComponent`); `dn_stamp_copy` stamps and copies, keeping all else (`stampCopy_run`, `stampCopy_witness`) | Items 1, 2, 3 and 7; a C caller's buffers outside the heap (item 8) |
+| `DN.Compiler.Components`, the clock | No run ends with more clock than it began with, so statements in sequence group either way (`clock_le`, `seq_assoc`) | Item 1 |
 | `DN.Compiler.Wp` | In the model, from `wp c Q` a run of `c` ends as a run may or finishes in `Q`, once `Q` and the invariants ignore the clock and loops keep them (`wp_sound`) | Item 1; termination |
 | `DN.News.SipHashCode`, `DN.News.CrcCode` | The printed programs compute `SipHash.tag` under a sixteen-octet key (`sip_safe`), the CRC table (`fill_safe`) and a buffer's CRC-32C (`crc_safe`); `sipPre_witness`, `fillGiven_witness`, `crcPre_witness` hold the premises | Item 1; termination |
 | Session program (`scripts/session_native.py`) | The compiled session answers as the model on its scenarios and 200 drawn hosts, and stops on hosts the model cannot describe | That it is the specification on every run |
@@ -68,7 +70,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 21,343 declarations, including 9,645 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 21,531 declarations, including 9,748 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -84,9 +86,9 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
 1. **Semantics correspondence.** `DN.Compiler.Semantics` is a transcription of HOL4's, compared clause by clause in [pancake-semantics](pancake-semantics.md), not a certified translation.
 
-2. **Source representation.** The programs `dn-compiler` prints, 240 in all, are each read by the pinned parser as its lowering in canonical form, which `Canon.canon_eval` proves keeps evaluation. `printed_well` relies on 62 of that table's 320 cells; the parser's theorem is open, and the differential suite runs 35,520 cases.
+2. **Source representation.** The programs `dn-compiler` prints, 241 in all, are each read by the pinned parser as its lowering in canonical form, which `Canon.canon_eval` proves keeps evaluation. `printed_well` relies on 62 of that table's 320 cells; the parser's theorem is open, and the differential suite runs 35,520 cases.
 
-3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 240 programs the same way, but no theorem covers the binary.
+3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 241 programs the same way, but no theorem covers the binary.
 
 4. **Shift distances.** `Checked.emit` takes only a literal distance below 64, since the release accepts larger ones the semantics gives no value.
 
