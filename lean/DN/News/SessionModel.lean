@@ -16,8 +16,10 @@ time and for the compiled server to be held against. Its input, blank lines asid
                                       generation, the last job's generation, and the spool as
                                       recovered (`NAME=OCTETS;…`, as `recovery-model` reads it)
     turn NOW [WALL]                   a batch begins at this time, the wall clock WALL
-    open IDX GEN [1] | recv IDX GEN HEX | writable IDX GEN | end IDX GEN | closed IDX GEN
-                                      an event; `1` when the connection may post
+    open IDX GEN [FLAGS] | recv IDX GEN HEX | writable IDX GEN | end IDX GEN | closed IDX GEN
+    | verdict IDX GEN OK              an event; FLAGS adds 1 when the connection may post, 2 when
+                                      it may log in and 4 over TLS; OK is 1 for a name and password
+                                      taken
     complete SLOT GEN OK RESULTS [DATA]
                                       a job's completion: the operations that succeeded, each's
                                       two result words (`A:B,…`, `-` for none), the octets read
@@ -26,7 +28,7 @@ time and for the compiled server to be held against. Its input, blank lines asid
 
 To `go` it answers the actions, one a line, then the jobs, then `done`:
 
-    send IDX GEN HEX READ | graceful IDX GEN | close IDX GEN
+    send IDX GEN HEX READ | graceful IDX GEN | close IDX GEN | verify IDX GEN NAME PASSWORD
     job SLOT GEN OP …                 `create:NAME`, `write:PLACE:GEN:OFFSET:HEX`,
                                       `datasync:PLACE:GEN`, `close:PLACE:GEN`, `rename:NAME:NAME`,
                                       `remove:NAME`, `syncdir`, `open:NAME`,
@@ -64,6 +66,8 @@ def showAction : Action → String
     s!"send {idx} {gen} {if data.isEmpty then "-" else hex data} {if read then 1 else 0}"
   | .closeGracefully idx gen => s!"graceful {idx} {gen}"
   | .closeNow idx gen => s!"close {idx} {gen}"
+  | .verify idx gen nm pw =>
+    s!"verify {idx} {gen} {if nm.isEmpty then "-" else hex nm} {if pw.isEmpty then "-" else hex pw}"
 
 def nameText (n : Journal.Name) : String := String.ofList (n.bytes.map (Char.ofNat ·.toNat))
 
@@ -90,8 +94,13 @@ def bytes (s : String) : Except String (List Byte) :=
   | none => throw s!"not hex: {s}"
 
 def event : List String → Except String Event
-  | ["open", i, g] => return .opened (← nat i) (← nat g) false
-  | ["open", i, g, "1"] => return .opened (← nat i) (← nat g) true
+  | ["open", i, g] => return .opened (← nat i) (← nat g) false false false
+  | ["open", i, g, f] => do
+    let f ← nat f
+    if 8 ≤ f then throw s!"not flags: {f}"
+    return .opened (← nat i) (← nat g) (f % 2 = 1) (f / 2 % 2 = 1) (f / 4 = 1)
+  | ["verdict", i, g, "0"] => return .verified (← nat i) (← nat g) false
+  | ["verdict", i, g, "1"] => return .verified (← nat i) (← nat g) true
   | ["recv", i, g, d] => return .received (← nat i) (← nat g) (← bytes d)
   | ["writable", i, g] => return .writable (← nat i) (← nat g)
   | ["end", i, g] => return .inputEnded (← nat i) (← nat g)

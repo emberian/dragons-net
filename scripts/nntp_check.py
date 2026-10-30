@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import abnf_check  # the path above is what makes these importable
 import lanes
 from lanes import NATIVE, ROOT, LaneError, Report
+import nntp_account
 import session_check as sessions
 import session_native
 import session_ref as ref
@@ -54,7 +55,7 @@ import store_ref
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
 # The host's side of the store, linked with every build of the host.
-STORE = [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c"]
+STORE = [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c", NATIVE / "accounts.c"]
 HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "jobs.h", NATIVE / "session_calls.h",
          NATIVE / "call_checks.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 REVISION, SOURCE = sessions.IDENTITY
@@ -67,7 +68,7 @@ LINGER_QUIET, LINGER_TOTAL, ACCEPT_PAUSE, LINGERING = 5_000, 30_000, 100, 64
 # How long a check waits for the server, and for a server with a planted defect.
 TIMEOUT, DEFECT_TIMEOUT = 10.0, 1.5
 # The program acts for the generation before its connection's, to see the host refuse it.
-STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 6)
+STALE = ("st slot + 16, lds 1 (cb + 8);", "st slot + 16, lds 1 (cb + 8) - 1;", 7)
 Conn = tuple[int, int]
 
 
@@ -1356,6 +1357,85 @@ def over_tls(b: Build) -> str:
             f"reset, one of TLS 1.1 refused, a silent one closed at 10 s; {len(article)} octets posted and read back")
 
 
+def logins(b: Build) -> str:
+    """With `--users`, the accounts of a file (native/accounts.h): over TLS nntplib reads AUTHINFO USER
+    among the capabilities, is refused POST where its network may not post, logs in and posts; a
+    wrong password and a name no account has are answered 481, and the counters count one login
+    taken and two refused. In the clear AUTHINFO USER is answered 483 and not offered. A file of
+    accounts or a key others may read, a line that is no account, and `--users` without a store each
+    end the host with status 2."""
+    nntplib = import_nntplib()
+    with tempfile.TemporaryDirectory() as temp:
+        where = Path(temp)
+        key, cert = certificate(where)
+        users = where / "users"
+        users.write_text(f"# accounts\n{nntp_account.line(b'alice', b's3cret', nntp_account.ITERATIONS_MIN)}\n")
+        users.chmod(0o600)
+        spool, run = where / "spool", where / "run"
+        spool.mkdir()
+        run.mkdir()
+        store = ("--users", str(users), "--spool", str(spool), "--run-dir", str(run), "--path-identity",
+                 "dn.example", "--group", "local.test", "--post-from", "10.0.0.0/8")
+        tls = ("--tls-cert", str(cert), "--tls-key", str(key))
+        context = ssl.create_default_context(cafile=str(cert))
+        article = ["From: a@b.example", "Newsgroups: local.test", "Subject: logged in",
+                   "Message-ID: <login@x.example>", "", "body"]
+        with serving(b, False, *tls, *store, traced=False) as server:
+            try:
+                with nntplib.NNTP_SSL("127.0.0.1", server.port, ssl_context=context, timeout=b.timeout) as news:
+                    before = news.getcapabilities()
+                    try:
+                        news.post([line.encode() for line in article])
+                    except nntplib.NNTPTemporaryError as error:
+                        unposted = str(error)
+                    else:
+                        raise LaneError("a client its network may not post from posted before it logged in")
+                    news.login("alice", "s3cret", usenetrc=False)
+                    after = news.getcapabilities()
+                    posted = news.post([line.encode() for line in article])
+                for name, password in (("alice", "wrong"), ("nobody", "s3cret")):
+                    with nntplib.NNTP_SSL("127.0.0.1", server.port, ssl_context=context, timeout=b.timeout) as news:
+                        try:
+                            news.login(name, password, usenetrc=False)
+                        except nntplib.NNTPTemporaryError as error:
+                            if not str(error).startswith("481"):
+                                raise LaneError(f"{name} with a wrong password was answered {error}") from None
+                        else:
+                            raise LaneError(f"{name} logged in with a wrong password")
+            except (nntplib.NNTPError, OSError) as error:
+                raise LaneError(f"nntplib logging in: {error!r}") from None
+            server.proc.send_signal(signal.SIGUSR1)
+        if "AUTHINFO" not in before or before["AUTHINFO"] != ["USER"] or "AUTHINFO" in after or "POST" not in after:
+            raise LaneError(f"the capabilities before a login were {before}, after it {after}")
+        if not unposted.startswith("440") or not posted.startswith("240"):
+            raise LaneError(f"POST was answered {unposted!r} before the login and {posted!r} after it")
+        if counted(server.said(), "counters")[8:10] != [1, 2]:
+            raise LaneError(f"one login taken and two refused were counted {server.said()[-300:]!r}")
+        with serving(b, False, *store, traced=False) as server:
+            clear = server.client()
+            read_expected(clear, TEXTS["greeting"], "the greeting in the clear")
+            clear.sendall(b"AUTHINFO USER alice\r\nCAPABILITIES\r\nQUIT\r\n")
+            in_clear = read_to_end(clear)
+        if not in_clear.startswith(b"483 ") or b"AUTHINFO" in in_clear:
+            raise LaneError(f"AUTHINFO in the clear was answered {in_clear[:200]!r}")
+        named = ("--revision", REVISION.decode(), "--source", SOURCE.decode())
+        key.chmod(0o644)
+        refused = [refused_start(b, *named, *tls, *store)]
+        key.chmod(0o600)
+        users.chmod(0o604)
+        refused.append(refused_start(b, *named, *tls, *store))
+        users.chmod(0o600)
+        users.write_text("alice:10:00:00\n")
+        refused.append(refused_start(b, *named, *tls, *store))
+        refused.append(refused_start(b, *named, "--users", str(users)))
+        signs = (f"TLS: {key}: others may read it", f"users: {users}: others may read it",
+                 f"{users}:1: not an account", "--users needs a store")
+        for (status, said), sign in zip(refused, signs, strict=True):
+            if status != 2 or sign not in said:
+                raise LaneError(f"a refused file of accounts ended the host with status {status}: {said[-200:]!r}")
+    return "nntplib logged in over TLS and posted; two wrong logins refused, AUTHINFO refused in the clear"
+
+
 def over_ipv6(b: Build) -> str:
     """The server listening on the IPv6 loopback address greets a client and answers its QUIT."""
     with serving(b, False, "--address", "::1") as server:
@@ -1971,8 +2051,9 @@ def store_directories(b: Build) -> str:
 
 COUNTERS = re.compile(
     r"^(counters|at the stop): (\d+) connections, (\d+) closed gracefully, (\d+) at once, (\d+) by the client "
-    r"or the network; (\d+) TLS handshakes failed; (\d+) octets in, (\d+) out; (\d+) accept pauses; (\d+) file "
-    r"jobs, (\d+) failed for want of space, (\d+) on I/O errors, (\d+) otherwise$", re.MULTILINE)
+    r"or the network; (\d+) TLS handshakes failed; (\d+) octets in, (\d+) out; (\d+) accept pauses; (\d+) logins "
+    r"taken, (\d+) refused; (\d+) file jobs, (\d+) failed for want of space, (\d+) on I/O errors, (\d+) otherwise$",
+    re.MULTILINE)
 
 
 def counted(said: str, when: str) -> list[int]:
@@ -1999,7 +2080,7 @@ def counters(b: Build) -> str:
         reset(second)
         server.await_close(second, "the reset")
         server.proc.send_signal(signal.SIGUSR1)
-    want = [2, 1, 0, 1, 0, len(b"HELP\r\nQUIT\r\n"), len(to_first) + len(to_second), 0, 0, 0, 0, 0]
+    want = [2, 1, 0, 1, 0, len(b"HELP\r\nQUIT\r\n"), len(to_first) + len(to_second), 0, 0, 0, 0, 0, 0, 0]
     for when in ("counters", "at the stop"):
         if (got := counted(server.said(), when)) != want:
             raise LaneError(f"the counters {when} were {got}, not {want}")
@@ -2041,7 +2122,8 @@ def configuration(b: Build) -> str:
         done = subprocess.run([str(b.path), "--check-config", str(full)], capture_output=True, text=True,
                               timeout=b.timeout, check=False)
         want = {"address": "127.0.0.1", "port": 0, "revision": REVISION.decode(), "source": SOURCE.decode(),
-                "send_buffer": 8192, "tls_cert": None, "tls_key": None, "spool": str(spool), "run_dir": str(run),
+                "send_buffer": 8192, "tls_cert": None, "tls_key": None, "users": None, "spool": str(spool),
+                "run_dir": str(run),
                 "path_identity": "dn.example", "groups": ["local.test", "local.other"], "post_from": ["127.0.0.0/8"]}
         try:
             said = json.loads(done.stdout)
@@ -2244,6 +2326,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "actions for another generation": stale_generation,
     "over IPv6": over_ipv6,
     "over TLS": over_tls,
+    "logins": logins,
     "sixty-five clients": crowd,
     "a store recovered at start": store_start,
     "a post over sockets": post_over_sockets,
@@ -2285,6 +2368,12 @@ DEFECTS = [
            [("        if (i >= 0) done |= handshake(i, POLLIN);",
              "        if (i >= 0) conns[i].handshaking = 0, conns[i].handshaken = done = 1;", 1)], "over TLS",
            "which is no client of the check"),
+    Defect("a login taken whatever the verdict",
+           [("                    (uint64_t)ok);", "                    1u + 0 * ok);", 1)],
+           "logins", "logged in with a wrong password"),
+    Defect("a connection in the clear reported over TLS", [(
+        "dn_put_word(slot + DN_SESSION_EVENT_TLS, conns[i].tls != NULL);",
+        "dn_put_word(slot + DN_SESSION_EVENT_TLS, 1);", 1)], "logins", "AUTHINFO in the clear was answered"),
     Defect("a connection not logged", [("    dn_store_log_opened(&conns[i].peer);\n", "", 1)], "a post over sockets",
            "is not in the log"),
     Defect("an unknown setting taken", [(
@@ -2418,7 +2507,7 @@ DEFECTS = [
     Defect("a line's deadline a millisecond early", [(r"now \+ 180000;", "now + 179999;", 2)],
            "a line", "asked to be woken", program=True),
     Defect("the inactivity deadline a millisecond early",
-           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 8)],
+           [(r"st cb \+ 48, now \+ 1800000;", "st cb + 48, now + 1799999;", 9)],
            "inactivity", "asked to be woken", program=True),
     Defect("HELP answered as CAPABILITIES", [(r"r = 2;", "r = 1;", 1)], "pipeline",
            "broke the session's contract", program=True),

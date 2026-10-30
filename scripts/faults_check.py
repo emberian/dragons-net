@@ -260,7 +260,7 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str, counter:
     if not outcome:
         return "", f"{what}, which 0005 does not expect"
     if counter >= 0:
-        failures = N.counted(run.said, "at the stop")[9:]
+        failures = N.counted(run.said, "at the stop")[11:]
         if failures != [int(point != "" and not retried and k == counter) for k in range(3)]:
             return "", f"{what}, the stop counted {failures} failed file jobs"
     if (outcome == "none") != (at < 0) or run.got[:LISTING] != expected(base, outcome, at):
@@ -745,7 +745,7 @@ DEFECTS = [
     C.Defect("the octet past an article's end not read", r"st jb \+ 88, left \+ 1;", "st jb + 88, left;", 1,
              "grown, ARTICLE"),
     C.Defect("a failed commit refused, the store going on",
-             r"(\} else \{\n\s+)(st zs \+ 96, 3;\n\s+st zs \+ 104, 0;\n\s+st @base \+ 1032624, 0;)",
+             r"(\} else \{\n\s+)(st zs \+ 96, 3;\n\s+st zs \+ 104, 0;\n\s+st @base \+ \d+, 0;)",
              r"\g<1>if ok == 0 { st zs + 160, 3; st zs + 88, 1; st zs + 104, 0; } else { \g<2> }", 1,
              "on the journal file failing"),
     C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,

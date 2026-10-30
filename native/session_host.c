@@ -134,7 +134,7 @@ static void answer(void) {
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
 }
 
-static const char *const kinds[] = {"open", "recv", "writable", "end", "closed"};
+static const char *const kinds[] = {"open", "recv", "writable", "end", "closed", "verdict"};
 
 static size_t smaller(size_t a, size_t b) { return a < b ? a : b; }
 
@@ -446,20 +446,27 @@ static void batch(unsigned char *a) {
         if (!kind || !idx || !gen || (strcmp(kind, "raw") == 0 && !raw))
             dn_harness("bad input: an event without its connection");
         uint64_t code = raw ? number(raw) : 0;
-        for (uint64_t k = 0; !raw && k < 5; ++k)
+        for (uint64_t k = 0; !raw && k < sizeof kinds / sizeof *kinds; ++k)
             if (strcmp(kind, kinds[k]) == 0) code = k + 1;
-        int posts = code == DN_SESSION_OPENED && data && strcmp(data, "1") == 0;
+        /* An open's flags add 1 when it may post, 2 when it may log in, 4 over TLS; a verdict's are 1
+         * when it takes the name and password. */
+        int flagged = (code == DN_SESSION_OPENED || code == DN_SESSION_VERIFIED) && data;
+        uint64_t flags = flagged ? number(data) : 0;
         if (raw ? data != NULL
-                : (!code || (code == DN_SESSION_RECEIVED) != (data != NULL && !posts) || (data && strtok(NULL, " "))))
+                : (!code || (code == DN_SESSION_RECEIVED) != (data != NULL && !flagged) ||
+                   (code == DN_SESSION_VERIFIED && !data) || flags > (code == DN_SESSION_OPENED ? 7u : 1u) ||
+                   (data && strtok(NULL, " "))))
             dn_harness("bad input: no event %s", kind);
         if (count < DN_SESSION_BATCH) {
             unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + count * DN_SESSION_EVENT_SLOT;
             dn_put_word(slot + DN_SESSION_EVENT_KIND, code);
             dn_put_word(slot + DN_SESSION_EVENT_IDX, number(idx));
             dn_put_word(slot + DN_SESSION_EVENT_GEN, number(gen));
-            dn_put_word(slot + DN_SESSION_EVENT_POST, (uint64_t)posts);
+            dn_put_word(slot + DN_SESSION_EVENT_POST, flags & 1);
+            dn_put_word(slot + DN_SESSION_EVENT_LOGINS, flags >> 1 & 1);
+            dn_put_word(slot + DN_SESSION_EVENT_TLS, flags >> 2 & 1);
             dn_put_word(slot + DN_SESSION_EVENT_LEN,
-                        data && !posts ? unhex(data, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA) : 0);
+                        data && !flagged ? unhex(data, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA) : 0);
         }
         ++count;
     }
@@ -570,6 +577,15 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             printf("graceful %" PRIu64 " %" PRIu64 "\n", idx, gen);
         } else if (kind == DN_SESSION_CLOSE_NOW) {
             printf("close %" PRIu64 " %" PRIu64 "\n", idx, gen);
+        } else if (kind == DN_SESSION_VERIFY) {
+            uint64_t name = dn_word(slot + DN_SESSION_ACTION_READ);
+            if (name > DN_SESSION_NAME_MAX || len < name || len - name > DN_SESSION_PASSWORD_MAX)
+                dn_violation("dn_emit: a check of %" PRIu64 " octets, %" PRIu64 " of them the name", len, name);
+            printf("verify %" PRIu64 " %" PRIu64 " ", idx, gen);
+            print_hex(slot + DN_SESSION_ACTION_HEAD, name);
+            putchar(' ');
+            print_hex(slot + DN_SESSION_ACTION_HEAD + name, len - name);
+            putchar('\n');
         } else {
             dn_violation("dn_emit: an action of kind %" PRIu64, kind);
         }

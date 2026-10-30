@@ -30,17 +30,19 @@ import store_ref as J
 
 FIRST_COMMAND, INACTIVITY, LINE_TIME, ARTICLE_TIME = 10_000, 1_800_000, 180_000, 1_800_000
 LINE_LIMIT, CHUNK, CONNS = 512, 512, 64
-COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT", b"MODE")
+COMMANDS = (b"CAPABILITIES", b"HELP", b"QUIT", b"HEAD", b"STAT", b"MODE", b"AUTHINFO")
 # The commands a server with a store has besides.
 STORED = (b"POST", b"ARTICLE", b"BODY", b"GROUP", b"NEXT", b"LAST", b"LISTGROUP", b"LIST", b"DATE", b"NEWGROUPS",
           b"OVER", b"HDR", b"XOVER", b"XHDR")
 # The replies a server with a store decides as it gives them.
 DECIDED = ("capabilities", "post", "lookup", "group", "number", "current", "next", "last", "listgroup", "list-active",
-           "date", "mode-reader", "overview")
+           "date", "mode-reader", "overview", "authinfo")
 # The replies after which the connection closes: QUIT's, and MODE READER's 502 of a server that does not
 # advertise READER (RFC 3977 §5.3.2).
 CLOSING = ("quit", "mode-reader")
 NUMBER_MAX = 2_147_483_647
+# The longest name and password AUTHINFO takes: no account has a longer one.
+NAME_MAX, PASSWORD_MAX = 64, 256
 
 
 def words(kept: bytes) -> list[bytes]:
@@ -156,6 +158,8 @@ def reply(kind: str, kept: bytes, offered: bool = False) -> str:
         return name.decode().lower()
     if name == b"MODE" and len(args) == 1 and args[0].upper() == b"READER":
         return "mode-reader"
+    if name == b"AUTHINFO":
+        return "authinfo"
     if name in (b"HEAD", b"STAT", b"ARTICLE", b"BODY") and len(args) <= 1:
         if not args:
             return "current" if offered else "no-group"
@@ -206,6 +210,11 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\nPOST\r\n.\r\n",
         "capabilities-reader": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
         + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\n.\r\n",
+        "capabilities-post-auth": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
+        + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\nPOST\r\n"
+        b"AUTHINFO USER\r\n.\r\n",
+        "capabilities-reader-auth": b"101 Capability list:\r\nVERSION 2\r\nIMPLEMENTATION dragons-net " + revision
+        + b"\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID\r\nAUTHINFO USER\r\n.\r\n",
         "mode-reader": b"502 Reading service unavailable\r\n",
         "reader-posting": b"200 Posting allowed\r\n",
         "reader-no-posting": b"201 Posting prohibited\r\n",
@@ -243,6 +252,14 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "field-refused": b"503 HDR not permitted on that field\r\n",
         "none-over": b"224 Overview information follows\r\n.\r\n",
         "none-hdr": b"221 Header follows\r\n.\r\n",
+        # RFC 4643 §2.3; a server offering no logins answers 502 as one does once logged in (§2.2)
+        "authinfo": b"502 Command unavailable\r\n",
+        "auth-done": b"502 Command unavailable\r\n",
+        "auth-user": b"381 Password required\r\n",
+        "auth-accepted": b"281 Authentication accepted\r\n",
+        "auth-failed": b"481 Authentication failed\r\n",
+        "auth-sequence": b"482 Authentication commands issued out of sequence\r\n",
+        "encryption-required": b"483 Encryption required\r\n",
     }
 
 
@@ -270,22 +287,28 @@ class Violation(Exception):
 
 class Event(NamedTuple):
     """An event, as `dn-compiler session-model` takes it: its kind, the connection's index and
-    generation, the bytes of a `recv`, and whether an opened connection may post."""
+    generation, the bytes of a `recv`, whether an opened connection may post, may log in and runs
+    over TLS, and whether a verdict takes the name and password."""
     kind: str
     idx: int
     gen: int
     data: bytes = b""
     post: bool = False
+    logins: bool = False
+    tls: bool = False
+    ok: bool = False
 
 
 class Action(NamedTuple):
-    """An action, as the model gives it: its kind, the connection's index and generation, and for a
-    send its bytes and whether to read once they are taken."""
+    """An action, as the model gives it: its kind, the connection's index and generation, for a
+    send its bytes and whether to read once they are taken, and for a check the name and the
+    password."""
     kind: str
     idx: int
     gen: int
     data: bytes = b""
     read: bool = False
+    secret: bytes = b""
 
 
 @dataclass
@@ -352,6 +375,14 @@ class Conn:
     current: int = 0
     # its replies of many lines, the last going out while it is not done
     listings: list[Listing] = field(default_factory=list)
+    # whether it may post now; whether it may log in and runs over TLS; the name of its last 381 until a 481 or
+    # a check, the name and password with the host, and whether it has logged in
+    posting: bool = False
+    logins: bool = False
+    tls: bool = False
+    name: bytes | None = None
+    checking: tuple[bytes, bytes] | None = None
+    logged: bool = False
 
     def pending(self) -> bytes:
         return bytes(self.emitted[self.taken:])
@@ -577,7 +608,15 @@ class PostJudge(Judge):
     turn (`post_ref.Fetch`), making none current. With none to give: 430, 412, 420, and for a range
     423, or for XOVER and XHDR 224 and 221 with an empty list, as INN answers. A metadata item other
     than `:bytes` and `:lines` is answered 503. LIST OVERVIEW.FMT and LIST HEADERS answer their fixed
-    lists."""
+    lists.
+
+    AUTHINFO USER and PASS (RFC 4643 §2.3) where the host lets the connection log in, else 502 as
+    after a login (§2.2); anything but USER or PASS and one argument, 501; in the clear, 483. USER
+    is answered 381, its name kept until a 481 or the PASS after it, or at once 481 for a name longer
+    than any account's; PASS without a name, 482; with one, and a password no longer than an
+    account's may be, the two go to the host, unread and with no deadline until its verdict, 281 or
+    481, of which 281 lets the connection post while the store accepts and carries a group. Over
+    TLS, until logged in, the capabilities name AUTHINFO USER."""
 
     def __init__(self, revision: bytes, source: bytes, start: P.Start, checker: P.Checker) -> None:
         super().__init__(revision, source)
@@ -674,8 +713,10 @@ class PostJudge(Judge):
         return c.listings[-1] if c.listings and not c.listings[-1].done else None
 
     def busy(self, c: Conn) -> bool:
-        """Whether a read waits for a place or answers it, or a listing goes out."""
-        return c.wanted is not None or self.fetch(c) is not None or self.listing(c) is not None
+        """Whether a read waits for a place or answers it, a listing goes out, or a name and
+        password are with the host."""
+        return c.wanted is not None or self.fetch(c) is not None or self.listing(c) is not None or \
+            c.checking is not None
 
     def due_line(self, c: Conn) -> tuple[str, bytes] | None:
         """The reply its next whole line is due, if one is due and not decided, with what the line
@@ -723,7 +764,7 @@ class PostJudge(Judge):
 
     def deadlines(self, c: Conn) -> dict[str, int]:
         a = self.article(c)
-        if c.waiting or (a is not None and a.ended) or c.wanted is not None:
+        if c.waiting or (a is not None and a.ended) or c.wanted is not None or c.checking is not None:
             return {}
         if self.fetch(c) is not None:
             return {"inactivity": c.activity + INACTIVITY} if c.pending() else {}
@@ -742,7 +783,7 @@ class PostJudge(Judge):
         return bool(bytes(c.delivered[at:]).rsplit(b"\n", 1)[-1])
 
     def ready(self, c: Conn, idx: int = 0, gen: int = 0) -> bool:
-        if c.pending():
+        if c.pending() or c.checking is not None:
             return False
         if self.listing(c) is not None:
             return True
@@ -771,7 +812,8 @@ class PostJudge(Judge):
             if kind == "open":
                 self.opened += 1
                 greeted = event.post and self.store.accepting and bool(self.store.start.groups)
-                self.conns[idx] = (gen, Conn(opened=t.now, activity=t.now, number=self.opened, greeted=greeted))
+                self.conns[idx] = (gen, Conn(opened=t.now, activity=t.now, number=self.opened, greeted=greeted,
+                                             posting=greeted, logins=event.logins, tls=event.tls))
             elif idx in self.conns and self.conns[idx][0] == gen:
                 c = self.conns[idx][1]
                 if kind == "recv":
@@ -784,6 +826,11 @@ class PostJudge(Judge):
                 elif kind == "closed":
                     self.gone(idx, gen)
                     del self.conns[idx]
+                elif kind == "verdict" and c.checking is not None:
+                    c.checking, c.logged = None, event.ok
+                    c.decisions.append("auth-accepted" if event.ok else "auth-failed")
+                    c.posting |= event.ok and self.store.accepting and bool(self.store.start.groups)
+                    c.activity = t.now
         posted = len(self.store.answered)
         self.store.complete(t.dones)
         actions = {a.idx: a for a in t.actions}
@@ -860,6 +907,17 @@ class PostJudge(Judge):
                 self.lookup_due(t, idx, gen, c, line[0], line[1])
             elif line is not None and line[0] == "overview":
                 self.view_due(t, idx, gen, c, line[1])
+        check = self.check_due(c) if a is None and f is None and not self.busy(c) and not c.pending() and \
+            c.replies == len(self.replies(c)) else None
+        if check is not None:
+            if action is None or action.kind != "verify" or action.gen != gen or (action.data, action.secret) != check:
+                raise Violation("unchecked", f"{idx}/{gen} not handed its name and password to check at {t.now}")
+            c.checking, c.name, c.reading = check, None, False
+            if c.answered is None:
+                c.answered = t.now
+            return
+        if action is not None and action.kind == "verify":
+            raise Violation("verify", f"{idx}/{gen} handed a name and password to check at {t.now} with none due")
         if c.wanted is not None and self.admitted_read(idx, gen):
             cmd, number, commit, view = c.wanted
             c.fetches.append(self.store.grant((idx, gen), cmd, commit, number, view))
@@ -1109,7 +1167,7 @@ class PostJudge(Judge):
 
     def post_due(self, t: Turn, idx: int, gen: int, c: Conn, action: Action | None) -> None:
         """A POST its connection is due an answer to: one at once, but for a slot it waits for."""
-        if c.greeted and self.store.accepting:
+        if c.posting and self.store.accepting:
             if (idx, gen) not in self.waiters:
                 self.waiters.append((idx, gen))
             if not self.admitted(idx, gen):
@@ -1151,11 +1209,22 @@ class PostJudge(Judge):
                 raise Violation(error.kind, f"{idx} {error}") from None
             return
         if due == "capabilities":
-            c.decisions.append("capabilities-post" if c.greeted and self.store.accepting else "capabilities-reader")
+            listed = "capabilities-post" if c.posting and self.store.accepting else "capabilities-reader"
+            c.decisions.append(listed + "-auth" if c.logins and c.tls and not c.logged else listed)
+        elif due == "authinfo":
+            line = self.due_line(c)
+            r = self.auth_reply(c, words(line[1])[1:] if line else [])
+            if r == "check":
+                raise Violation("check", f"{idx} answered AUTHINFO PASS at once, before its check")
+            c.decisions.append(r)
+            if r == "auth-user" and line:
+                c.name = words(line[1])[2]
+            elif r == "auth-failed":
+                c.name = None
         elif due == "mode-reader":
-            c.decisions.append("reader-posting" if c.greeted and self.store.accepting else "reader-no-posting")
+            c.decisions.append("reader-posting" if c.posting and self.store.accepting else "reader-no-posting")
         elif due == "post":
-            if not c.greeted:
+            if not c.posting:
                 c.decisions.append("not-permitted")
             elif not self.store.accepting:
                 c.decisions.append("unavailable")
@@ -1171,6 +1240,29 @@ class PostJudge(Judge):
             c.waiting = False
             if (idx, gen) in self.waiters:
                 self.waiters.remove((idx, gen))
+
+    def auth_reply(self, c: Conn, args: list[bytes]) -> str:
+        """What an AUTHINFO with these arguments is answered, `check` when its name and password go to
+        the host."""
+        if not c.logins or c.logged:
+            return "auth-done"
+        if len(args) != 2 or args[0].upper() not in (b"USER", b"PASS"):
+            return "syntax"
+        if not c.tls:
+            return "encryption-required"
+        if args[0].upper() == b"USER":
+            return "auth-failed" if len(args[1]) > NAME_MAX else "auth-user"
+        if c.name is None:
+            return "auth-sequence"
+        return "auth-failed" if len(args[1]) > PASSWORD_MAX else "check"
+
+    def check_due(self, c: Conn) -> tuple[bytes, bytes] | None:
+        """The name and the password its next line hands the host, if it is such an AUTHINFO PASS."""
+        line = self.due_line(c)
+        if line is None or line[0] != "authinfo":
+            return None
+        args = words(line[1])[1:]
+        return (c.name or b"", args[1]) if self.auth_reply(c, args) == "check" else None
 
     def unacted(self, t: Turn, idx: int, gen: int, c: Conn) -> None:
         """A connection with no action: nothing it is due now, but for output the host left."""

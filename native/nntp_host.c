@@ -30,9 +30,10 @@
  * `--clock-fd N` takes the time from N instead of CLOCK_MONOTONIC — a line with a number of
  * milliseconds sets it, and it moves only then, so nothing waits for it before that — and
  * `--report-fd N` receives a line for each turn: `turn`, the time handed to the program, its events
- * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`, each
- * with the index and generation), `|`, its actions (`send` with whether to read, how much the kernel
- * took and the bytes, `graceful`, `close`), `| wake` and the time the program asked to be woken at
+ * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`,
+ * `verdict` with 1 for a login taken, each with the index and generation), `|`, its actions (`send`
+ * with whether to read, how much the kernel took and the bytes, `graceful`, `close`, `verify`),
+ * `| wake` and the time the program asked to be woken at
  * — or, when the program stops the run in that turn, `| stopped` and its code.
  *
  * Settings come as options or, with `--config FILE`, from a file: a setting a line, an option's name
@@ -46,12 +47,17 @@
  * and `--port` are then refused. With `--tls-cert FILE` and `--tls-key FILE`, PEM files, every
  * connection speaks TLS from its first octet (RFC 8143, port 563) through libssl (tls.c), and the
  * program learns of one only once its handshake is done; a handshake not done in 10 s, or that
- * fails, closes the connection unreported. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
- * connections taken, how they ended, the octets read and sent, the pauses in accepting, the file
- * jobs and those that failed for want of space, on an I/O error or otherwise; no address, name or
- * octet a client sent. */
+ * fails, closes the connection unreported. With `--users FILE` and a store, AUTHINFO USER and PASS
+ * log in to the accounts of the file (accounts.h) over TLS, and a login lets a connection post;
+ * the program hands the host a name and a password to check, and the host stops reading from the
+ * connection until it reports the verdict. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
+ * connections taken, how they ended, the octets read and sent, the pauses in accepting, the logins
+ * taken and refused, the file jobs and those that failed for want of space, on an I/O error or
+ * otherwise; no address, name, password or octet a client sent. The report, for tests, holds every
+ * octet received, a password among them; of a check it names only the connection. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
+#include "accounts.h"
 #include "faults.h"
 #include "jobs.h"
 #include "session_calls.h"
@@ -92,6 +98,7 @@ struct conn {
     short tls_wants;             /* what TLS waits for before the read, write or handshake can go on */
     uint64_t handshake_until;    /* when a handshake not done by then ends the connection */
     struct sockaddr_storage peer; /* the client, for the store once the handshake is done */
+    int checking;                /* its name and password are with the accounts' thread */
 };
 
 struct lingering { int fd; uint64_t until, quiet_until, since; };
@@ -103,13 +110,13 @@ static int accept_ready, started, awaiting_emit, carrying, listening;
 static unsigned start, listen_port;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
 static int send_buffer, pausing, checking;
-static const char *revision, *source, *address = "127.0.0.1", *tls_cert, *tls_key;
+static const char *revision, *source, *address = "127.0.0.1", *tls_cert, *tls_key, *users;
 static unsigned port_wanted;
 /* While a file's settings are taken, where the one taken is. */
 static const char *setting_at = "";
 /* What the counters count; a connection ended by neither action was ended by its client or the
  * network. */
-static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses, handshakes_failed; } counted;
+static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses, handshakes_failed, logins, refused; } counted;
 static char clock_text[MAX_LINE], trace[TRACE_BYTES];
 static size_t clock_len, trace_len;
 
@@ -148,7 +155,7 @@ static void traced_bytes(const unsigned char *p, uint64_t n) {
 static void trace_events(const unsigned char *a, uint64_t now) {
     static const char *const names[] = {[DN_SESSION_OPENED] = "open", [DN_SESSION_RECEIVED] = "recv",
                                         [DN_SESSION_INPUT_ENDED] = "end", [DN_SESSION_WRITABLE] = "writable",
-                                        [DN_SESSION_CLOSED] = "closed"};
+                                        [DN_SESSION_CLOSED] = "closed", [DN_SESSION_VERIFIED] = "verdict"};
     trace_len = 0;
     traced("turn %" PRIu64, now);
     for (uint64_t k = 0; k < turn_events; ++k) {
@@ -156,6 +163,7 @@ static void trace_events(const unsigned char *a, uint64_t now) {
         uint64_t kind = dn_word(slot + DN_SESSION_EVENT_KIND), idx = dn_word(slot + DN_SESSION_EVENT_IDX);
         traced(" %s %" PRIu64 " %" PRIu64, names[kind], idx, dn_word(slot + DN_SESSION_EVENT_GEN));
         if (kind == DN_SESSION_OPENED) traced(" %u", conns[idx].port);
+        if (kind == DN_SESSION_VERIFIED) traced(" %" PRIu64, dn_word(slot + DN_SESSION_EVENT_POST));
         if (kind == DN_SESSION_RECEIVED)
             traced_bytes(slot + DN_SESSION_EVENT_HEAD, dn_word(slot + DN_SESSION_EVENT_LEN));
     }
@@ -200,11 +208,11 @@ static void say_counters(const char *when) {
     fprintf(stderr,
             "%s: %" PRIu64 " connections, %" PRIu64 " closed gracefully, %" PRIu64 " at once, %" PRIu64
             " by the client or the network; %" PRIu64 " TLS handshakes failed; %" PRIu64 " octets in, %" PRIu64
-            " out; %" PRIu64 " accept pauses; %" PRIu64 " file jobs, %" PRIu64 " failed for want of space, %" PRIu64
-            " on I/O errors, %" PRIu64 " otherwise\n",
+            " out; %" PRIu64 " accept pauses; %" PRIu64 " logins taken, %" PRIu64 " refused; %" PRIu64
+            " file jobs, %" PRIu64 " failed for want of space, %" PRIu64 " on I/O errors, %" PRIu64 " otherwise\n",
             when, counted.accepted, counted.graceful, counted.abrupt,
             counted.ended - counted.graceful - counted.abrupt - counted.handshakes_failed, counted.handshakes_failed,
-            counted.in, counted.out, counted.pauses, jobs[0], jobs[1], jobs[2], jobs[3]);
+            counted.in, counted.out, counted.pauses, counted.logins, counted.refused, jobs[0], jobs[1], jobs[2], jobs[3]);
 }
 
 /* Every socket closed, the file jobs drained, and the run ends inside the call. */
@@ -239,6 +247,8 @@ static int take_handshakes(uint64_t now);
 
 static void free_index(struct conn *c) {
     ++counted.ended;
+    if (c->checking) dn_accounts_forget((int)(c - conns));
+    c->checking = 0;
     end_tls(c, 0);
     if (c->fd >= 0) close(c->fd);
     c->fd = -1;
@@ -359,7 +369,7 @@ static int until(uint64_t at, int timeout) {
 /* Poll until something is ready to give out or `wake` has come. */
 static void wait_for(uint64_t wake) {
     for (;;) {
-        struct pollfd fds[4 + CONNS + LINGERING];
+        struct pollfd fds[5 + CONNS + LINGERING];
         int n = 0, conn_at[CONNS], linger_at[LINGERING];
         int paused = now_ms() < accept_paused_until;
         int taking = listening && free_indexes() > 0 && !paused;
@@ -367,6 +377,7 @@ static void wait_for(uint64_t wake) {
         fds[n++] = (struct pollfd){.fd = taking ? listener : -1, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = clock_fd, .events = POLLIN};
         fds[n++] = (struct pollfd){.fd = jobs_done, .events = POLLIN};
+        fds[n++] = (struct pollfd){.fd = dn_accounts_fd(), .events = POLLIN};
         int timeout = until(wake, -1);
         if (paused) timeout = until(accept_paused_until, timeout);
         /* Octets TLS has taken off a socket and not yet given out no poll reports. */
@@ -415,7 +426,7 @@ static void wait_for(uint64_t wake) {
         int news = 0;
         if (fds[1].revents && tls_cert) news |= take_handshakes(now_ms());
         else if (fds[1].revents) news = accept_ready = 1;
-        news |= dn_jobs_ready();
+        news |= dn_jobs_ready() | dn_accounts_ready();
         uint64_t now = now_ms();
         for (int i = 0; i < CONNS; ++i) {
             if (conn_at[i] < 0) continue;
@@ -440,6 +451,8 @@ static void event(unsigned char *a, uint64_t kind, int idx, uint64_t gen, uint64
     dn_put_word(slot + DN_SESSION_EVENT_GEN, gen);
     dn_put_word(slot + DN_SESSION_EVENT_LEN, len);
     dn_put_word(slot + DN_SESSION_EVENT_POST, 0);
+    dn_put_word(slot + DN_SESSION_EVENT_LOGINS, 0);
+    dn_put_word(slot + DN_SESSION_EVENT_TLS, 0);
     ++turn_events;
 }
 
@@ -447,8 +460,26 @@ static void event(unsigned char *a, uint64_t kind, int idx, uint64_t gen, uint64
 static void opened(unsigned char *a, int i) {
     event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
     dn_store_log_opened(&conns[i].peer);
-    dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
-                (uint64_t)dn_store_may_post(&conns[i].peer));
+    unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT;
+    dn_put_word(slot + DN_SESSION_EVENT_POST, (uint64_t)dn_store_may_post(&conns[i].peer));
+    dn_put_word(slot + DN_SESSION_EVENT_LOGINS, users != NULL);
+    dn_put_word(slot + DN_SESSION_EVENT_TLS, conns[i].tls != NULL);
+}
+
+/* The verdicts the accounts' thread has come to, while the batch has room, ahead of the connections'
+ * events, which the next batch takes if this one is full; one of a connection gone is dropped. */
+static void give_verdicts(unsigned char *a) {
+    int idx, ok;
+    uint64_t gen;
+    while (turn_events < DN_SESSION_BATCH && dn_accounts_verdict(&idx, &gen, &ok)) {
+        struct conn *c = &conns[idx];
+        if (c->fd < 0 || c->gen != gen || !c->checking) continue;
+        c->checking = 0;
+        ++*(ok ? &counted.logins : &counted.refused);
+        event(a, DN_SESSION_VERIFIED, idx, gen, 0);
+        dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
+                    (uint64_t)ok);
+    }
 }
 
 /* What one connection has to report, if anything. */
@@ -599,10 +630,11 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     if (!carrying && !first) wait_for(wake);
     uint64_t now = now_ms();
     turn_events = 0;
+    give_verdicts(a);
     for (unsigned k = 0; k < CONNS && turn_events < DN_SESSION_BATCH; ++k) give_out(a, (int)((start + k) % CONNS));
     start = (start + 1) % CONNS;
     take_connections(a, now);
-    carrying = 0;
+    carrying = dn_accounts_ready();
     for (int i = 0; i < CONNS; ++i) carrying |= conns[i].ready != 0 || conns[i].lost || conns[i].handshaken;
     carrying |= accept_ready && free_indexes() > 0;
     dn_jobs_give(a);
@@ -637,7 +669,9 @@ static void trace_actions(const unsigned char *a) {
                    dn_word(slot + DN_SESSION_ACTION_TAKEN));
             traced_bytes(slot + DN_SESSION_ACTION_HEAD, dn_word(slot + DN_SESSION_ACTION_LEN));
         } else if (kind) {
-            traced(" %s %d %" PRIu64, kind == DN_SESSION_CLOSE_GRACEFULLY ? "graceful" : "close", k, gen);
+            traced(" %s %d %" PRIu64,
+                   kind == DN_SESSION_CLOSE_GRACEFULLY ? "graceful" : kind == DN_SESSION_VERIFY ? "verify" : "close", k,
+                   gen);
         }
     }
 }
@@ -655,17 +689,30 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
         uint64_t idx = dn_word(slot + DN_SESSION_ACTION_IDX), gen = dn_word(slot + DN_SESSION_ACTION_GEN);
         uint64_t len = dn_word(slot + DN_SESSION_ACTION_LEN), read = dn_word(slot + DN_SESSION_ACTION_READ);
         if (idx != (uint64_t)k) dn_violation("dn_emit: the slot of connection %d holds an action for %" PRIu64, k, idx);
-        if (kind != DN_SESSION_SEND && kind != DN_SESSION_CLOSE_GRACEFULLY && kind != DN_SESSION_CLOSE_NOW)
+        if (kind != DN_SESSION_SEND && kind != DN_SESSION_CLOSE_GRACEFULLY && kind != DN_SESSION_CLOSE_NOW &&
+            (kind != DN_SESSION_VERIFY || !users))
             dn_violation("dn_emit: an action of kind %" PRIu64, kind);
         if (kind == DN_SESSION_SEND && (len > DN_SESSION_DATA || read > 1))
             dn_violation("dn_emit: a send of %" PRIu64 " bytes, reading %" PRIu64, len, read);
+        if (kind == DN_SESSION_VERIFY && (read > DN_SESSION_NAME_MAX || len < read || len - read > DN_SESSION_PASSWORD_MAX))
+            dn_violation("dn_emit: a check of %" PRIu64 " octets, %" PRIu64 " of them the name", len, read);
+        /* The program reads nothing of the slot back but what the host took of a send: a password goes
+         * once handed over. */
+        unsigned char *password = slot + DN_SESSION_ACTION_HEAD + read;
         struct conn *cn = &conns[k];
         if (cn->fd < 0 || cn->gen != gen) {
             /* not this connection's: its close is reported, or about to be */
             if (kind == DN_SESSION_SEND) dn_put_word(slot + DN_SESSION_ACTION_TAKEN, 0);
+            if (kind == DN_SESSION_VERIFY) explicit_bzero(password, len - read);
             continue;
         }
-        if (kind == DN_SESSION_SEND) {
+        if (kind == DN_SESSION_VERIFY) {
+            if (cn->checking || !cn->tls) dn_violation("dn_emit: a check for connection %d, checking or in the clear", k);
+            dn_accounts_check(k, gen, slot + DN_SESSION_ACTION_HEAD, read, password, len - read);
+            explicit_bzero(password, len - read);
+            cn->checking = 1;
+            cn->reading = 0;
+        } else if (kind == DN_SESSION_SEND) {
             int failed;
             uint64_t taken;
             if (cn->tls) {
@@ -757,11 +804,11 @@ static void identity(const char *name, const char *value, size_t max) {
 static void read_settings(const char *path);
 
 /* Settings taken once at most; the file of settings, given either way, counts as one. */
-enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_ONCE = 13 };
+enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_SPOOL = 8, GIVEN_ONCE = 14 };
 static const char *const taken_once[GIVEN_ONCE] = {
     [GIVEN_PORT] = "--port", [GIVEN_ADDRESS] = "--address", [GIVEN_SETTINGS] = "--config", "--revision", "--source",
-    "--send-buffer", "--clock-fd", "--report-fd", "--spool", "--run-dir", "--path-identity", "--tls-cert",
-    "--tls-key"};
+    "--send-buffer", "--clock-fd", "--report-fd", [GIVEN_SPOOL] = "--spool", "--run-dir", "--path-identity",
+    "--tls-cert", "--tls-key", "--users"};
 static int given[sizeof taken_once / sizeof *taken_once];
 
 /* A number of the setting `name`, the file's line named. */
@@ -787,6 +834,7 @@ static void set(const char *name, const char *value) {
     else if (!strcmp(name, "--report-fd")) report_fd = descriptor(value);
     else if (!strcmp(name, "--tls-cert")) tls_cert = value;
     else if (!strcmp(name, "--tls-key")) tls_key = value;
+    else if (!strcmp(name, "--users")) users = value;
     else if (!strcmp(counted_as, "--config")) {
         checking = !strcmp(name, "--check-config");
         read_settings(value);
@@ -902,6 +950,9 @@ __attribute__((noreturn)) static void say_settings(void) {
     fputs(",\"tls_key\":", stdout);
     if (tls_key) dn_json_string(stdout, tls_key);
     else fputs("null", stdout);
+    fputs(",\"users\":", stdout);
+    if (users) dn_json_string(stdout, users);
+    else fputs("null", stdout);
     dn_store_settings(stdout);
     puts("}");
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
@@ -920,6 +971,13 @@ int main(int argc, char **argv) {
         char why[512];
         if (dn_tls_setup(tls_cert, tls_key, why, sizeof why)) dn_harness("TLS: %s", why);
     }
+    if (users) {
+        char why[512];
+        if (!given[GIVEN_SPOOL]) dn_harness("--users needs a store, which --spool gives");
+        if (dn_accounts_load(users, why, sizeof why)) dn_harness("users: %s", why);
+        /* Passwords pass through memory: no core dump writes them out. */
+        if (prctl(PR_SET_DUMPABLE, 0)) dn_harness("prctl: %s", strerror(errno));
+    }
     if (checking) say_settings();
     int handed = handed_listener();
     /* Blocked before anything starts, the workers too, so that a signal waits for the loop. */
@@ -934,6 +992,7 @@ int main(int argc, char **argv) {
     if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) dn_harness("signal: %s", strerror(errno));
     dn_store_start();
     jobs_done = dn_jobs_start(dn_store_spool());
+    if (users) dn_accounts_start();
     if (clock_fd >= 0) now_virtual = 1;
     for (int i = 0; i < CONNS; ++i) conns[i].fd = -1;
     for (int i = 0; i < LINGERING; ++i) lingering[i].fd = -1;

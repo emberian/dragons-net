@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 enum {
     SSL_FILETYPE_PEM = 1,
@@ -119,6 +120,16 @@ int dn_tls_setup(const char *certificate, const char *key, char *why, size_t why
     ossl.SSL_CTX_ctrl(context, SSL_CTRL_SET_SESS_CACHE_MODE, SSL_SESS_CACHE_OFF, NULL);
     if (ossl.SSL_CTX_use_certificate_chain_file(context, certificate) != 1)
         return failed(certificate, why, why_len);
+    /* The key is the server's alone: a file others may read, or its group write, is refused. */
+    struct stat st;
+    if (stat(key, &st)) {
+        snprintf(why, why_len, "%s: %s", key, strerror(errno));
+        return 1;
+    }
+    if (st.st_mode & (S_IRWXO | S_IWGRP)) {
+        snprintf(why, why_len, "%s: others may read it, or its group write it", key);
+        return 1;
+    }
     /* A key that is not the certificate's fails here too. */
     if (ossl.SSL_CTX_use_PrivateKey_file(context, key, SSL_FILETYPE_PEM) != 1) return failed(key, why, why_len);
     return 0;

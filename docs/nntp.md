@@ -21,7 +21,8 @@ Without a store the server answers the mandatory commands ([decision 0003](decis
 - CAPABILITIES: `VERSION 2` and `IMPLEMENTATION`; a keyword argument is ignored;
 - HELP and QUIT;
 - HEAD and STAT as a server with no group selected and no articles: 412 to a number or no argument, 430 to a message-id;
-- MODE READER: 502, then the connection closes, as §5.3.2 asks of a server that does not advertise READER.
+- MODE READER: 502, then the connection closes, as §5.3.2 asks of a server that does not advertise READER;
+- AUTHINFO: 502 whatever follows it, as no account logs in without a store, and as RFC 4643 §2.2 answers it once logged in.
 
 A line naming one of these commands that is malformed — an argument the command does not take, a byte it may not hold, more than 512 octets — gets 501. A line naming any other command gets 500, and an empty line is ignored. Rows that name no issue are **planned**.
 
@@ -37,6 +38,7 @@ A line naming one of these commands that is malformed — an argument the comman
 | NEWNEWS | NEWNEWS | Incremental peer/client discovery (#22) |
 | LIST extensions in RFC 3977 | LIST ACTIVE.TIMES, LIST DISTRIB.PATS | ACTIVE.TIMES with the groups' creation dates (#21); DISTRIB.PATS not planned |
 | MODE-READER | MODE READER | Not advertised: the server is not mode-switching and answers MODE READER as §5.3.2 asks of one (#18) |
+| AUTHINFO (RFC 4643) | AUTHINFO USER, AUTHINFO PASS | Done over TLS against the host's accounts; no SASL (#20) |
 
 Capability output includes VERSION 2 first, as required by §3.3.2. It must reflect the current session and permissions. Do not infer implementation from the software name or advertise a capability solely because a command keyword is recognized.
 
@@ -48,6 +50,7 @@ What each command of RFC 3977 gets with a store, and what holds it: the session'
 | --- | --- | --- | --- |
 | CAPABILITIES | §5.2 | `VERSION 2`, `IMPLEMENTATION`, READER, HDR, `LIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT`, `OVER MSGID`, and POST while the client may post | session lanes, nntp lane, faults lane after the store stops |
 | MODE READER | §5.3 | 200 while the client may post, else 201, changing nothing | session lanes, Net::NNTP |
+| AUTHINFO USER, PASS | RFC 4643 §2.3 | Where the host has accounts, over TLS: 381, then 281 or 481 once the host has checked the two; 482, 483 in the clear, 502 once logged in or with no accounts | session lanes, `nntplib` |
 | QUIT | §5.4 | 205, then the connection closes | session lanes, nntp lane |
 | GROUP | §6.1.1 | 211 with the count and the lowest and highest numbers, the first article current; 411 | session lanes, `nntplib`, Net::NNTP |
 | LISTGROUP | §6.1.2 | GROUP's 211, then the numbers in the range of the articles held as the group is selected | session lanes, nntp lane, Net::NNTP |
@@ -91,8 +94,8 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 5537 | Netnews architecture and procedures | The duties of an injecting agent (§3.5), which the article specification follows ([details](baseline.md#article-acceptance)); relaying and serving roles as they are added |
 | 7143 | iSCSI | Its CRC-32C (§13.1), which is to check every article's file, and the examples it prints (appendix A.4) ([details](baseline.md#journal)) |
 | 3798 | Message disposition notification | Its Disposition-Notification-To, which it deprecates for Netnews (as RFC 8098, which obsoletes it, still does), is refused |
-| 4643 | Authentication | Add with an explicit access-control and transport-security design |
-| 4642 | Transport security (TLS) | Add with the authentication profile, in the form RFC 8143 leaves it |
+| 4643 | Authentication | AUTHINFO USER and PASS over TLS, a login letting a client post ([runbook](runbook.md#logins)); no SASL |
+| 4642 | Transport security (TLS) | In the form RFC 8143 leaves it: implicit TLS, no STARTTLS ([runbook](runbook.md#tls)) |
 | 8143 | TLS update to RFC 4642 | Implicit TLS on port 563 is preferred over STARTTLS |
 | 4644 | Streaming feeds | Add after durable IHAVE ingestion and deduplication work |
 | 6048 | LIST extensions | Add according to actual client/feed needs |
@@ -101,7 +104,7 @@ The offline [RFC collection](../rfcs/manifest.json) supplies exact document hash
 | 4707 | Netnews Administration System (Experimental) | Reference only; not planned |
 | 2980 | Historical extensions | Compatibility reference; not a substitute for RFC 3977 |
 
-TLS design needs RFC 4642 as updated by RFC 8143, which prefers implicit TLS on port 563 over STARTTLS; both are in the local collection. Moderation, control messages, authentication, and relaying have policy consequences beyond recognizing commands. Defer capabilities deliberately and document the role the server actually performs.
+Reading needs no login; posting needs a network `post-from` names or a login. Moderation, control messages and relaying have policy consequences beyond recognizing commands. Defer capabilities deliberately and document the role the server actually performs.
 
 ## Source offer for a network service
 

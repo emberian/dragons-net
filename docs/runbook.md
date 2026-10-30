@@ -29,6 +29,7 @@ Settings come as options or from a file given by `--config FILE`: a setting a li
 | `post-from` | A network that may post, as an address and a prefix length, at most 16 | 127.0.0.0/8 and ::1/128 |
 | `send-buffer` | SO_SNDBUF of each connection, in octets | the kernel's |
 | `tls-cert`, `tls-key` | PEM files of the certificate chain and its key: every connection speaks TLS (RFC 8143) | No TLS |
+| `users` | A file of accounts that log in by AUTHINFO USER and PASS (RFC 4643) over TLS; needs `spool` | No logins |
 
 ```
 revision v1
@@ -48,11 +49,27 @@ With `tls-cert` and `tls-key` every connection speaks TLS 1.2 or later from its 
 
 A handshake not done in 10 s, or that fails, closes the connection before the session learns of it. The counters count those, and the first failure of a run says why.
 
-To rotate a certificate, put the new files in place and restart: they are read at start only. The key file should be readable by the server's user alone.
+To rotate a certificate, put the new files in place and restart: they are read at start only. A key file others may read, or its group write, refuses the start with status 2.
 
 A handshake holds one of the 64 connections up to its 10 s, and its work runs in the server's one loop, so a server open to the world wants a rate limit in front.
 
 Ciphers, their security level and session tickets are libssl's defaults; there is no SNI, ALPN or client certificate. The server needs glibc 2.34 or later, whose libc holds `dlopen`.
+
+## Logins
+
+With `users` a client logs in by AUTHINFO USER and PASS, over TLS only: in the clear both are answered 483 and CAPABILITIES offers no AUTHINFO. A login lets the connection post, from any network; reading needs none.
+
+The file holds a line an account, `NAME:ITERATIONS:SALT:KEY`, the key PBKDF2-HMAC-SHA256's of the password, salt and key in lowercase hex; `#` starts a comment. `scripts/nntp_account.py NAME` prints a line, reading the password from the terminal, with 600,000 iterations and a random salt. Neither a name nor a password may hold white space, as AUTHINFO splits its line there.
+
+The file is read at start: to change an account, edit it and restart. A file others may read, or its group write, refuses the start with status 2, and so does a line that is no account; the reason names the line, not its contents.
+
+The server loads `libcrypto.so.3` at start. A check runs on a thread of its own, one at a time: a connection waits for its verdict unread and with no deadline, and the others go on.
+
+A name no account has costs as long as the first account's: while every account has the same iterations, as the script gives them, the time tells nothing of which names exist. With `users` the server makes no core dump, as passwords pass through its memory.
+
+A failed login is answered 481 once checked. One check at a time bounds the guesses of all clients together to what the iterations allow; one client can still make the others wait, so a server open to the world wants a rate limit in front.
+
+The counters count logins taken and refused; neither they nor the log hold a name or a password.
 
 ## Privileges
 
@@ -89,9 +106,9 @@ Other statuses: 1, the program broke the host's contract; 2, a setting or a syst
 
 SIGUSR1 writes one line of counters to stderr, and a stop on a signal writes it again. It counts the connections taken and how those ended: gracefully, at once, or by the client or the network.
 
-It counts the TLS handshakes that failed or ran out of time, the octets read and sent, and the pauses in accepting when descriptors or memory ran out. Last, the file jobs, and those that failed for want of space, on an I/O error or otherwise.
+It counts the TLS handshakes that failed or ran out of time, the octets read and sent, the pauses in accepting when descriptors or memory ran out, and the logins taken and refused. Last, the file jobs, and those that failed for want of space, on an I/O error or otherwise.
 
-The line holds no address, name or octet a client sent; the log of connections, which names each poster's address, is apart.
+The line holds no address, name, password or octet a client sent; the log of connections, which names each poster's address, is apart.
 
 ## Backup and restore
 

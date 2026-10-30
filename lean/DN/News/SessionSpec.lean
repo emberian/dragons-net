@@ -124,6 +124,21 @@ inductive Listing
   | groups (w : Option Wildmat) (next : Nat)
   deriving DecidableEq, Repr
 
+/-- Where a connection stands with AUTHINFO (RFC 4643 §2.3): not logged in, a name kept for the
+password, the name and the password for the host to check, with the host, or logged in. -/
+inductive Auth
+  | none
+  | named (name : List Byte)
+  | verify (name password : List Byte)
+  | checking
+  | done
+  deriving DecidableEq, Repr
+
+/-- Whether a name and a password are for the host to check or with it. -/
+def Auth.pending : Auth → Bool
+  | .verify .. | .checking => true
+  | _ => false
+
 structure Conn where
   gen : Nat
   phase : Phase
@@ -143,8 +158,12 @@ structure Conn where
   lineDue : Nat
   /-- its number among the connections of the run, from one -/
   number : Nat := 0
-  /-- whether it was greeted with 200 -/
+  /-- whether it may post: it was greeted with 200, or logged in while the store accepted -/
   greeted : Bool := false
+  /-- whether the host offers it AUTHINFO, and whether it runs over TLS -/
+  logins : Bool := false
+  tls : Bool := false
+  auth : Auth := .none
   /-- whether a POST waits for a slot -/
   waiting : Bool := false
   /-- the slot of its POST, from the 340 until the answer -/
@@ -171,12 +190,14 @@ def Conn.fresh (i : Identity) (greeted : Bool) (number gen now : Nat) : Conn :=
     first := now + firstCommand, idle := now + inactivity, lineDue := 0, number, greeted }
 
 inductive Event
-  /-- a connection opened, and whether it may post -/
-  | opened (idx gen : Nat) (mayPost : Bool)
+  /-- a connection opened: whether it may post, may log in and runs over TLS -/
+  | opened (idx gen : Nat) (mayPost logins tls : Bool)
   | received (idx gen : Nat) (data : List Byte)
   | writable (idx gen : Nat)
   | inputEnded (idx gen : Nat)
   | closed (idx gen : Nat)
+  /-- the host's verdict on the name and password a connection gave -/
+  | verified (idx gen : Nat) (ok : Bool)
   deriving DecidableEq, Repr
 
 inductive Action
@@ -185,6 +206,8 @@ inductive Action
   /-- everything was taken: close after the host's lingering read -/
   | closeGracefully (idx gen : Nat)
   | closeNow (idx gen : Nat)
+  /-- check the name and the password, and report the verdict -/
+  | verify (idx gen : Nat) (name password : List Byte)
   deriving DecidableEq, Repr
 
 /-- What a host may not report; each ends the run. -/
@@ -195,7 +218,7 @@ inductive Breach
   | tooLong
   /-- an index past the table -/
   | noSuchIndex
-  /-- input from a connection that was not asked for it -/
+  /-- input, or a verdict, for a connection that was not asked for it -/
   | unasked
   /-- more bytes taken than a send carried, or a count for no send -/
   | overTaken
@@ -249,14 +272,14 @@ def greets (st : Option Store) (mayPost : Bool) : Bool :=
 /-- One event. An event for a connection the table does not hold, or of an older generation, is
 left alone. The end of input, or a close, abandons the article of a block not ended. -/
 def applyEvent (i : Identity) (now : Nat) (s : Server) : Event → Except Breach Server
-  | .opened idx gen mayPost => do
+  | .opened idx gen mayPost logins tls => do
     checkIndex idx
     match s.table[idx]? with
     | some (some _) => throw .reopened
     | _ =>
       if gen ≤ s.gens.getD idx 0 || genLimit < gen then throw .reopened
       else
-        let c := Conn.fresh i (greets s.store mayPost) (s.opened + 1) gen now
+        let c := { Conn.fresh i (greets s.store mayPost) (s.opened + 1) gen now with logins, tls }
         return { s with table := s.table.set idx (some c), opened := s.opened + 1,
                         gens := s.gens.set idx gen }
   | .received idx gen data => do
@@ -290,6 +313,17 @@ def applyEvent (i : Identity) (now : Nat) (s : Server) : Event → Except Breach
     | some _ =>
       return { s with table := s.table.set idx none, store := s.store.map (Store.abandon idx gen) }
     | none => return s
+  | .verified idx gen ok => do
+    checkIndex idx
+    match s.table.live idx gen with
+    | some c =>
+      if c.auth = .checking then
+        let c' := { c with auth := if ok then .done else .none, idle := now + inactivity,
+                           out := text i (if ok then .authAccepted else .authFailed),
+                           greeted := c.greeted || ok && greets s.store true }
+        return { s with table := s.table.set idx (some c') }
+      else throw .unasked
+    | none => return s
 
 /-- Whether a deadline has passed. -/
 def Conn.due (c : Conn) (now : Nat) : Bool :=
@@ -299,10 +333,10 @@ def Conn.due (c : Conn) (now : Nat) : Bool :=
 /-- Whether the host should read from the connection: it takes commands and holds none. -/
 def Conn.wants (c : Conn) : Bool := c.phase == .open_ && c.held.isEmpty
 
-/-- …and no POST or read waits or is answered, no reply goes out a part at a time, and the slot of its
-POST takes octets. -/
+/-- …and no POST or read waits or is answered, no reply goes out a part at a time, no name and
+password are with the host, and the slot of its POST takes octets. -/
 def Conn.wantsWith (st : Option Store) (c : Conn) : Bool :=
-  c.wants && !c.waiting && c.want.isNone && c.listing.isNone && match c.post with
+  c.wants && !c.waiting && c.want.isNone && c.listing.isNone && !c.auth.pending && match c.post with
     | none => true
     | some k => st.any fun st => (st.slot k).any Slot.takes
 
@@ -392,10 +426,15 @@ def viewOf (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) : Sel �
 may post, and MODE READER's 200 or 201 as they name POST or not; the help with POST, for a
 well-formed POST 340, 440 or 403, and for a message-id the store does not hold 430, for one it holds
 with STAT 223; the replies of the selected group and the current article. Without a store, the
-capabilities and the help of 0003, and MODE READER's 502. -/
+capabilities and the help of 0003, and MODE READER's 502. AUTHINFO USER and PASS (RFC 4643 §2.3)
+where the host offers them: 483 in the clear, and over TLS AUTHINFO USER in the capabilities until
+logged in; 502 once logged in, and where it may not log in. -/
 def resolve (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
-    if c.greeted && p.accepting then .capabilitiesPost else if p.offered then .capabilitiesReader
+    if c.logins && c.tls && c.auth != .done then
+      if c.greeted && p.accepting then .capabilitiesPostAuth else if p.offered then .capabilitiesReaderAuth
+      else .capabilitiesAuth
+    else if c.greeted && p.accepting then .capabilitiesPost else if p.offered then .capabilitiesReader
     else .capabilities
   | .modeReader =>
     if !p.offered then .modeReader else if c.greeted && p.accepting then .readerPosting
@@ -432,6 +471,19 @@ def resolve (p : Posting) (c : Conn) : Reply → Reply
   | .date => .time (dateDigits p.wall)
   | .over lg s => viewOf p c lg none s
   | .hdr lg f s => viewOf p c lg (some f) s
+  | .authinfo args =>
+    if !c.logins || c.auth = .done then .authDone
+    else match args with
+      | [k, a] =>
+        if k.map upper = ascii "USER" then
+          if !c.tls then .encryptionRequired else if nameMax < a.length then .authFailed else .authUser a
+        else if k.map upper = ascii "PASS" then
+          if !c.tls then .encryptionRequired
+          else match c.auth with
+            | .named nm => if passwordMax < a.length then .authFailed else .authPass nm a
+            | _ => .authSequence
+        else .syntax
+      | _ => .syntax
   | r => r
 
 /-- The line of LIST ACTIVE for group `g`: its name, its highest and lowest numbers as GROUP gives
@@ -491,11 +543,18 @@ of the listing (`part_progress`). -/
 def Listing.part (p : Posting) : Nat → List Byte → Listing → List Byte × Option Listing :=
   partWith (Listing.next p) chunk
 
+/-- Where a connection stands with AUTHINFO after a reply: the name of a 381 kept, none after a 481. -/
+def authAfter : Reply → Auth → Auth
+  | .authUser nm, _ => .named nm
+  | .authFailed, _ => .none
+  | _, a => a
+
 /-- Answer the first held line that gets a reply, putting it in `out`, and frame on past the lines
 that get none and into an unfinished last line, stopping before the next line that gets a reply: a
 connection holds input only while such a line waits. A connection with output untaken, an ARTICLE,
-HEAD or BODY to be answered by a read, or a reply going out a part at a time, answers nothing; a POST
-that may have a slot waits for one. Each round frames at least one byte, so `fuel`
+HEAD or BODY to be answered by a read, a reply going out a part at a time, or a name and password
+with the host, answers nothing; a POST that may have a slot waits for one, and an AUTHINFO PASS for
+the host's verdict. Each round frames at least one byte, so `fuel`
 of one more than the held bytes is enough; a line left unanswered was framed from the start of a
 line, so the framer's state is left as it was. -/
 def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
@@ -511,14 +570,15 @@ def serve (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
         match resolve p c (replyIn p.offered l) with
         | .ignore => serve i p now fuel c1
         | r =>
-          if !c.out.isEmpty || c.want.isSome || c.listing.isSome then c
+          if !c.out.isEmpty || c.want.isSome || c.listing.isSome || c.auth.pending then c
           else if r = .post then { c1 with waiting := true, first := 0, idle := 0 }
+          else if let .authPass nm pw := r then { c1 with auth := .verify nm pw, idle := 0 }
           else if let some (k, n, id, v) := readOf p r then
             serve i p now fuel { c1 with want := some (k, n, id), view := v, first := 0, idle := 0 }
           else
             let c2 := { c1 with out := text i r, first := 0, idle := now + inactivity,
                                 group := r.groupAfter c1.group, current := r.currentAfter c1.current,
-                                listing := listingOf r }
+                                listing := listingOf r, auth := authAfter r c1.auth }
             if r = .quit ∨ r = .modeReader then { c2 with phase := .quitting, held := [] }
             else serve i p now fuel c2
 
@@ -643,13 +703,16 @@ def claimRead (idx : Nat) (st : Option Store) (c : Conn) : Conn × Option Store 
 /-- What a connection that is not closed at a deadline asks of the host once it is served: its
 output, with whether to read once it is taken, unless the host has not yet reported it ready
 after leaving part of it; or a graceful close once everything is answered and taken after a QUIT, a
-502 or the end of input; or, with nothing to send, whether to read, when that has changed. -/
+502 or the end of input; or a name and a password to check; or whether to read, when that has
+changed. -/
 def emit (idx : Nat) (wants : Bool) (c : Conn) : Option Conn × Option Action :=
   if !c.out.isEmpty then
     if c.blocked then (some c, none)
     else (some { c with reading := wants }, some (.send idx c.gen c.out wants))
-  else if c.phase = .quitting || (c.phase = .ending && c.held.isEmpty) then
+  else if c.phase = .quitting || (c.phase = .ending && c.held.isEmpty && !c.auth.pending) then
     (none, some (.closeGracefully idx c.gen))
+  else if let .verify nm pw := c.auth then
+    (some { c with auth := .checking, reading := false }, some (.verify idx c.gen nm pw))
   else if c.phase = .open_ && c.reading != wants then
     (some { c with reading := wants }, some (.send idx c.gen [] wants))
   else (some c, none)
@@ -740,7 +803,8 @@ def settle (s : Server) (actions : List Action) (taken : List Nat) : Except Brea
   return { s with table := ← settleTable s.clock s.table actions taken }
 
 /-- Whether the connection at `idx` can go on without waiting for the host: nothing of its output is
-untaken, and it holds input to answer or to frame, has to close, waits for a slot it gets now or
+untaken, and it holds input to answer or to frame and no name and password are with the host, has to
+close, waits for a slot it gets now or
 for its 403, waits for a read it gets now, is answered by a read that has octets to give or
 failed, or has a reply going out a part at a time. -/
 def Conn.ready (st : Option Store) (idx : Nat) (c : Conn) : Bool :=
@@ -749,7 +813,7 @@ def Conn.ready (st : Option Store) (idx : Nat) (c : Conn) : Bool :=
     (c.want.isSome && st.any fun st => match c.read with
       | none => st.admitsRead (idx, c.gen)
       | some k => (st.readSlot k).any fun r => r.bad || r.given < r.out.size) ||
-    (!c.held.isEmpty && !c.waiting && c.want.isNone && match c.post with
+    (!c.held.isEmpty && !c.waiting && c.want.isNone && !c.auth.pending && match c.post with
       | none => true
       | some k => st.any fun st => (st.slot k).any Slot.takes))
 
@@ -1189,7 +1253,7 @@ theorem fits_witness : (Posting.of 0 none).Fits ∧
   ⟨by unfold Posting.Fits Posting.of; decide +kernel, by unfold Posting.Fits; decide +kernel⟩
 
 def Action.idx : Action → Nat
-  | .send idx .. | .closeGracefully idx _ | .closeNow idx _ => idx
+  | .send idx .. | .closeGracefully idx _ | .closeNow idx _ | .verify idx .. => idx
 
 theorem emit_idx (idx : Nat) (w : Bool) (c : Conn) (a : Action) (h : (emit idx w c).2 = some a) :
     a.idx = idx := by
@@ -1203,7 +1267,9 @@ theorem emit_idx (idx : Nat) (w : Bool) (c : Conn) (a : Action) (h : (emit idx w
     · intro h; cases h; rfl
     · split
       · intro h; cases h; rfl
-      · intro h; cases h
+      · split
+        · intro h; cases h; rfl
+        · intro h; cases h
 
 theorem act_idx (i : Identity) (now wall idx : Nat) (st : Option Store) (c : Conn) (a : Action)
     (h : (act i now wall idx st c).2.1 = some a) : a.idx = idx := by
@@ -1338,7 +1404,8 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .ignore, h => absurd rfl h
   | .capabilities, _ => fun e =>
     absurd (List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp e).1).1 (by decide +kernel)
-  | .capabilitiesPost, _ | .capabilitiesReader, _ => fun e => by
+  | .capabilitiesPost, _ | .capabilitiesReader, _ | .capabilitiesAuth, _ | .capabilitiesReaderAuth, _
+  | .capabilitiesPostAuth, _ => fun e => by
     simp only [text, List.append_assoc, List.append_eq_nil_iff] at e
     exact absurd e.1 (by decide +kernel)
   | .help, _ | .helpPost, _ => fun e =>
@@ -1356,7 +1423,8 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .noNext, _ | .noPrevious, _ | .noNumber, _ | .listGroup .., _ | .active _, _ | .newsgroups, _
   | .newGroups, _ | .date, _ | .modeReader, _ | .readerPosting, _ | .readerNoPosting, _
   | .over .., _ | .hdr .., _ | .noneOver, _ | .noneHdr, _ | .noRange, _ | .fieldRefused, _
-  | .overviewFmt, _ | .headerList, _ => by
+  | .overviewFmt, _ | .headerList, _ | .authinfo _, _ | .authUser _, _ | .authPass _ _, _
+  | .authAccepted, _ | .authFailed, _ | .authSequence, _ | .encryptionRequired, _ | .authDone, _ => by
     simp only [text]; decide +kernel
   | .overview lg f _ _, _ => by
     cases lg <;> cases f <;> (simp only [text, overviewStatus]; decide +kernel)
@@ -1404,12 +1472,14 @@ theorem serve_one (i : Identity) (p : Posting) (now : Nat) :
           · split
             · exact .inl h
             · split
-              · exact ih _ h
+              · exact .inl h
               · split
-                · exact .inr ⟨_, hr, rfl⟩
-                · rw [serve_out]
+                · exact ih _ h
+                · split
                   · exact .inr ⟨_, hr, rfl⟩
-                  · exact text_ne_nil i _ hr
+                  · rw [serve_out]
+                    · exact .inr ⟨_, hr, rfl⟩
+                    · exact text_ne_nil i _ hr
 
 /-- `serve` leaves the line's deadline to `Conn.waitLine`. -/
 theorem serve_lineDue (i : Identity) (p : Posting) (now : Nat) :
@@ -1432,10 +1502,12 @@ theorem serve_lineDue (i : Identity) (p : Posting) (now : Nat) :
           · split
             · rfl
             · split
-              · exact ih _
+              · rfl
               · split
-                · rfl
                 · exact ih _
+                · split
+                  · rfl
+                  · exact ih _
 
 theorem emit_lineDue (idx : Nat) (w : Bool) (c c0 : Conn) (h : (emit idx w c).1 = some c0) :
     c0.lineDue = c.lineDue := by
@@ -1604,14 +1676,16 @@ theorem serve_quit (i : Identity) (p : Posting) (now : Nat) :
           · split
             · intro h; simp only at h; rw [hp] at h; cases h
             · split
-              · exact ih _ hp
+              · intro h; simp only at h; rw [hp] at h; cases h
               · split
-                · rename_i hq
-                  intro _
-                  rcases hq with hq | hq
-                  · exact ⟨.inl (by rw [hq]), rfl⟩
-                  · exact ⟨.inr ⟨resolve_modeReader _ hq, by rw [hq]⟩, rfl⟩
                 · exact ih _ hp
+                · split
+                  · rename_i hq
+                    intro _
+                    rcases hq with hq | hq
+                    · exact ⟨.inl (by rw [hq]), rfl⟩
+                    · exact ⟨.inr ⟨resolve_modeReader _ hq, by rw [hq]⟩, rfl⟩
+                  · exact ih _ hp
 
 /-- **After a QUIT, only what is left of its reply and the close**: a connection answering QUIT, or
 MODE READER without a store, is closed at a deadline, waits for the host, sends the rest of its output
@@ -1643,9 +1717,9 @@ theorem act_quitting (i : Identity) (now wall idx : Nat) (st : Option Store) (c 
 /-! ## After a QUIT or a 502, only what is left of it -/
 
 /-- A connection that answered QUIT, or MODE READER without a store, has only what is left of the 205
-or the 502 to send. -/
+or the 502 to send, and no name and password for the host. -/
 def Conn.QuitRest (i : Identity) (c : Conn) : Prop :=
-  c.phase = .quitting → c.out <:+ text i .quit ∨ c.out <:+ text i .modeReader
+  c.phase = .quitting → (c.out <:+ text i .quit ∨ c.out <:+ text i .modeReader) ∧ c.auth.pending = false
 
 def Table.QuitRest (i : Identity) (t : Table) : Prop := ∀ c, some c ∈ t → c.QuitRest i
 
@@ -1676,7 +1750,7 @@ theorem applyEvent_quitRest {i : Identity} {now : Nat} {s s' : Server} {e : Even
     (h : applyEvent i now s e = .ok s') (hs : Table.QuitRest i s.table) :
     Table.QuitRest i s'.table := by
   cases e with
-  | opened idx gen mp =>
+  | opened idx gen mp ml tls =>
     unfold applyEvent at h
     cases hc : checkIndex idx with
     | error b => simp [hc, bind, Except.bind] at h
@@ -1736,6 +1810,25 @@ theorem applyEvent_quitRest {i : Identity} {now : Nat} {s s' : Server} {e : Even
       · cases h
         exact quitRest_set hs fun c' hc' => by cases hc'
       · cases h; exact hs
+  | verified idx gen ok =>
+    unfold applyEvent at h
+    cases hc : checkIndex idx with
+    | error b => simp [hc, bind, Except.bind] at h
+    | ok u =>
+      simp only [hc, bind, Except.bind] at h
+      split at h
+      · rename_i c hl
+        split at h
+        · rename_i ha
+          cases h
+          exact quitRest_set hs fun c' hc' => by
+            cases hc'
+            intro hq
+            have hp := (hs c (live_mem hl) hq).2
+            rw [ha] at hp
+            cases hp
+        · cases h
+      · cases h; exact hs
 
 theorem events_quitRest {i : Identity} {now : Nat} :
     ∀ (es : List Event) (s s' : Server), es.foldlM (applyEvent i now) s = .ok s' →
@@ -1769,18 +1862,25 @@ theorem serve_quitRest (i : Identity) (p : Posting) (now : Nat) :
         · exact ih _ hp
         · split
           · intro hq; exact absurd hq hp
-          · split
+          · rename_i hbusy
+            simp only [Bool.or_eq_true, not_or] at hbusy
+            split
             · intro hq; exact absurd hq hp
             · split
-              · exact ih _ hp
+              · intro hq; exact absurd hq hp
               · split
-                · rename_i hq
-                  intro _
-                  show text i _ <:+ _ ∨ text i _ <:+ _
-                  rcases hq with hq | hq
-                  · rw [hq]; exact .inl (List.suffix_refl _)
-                  · rw [hq]; exact .inr (List.suffix_refl _)
                 · exact ih _ hp
+                · split
+                  · rename_i hq
+                    intro _
+                    refine ⟨?_, ?_⟩
+                    · show text i _ <:+ _ ∨ text i _ <:+ _
+                      rcases hq with hq | hq
+                      · rw [hq]; exact .inl (List.suffix_refl _)
+                      · rw [hq]; exact .inr (List.suffix_refl _)
+                    · show (authAfter _ c.auth).pending = false
+                      rcases hq with hq | hq <;> (rw [hq]; simpa [authAfter] using hbusy.2)
+                  · exact ih _ hp
 
 theorem waitLine_quitRest {i : Identity} {now : Nat} {c : Conn} (h : c.QuitRest i) :
     (Conn.waitLine now c).QuitRest i := by
@@ -1792,9 +1892,18 @@ theorem waitLine_quitRest {i : Identity} {now : Nat} {c : Conn} (h : c.QuitRest 
   · exact h
 
 theorem emit_keeps {idx : Nat} {w : Bool} {c c1 : Conn} (h : (emit idx w c).1 = some c1) :
-    c1.phase = c.phase ∧ c1.out = c.out := by
+    c1.phase = c.phase ∧ c1.out = c.out ∧ (c.phase = .quitting → c1.auth = c.auth) := by
   unfold emit at h
-  repeat (first | split at h | (cases h; exact ⟨rfl, rfl⟩) | cases h)
+  split at h
+  · split at h <;> (cases h; exact ⟨rfl, rfl, fun _ => rfl⟩)
+  · split at h
+    · cases h
+    · rename_i hn
+      split at h
+      · cases h
+        refine ⟨rfl, rfl, fun hq => absurd ?_ hn⟩
+        simp [hq]
+      · split at h <;> (cases h; exact ⟨rfl, rfl, fun _ => rfl⟩)
 
 /-- What `progress` and `claim` leave of a connection that answers QUIT, or of one that does
 not. -/
@@ -1849,9 +1958,9 @@ theorem act_quitRest {i : Identity} {now wall idx : Nat} {st : Option Store} {c 
         have hg := progressList_quitRest i now wall
           (progressRead i now (progress i now wall st c).2.1 (progress i now wall st c).1).2.1 _
           (progressRead_quitRest i now (progress i now wall st c).2.1 _ (progress_quitRest i now wall st c hc))
-        obtain ⟨hp, ho⟩ := emit_keeps h1
+        obtain ⟨hp, ho, ha⟩ := emit_keeps h1
         intro hq
-        rw [ho]
+        rw [ho, ha (hp ▸ hq)]
         apply claimRead_quitRest i idx _ _ ?_ (hp ▸ hq)
         apply claim_quitRest i now idx _ _ ?_
         split
@@ -1913,13 +2022,17 @@ theorem settleTable_quitRest {i : Identity} {now : Nat} :
         cases hc'
         apply waitLine_quitRest
         intro hq
-        exact (ht c (live_mem hl) hq).imp (List.drop_suffix _ _).trans (List.drop_suffix _ _).trans
+        exact ⟨(ht c (live_mem hl) hq).1.imp (List.drop_suffix _ _).trans (List.drop_suffix _ _).trans,
+          (ht c (live_mem hl) hq).2⟩
       · exact ht
   | t, .send .. :: _, [], t', h, _ => by simp [settleTable] at h
   | t, .closeGracefully .. :: rest, ns, t', h, ht => by
     simp only [settleTable] at h
     exact settleTable_quitRest t rest ns t' h ht
   | t, .closeNow .. :: rest, ns, t', h, ht => by
+    simp only [settleTable] at h
+    exact settleTable_quitRest t rest ns t' h ht
+  | t, .verify .. :: rest, ns, t', h, ht => by
     simp only [settleTable] at h
     exact settleTable_quitRest t rest ns t' h ht
   | t, [], _ :: _, t', h, _ => by simp [settleTable] at h
@@ -1959,7 +2072,7 @@ theorem getD_set_le {l : List Nat} {idx gen : Nat} (h : l.getD idx 0 < gen) (k :
 theorem applyEvent_gens {i : Identity} {now : Nat} {s s' : Server} {e : Event}
     (h : applyEvent i now s e = .ok s') (k : Nat) : s.gens.getD k 0 ≤ s'.gens.getD k 0 := by
   cases e with
-  | opened idx gen mp =>
+  | opened idx gen mp ml tls =>
     unfold applyEvent at h
     cases hc : checkIndex idx with
     | error b => simp [hc, bind, Except.bind] at h
@@ -1985,7 +2098,7 @@ theorem applyEvent_gens {i : Identity} {now : Nat} {s s' : Server} {e : Event}
     unfold applyEvent at h
     simp only [bind, Except.bind] at h
     repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
-  | closed idx gen =>
+  | closed idx gen | verified idx gen _ =>
     unfold applyEvent at h
     simp only [bind, Except.bind] at h
     repeat (first | split at h | (cases h; exact Nat.le_refl _) | cases h)
@@ -1994,8 +2107,8 @@ theorem applyEvent_gens {i : Identity} {now : Nat} {s s' : Server} {e : Event}
 opened at its index and not past `genLimit`, and becomes the last; so a pair of an index and a
 generation names at most one connection of a run, and what is left of a connection gone, an
 event, a send or a read it owned, names none that follows it. -/
-theorem applyEvent_opened {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat} {mp : Bool}
-    (h : applyEvent i now s (.opened idx gen mp) = .ok s') :
+theorem applyEvent_opened {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat} {mp ml tls : Bool}
+    (h : applyEvent i now s (.opened idx gen mp ml tls) = .ok s') :
     s.gens.getD idx 0 < gen ∧ gen ≤ genLimit ∧ s'.gens = s.gens.set idx gen := by
   unfold applyEvent at h
   cases hc : checkIndex idx with
@@ -2108,8 +2221,8 @@ theorem deadline_earliest (s : Server)
 
 /-- **A new connection's deadlines are its own**: what the one before at its index had set is gone
 with it, so none of it can end this one. -/
-theorem applyEvent_opened_fresh {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat} {mp : Bool}
-    (hi : idx < s.table.length) (h : applyEvent i now s (.opened idx gen mp) = .ok s') :
+theorem applyEvent_opened_fresh {i : Identity} {now : Nat} {s s' : Server} {idx gen : Nat}
+    {mp ml tls : Bool} (hi : idx < s.table.length) (h : applyEvent i now s (.opened idx gen mp ml tls) = .ok s') :
     ∃ c, s'.table[idx]? = some (some c) ∧ c.gen = gen ∧ c.first = now + firstCommand ∧
       c.idle = now + inactivity ∧ c.lineDue = 0 ∧ c.articleDue = 0 := by
   unfold applyEvent at h
@@ -2122,8 +2235,8 @@ theorem applyEvent_opened_fresh {i : Identity} {now : Nat} {s s' : Server} {idx 
     · split at h
       · cases h
       · cases h
-        exact ⟨Conn.fresh i (greets s.store mp) (s.opened + 1) gen now, by simp [List.getElem?_set_self hi],
-          rfl, rfl, rfl, rfl, rfl⟩
+        exact ⟨{ Conn.fresh i (greets s.store mp) (s.opened + 1) gen now with logins := ml, tls },
+          by simp [List.getElem?_set_self hi], rfl, rfl, rfl, rfl, rfl⟩
 
 /-- A run: turns, and what the host took of their sends, one after another. -/
 inductive Reaches (i : Identity) : Server → Server → Prop
@@ -2145,7 +2258,7 @@ theorem reaches_gens {i : Identity} {s s' : Server} (h : Reaches i s s') (k : Na
 /-- The premise holds of a real run: a turn of the empty server that opens index 0 at generation 1,
 which becomes the index's last. -/
 theorem reaches_witness : ∃ s', Reaches ⟨[], []⟩ {} s' ∧ s'.gens.getD 0 0 = 1 := by
-  have hv : (match turn ⟨[], []⟩ {} 1 0 [.opened 0 1 false] [] with
+  have hv : (match turn ⟨[], []⟩ {} 1 0 [.opened 0 1 false false false] [] with
       | .ok (s', _, _) => s'.gens.getD 0 0 == 1
       | .error _ => false) = true := by decide
   split at hv
@@ -2155,7 +2268,7 @@ theorem reaches_witness : ∃ s', Reaches ⟨[], []⟩ {} s' ∧ s'.gens.getD 0 
 
 /-- An index opened again at its last generation is a breach. -/
 theorem reopened_witness :
-    (match applyEvent ⟨[], []⟩ 0 { gens := [1] } (.opened 0 1 false) with
+    (match applyEvent ⟨[], []⟩ 0 { gens := [1] } (.opened 0 1 false false false) with
       | .error b => b == .reopened
       | .ok _ => false) = true := by decide
 
@@ -2164,6 +2277,6 @@ theorem quitRest_witness :
     Conn.QuitRest ⟨[], []⟩ { Conn.fresh ⟨[], []⟩ false 1 1 0 with
         phase := .quitting, out := text ⟨[], []⟩ .quit } ∧
       Table.QuitRest ⟨[], []⟩ Table.empty :=
-  ⟨fun _ => .inl (List.suffix_refl _), empty_quitRest _⟩
+  ⟨fun _ => ⟨.inl (List.suffix_refl _), rfl⟩, empty_quitRest _⟩
 
 end DN.News.SessionSpec

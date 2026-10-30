@@ -562,8 +562,8 @@ def test_build(cake: str, out: Path, name: str, source: str, defect: Defect | No
     planted.write_text(lanes.plant((N.HOST if defect.loop else JOBS).read_text(), defect.pattern, defect.becomes,
                                    defect.times, f"the host, for {defect.name},", exact=True))
     host, jobs = (planted, JOBS) if defect.loop else (N.HOST, planted)
-    return lanes.link(out / name, [host, NATIVE / "store.c", jobs, NATIVE / "tls.c", NATIVE / "cake_header.c",
-                                   NATIVE / "cake_runtime.c", base.with_suffix(".S")],
+    return lanes.link(out / name, [host, NATIVE / "store.c", jobs, NATIVE / "tls.c", NATIVE / "accounts.c",
+                                   NATIVE / "cake_header.c", NATIVE / "cake_runtime.c", base.with_suffix(".S")],
                       includes=[out], flags=flags, check=False)
 
 

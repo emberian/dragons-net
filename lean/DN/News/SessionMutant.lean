@@ -280,6 +280,32 @@ inductive Mutant
   | firstFailureClosed
   /-- HDR of a metadata item it does not give answered 412 with no group selected -/
   | refusedAfterGroup
+  /-- AUTHINFO USER and PASS taken in the clear -/
+  | authInClear
+  /-- AUTHINFO once logged in answered as before -/
+  | authAgain
+  /-- AUTHINFO PASS with no name before it checked, with an empty name -/
+  | passUnnamed
+  /-- the name kept after a 481 -/
+  | nameKept
+  /-- AUTHINFO USER left out of the capabilities over TLS -/
+  | authUnadvertised
+  /-- AUTHINFO USER among the capabilities once logged in -/
+  | authAdvertisedAfter
+  /-- a login that does not let the connection post -/
+  | loginNoPost
+  /-- lines answered while the name and password are with the host -/
+  | answerWhileChecking
+  /-- the deadlines run while the name and password are with the host -/
+  | checkDeadlines
+  /-- the host told to read while the name and password are with it -/
+  | readWhileChecking
+  /-- a name longer than any account's answered 381 -/
+  | longNameKept
+  /-- AUTHINFO taken where the connection may not log in -/
+  | authUnoffered
+  /-- the name of the first of two AUTHINFO USER kept -/
+  | firstNameKept
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -341,7 +367,12 @@ def names : List (String × Mutant) :=
    ("status-repeated", .statusRepeated), ("view-failure-answered", .viewFailureAnswered),
    ("range-later", .rangeLater), ("header-stuffed", .headerStuffed), ("xref-folded", .xrefFolded),
    ("metadata-cased", .metadataCased), ("first-failure-closed", .firstFailureClosed),
-   ("refused-after-group", .refusedAfterGroup)]
+   ("refused-after-group", .refusedAfterGroup), ("auth-in-clear", .authInClear), ("auth-again", .authAgain),
+   ("pass-unnamed", .passUnnamed), ("name-kept", .nameKept), ("auth-unadvertised", .authUnadvertised),
+   ("auth-advertised-after", .authAdvertisedAfter), ("login-no-post", .loginNoPost),
+   ("answer-while-checking", .answerWhileChecking), ("check-deadlines", .checkDeadlines),
+   ("read-while-checking", .readWhileChecking), ("long-name-kept", .longNameKept),
+   ("auth-unoffered", .authUnoffered), ("first-name-kept", .firstNameKept)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -403,14 +434,14 @@ def liveM (m : Mutant) (t : Table) (idx gen : Nat) : Option Conn :=
 
 def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
     Event → Except Breach Server
-  | .opened idx gen mayPost => do
+  | .opened idx gen mayPost logins tls => do
     checkIndex idx
     match s.table[idx]? with
     | some (some _) => throw .reopened
     | _ =>
       if gen ≤ s.gens.getD idx 0 || genLimit < gen then throw .reopened
       else
-        let c := freshM m i (greets s.store (mayPost || m = .greetAll)) (s.opened + 1) gen now
+        let c := { freshM m i (greets s.store (mayPost || m = .greetAll)) (s.opened + 1) gen now with logins, tls }
         return { s with table := s.table.set idx (some c), opened := s.opened + 1,
                         gens := s.gens.set idx gen }
   | .received idx gen data => do
@@ -448,10 +479,22 @@ def applyEventM (m : Mutant) (i : Identity) (now : Nat) (s : Server) :
     | some _ =>
       return { s with table := s.table.set idx none, store := s.store.map (Store.abandon idx gen) }
     | none => return s
+  | .verified idx gen ok => do
+    checkIndex idx
+    match liveM m s.table idx gen with
+    | some c =>
+      if c.auth = .checking then
+        let c' := { c with auth := if ok then .done else .none, idle := now + inactivity,
+                           out := text i (if ok then .authAccepted else .authFailed),
+                           greeted := c.greeted || ok && m != .loginNoPost && greets s.store true }
+        return { s with table := s.table.set idx (some c') }
+      else throw .unasked
+    | none => return s
 
 def wantsWithM (m : Mutant) (st : Option Store) (c : Conn) : Bool :=
   (c.wantsWith st || (m = .readWhileFetching && c.read.isSome && c.wants && !c.waiting) ||
-      (m = .listingReads && { c with listing := none }.wantsWith st)) &&
+      (m = .listingReads && { c with listing := none }.wantsWith st) ||
+      (m = .readWhileChecking && { c with auth := .none }.wantsWith st)) &&
     !(m = .readNotResumed && c.first == 0)
 
 def waitLineM (m : Mutant) (now : Nat) (c : Conn) : Conn :=
@@ -542,9 +585,26 @@ def viewOfM (m : Mutant) (p : Posting) (c : Conn) (lg : Bool) (f : Option (List 
 
 def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
-    if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
+    if c.logins && c.tls && m != .authUnadvertised && (c.auth != .done || m = .authAdvertisedAfter) then
+      if c.greeted && p.accepting then .capabilitiesPostAuth else if p.offered then .capabilitiesReaderAuth
+      else .capabilitiesAuth
+    else if c.greeted && (p.accepting || m = .capabilitiesStale) then .capabilitiesPost
     else if (p.offered && m != .readerUnadvertised) || m = .readerWithoutStore then .capabilitiesReader
     else .capabilities
+  | .authinfo args =>
+    if (!c.logins && m != .authUnoffered) || (c.auth = .done && m != .authAgain) then .authDone
+    else match args with
+      | [k, a] =>
+        if k.map upper = ascii "USER" then
+          if !c.tls && m != .authInClear then .encryptionRequired
+          else if nameMax < a.length && m != .longNameKept then .authFailed else .authUser a
+        else if k.map upper = ascii "PASS" then
+          if !c.tls && m != .authInClear then .encryptionRequired
+          else match c.auth with
+            | .named nm => if passwordMax < a.length then .authFailed else .authPass nm a
+            | _ => if m = .passUnnamed then .authPass [] a else .authSequence
+        else .syntax
+      | _ => .syntax
   | .modeReader =>
     if !p.offered then .modeReader
     else if (c.greeted || m = .modeUngreeted) && (p.accepting || m = .modeStale) then .readerPosting
@@ -632,6 +692,13 @@ def dateM (m : Mutant) (p : Posting) (now : Nat) (r : Reply) : Reply :=
     else if m = .dateUnpadded then .time (dateUnpaddedDigits p.wall) else r
   | _ => r
 
+/-- `authAfter`, the name kept after a 481 with `nameKept`, and the first of two names with
+`firstNameKept`. -/
+def authAfterM (m : Mutant) : Reply → Auth → Auth
+  | .authFailed, a => if m = .nameKept then a else .none
+  | .authUser nm, .named old => .named (if m = .firstNameKept then old else nm)
+  | r, a => authAfter r a
+
 def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn → Conn
   | 0, c => c
   | fuel + 1, c =>
@@ -648,10 +715,14 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
           serveM m i p now fuel
             (if m = .blankCounts then { c1 with first := 0, idle := now + inactivity } else c1)
         | r =>
-          if (!c.out.isEmpty && m != .answerWhileBusy) || c.want.isSome || c.listing.isSome then c
+          if (!c.out.isEmpty && m != .answerWhileBusy) || c.want.isSome || c.listing.isSome ||
+              (c.auth.pending && m != .answerWhileChecking) then c
           else if r = .post then
             if m = .waitDeadlines then { c1 with waiting := true }
             else { c1 with waiting := true, first := 0, idle := 0 }
+          else if let .authPass nm pw := r then
+            if m = .checkDeadlines then { c1 with auth := .verify nm pw }
+            else { c1 with auth := .verify nm pw, idle := 0 }
           else if let some (k, n, id, v) := readOf p r then
             serveM m i p now fuel
               { c1 with want := some (k, n, id), view := v, first := 0, idle := 0,
@@ -661,7 +732,8 @@ def serveM (m : Mutant) (i : Identity) (p : Posting) (now : Nat) : Nat → Conn 
             let first := if m = .firstNotCleared then c1.first else 0
             let c2 := { c1 with out := text i r, first := first, idle := now + inactivity,
                                 group := groupAfterM m r c1.group, current := currentAfterM m p c1 asked r,
-                                listing := listingOfM m r }
+                                listing := listingOfM m r,
+                                auth := authAfterM m r c1.auth }
             if (r = .quit && m != .quitTail) || (r = .modeReader && m != .refusedStaysOpen) then
               { c2 with phase := .quitting, held := [] }
             else serveM m i p now fuel c2
@@ -831,8 +903,10 @@ def emitM (m : Mutant) (idx : Nat) (wants : Bool) (c : Conn) : Option Conn × Op
   if !c.out.isEmpty then
     if c.blocked && m != .resendAnytime then (some c, none)
     else (some { c with reading := wants }, some (.send idx c.gen c.out wants))
-  else if c.phase = .quitting || (c.phase = .ending && c.held.isEmpty) then
+  else if c.phase = .quitting || (c.phase = .ending && c.held.isEmpty && !c.auth.pending) then
     (none, some (.closeGracefully idx c.gen))
+  else if let .verify nm pw := c.auth then
+    (some { c with auth := .checking, reading := false }, some (.verify idx c.gen nm pw))
   else if c.phase = .open_ && c.reading != wants && m != .noReadControl then
     (some { c with reading := wants }, some (.send idx c.gen [] wants))
   else (some c, none)
@@ -959,7 +1033,10 @@ theorem viewOfM_none (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte
 
 theorem resolveM_none : resolveM .none = resolve := by
   funext p c r
-  cases r <;> simp [resolveM, resolve, viewOfM_none]
+  cases r <;> try (simp [resolveM, resolve, viewOfM_none]; done)
+  rename_i args
+  simp only [resolveM, resolve]
+  rcases args with _ | ⟨k, _ | ⟨a, _ | ⟨b, rest⟩⟩⟩ <;> cases ha : c.auth <;> (try rw [ha]) <;> simp
 
 theorem groupAfterM_none : groupAfterM .none = Reply.groupAfter := by
   funext r g
@@ -1022,6 +1099,11 @@ theorem progressListM_none : progressListM .none = progressList := by
   funext now wall st c
   cases h : c.listing <;> simp [progressListM, progressList, partM_none, h]
 
+theorem authAfterM_none : authAfterM .none = authAfter := by
+  funext r a
+  unfold authAfterM
+  split <;> simp_all [authAfter]
+
 theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
     serveM .none i p now = serve i p now := by
   funext fuel c
@@ -1031,9 +1113,10 @@ theorem serveM_none (i : Identity) (p : Posting) (now : Nat) :
     have h1 : (Mutant.none != Mutant.answerWhileBusy) = true := rfl
     have h2 : (Mutant.none != Mutant.quitTail) = true := rfl
     have h3 : (Mutant.none != Mutant.refusedStaysOpen) = true := rfl
-    simp only [serveM, serve, ih, resolveM_none, replyInM_none, groupAfterM_none, currentAfterM_none,
-      dateM_none, listingOfM_none, reduceCtorEq, if_false, h1, h2, h3, Bool.and_true, Bool.or_eq_true,
-      decide_eq_true_eq]
+    have h4 : (Mutant.none != Mutant.answerWhileChecking) = true := rfl
+    simp only [serveM, serve, ih, resolveM_none, replyInM_none, groupAfterM_none, currentAfterM_none, authAfterM_none,
+      dateM_none, listingOfM_none, reduceCtorEq, if_false, h1, h2, h3, h4, Bool.and_true, Bool.or_eq_true,
+      decide_eq_true_eq, decide_false]
     rfl
 
 theorem progressM_none : progressM .none = progress := by
@@ -1054,12 +1137,13 @@ theorem claimReadM_none : claimReadM .none = claimRead := by
 
 theorem emitM_none : emitM .none = emit := by
   funext idx w c
-  simp [emitM, emit]
+  cases ha : c.auth <;> simp [emitM, emit, ha]
 
 theorem applyEventM_none : applyEventM .none = applyEvent := by
   funext i now s e
+  have h : (Mutant.none != Mutant.loginNoPost) = true := rfl
   cases e <;> simp only [applyEventM, applyEvent, liveM_none, freshM_none, reduceCtorEq,
-    if_false, Bool.or_false, decide_false] <;> rfl
+    if_false, Bool.or_false, decide_false, h, Bool.and_true] <;> rfl
 
 theorem actM_none : actM .none = act := by
   funext i now wall idx st c
