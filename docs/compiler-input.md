@@ -11,7 +11,9 @@ cake --pancake --reg_alg=0 --main_return=true < echo.pnk > echo.S
 
 ## Format
 
-The file is one JSON object of version 1. It has the fields `dn_input`, the version; `function`, the exported function; and `calls`, the functions it calls, which may be left out. A field the format does not have is refused, so that a misspelt name is not silently dropped; a key given twice takes its last value.
+The file is one JSON object of version 1. It has the fields `dn_input`, the version; `function`, the exported function; and `calls`, the functions it calls, which may be left out, each calling only those before it.
+
+A field the format does not have is refused, so that a misspelt name is not silently dropped; a key given twice takes its last value.
 
 A function is `{"name": N, "params": [names], "body": [statements]}`; every parameter and value is a 64-bit word, and arithmetic wraps. The exported function's name starts with `dn_`; every name is an identifier that is no keyword of either pinned lexer.
 
@@ -42,9 +44,9 @@ A refused input prints `error[DNnnnn]: message` on stderr and ends with status 1
 | DN0004 | More than 256 levels of JSON |
 | DN0005 | A field the format does not have |
 | DN0006 | Not of the format: a form, a type or a field missing where one is due |
-| DN0100–DN0122 | The gate's reasons, one code each, in the order of `Checked.Reason`; DN0119 and DN0120 are another entry's and not printed here |
+| DN0100–DN0123 | The gate's reasons, one code each, in the order of `Checked.Reason`; DN0119 and DN0120 are another entry's and not printed here |
 
-`tests/test_native.py` holds each code of the format and four of the gate's against an input that earns it, and both examples against the built-in programs.
+`tests/test_native.py` holds each code of the format and five of the gate's against an input that earns it, and both examples against the built-in programs.
 
 ## Versions
 

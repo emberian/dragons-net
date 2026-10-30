@@ -96,7 +96,7 @@ class Emitted(unittest.TestCase):
         self.assertEqual(hashlib.sha256(emit("recover").encode()).hexdigest(),
                          "8f562e94aa1ba27b2c0c00f99fed5732470d27594079e46a8778fbf369b24472")
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "b9a5c824739f6d6fe047d99b6a7a7b150b4c71897d30054a7f3aa5abbcbe51e6")
+                         "e3e64d525a5f7455ac670d55f00bd2ac3b59e57188a5c8087f40c2ea2db928d6")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 
@@ -150,6 +150,9 @@ class Emitted(unittest.TestCase):
             (program([["return", "a"]], params=["a", "a"]), "DN0105", 1),
             (program([["return", "b"]]), "DN0107", 1),
             (program([["set", "a", 1]]), "DN0122", 1),
+            (program([["call", "r", "f", ["a"]], ["return", "r"]],
+                     calls=[{"name": "f", "params": ["x"], "body": [["call", "y", "f", ["x"]], ["return", "y"]]}]),
+             "DN0123", 1),
         ]
         for text, code, status in cases:
             done = self.compiled(text)

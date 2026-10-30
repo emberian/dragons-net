@@ -1881,7 +1881,7 @@ theorem emit_parts {f : PFun} {src : String} (h : emit f = .ok src) :
 /-- …and `Checked.emitWith`, in the profile of the functions it may call. -/
 theorem emitWith_parts {funs : List PFun} {f : PFun} {src : String} (h : emitWith funs f = .ok src) :
     f.params.length ≤ 4 ∧ ∃ scope, paramScope f.params [] = .ok scope ∧
-      statements ⟨false, [], funs.map fun g => (g.name, g.params.length)⟩ scope f.body = .ok () := by
+      statements ⟨false, [], funs.map fun g => (g.name, g.params.length), none⟩ scope f.body = .ok () := by
   simp only [emitWith, bind, Except.bind] at h
   repeat' split at h
   all_goals first

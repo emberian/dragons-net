@@ -72,7 +72,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 22,069 declarations, including 10,022 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 22,084 declarations, including 10,028 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -100,7 +100,9 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
 7. **Entry points.** CakeML's theorem covers `main` only, so the server runs inside `main` and reaches its host through external calls ([decision 0002](decisions/0002-entry-and-memory.md)); the exported kernels are tests outside the theorem.
 
-8. **Addresses the theorem admits.** The theorem's memory is CakeML's heap, so every buffer lives there, the hosts write and check the heap header it fixes, and the analysis keeps off the heap's first 64 bytes. The stack bound (`max_depth`) is not yet obtained; for every other run here, whose buffers the C host owns, the premise is false.
+8. **Addresses the theorem admits.** The theorem's memory is CakeML's heap, so every buffer lives there, the hosts write and check the heap header it fixes, and the analysis keeps off the heap's first 64 bytes. For every other run here, whose buffers the C host owns, the premise is false.
+
+   The stack bound (`max_depth`) is not yet obtained. The gate refuses a call of a function not before its caller, so every printed program's call graph is acyclic, as CakeML needs for a bound; that its bound is `SOME` and below the stack is not shown.
 
 9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`. The session with POST and reading by message-id is specified, in the program, and tested, not proven.
 

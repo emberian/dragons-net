@@ -47,7 +47,7 @@ def reasonCode : Checked.Reason → Nat
   | .shiftAmount => 110 | .declarationName => 111 | .redeclaration => 112
   | .unboundAssignment => 113 | .callEffect => 114 | .callArity => 115 | .functionName => 116
   | .externalEffect => 117 | .externalArity => 118 | .notExported => 119 | .entryShape => 120
-  | .unreachable => 121 | .missingReturn => 122
+  | .unreachable => 121 | .missingReturn => 122 | .recursion => 123
 
 def Problem.code : Problem → Nat
   | .notJson _ => 1 | .version _ => 2 | .tooLarge _ => 3 | .tooDeep => 4 | .unknownField _ => 5
