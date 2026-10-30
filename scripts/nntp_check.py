@@ -30,6 +30,7 @@ import selectors
 import shutil
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -53,7 +54,7 @@ import store_ref
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
 # The host's side of the store, linked with every build of the host.
-STORE = [NATIVE / "store.c", NATIVE / "jobs.c"]
+STORE = [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c"]
 HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "jobs.h", NATIVE / "session_calls.h",
          NATIVE / "call_checks.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
 REVISION, SOURCE = sessions.IDENTITY
@@ -246,6 +247,45 @@ class Client(socket.socket):
         return data
 
 
+class TlsClient:
+    """A client over TLS that keeps, as `Client` does, what it sent and what it read in the clear: what
+    the host gives the program and what the program hands it."""
+
+    def __init__(self, port: int, timeout: float, context: ssl.SSLContext, receive_buffer: int = 0) -> None:
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if receive_buffer:
+                raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+            raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            raw.settimeout(timeout)
+            raw.connect(("127.0.0.1", port))
+            self.port: int = raw.getsockname()[1]
+            self.sock = context.wrap_socket(raw, server_hostname="localhost")
+        except BaseException:
+            raw.close()
+            raise
+        self.sent = bytearray()
+        self.got = bytearray()
+        self.eof = False
+        self.conn: Conn | None = None
+
+    def sendall(self, data: bytes) -> None:
+        self.sent += data
+        self.sock.sendall(data)
+
+    def recv(self, size: int) -> bytes:
+        data = self.sock.recv(size)
+        self.got += data
+        self.eof |= not data
+        return data
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+Peer = Client | TlsClient
+
+
 class Server:
     """The server on a free loopback port. With `virtual`, on a clock the check moves; otherwise on
     the real clock. With `traced`, its report is read as it comes, and when the run ends it is held
@@ -259,7 +299,7 @@ class Server:
         self.lines = lanes.Lines()
         self.trace: list[Turn] = []
         # the clients of each port, in the order they connected
-        self.clients: dict[int, list[Client]] = {}
+        self.clients: dict[int, list[Peer]] = {}
         self.delivered: dict[Conn, bytearray] = {}
         self.gone: dict[Conn, int] = {}
         self.last = Turn(0, [], [], 0)
@@ -337,6 +377,11 @@ class Server:
 
     def client(self, receive_buffer: int = 0, family: int = socket.AF_INET) -> Client:
         c = Client(self.port, self.timeout, receive_buffer, family)
+        self.clients.setdefault(c.port, []).append(c)
+        return c
+
+    def tls_client(self, context: ssl.SSLContext, receive_buffer: int = 0) -> TlsClient:
+        c = TlsClient(self.port, self.timeout, context, receive_buffer)
         self.clients.setdefault(c.port, []).append(c)
         return c
 
@@ -489,7 +534,7 @@ def replayed(trace: list[Turn]) -> None:
                 raise LaneError(f"turn {k} at {t.now}: the program asked to be woken at {t.wake}, the model {wake}")
 
 
-def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: int) -> None:
+def held_to_sockets(trace: list[Turn], clients: dict[int, list[Peer]], batch: int) -> None:
     """The report against the sockets and the host's side of the contract: every connection comes
     from a client of the check; what the host gave the program of it is what the client sent, all of
     it once the input ended; what the client read is what the kernel took of the program's sends,
@@ -499,7 +544,7 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Client]], batch: 
     when free, and never with a generation it had; a client never taken reads nothing, not even the
     end of its stream."""
     waiting = {port: list(same_port) for port, same_port in clients.items()}
-    client_of: dict[Conn, Client] = {}
+    client_of: dict[Conn, Peer] = {}
     given: dict[Conn, bytearray] = {}
     delivered: dict[Conn, bytearray] = {}
     reading: dict[Conn, bool] = {}
@@ -578,7 +623,7 @@ def serving(build: Build, virtual: bool = False, *options: str, traced: bool = T
         server.close()
 
 
-def read_exactly(s: socket.socket, n: int) -> bytes:
+def read_exactly(s: socket.socket | TlsClient, n: int) -> bytes:
     got = b""
     while len(got) < n:
         chunk = s.recv(n - len(got))
@@ -588,13 +633,13 @@ def read_exactly(s: socket.socket, n: int) -> bytes:
     return got
 
 
-def read_expected(s: socket.socket, want: bytes, what: str) -> None:
+def read_expected(s: socket.socket | TlsClient, want: bytes, what: str) -> None:
     got = read_exactly(s, len(want))
     if got != want:
         raise LaneError(f"{what}: read {got[-120:]!r}, not {want[-120:]!r}")
 
 
-def read_to_end(s: socket.socket) -> bytes:
+def read_to_end(s: socket.socket | TlsClient) -> bytes:
     got = b""
     try:
         while chunk := s.recv(65536):
@@ -1177,6 +1222,138 @@ def stale_generation(b: Build) -> str:
     if not sends or any(a.conn == conn or a.taken for a in sends):
         raise LaneError(f"the host took the sends {sends} for the generation before {conn}")
     return f"{len(sends)} sends for the generation before, none taken"
+
+
+# How long the host gives a handshake (native/nntp_host.c, HANDSHAKE_MS).
+HANDSHAKE = 10_000
+
+
+def certificate(where: Path) -> tuple[Path, Path]:
+    """A key and a self-signed certificate for localhost and 127.0.0.1, made by the openssl command."""
+    key, cert = where / "key.pem", where / "cert.pem"
+    lanes.loud(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                "-keyout", str(key), "-out", str(cert), "-days", "2", "-subj", "/CN=localhost",
+                "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"], timeout=60, what="making a certificate")
+    return key, cert
+
+
+def over_tls(b: Build) -> str:
+    """With a certificate the server speaks TLS from the first octet (RFC 8143). A pipeline of more
+    than one read of the host in one record is answered as over TCP, and judged. nntplib's NNTP_SSL is
+    greeted, reads the capabilities and quits. A client speaking NNTP in the clear is never greeted
+    nor reported, nor one that resets in its handshake or speaks TLS 1.1; the three are counted, the
+    first failure says why, and a client after them is served. One that says nothing is open at its
+    handshake's 10 s, on the clock the check moves, closed after, and counted; the server stops on
+    SIGTERM with another handshake in flight. An article of 200 KB is posted and read back through a
+    send buffer of 4 KB, which the host fills many times."""
+    with tempfile.TemporaryDirectory() as temp:
+        key, cert = certificate(Path(temp))
+        tls = ("--tls-cert", str(cert), "--tls-key", str(key))
+        context = ssl.create_default_context(cafile=str(cert))
+        recorded = transcripts()
+        stream = recorded["commands"][0].removesuffix(b"QUIT\r\n") + recorded["long lines"][0] + lines("HELP")
+        if len(stream) <= 512:
+            raise LaneError("the pipeline over TLS fits one read of the host, so it shows nothing")
+        with serving(b, False, *tls) as server:
+            s = server.tls_client(context)
+            s.sendall(stream)
+            try:
+                got = read_to_end(s)
+            except LaneError as error:
+                raise LaneError(f"over TLS a pipeline: {error}") from None
+            with socket.create_connection(("127.0.0.1", server.port), timeout=b.timeout) as clear:
+                clear.sendall(b"CAPABILITIES\r\n")
+                clear_port = clear.getsockname()[1]
+                in_clear = b""
+                with suppress(ConnectionResetError):
+                    in_clear = read_to_end(clear)
+            # A client that resets in the middle of its handshake, and one of TLS 1.1 only.
+            with socket.create_connection(("127.0.0.1", server.port), timeout=b.timeout) as cut:
+                cut.sendall(b"\x16\x03\x01\x02\x00\x01")
+                cut.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            old = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            old.load_verify_locations(cafile=str(cert))
+            old.minimum_version = old.maximum_version = ssl.TLSVersion.TLSv1_1
+            old.set_ciphers("DEFAULT:@SECLEVEL=0")
+            try:
+                server.tls_client(old).close()
+            except ssl.SSLError:
+                pass
+            else:
+                raise LaneError("a client of TLS 1.1 was served")
+            after = server.tls_client(context)
+            after.sendall(b"QUIT\r\n")
+            after_got = read_to_end(after)
+        if after_got != expected(b"QUIT\r\n"):
+            raise LaneError(f"after the failed handshakes a client over TLS read {after_got[-80:]!r}")
+        if counted(server.said(), "at the stop")[4] != 3 or "TLS: a handshake" not in server.said():
+            raise LaneError(f"three handshakes failed, the server said {server.said()[-400:]!r}")
+        if got != expected(stream):
+            raise LaneError(f"over TLS a pipeline got {got[-160:]!r}")
+        if in_clear.startswith(b"20") or any(e.kind == "open" and e.port == clear_port
+                                             for t in server.trace for e in t.events):
+            raise LaneError(f"a client in the clear was greeted or reported open: {in_clear[:60]!r}")
+        nntplib = import_nntplib()
+        with serving(b, False, *tls, traced=False) as server:
+            try:
+                with nntplib.NNTP_SSL("127.0.0.1", server.port, ssl_context=context, timeout=b.timeout) as news:
+                    welcome, capabilities, bye = news.getwelcome(), news.getcapabilities(), news.quit()
+            except (nntplib.NNTPError, OSError) as error:
+                raise LaneError(f"nntplib over TLS: {error!r}") from None
+        if [welcome + "\r\n", bye + "\r\n"] != [GREETING.decode(), TEXTS["quit"].decode()] or \
+                capabilities != {"VERSION": ["2"], "IMPLEMENTATION": ["dragons-net", REVISION.decode()]}:
+            raise LaneError(f"nntplib over TLS was greeted {welcome!r}, read {capabilities} and quit {bye!r}")
+        with serving(b, True, *tls) as server:
+            before = descriptors(server.proc.pid)
+            with socket.create_connection(("127.0.0.1", server.port), timeout=b.timeout) as idle:
+                # The turn that took the connection is reported only with the next, so its socket is
+                # what shows that the host has it.
+                given_up = time.monotonic() + b.timeout
+                while descriptors(server.proc.pid) <= before:
+                    if time.monotonic() > given_up:
+                        raise LaneError("the host did not take a client over TLS")
+                    time.sleep(0.01)
+                server.advance(HANDSHAKE)
+                server.idle(0.3)
+                if not still_open(idle):
+                    raise LaneError("a handshake was given up before its 10 s were past")
+                server.advance(HANDSHAKE + 1)
+                try:
+                    closed = ended(idle)
+                except TimeoutError:
+                    closed = False
+                if not closed:
+                    raise LaneError("a client that says nothing was kept past its handshake's 10 s")
+            # The server stops on SIGTERM with a handshake in flight.
+            pending = socket.create_connection(("127.0.0.1", server.port), timeout=b.timeout)
+            server.idle(0.2)
+        pending.close()
+        if counted(server.said(), "at the stop")[4] != 1:
+            raise LaneError(f"the handshake given up was not counted: {server.said()[-300:]!r}")
+        body = "\r\n".join(f"line {k} " + "z" * 90 for k in range(2000)).encode()
+        article = "\r\n".join((*sessions.BASIC, "Message-ID: <big@x.example>", "")).encode() + b"\r\n" + body + \
+            b"\r\n.\r\n"
+        spool, run = Path(temp, "spool"), Path(temp, "run")
+        spool.mkdir()
+        run.mkdir()
+        options = (*tls, "--spool", str(spool), "--run-dir", str(run), "--path-identity", "dn.example",
+                   "--group", "local.test", "--send-buffer", "4096")
+        with serving(b, False, *options, traced=False) as server:
+            poster = server.tls_client(context)
+            read_expected(poster, TEXTS["greeting-post"], "the greeting over TLS")
+            poster.sendall(b"POST\r\n")
+            read_expected(poster, TEXTS["post"], "the reply to POST over TLS")
+            poster.sendall(article)
+            read_expected(poster, TEXTS["posted"], "the reply to the article over TLS")
+            reader = server.tls_client(context, receive_buffer=4096)
+            read_expected(reader, TEXTS["greeting-post"], "the greeting over TLS")
+            reader.sendall(b"ARTICLE <big@x.example>\r\nQUIT\r\n")
+            time.sleep(0.2)
+            read_back = read_to_end(reader)
+        if body not in read_back.replace(b"\r\n..", b"\r\n."):
+            raise LaneError(f"the article of {len(article)} octets read back over TLS was {len(read_back)} octets")
+    return (f"a pipeline of {len(stream)} octets answered over TLS, nntplib greeted; a client in the clear, one "
+            f"reset, one of TLS 1.1 refused, a silent one closed at 10 s; {len(article)} octets posted and read back")
 
 
 def over_ipv6(b: Build) -> str:
@@ -1794,8 +1971,8 @@ def store_directories(b: Build) -> str:
 
 COUNTERS = re.compile(
     r"^(counters|at the stop): (\d+) connections, (\d+) closed gracefully, (\d+) at once, (\d+) by the client "
-    r"or the network; (\d+) octets in, (\d+) out; (\d+) accept pauses; (\d+) file jobs, (\d+) failed for want "
-    r"of space, (\d+) on I/O errors, (\d+) otherwise$", re.MULTILINE)
+    r"or the network; (\d+) TLS handshakes failed; (\d+) octets in, (\d+) out; (\d+) accept pauses; (\d+) file "
+    r"jobs, (\d+) failed for want of space, (\d+) on I/O errors, (\d+) otherwise$", re.MULTILINE)
 
 
 def counted(said: str, when: str) -> list[int]:
@@ -1822,7 +1999,7 @@ def counters(b: Build) -> str:
         reset(second)
         server.await_close(second, "the reset")
         server.proc.send_signal(signal.SIGUSR1)
-    want = [2, 1, 0, 1, len(b"HELP\r\nQUIT\r\n"), len(to_first) + len(to_second), 0, 0, 0, 0, 0]
+    want = [2, 1, 0, 1, 0, len(b"HELP\r\nQUIT\r\n"), len(to_first) + len(to_second), 0, 0, 0, 0, 0]
     for when in ("counters", "at the stop"):
         if (got := counted(server.said(), when)) != want:
             raise LaneError(f"the counters {when} were {got}, not {want}")
@@ -1864,8 +2041,8 @@ def configuration(b: Build) -> str:
         done = subprocess.run([str(b.path), "--check-config", str(full)], capture_output=True, text=True,
                               timeout=b.timeout, check=False)
         want = {"address": "127.0.0.1", "port": 0, "revision": REVISION.decode(), "source": SOURCE.decode(),
-                "send_buffer": 8192, "spool": str(spool), "run_dir": str(run), "path_identity": "dn.example",
-                "groups": ["local.test", "local.other"], "post_from": ["127.0.0.0/8"]}
+                "send_buffer": 8192, "tls_cert": None, "tls_key": None, "spool": str(spool), "run_dir": str(run),
+                "path_identity": "dn.example", "groups": ["local.test", "local.other"], "post_from": ["127.0.0.0/8"]}
         try:
             said = json.loads(done.stdout)
         except json.JSONDecodeError:
@@ -1891,6 +2068,8 @@ def configuration(b: Build) -> str:
             (f"spool {spool}\nspool {spool}\n", file, f"{named}:2: --spool given twice"),
             ("port many\n", file, f"{named}:1: --port: not a number from 0 to 65535: many"),
             (f"spool {full}\nrun-dir {run}\n", ("--check-config", named), "Not a directory"),
+            (f"tls-cert {full}\n", file, "--tls-cert and --tls-key are given together"),
+            (f"tls-cert {full}\ntls-key {full}\n", file, f"TLS: {full}: "),
         ]
         for text, args, sign in cases:
             settings_file(where, text)
@@ -2064,6 +2243,7 @@ CHECKS: dict[str, Callable[[Build], str]] = {
     "out of descriptors on the real clock": real_pause,
     "actions for another generation": stale_generation,
     "over IPv6": over_ipv6,
+    "over TLS": over_tls,
     "sixty-five clients": crowd,
     "a store recovered at start": store_start,
     "a post over sockets": post_over_sockets,
@@ -2095,7 +2275,17 @@ class Defect:
 # acknowledged, which on loopback no check can time reliably, and no portable call reads another
 # process's socket option.
 DEFECTS = [
-    Defect("a connection not logged", [("        dn_store_log_opened(&peer);\n", "", 1)], "a post over sockets",
+    Defect("octets libssl holds left unreported",
+           [("                c->ready |= POLLIN;\n                held = 1;\n", "", 1)], "over TLS",
+           "over TLS a pipeline"),
+    Defect("a handshake's time never up",
+           [("&& now_ms() < c->handshake_until) {", ") {", 1)], "over TLS",
+           "kept past its handshake"),
+    Defect("a connection over TLS reported before its handshake",
+           [("        if (i >= 0) done |= handshake(i, POLLIN);",
+             "        if (i >= 0) conns[i].handshaking = 0, conns[i].handshaken = done = 1;", 1)], "over TLS",
+           "which is no client of the check"),
+    Defect("a connection not logged", [("    dn_store_log_opened(&conns[i].peer);\n", "", 1)], "a post over sockets",
            "is not in the log"),
     Defect("an unknown setting taken", [(
         '    } else if (!dn_store_option(name, value)) dn_harness("%sunknown setting %s", setting_at, name);',
@@ -2111,8 +2301,10 @@ DEFECTS = [
         "            c->reading = 0;\n            event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);", 1)],
         "lines cut between reads", "gave no turn"),
     Defect("the end of input reported as a close", [(
-        "            event(a, DN_SESSION_INPUT_ENDED, i, c->gen, 0);",
-        "            event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n            free_index(c);", 1)],
+        ("        } else if (n == 0) {\n            c->reading = 0;\n"
+         "            event(a, DN_SESSION_INPUT_ENDED, i, c->gen, 0);"),
+        ("        } else if (n == 0) {\n            c->reading = 0;\n"
+         "            event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n            free_index(c);"), 1)],
         "half close", "the end of input was reported"),
     Defect("input read when the program did not ask", [
         ("(c->reading ? POLLIN : 0)", "POLLIN", 1), ("if ((r & POLLIN) && c->reading)", "if (r & POLLIN)", 1)],
@@ -2121,7 +2313,7 @@ DEFECTS = [
            "first command", "gave no turn"),
     Defect("woken a millisecond late", [("(wake && now_ms() >= wake)", "(wake && now_ms() > wake)", 1)],
            "first command", "gave no turn"),
-    Defect("a new connection put at index 0", [("        while (!usable(i)) ++i;\n", "", 1)],
+    Defect("a new connection put at index 0", [("    while (!usable(i)) ++i;\n", "", 1)],
            "sixty-five clients", "stopped the run: code 6"),
     Defect("an index given out again with its generation", [(".gen = conns[i].gen + 1,", ".gen = 1,", 1)],
            "lines cut between reads", "the program stopped the run with code 6"),
@@ -2142,7 +2334,7 @@ DEFECTS = [
            "first command", "closed gracefully, not at once"),
     Defect("no poll for writing", [("(c->unsent ? POLLOUT : 0)", "0", 1)], "slow reader", "the stream did not end"),
     Defect("a send said taken whole", [(
-        "uint64_t taken = n > 0 ? (uint64_t)n : 0;", "uint64_t taken = n >= 0 ? len : 0;", 1)],
+        "taken = n > 0 ? (uint64_t)n : 0;", "taken = n >= 0 ? len : 0;", 1)],
         "slow reader", "the kernel was not given"),
     Defect("reading while a send waits for room", [(
         "cn->reading = !cn->lost && read && taken == len;", "cn->reading = !cn->lost && read;", 1)],
@@ -2165,15 +2357,16 @@ DEFECTS = [
          "        free_index(c);\n        return;\n    }\n"), "", 1)],
         "reset while sending", "was reported as"),
     Defect("writable reported with nothing untaken", [
-        ("(c->unsent ? POLLOUT : 0)", "POLLOUT", 1), ("if ((r & POLLOUT) && c->unsent) {", "if (r & POLLOUT) {", 1)],
+        ("(c->unsent ? POLLOUT : 0)", "POLLOUT", 1),
+        ("if ((r & (POLLOUT | c->tls_wants)) && c->unsent) {", "if (r & (POLLOUT | c->tls_wants)) {", 1)],
         "pipeline", "with nothing untaken"),
     Defect("a close reported and the index kept", [(
         "        event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n        free_index(c);\n        return;\n    }\n    if",
         "        event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n        return;\n    }\n    if", 1)],
         "reset while sending", "which is not open"),
     Defect("a batch one event too large", [(
-        "while (accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {",
-        "while (accept_ready && turn_events <= DN_SESSION_BATCH && free_indexes() > 0) {", 1)],
+        "while (!tls_cert && accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {",
+        "while (!tls_cert && accept_ready && turn_events <= DN_SESSION_BATCH && free_indexes() > 0) {", 1)],
         "sixty-five clients", "stopped the run: code 1"),
     Defect("a lost connection reported late", [(
         "                cn->lost = 1;\n                carrying = 1;\n", "                cn->lost = 1;\n", 1)],
@@ -2207,8 +2400,8 @@ DEFECTS = [
         "accept_paused_until = now + ACCEPT_PAUSE_MS;", "accept_paused_until = UINT64_MAX + 0 * now;", 1)],
         "out of descriptors", "waiting for the connection"),
     Defect("accepting not paused when out of descriptors", [(
-        ("                accept_ready = 0;\n                accept_paused_until = now + ACCEPT_PAUSE_MS;\n"
-         "                return;"), "                (void)now;\n                return;", 1)],
+        ("            accept_ready = 0;\n            accept_paused_until = now + ACCEPT_PAUSE_MS;\n"
+         "            return -2;"), "            (void)now;\n            return -2;", 1)],
         "out of descriptors", "a turn with nothing to do"),
     Defect("a store refused at start taken for a broken contract",
            [("    if (stop == DN_SESSION_STORE_REFUSED || stop == DN_SESSION_RECOVERY_FAILED)\n", "    if (0)\n", 1)],

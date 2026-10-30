@@ -43,7 +43,10 @@
  * that the store's directories open, writes them as JSON on standard output and ends with status 0,
  * starting nothing. Started by systemd with one socket (LISTEN_PID naming the process, LISTEN_FDS 1),
  * the host listens on descriptor 3 instead, so that it needs no privilege for port 119; `--address`
- * and `--port` are then refused. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
+ * and `--port` are then refused. With `--tls-cert FILE` and `--tls-key FILE`, PEM files, every
+ * connection speaks TLS from its first octet (RFC 8143, port 563) through libssl (tls.c), and the
+ * program learns of one only once its handshake is done; a handshake not done in 10 s, or that
+ * fails, closes the connection unreported. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
  * connections taken, how they ended, the octets read and sent, the pauses in accepting, the file
  * jobs and those that failed for want of space, on an I/O error or otherwise; no address, name or
  * octet a client sent. */
@@ -53,6 +56,7 @@
 #include "jobs.h"
 #include "session_calls.h"
 #include "store.h"
+#include "tls.h"
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -70,7 +74,7 @@
 
 enum { CONNS = DN_SESSION_CONNS, LINGERING = 64, LINGER_TOTAL_MS = 30000, LINGER_QUIET_MS = 5000,
        LINGER_READS = 32, ACCEPT_PAUSE_MS = 100, MAX_LINE = 256, TRACE_BYTES = 1 << 18, DRAIN_MS = 30000,
-       CONFIG_MAX = 1 << 16, LISTEN_FD = 3 };
+       CONFIG_MAX = 1 << 16, LISTEN_FD = 3, HANDSHAKE_MS = 10000 };
 
 struct conn {
     int fd;          /* -1 when the index is free */
@@ -82,6 +86,12 @@ struct conn {
     int lost;        /* a send failed; the socket is closed, its close still to be reported */
     short ready;     /* what the last poll reported, not yet given out */
     unsigned port;   /* the client's, for the report */
+    struct dn_tls *tls;          /* with a certificate set, the connection's TLS */
+    int handshaking;             /* its handshake is not done: the program has not been told of it */
+    int handshaken;              /* its handshake is done and the program is still to be told */
+    short tls_wants;             /* what TLS waits for before the read, write or handshake can go on */
+    uint64_t handshake_until;    /* when a handshake not done by then ends the connection */
+    struct sockaddr_storage peer; /* the client, for the store once the handshake is done */
 };
 
 struct lingering { int fd; uint64_t until, quiet_until, since; };
@@ -93,13 +103,13 @@ static int accept_ready, started, awaiting_emit, carrying, listening;
 static unsigned start, listen_port;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
 static int send_buffer, pausing, checking;
-static const char *revision, *source, *address = "127.0.0.1";
+static const char *revision, *source, *address = "127.0.0.1", *tls_cert, *tls_key;
 static unsigned port_wanted;
 /* While a file's settings are taken, where the one taken is. */
 static const char *setting_at = "";
 /* What the counters count; a connection ended by neither action was ended by its client or the
  * network. */
-static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses; } counted;
+static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses, handshakes_failed; } counted;
 static char clock_text[MAX_LINE], trace[TRACE_BYTES];
 static size_t clock_len, trace_len;
 
@@ -168,7 +178,7 @@ static void report(uint64_t wake) {
 
 /* The test build says how many octets the heap allocator has given out, and the most the process
  * has held resident since it began (VmHWM: getrusage's maximum takes in what its parent held before
- * exec): nothing is allocated once it serves. */
+ * exec): without TLS nothing is allocated once it serves; libssl allocates for each TLS connection. */
 static void say_allocated(const char *when) {
 #ifdef FIU_ENABLE
     long peak = -1;
@@ -189,9 +199,11 @@ static void say_counters(const char *when) {
     dn_jobs_counted(jobs);
     fprintf(stderr,
             "%s: %" PRIu64 " connections, %" PRIu64 " closed gracefully, %" PRIu64 " at once, %" PRIu64
-            " by the client or the network; %" PRIu64 " octets in, %" PRIu64 " out; %" PRIu64 " accept pauses; %" PRIu64
-            " file jobs, %" PRIu64 " failed for want of space, %" PRIu64 " on I/O errors, %" PRIu64 " otherwise\n",
-            when, counted.accepted, counted.graceful, counted.abrupt, counted.ended - counted.graceful - counted.abrupt,
+            " by the client or the network; %" PRIu64 " TLS handshakes failed; %" PRIu64 " octets in, %" PRIu64
+            " out; %" PRIu64 " accept pauses; %" PRIu64 " file jobs, %" PRIu64 " failed for want of space, %" PRIu64
+            " on I/O errors, %" PRIu64 " otherwise\n",
+            when, counted.accepted, counted.graceful, counted.abrupt,
+            counted.ended - counted.graceful - counted.abrupt - counted.handshakes_failed, counted.handshakes_failed,
             counted.in, counted.out, counted.pauses, jobs[0], jobs[1], jobs[2], jobs[3]);
 }
 
@@ -214,12 +226,49 @@ __attribute__((noreturn)) static void stop_serving(const char *why) {
     exit(0);
 }
 
+/* The connection's TLS ended, saying so to the client if `gracefully`. */
+static void end_tls(struct conn *c, int gracefully) {
+    if (c->tls) dn_tls_end(c->tls, gracefully);
+    c->tls = NULL;
+    c->handshaking = 0;
+    c->tls_wants = 0;
+}
+
+static int handshake(int i, short r);
+static int take_handshakes(uint64_t now);
+
 static void free_index(struct conn *c) {
     ++counted.ended;
+    end_tls(c, 0);
     if (c->fd >= 0) close(c->fd);
     c->fd = -1;
-    c->reading = c->unsent = c->lost = 0;
+    c->reading = c->unsent = c->lost = c->handshaken = 0;
     c->ready = 0;
+}
+
+/* A step of the handshake of connection `i`, which the poll found `r`. Done, the connection is the
+ * program's to be told of; failed or past its time, it ends without the program having known of it,
+ * so a handshake never takes a turn of the program. The first failure of a run says why, the others
+ * are counted. Says whether the handshake is done. */
+static int handshake(int i, short r) {
+    struct conn *c = &conns[i];
+    enum dn_tls_state state = r ? dn_tls_handshake(c->tls)
+                                : c->tls_wants == POLLIN ? DN_TLS_WANT_READ : DN_TLS_WANT_WRITE;
+    if (state == DN_TLS_DONE) {
+        c->handshaking = 0;
+        c->handshaken = 1;
+        c->tls_wants = 0;
+        return 1;
+    }
+    if ((state == DN_TLS_WANT_READ || state == DN_TLS_WANT_WRITE) && now_ms() < c->handshake_until) {
+        c->tls_wants = state == DN_TLS_WANT_READ ? POLLIN : POLLOUT;
+        return 0;
+    }
+    if (!counted.handshakes_failed++)
+        fprintf(stderr, "TLS: a handshake %s; later ones are counted only\n",
+                state == DN_TLS_WANT_READ || state == DN_TLS_WANT_WRITE ? "was not done in time" : dn_tls_reason());
+    free_index(c);
+    return 0;
 }
 
 static int usable(int i) {
@@ -320,14 +369,25 @@ static void wait_for(uint64_t wake) {
         fds[n++] = (struct pollfd){.fd = jobs_done, .events = POLLIN};
         int timeout = until(wake, -1);
         if (paused) timeout = until(accept_paused_until, timeout);
+        /* Octets TLS has taken off a socket and not yet given out no poll reports. */
+        int held = 0;
         for (int i = 0; i < CONNS; ++i) {
             conn_at[i] = -1;
             struct conn *c = &conns[i];
             if (c->fd < 0) continue;
+            if (c->handshaking) timeout = until(c->handshake_until, timeout);
+            if (c->tls && !c->handshaking && c->reading && dn_tls_pending(c->tls)) {
+                c->ready |= POLLIN;
+                held = 1;
+            }
             conn_at[i] = n;
-            short wanted = (short)((c->reading ? POLLIN : 0) | (c->unsent ? POLLOUT : 0));
+            short wanted = c->handshaking ? c->tls_wants
+                                          : (short)((c->reading ? POLLIN : 0) | (c->unsent ? POLLOUT : 0) | c->tls_wants);
+            /* A send that waits for the peer to send waits for that alone, or it would spin. */
+            if (c->unsent && c->tls_wants == POLLIN) wanted = POLLIN;
             fds[n++] = (struct pollfd){.fd = c->fd, .events = wanted};
         }
+        if (held) return;
         for (int i = 0; i < LINGERING; ++i) {
             linger_at[i] = -1;
             if (lingering[i].fd < 0) continue;
@@ -352,13 +412,20 @@ static void wait_for(uint64_t wake) {
         if (fds[2].revents) read_clock();
         for (int i = 0; i < LINGERING; ++i)
             if (linger_at[i] >= 0) drain(&lingering[i], fds[linger_at[i]].revents);
-        int news = fds[1].revents != 0;
-        if (news) accept_ready = 1;
+        int news = 0;
+        if (fds[1].revents && tls_cert) news |= take_handshakes(now_ms());
+        else if (fds[1].revents) news = accept_ready = 1;
         news |= dn_jobs_ready();
+        uint64_t now = now_ms();
         for (int i = 0; i < CONNS; ++i) {
             if (conn_at[i] < 0) continue;
-            conns[i].ready = fds[conn_at[i]].revents;
-            news |= conns[i].ready != 0;
+            short revents = fds[conn_at[i]].revents;
+            if (conns[i].handshaking) {
+                if (revents || now >= conns[i].handshake_until) news |= handshake(i, revents);
+                continue;
+            }
+            conns[i].ready = revents;
+            news |= revents != 0;
         }
         for (int i = 0; i < CONNS; ++i) news |= conns[i].lost;
         if (news || (wake && now_ms() >= wake)) return;
@@ -376,9 +443,22 @@ static void event(unsigned char *a, uint64_t kind, int idx, uint64_t gen, uint64
     ++turn_events;
 }
 
+/* The connection opened, as the program learns of it. */
+static void opened(unsigned char *a, int i) {
+    event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
+    dn_store_log_opened(&conns[i].peer);
+    dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
+                (uint64_t)dn_store_may_post(&conns[i].peer));
+}
+
 /* What one connection has to report, if anything. */
 static void give_out(unsigned char *a, int i) {
     struct conn *c = &conns[i];
+    if (c->handshaken) {
+        c->handshaken = 0;
+        opened(a, i);
+        return;
+    }
     if (c->lost) {
         event(a, DN_SESSION_CLOSED, i, c->gen, 0);
         free_index(c);
@@ -386,7 +466,24 @@ static void give_out(unsigned char *a, int i) {
     }
     short r = c->ready;
     c->ready = 0;
-    if (c->fd < 0 || !r) return;
+    if (c->fd < 0 || c->handshaking || !r) return;
+    if (c->tls && c->reading && (r & (POLLIN | c->tls_wants | POLLERR | POLLHUP))) {
+        unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + turn_events * DN_SESSION_EVENT_SLOT;
+        enum dn_tls_state state;
+        size_t n = dn_tls_read(c->tls, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA, &state);
+        c->tls_wants = state == DN_TLS_WANT_WRITE ? POLLOUT : 0;
+        if (state == DN_TLS_DONE) {
+            counted.in += n;
+            event(a, DN_SESSION_RECEIVED, i, c->gen, n);
+        } else if (state == DN_TLS_ENDED) {
+            c->reading = 0;
+            event(a, DN_SESSION_INPUT_ENDED, i, c->gen, 0);
+        } else if (state == DN_TLS_FAILED) {
+            event(a, DN_SESSION_CLOSED, i, c->gen, 0);
+            free_index(c);
+        }
+        return;
+    }
     if ((r & POLLIN) && c->reading) {
         unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + turn_events * DN_SESSION_EVENT_SLOT;
         ssize_t n = recv(c->fd, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA, MSG_DONTWAIT);
@@ -407,58 +504,86 @@ static void give_out(unsigned char *a, int i) {
         free_index(c);
         return;
     }
-    if ((r & POLLOUT) && c->unsent) {
+    if ((r & (POLLOUT | c->tls_wants)) && c->unsent) {
         c->unsent = 0;
+        c->tls_wants = 0;
         event(a, DN_SESSION_WRITABLE, i, c->gen, 0);
     }
 }
 
-static void take_connections(unsigned char *a, uint64_t now) {
-    while (accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {
-        struct sockaddr_storage peer;
-        socklen_t peer_len = sizeof peer;
-        int fd = accept4(listener, (struct sockaddr *)&peer, &peer_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (fd < 0) {
-            int code = errno;
-            switch (dn_accept_action(code)) {
-            case DN_ACCEPT_RETRY:
-                if (code == EAGAIN || code == EWOULDBLOCK) accept_ready = 0;
-                continue;
-            case DN_ACCEPT_PAUSE:
-                ++counted.pauses;
-                if (!pausing) fprintf(stderr, "accept: %s; pausing\n", strerror(code));
-                pausing = 1;
-                accept_ready = 0;
-                accept_paused_until = now + ACCEPT_PAUSE_MS;
-                return;
-            case DN_ACCEPT_FATAL:
-            default:
-                dn_harness("accept: %s", strerror(code));
-            }
+/* One connection taken from the listener: its index, -1 when none was taken, or -2 when accepting
+ * pauses, descriptors or memory having run out. `accept_ready` is cleared once the listener has none.
+ * Over TLS the connection's handshake begins, and the program learns of it once it is done. */
+static int accept_next(uint64_t now) {
+    struct sockaddr_storage peer;
+    socklen_t peer_len = sizeof peer;
+    int fd = accept4(listener, (struct sockaddr *)&peer, &peer_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (fd < 0) {
+        int code = errno;
+        switch (dn_accept_action(code)) {
+        case DN_ACCEPT_RETRY:
+            if (code == EAGAIN || code == EWOULDBLOCK) accept_ready = 0;
+            return -1;
+        case DN_ACCEPT_PAUSE:
+            ++counted.pauses;
+            if (!pausing) fprintf(stderr, "accept: %s; pausing\n", strerror(code));
+            pausing = 1;
+            accept_ready = 0;
+            accept_paused_until = now + ACCEPT_PAUSE_MS;
+            return -2;
+        case DN_ACCEPT_FATAL:
+        default:
+            dn_harness("accept: %s", strerror(code));
         }
-        pausing = 0;
-        static const int one = 1;
-        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) ||
-            (send_buffer && setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof send_buffer))) {
-            close(fd);
-            continue;
-        }
-        int i = 0;
-        while (!usable(i)) ++i;
-        /* The test build's `dn/generation` takes the index's count of generations up to its number. */
-        uint64_t past;
-        if (DN_FAULT_INFO("dn/generation", past) && conns[i].gen < past && past < DN_SESSION_GEN_LIMIT)
-            conns[i].gen = past;
-        in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
-                                                   : ((struct sockaddr_in6 *)&peer)->sin6_port;
-        conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port)};
-        ++counted.accepted;
-        if (conns[i].gen == DN_SESSION_GEN_LIMIT) fprintf(stderr, "index %d given out at its last generation\n", i);
-        event(a, DN_SESSION_OPENED, i, conns[i].gen, 0);
-        dn_store_log_opened(&peer);
-        dn_put_word(a + DN_SESSION_NEXT_EVENTS + (turn_events - 1) * DN_SESSION_EVENT_SLOT + DN_SESSION_EVENT_POST,
-                    (uint64_t)dn_store_may_post(&peer));
     }
+    pausing = 0;
+    static const int one = 1;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) ||
+        (send_buffer && setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof send_buffer))) {
+        close(fd);
+        return -1;
+    }
+    int i = 0;
+    while (!usable(i)) ++i;
+    /* The test build's `dn/generation` takes the index's count of generations up to its number. */
+    uint64_t past;
+    if (DN_FAULT_INFO("dn/generation", past) && conns[i].gen < past && past < DN_SESSION_GEN_LIMIT)
+        conns[i].gen = past;
+    in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
+                                               : ((struct sockaddr_in6 *)&peer)->sin6_port;
+    struct dn_tls *tls = NULL;
+    if (tls_cert && !(tls = dn_tls_new(fd))) {
+        close(fd);
+        return -1;
+    }
+    conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port), .tls = tls, .peer = peer,
+                             .handshaking = tls != NULL, .handshake_until = now + HANDSHAKE_MS};
+    ++counted.accepted;
+    if (conns[i].gen == DN_SESSION_GEN_LIMIT) fprintf(stderr, "index %d given out at its last generation\n", i);
+    return i;
+}
+
+/* Over TCP, the connections the listener has, each reported open in the batch. */
+static void take_connections(unsigned char *a, uint64_t now) {
+    while (!tls_cert && accept_ready && turn_events < DN_SESSION_BATCH && free_indexes() > 0) {
+        int i = accept_next(now);
+        if (i == -2) return;
+        if (i >= 0) opened(a, i);
+    }
+}
+
+/* Over TLS, the connections the listener has, taken while the host waits, so that one whose handshake
+ * is not done takes no turn of the program. Says whether a handshake is done. */
+static int take_handshakes(uint64_t now) {
+    int done = 0;
+    accept_ready = 1;
+    while (accept_ready && free_indexes() > 0) {
+        int i = accept_next(now);
+        if (i == -2) break;
+        if (i >= 0) done |= handshake(i, POLLIN);
+    }
+    accept_ready = 0;
+    return done;
 }
 
 void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
@@ -478,7 +603,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     start = (start + 1) % CONNS;
     take_connections(a, now);
     carrying = 0;
-    for (int i = 0; i < CONNS; ++i) carrying |= conns[i].ready != 0 || conns[i].lost;
+    for (int i = 0; i < CONNS; ++i) carrying |= conns[i].ready != 0 || conns[i].lost || conns[i].handshaken;
     carrying |= accept_ready && free_indexes() > 0;
     dn_jobs_give(a);
     dn_put_word(a + DN_SESSION_NEXT_COUNT, turn_events);
@@ -541,10 +666,21 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             continue;
         }
         if (kind == DN_SESSION_SEND) {
-            ssize_t n = len ? send(cn->fd, slot + DN_SESSION_ACTION_HEAD, len, MSG_NOSIGNAL | MSG_DONTWAIT) : 0;
-            uint64_t taken = n > 0 ? (uint64_t)n : 0;
+            int failed;
+            uint64_t taken;
+            if (cn->tls) {
+                enum dn_tls_state state = DN_TLS_DONE;
+                taken = len ? dn_tls_write(cn->tls, slot + DN_SESSION_ACTION_HEAD, len, &state) : 0;
+                cn->tls_wants = state == DN_TLS_WANT_READ ? POLLIN : 0;
+                failed = state == DN_TLS_ENDED || state == DN_TLS_FAILED;
+            } else {
+                ssize_t n = len ? send(cn->fd, slot + DN_SESSION_ACTION_HEAD, len, MSG_NOSIGNAL | MSG_DONTWAIT) : 0;
+                taken = n > 0 ? (uint64_t)n : 0;
+                failed = n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR;
+            }
             counted.out += taken;
-            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            if (failed) {
+                end_tls(cn, 0);
                 close(cn->fd);
                 cn->fd = -1;
                 cn->lost = 1;
@@ -555,6 +691,7 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             cn->reading = !cn->lost && read && taken == len;
         } else {
             int fd = cn->fd;
+            end_tls(cn, kind == DN_SESSION_CLOSE_GRACEFULLY);
             cn->fd = -1;
             free_index(cn);
             if (kind == DN_SESSION_CLOSE_GRACEFULLY) {
@@ -620,10 +757,11 @@ static void identity(const char *name, const char *value, size_t max) {
 static void read_settings(const char *path);
 
 /* Settings taken once at most; the file of settings, given either way, counts as one. */
-enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_ONCE = 11 };
+enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_ONCE = 13 };
 static const char *const taken_once[GIVEN_ONCE] = {
     [GIVEN_PORT] = "--port", [GIVEN_ADDRESS] = "--address", [GIVEN_SETTINGS] = "--config", "--revision", "--source",
-    "--send-buffer", "--clock-fd", "--report-fd", "--spool", "--run-dir", "--path-identity"};
+    "--send-buffer", "--clock-fd", "--report-fd", "--spool", "--run-dir", "--path-identity", "--tls-cert",
+    "--tls-key"};
 static int given[sizeof taken_once / sizeof *taken_once];
 
 /* A number of the setting `name`, the file's line named. */
@@ -647,6 +785,8 @@ static void set(const char *name, const char *value) {
     else if (!strcmp(name, "--send-buffer")) send_buffer = (int)number(name, value, 1 << 20);
     else if (!strcmp(name, "--clock-fd")) clock_fd = descriptor(value);
     else if (!strcmp(name, "--report-fd")) report_fd = descriptor(value);
+    else if (!strcmp(name, "--tls-cert")) tls_cert = value;
+    else if (!strcmp(name, "--tls-key")) tls_key = value;
     else if (!strcmp(counted_as, "--config")) {
         checking = !strcmp(name, "--check-config");
         read_settings(value);
@@ -756,7 +896,12 @@ __attribute__((noreturn)) static void say_settings(void) {
     dn_json_string(stdout, revision);
     fputs(",\"source\":", stdout);
     dn_json_string(stdout, source);
-    printf(",\"send_buffer\":%d", send_buffer);
+    printf(",\"send_buffer\":%d,\"tls_cert\":", send_buffer);
+    if (tls_cert) dn_json_string(stdout, tls_cert);
+    else fputs("null", stdout);
+    fputs(",\"tls_key\":", stdout);
+    if (tls_key) dn_json_string(stdout, tls_key);
+    else fputs("null", stdout);
     dn_store_settings(stdout);
     puts("}");
     if (fflush(stdout)) dn_harness("stdout: %s", strerror(errno));
@@ -770,6 +915,11 @@ int main(int argc, char **argv) {
     }
     identity("--revision", revision, DN_SESSION_REV_MAX);
     identity("--source", source, DN_SESSION_SRC_MAX);
+    if (!tls_cert != !tls_key) dn_harness("--tls-cert and --tls-key are given together");
+    if (tls_cert) {
+        char why[512];
+        if (dn_tls_setup(tls_cert, tls_key, why, sizeof why)) dn_harness("TLS: %s", why);
+    }
     if (checking) say_settings();
     int handed = handed_listener();
     /* Blocked before anything starts, the workers too, so that a signal waits for the loop. */

@@ -28,6 +28,7 @@ Settings come as options or from a file given by `--config FILE`: a setting a li
 | `group` | A group carried, once a group, at most 64 of at most 64 octets | none |
 | `post-from` | A network that may post, as an address and a prefix length, at most 16 | 127.0.0.0/8 and ::1/128 |
 | `send-buffer` | SO_SNDBUF of each connection, in octets | the kernel's |
+| `tls-cert`, `tls-key` | PEM files of the certificate chain and its key: every connection speaks TLS (RFC 8143) | No TLS |
 
 ```
 revision v1
@@ -40,6 +41,18 @@ post-from 192.168.1.0/24
 ```
 
 Run without systemd, the file gives `address` and `port` too, such as `address ::` and `port 1119`. The limits are the specification's and need no setting: 64 connections, a first command within 10 s, 30 min of inactivity, 3 min for a line, 30 min for an article. Each bound and what holds it is in [architecture](architecture.md#bounds).
+
+## TLS
+
+With `tls-cert` and `tls-key` every connection speaks TLS 1.2 or later from its first octet, as RFC 8143 has NNTP over TLS, on port 563 by convention. The server loads `libssl.so.3`, OpenSSL 3, at start, and only then; a start whose files do not load or do not match refuses with status 2. STARTTLS is not offered.
+
+A handshake not done in 10 s, or that fails, closes the connection before the session learns of it. The counters count those, and the first failure of a run says why.
+
+To rotate a certificate, put the new files in place and restart: they are read at start only. The key file should be readable by the server's user alone.
+
+A handshake holds one of the 64 connections up to its 10 s, and its work runs in the server's one loop, so a server open to the world wants a rate limit in front.
+
+Ciphers, their security level and session tickets are libssl's defaults; there is no SNI, ALPN or client certificate. The server needs glibc 2.34 or later, whose libc holds `dlopen`.
 
 ## Privileges
 
@@ -76,7 +89,7 @@ Other statuses: 1, the program broke the host's contract; 2, a setting or a syst
 
 SIGUSR1 writes one line of counters to stderr, and a stop on a signal writes it again. It counts the connections taken and how those ended: gracefully, at once, or by the client or the network.
 
-It counts the octets read and sent, and the pauses in accepting when descriptors or memory ran out. Last, the file jobs, and those that failed for want of space, on an I/O error or otherwise.
+It counts the TLS handshakes that failed or ran out of time, the octets read and sent, and the pauses in accepting when descriptors or memory ran out. Last, the file jobs, and those that failed for want of space, on an I/O error or otherwise.
 
 The line holds no address, name or octet a client sent; the log of connections, which names each poster's address, is apart.
 

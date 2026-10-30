@@ -71,7 +71,7 @@ class Builds:
 
 def build(name: str, host: Path = HOST, store: Path = STORE, jobs: Path = JOBS) -> Builds:
     fiu = lanes.pinned_tool("libfiu")
-    sources = [DRIVER, host, store, jobs, *RUNTIME]
+    sources = [DRIVER, host, store, jobs, lanes.NATIVE / "tls.c", *RUNTIME]
     clean = (host, store, jobs) == (HOST, STORE, JOBS)
     return Builds(lanes.link(OUT / name, sources, includes=[OUT], check=clean),
                   lanes.link(OUT / f"{name}-fiu", sources, includes=[OUT, fiu], check=clean,

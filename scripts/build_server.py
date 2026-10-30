@@ -25,7 +25,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "dn_session_layout.h").write_text(lanes.emit("emit-session-layout"))
     built = lanes.whole_program(cake, "dragons-nntpd", lanes.emit("emit-session"), out, NATIVE / "nntp_host.c",
-                                [NATIVE / "store.c", NATIVE / "jobs.c"])
+                                [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c"])
     print(built)
 
 

@@ -74,13 +74,13 @@ Each bound is a constant of the specification, which the layout hands the progra
 
 | Resource | Bound and where it is set | Held to it by | Tested by |
 | --- | --- | --- | --- |
-| Connections | 64 (`SessionSpec.conns`); the host stops polling the listener at 64 | The program's table; the host's `usable` | `sixty-five clients` (nntp lane), every index taken at once (faults lane) |
+| Connections | 64 (`SessionSpec.conns`), a TLS handshake holding an index up to 10 s; the host stops polling the listener at 64 | The program's table; the host's `usable` | `sixty-five clients` (nntp lane), every index taken at once (faults lane) |
 | Reads in flight | 8 (`PostSpec.Rules.reads`); a ninth waits | The program's read slots | Nine readers at once (session lanes) |
 | Posts in flight | 4 (`PostSpec.Rules.posts`); a fifth waits | The program's slots | Five posts at once (session lanes) |
 | File jobs | 12 slots (`PostSpec.jobs`), one job a slot | The host: a job in a slot in flight ends it; the program: a completion of no job, breach 13 | Session breaches 13 and 14; the host lane's breaches of files |
 | Open files | 16 places (`PostSpec.places`) | The host: an operation on a place not open, of an old generation or of another job, or a seventeenth file, ends it | The host lane's breaches; session breaches 14 |
 | Input and output | 512 octets an event (`SessionSpec.chunk`), one send a slot | The program: a longer event, breach 2; the host: a longer send ends it | Session breaches; `a chunk of 512 bytes` |
-| Memory | The program's heap of 4 MiB and stack of 1 MiB (`SessionLayout.size_fits`); the host's tables static | The allocator holds no more once the server serves than as it began to | The faults lane: under load, allocation unchanged and at most 6 MiB more resident than at start |
+| Memory | The program's heap of 4 MiB and stack of 1 MiB (`SessionLayout.size_fits`); the host's tables static | Without TLS, the allocator holds no more once the server serves than as it began to; libssl allocates for each TLS connection | The faults lane: under load, allocation unchanged and at most 6 MiB more resident than at start |
 
 At the boundary what #11 names is refused as a breach of the contract, each held by a test:
 

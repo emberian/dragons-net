@@ -260,7 +260,7 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str, counter:
     if not outcome:
         return "", f"{what}, which 0005 does not expect"
     if counter >= 0:
-        failures = N.counted(run.said, "at the stop")[8:]
+        failures = N.counted(run.said, "at the stop")[9:]
         if failures != [int(point != "" and not retried and k == counter) for k in range(3)]:
             return "", f"{what}, the stop counted {failures} failed file jobs"
     if (outcome == "none") != (at < 0) or run.got[:LISTING] != expected(base, outcome, at):
@@ -404,7 +404,8 @@ def terminated(binary: Path, base: Image, count: int) -> None:
             stop = re.search(r"at the stop: (\d+) jobs run out, (\d+) dropped before they began, (\d+) still running",
                              run.said)
             if stop is None or stop[1] == "0" or stop[3] != "0":
-                raise LaneError(f"SIGTERM at operation {n}: the server said {run.said[-300:]!r}")
+                said = stop[0] if stop else run.said[-300:]
+                raise LaneError(f"SIGTERM at operation {n}: the server said {said!r}")
             try:
                 commits = R.recover(C.KEY, C.GROUPS, list(run.image.items()))[3]
             except R.Corrupt as error:
