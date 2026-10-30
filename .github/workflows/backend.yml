@@ -8,6 +8,7 @@ name: backend
 # chain, from a clean tree up to `pan_to_target_compile_semantics` and its tag check, took 46
 # minutes on twelve jobs of a fast machine, so the weekly run builds all of it; a change to the
 # lane itself builds the narrow target the patch touches, which took three minutes on two.
+# Before the proof, the Lean model's state corpus runs through panSem (scripts/check_semantics.sh).
 on:
   schedule:
     - cron: "23 5 * * 0"
@@ -20,6 +21,9 @@ on:
       - scripts/backend_lane.sh
       - scripts/check_backend.sh
       - scripts/check_holmake.py
+      - scripts/check_semantics.sh
+      - scripts/semantics_check.py
+      - scripts/state_corpus.py
       - tools.lock.json
       - .github/workflows/backend.yml
   pull_request:
@@ -30,6 +34,9 @@ on:
       - scripts/backend_lane.sh
       - scripts/check_backend.sh
       - scripts/check_holmake.py
+      - scripts/check_semantics.sh
+      - scripts/semantics_check.py
+      - scripts/state_corpus.py
       - tools.lock.json
       - .github/workflows/backend.yml
   workflow_dispatch:
@@ -78,6 +85,7 @@ jobs:
         run: |
           key=$(git rev-parse HEAD:backend HEAD:scripts/backend.py HEAD:scripts/bootstrap_tool.py \
             HEAD:scripts/backend_lane.sh HEAD:scripts/check_backend.sh HEAD:scripts/check_holmake.py \
+            HEAD:scripts/check_semantics.sh HEAD:scripts/semantics_check.py HEAD:scripts/state_corpus.py \
             HEAD:tools.lock.json HEAD:.github/workflows/backend.yml | sha256sum | cut -d' ' -f1)
           echo "key=backend-${TARGET%.uo}-$key" >> "$GITHUB_OUTPUT"
       - name: A pass recorded on the same inputs
@@ -127,6 +135,11 @@ jobs:
       - name: Fetch the patched compiler source
         if: steps.passed.outputs.run-id == ''
         run: python3 -P scripts/backend.py fetch cakeml
+      # The Lean model against panSem on the state corpus. It cleans the tree and builds the part it
+      # needs, so it runs before the proof, which cleans it again.
+      - name: Compare the model with panSem
+        if: steps.passed.outputs.run-id == ''
+        run: bash scripts/check_semantics.sh
       - name: Rebuild the proof
         if: steps.passed.outputs.run-id == ''
         run: bash scripts/check_backend.sh
@@ -148,4 +161,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: backend-logs
-          path: build/backend-*.log
+          path: |
+            build/backend-*.log
+            build/semantics-*.log

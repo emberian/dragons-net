@@ -5,7 +5,9 @@ semantics that lives in HOL4, in the CakeML sources. This document says exactly
 what it was compared against, clause by clause, what it leaves out, and which
 parts are checked by machine rather than by reading.
 
-The states a run stops in are compared against an independent implementation of these clauses on every run of the checks: `dn-compiler dump-states` prints the bounded corpus of `DN.Compiler.StateCorpus` with what the model makes of each case, and `scripts/state_check.py` recomputes it and compares the result constructor, the locals, the memory, the external trace, the base address and the clock; the write-back clause is compared on its own, because an external call reads the region before it writes and so never reaches a failing write-back. That is a guard against drift in the half of the semantics no differential lane over computed values can reach; it is not a connection to the HOL source, which remains the open obligation below.
+The states a run stops in are checked on every run of the checks. `dn-compiler dump-states` prints the bounded corpus of `DN.Compiler.StateCorpus` with what the model makes of each case. `scripts/state_check.py` recomputes each with an independent implementation of these clauses and compares the result constructor, the locals, the memory, the external trace, the base address and the clock.
+
+The write-back clause is compared on its own: an external call reads the region before it writes, so it never reaches a failing write-back. This guards the half of the semantics no differential lane over computed values reaches. HOL4 itself runs the same corpus, below.
 
 ## What it was compared against
 
@@ -151,5 +153,24 @@ leaves every local, the memory domain, the byte order, the base address and the
 clock as they were.
 
 The correspondence itself — that each clause above matches the HOL text — rests
-on reading the recorded files at the recorded digests. It is not machine-checked,
-and a bridge to HOL4 remains the open item.
+on reading the recorded files at the recorded digests and on the run below. Neither
+is a proof, and a bridge to HOL4 remains the open item.
+
+## Run by HOL4
+
+`scripts/check_semantics.sh` runs every case of the corpus through `panSem`'s own
+`evaluate`, under `EVAL`, in the backend's CakeML tree at `ed31510`, and compares
+each printed field with the model's. `backend/semantics/states.txt` is the corpus as the model
+prints it; the state lane holds it equal to the printer.
+
+`scripts/semantics_check.py` writes each case's input as a HOL term, the model's
+answer left out. HOL's answer is a theorem about that term, printed in the dump's
+form by `backend/semantics/dnShowScript.sml`.
+
+A second run reads subtraction as addition and must disagree, and only where a
+case subtracts. The backend workflow runs the lane: 136 cases and 5 write-backs
+agree, with each way a call of the subset ends, in its body and after it.
+
+Where `e8eca63` and `ed31510` differ, the model follows `e8eca63` and is not run
+by HOL: a shift is compared at literal distances only, and the return-shape check
+of a call, vacuous here, is `ed31510`'s.

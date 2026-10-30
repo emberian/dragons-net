@@ -43,6 +43,8 @@ What the lane fixes is the sources and the configuration of the tools built from
 
 Rebuilding the chain establishes the compiler's correctness theorem for the patched source; it is not a compiler bootstrap, and no executable comes from it. The next section is where one does.
 
+`scripts/check_semantics.sh` uses the same trees and gate to ask whether the Lean model of Pancake ends where `panSem`'s `evaluate` does. It builds `panSemTheory`, evaluates every case of `semantics/states.txt` under `EVAL` in a theory outside both trees, and compares each field ([pancake-semantics](../docs/pancake-semantics.md#run-by-hol4)).
+
 ## Bootstrap the compiler
 
 From the repository root, after `build hol` above:

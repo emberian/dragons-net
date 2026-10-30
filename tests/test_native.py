@@ -210,7 +210,7 @@ class StateCorpus(unittest.TestCase):
 
     def test_state_check_reads_the_whole_state(self) -> None:
         """The lane compares every printed field, not only the value a run computes."""
-        lines = ["CASE ok", "PROG (seq (assign x (const 1)) (ret (var x)))", "LOCALS x=5",
+        lines = ["CASE ok", "PROG (seq (assign x (const 1)) (ret (var x)))", "CODE ()", "LOCALS x=5",
                  "MEM 0=0", "DOM 0", "BE 0", "CLOCK 4", "BASE 0", "ANSWERS", "NAMES x",
                  "RESULT return:1", "FLOCALS x=", "FMEM 0=0", "FCALLS 0", "FTRACE",
                  "FCLOCK 4", "FBASE 0", "END"]
@@ -262,7 +262,8 @@ class StateCorpus(unittest.TestCase):
         programs = [line for line in dump.splitlines() if line.startswith("PROG ")]
         for construct in ("(skip)", "(dec ", "(assign ", "(store ", "(storeb ", "(extcall ",
                           "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ", "(shl ", "(xor ", "(or ",
-                          "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless "):
+                          "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless ", "(deccall ",
+                          "(sub "):
             with self.subTest(construct=construct):
                 self.assertTrue(any(construct in p for p in programs), construct)
         # The write-back clause an external call cannot reach has its own cases.
@@ -275,6 +276,10 @@ class StateCorpus(unittest.TestCase):
                 self.assertIn(f"{len(results)} cases", text)
         self.assertIn(f"{len(results)} cases, {stopping} of which stop",
                       (ROOT / "docs/baseline.md").read_text())
+        writes = sum(1 for line in dump.splitlines() if line.startswith("WRITE "))
+        for name in ("docs/assurance.md", "docs/pancake-semantics.md"):
+            with self.subTest(document=name):
+                self.assertIn(f"{writes} write-backs", (ROOT / name).read_text())
 
 
 class Replies(unittest.TestCase):

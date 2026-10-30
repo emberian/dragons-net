@@ -38,6 +38,7 @@ if not os.environ.get("DN_TEST_SILENT_PROVER"):
 """
 bootstrap_tool = script("bootstrap_tool")
 check_holmake = script("check_holmake")
+semantics_check = script("semantics_check")
 
 
 class Backend(unittest.TestCase):
@@ -164,6 +165,9 @@ class Backend(unittest.TestCase):
             "check_backend.sh": ("DN BACKEND:", [
                 {"DN_BUILD_JOBS": "0"}, {"DN_BUILD_JOBS": "--fast"}, {"DN_BUILD_JOBS": "2 --fast"},
                 {"CLINE_OPTIONS": "--fast"}, {"POLY_CLINE_OPTIONS": "--minheap 1G"}]),
+            "check_semantics.sh": ("DN SEMANTICS:", [
+                {"DN_BUILD_JOBS": "0"}, {"DN_BUILD_JOBS": "--fast"}, {"CLINE_OPTIONS": "--fast"},
+                {"POLY_CLINE_OPTIONS": "--minheap 1G"}]),
             "bootstrap_cake.sh": ("DN BOOTSTRAP:", [
                 {"DN_BUILD_JOBS": "0"}, {"DN_BUILD_JOBS": "--fast"},
                 {"DN_POLY_MINHEAP": "8G /tmp/evil.uo"}, {"DN_POLY_MINHEAP": "--fast"},
@@ -259,11 +263,11 @@ class Backend(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             tree = Path(temp).resolve() / "dn"
             (tree / "scripts").mkdir(parents=True)
-            for name in ("check_backend.sh", "bootstrap_cake.sh", "backend_lane.sh"):
+            for name in ("check_backend.sh", "bootstrap_cake.sh", "check_semantics.sh", "backend_lane.sh"):
                 shutil.copy(ROOT / "scripts" / name, tree / "scripts")
-            for name in ("tagcheck", "bootstrap-tagcheck"):
+            for name in ("tagcheck", "bootstrap-tagcheck", "semantics"):
                 shutil.copytree(ROOT / "backend" / name, tree / "backend" / name)
-            for name in ("backend", "check_holmake"):
+            for name in ("backend", "check_holmake", "semantics_check"):
                 (tree / f"scripts/{name}.py").write_text(RECORDER)
             prover = tree / ".deps/hol/bin/Holmake"
             prover.parent.mkdir(parents=True)
@@ -273,7 +277,7 @@ class Backend(unittest.TestCase):
             subprocess.run(["git", "init", "-q", str(cakeml)], check=True)
             (cakeml / ".gitignore").write_text("*.uo\n")
             # Directories of the checkout are tracked; its build outputs are not.
-            for directory in ("pancake/proofs", "compiler/bootstrap/compilation/x64/64"):
+            for directory in ("pancake/proofs", "pancake/semantics", "compiler/bootstrap/compilation/x64/64"):
                 (cakeml / directory).mkdir(parents=True)
                 (cakeml / directory / "Holmakefile").write_text("")
             subprocess.run(["git", "-C", str(cakeml), "add", "-A"], check=True)
@@ -282,6 +286,7 @@ class Backend(unittest.TestCase):
                     if key not in ("CLINE_OPTIONS", "POLY_CLINE_OPTIONS", "DN_BACKEND_TARGET")}
             base |= {"DN_BUILD_JOBS": "3", "DN_POLY_MINHEAP": "4G", "DN_TEST_CALLS": str(calls)}
             proofs, x64 = cakeml / "pancake/proofs", cakeml / "compiler/bootstrap/compilation/x64/64"
+            semantics, states = cakeml / "pancake/semantics", tree / "backend/semantics/states.txt"
             build = tree / "build"
             expected = {
                 "check_backend.sh": [
@@ -305,9 +310,27 @@ class Backend(unittest.TestCase):
                     (f"check_holmake --output {build}/bootstrap/tagcheck.log --tree {build}/bootstrap/tagcheck "
                      f"--jobs 1 --built {build}/bootstrap/tagcheck/dnBootstrapTagCheckTheory.uo --since T"),
                     "backend package-bootstrap --seconds T --jobs 3"],
+                "check_semantics.sh": [
+                    "backend verify hol", "backend built-with hol", "backend verify cakeml",
+                    "stale output False",
+                    f"Holmake -j 3 panSemTheory.uo | {semantics} | ",
+                    (f"check_holmake --output {build}/semantics-holmake.log --tree {cakeml} --jobs 3 "
+                     f"--built {semantics}/panSemTheory.uo --since T"),
+                    f"semantics_check write {states} {build}/semantics/dnStatesScript.sml",
+                    f"Holmake -j 1 --no_prereqs dnStatesTheory.uo | {build}/semantics | ",
+                    (f"check_holmake --output {build}/semantics-eval.log --tree {build}/semantics --jobs 1 "
+                     f"--built {build}/semantics/dnStatesTheory.uo --since T"),
+                    f"semantics_check compare {states} {build}/semantics-eval.log",
+                    f"semantics_check write {states} {build}/semantics-defect/dnStatesScript.sml --defect",
+                    f"Holmake -j 1 --no_prereqs dnStatesTheory.uo | {build}/semantics-defect | ",
+                    (f"check_holmake --output {build}/semantics-defect.log --tree {build}/semantics-defect "
+                     f"--jobs 1 --built {build}/semantics-defect/dnStatesTheory.uo --since T"),
+                    f"semantics_check compare {states} {build}/semantics-defect.log --expect-differences"],
             }
             for lane, steps in expected.items():
-                for silent in (False, True):
+                # The semantics lane's answer is what the comparison reads, not a sentence the
+                # prover prints; the comparison has its own tests below.
+                for silent in (False, True) if lane != "check_semantics.sh" else (False,):
                     with self.subTest(lane=lane, silent=silent):
                         (proofs / "stale.uo").write_text("")
                         calls.write_text("")
@@ -338,6 +361,7 @@ class Backend(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(list(ROOT.glob(path)), f"{path} matches nothing in the tree")
         self.assertIn("bash scripts/check_backend.sh", workflow)
+        self.assertIn("bash scripts/check_semantics.sh", workflow)
         self.assertIn("scripts/backend.py build hol", workflow)
         # A target that passed on the same inputs is not built again: its key reads what the paths name.
         keyed = re.findall(r"HEAD:(\S+)", workflow)
@@ -416,3 +440,106 @@ class Backend(unittest.TestCase):
         table = (ROOT / "docs/pancake-semantics.md").read_text().partition("## The modelled subset")[0]
         cited = set(re.findall(r"`([\w./-]+\.sml)`", table))
         self.assertEqual(cited, {source["path"] for source in lock["semantics_sources"]})
+
+
+class Semantics(unittest.TestCase):
+    """The HOL lane's terms and comparison, without the prover: what the theory evaluates is
+    built from the corpus's inputs alone, and the comparison refuses each way of disagreeing."""
+
+    corpus = semantics_check.corpus(ROOT / "backend/semantics/states.txt")
+
+    @staticmethod
+    def log(cases: list[dict[str, str]]) -> str:
+        """What the theory prints when HOL agrees with the model on every case."""
+        out = []
+        for case in cases:
+            if "WRITE" in case:
+                out += [f"DNCASE WRITE {case['WRITE']}", f"WRESULT {case['WRESULT']}"]
+            else:
+                out += [f"DNCASE CASE {case['CASE']}", *(f"{f} {case[f]}" for f in semantics_check.FIELDS)]
+            out.append("DNEND")
+        return "<<HOL message>>\n" + "\n".join(out) + "\nExporting theory\n"
+
+    @staticmethod
+    def moved(case: dict[str, str], field: str) -> str:
+        """Another value of an input field, in the field's own form."""
+        value = case[field]
+        others = {"BE": "0" if value == "1" else "1",
+                  "PROG": "(skip)" if value != "(skip)" else "(ret (const 0))",
+                  "CODE": "((f () (skip)))" if value == "()" else "()",
+                  "WBYTES": "00" if value == "-" else value + "00"}
+        if field in ("CLOCK", "BASE", "WADDR"):
+            return str(int(value) + 1)
+        if field in others or field == "WBE":
+            return others["BE" if field == "WBE" else field]
+        extra = {"LOCALS": "zz=1", "MEM": "4096=1", "WMEM": "4096=1", "DOM": "4096", "WDOM": "4096",
+                 "ANSWERS": "ret:00", "NAMES": "zz"}
+        if field in extra:
+            return f"{value}{';' if field == 'ANSWERS' else ','}{extra[field]}" if value else extra[field]
+        return value + "-moved"
+
+    def test_terms_read_only_the_inputs(self) -> None:
+        """The model's answer is not in the term HOL evaluates, so HOL cannot copy it; every input is."""
+        answers = (*semantics_check.FIELDS, "WRESULT")
+        for case in self.corpus:
+            inputs = semantics_check.WRITE_INPUTS if "WRITE" in case else semantics_check.INPUTS
+            term = semantics_check.case_term(case, semantics_check.BINOPS)
+            blanked = {k: ("" if k in answers else v) for k, v in case.items()}
+            self.assertEqual(semantics_check.case_term(blanked, semantics_check.BINOPS), term)
+            for field in inputs:
+                with self.subTest(case=case.get("CASE") or case.get("WRITE"), field=field):
+                    moved = {**case, field: self.moved(case, field)}
+                    self.assertNotEqual(semantics_check.case_term(moved, semantics_check.BINOPS), term)
+
+    def test_every_case_is_evaluated_once(self) -> None:
+        script = semantics_check.script(self.corpus, semantics_check.BINOPS)
+        keys = re.findall(r'^val _ = answer \("([^"]*)"', script, re.MULTILINE)
+        self.assertEqual(len(keys), len(self.corpus))
+        self.assertEqual(len(set(keys)), len(keys))
+        # The corpus reaches every statement and both kinds of case, calls among them.
+        for form in ("DecCall", "ExtCall", "While", "StoreByte", "write_bytearray", "Oracle_final"):
+            self.assertIn(form, script)
+        # The defect changes what is evaluated, and only where subtraction is.
+        defect = semantics_check.script(self.corpus, semantics_check.DEFECT)
+        self.assertNotEqual(defect, script)
+        self.assertEqual(defect.replace("asm$Add", "asm$Sub").count("asm$Sub"),
+                         script.replace("asm$Add", "asm$Sub").count("asm$Sub"))
+
+    def test_comparison_refuses_each_disagreement(self) -> None:
+        agreeing = self.log(self.corpus)
+        self.assertEqual(semantics_check.differences(self.corpus, agreeing), [])
+        first = next(c for c in self.corpus if "CASE" in c)
+        key = f"DNCASE CASE {first['CASE']}\n"
+        block = agreeing[agreeing.index(key):agreeing.index("DNEND\n", agreeing.index(key)) + 6]
+        wrong = {
+            "a field": agreeing.replace(key + f"RESULT {first['RESULT']}", key + "RESULT unreachable", 1),
+            "a case missing": agreeing.replace(block, ""),
+            "a case not in the corpus": agreeing + "DNCASE CASE extra\nRESULT none\nDNEND\n",
+            "an unreduced term": agreeing.replace(block, key + "UNREDUCED\nDNEND\n"),
+        }
+        for what, log in wrong.items():
+            with self.subTest(what=what):
+                self.assertNotEqual(semantics_check.differences(self.corpus, log), [])
+        with self.assertRaises(SystemExit):
+            semantics_check.differences(self.corpus, agreeing + block)
+
+    def test_defect_has_to_show_where_subtraction_is(self) -> None:
+        agreeing = self.log(self.corpus)
+
+        def changed(case: dict[str, str]) -> str:
+            key = f"DNCASE CASE {case['CASE']}\n"
+            return agreeing.replace(key + f"RESULT {case['RESULT']}", key + "RESULT unreachable", 1)
+
+        def dropped(case: dict[str, str]) -> str:
+            key = f"DNCASE CASE {case['CASE']}\n"
+            start = agreeing.index(key)
+            return agreeing[:start] + agreeing[agreeing.index("DNEND\n", start) + 6:]
+
+        states = [c for c in self.corpus if "CASE" in c]
+        subtracting = next(c for c in states if "(sub " in c["PROG"])
+        other = next(c for c in states if "(sub " not in c["PROG"] + c["CODE"])
+        self.assertIsNone(semantics_check.defect_unseen(self.corpus, changed(subtracting)))
+        for what, log in {"no difference": agreeing, "a difference without subtraction": changed(other),
+                          "a case unanswered": dropped(subtracting)}.items():
+            with self.subTest(what=what):
+                self.assertIsNotNone(semantics_check.defect_unseen(self.corpus, log))
