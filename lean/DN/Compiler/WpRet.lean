@@ -651,21 +651,24 @@ def zeros : List String → PancakeProg → PancakeProg
 def Bound (xs : List String) (s : PancakeState σ) : Prop := ∀ y ∈ xs, ∃ w, s.locals y = some w
 
 /-- **Locals declared from zero** are bound for the program after them, the rest of the state as
-`P` has it, when setting them keeps `P`; for a program that never finishes normally, as a function's
-body, whose declarations' scopes then never end. -/
-theorem zeros_run {o : Oracle σ} {R : Ret} (xs : List String) {c : PancakeProg} :
-    ∀ {P : PancakeState σ → Prop}, (∀ s y w, P s → y ∈ xs → P { s with locals := setLocal s.locals y w }) →
-      SafeR o (fun s => P s ∧ Bound xs s) c R (fun _ => False) →
-      SafeR o P (zeros xs c) R (fun _ => False) := by
+`P` has it, when setting them keeps `P`; the program's ending is theirs when it does not look at
+those locals, which their declarations' ends give back. -/
+theorem zeros_runQ {o : Oracle σ} {R : Ret} (xs : List String) {c : PancakeProg} :
+    ∀ {P Q : PancakeState σ → Prop},
+      (∀ s y w, P s → y ∈ xs → P { s with locals := setLocal s.locals y w }) →
+      (∀ t y v, Q t → y ∈ xs → Q (restore t y v)) →
+      SafeR o (fun s => P s ∧ Bound xs s) c R Q → SafeR o P (zeros xs c) R Q := by
   induction xs with
   | nil =>
-    intro P _ hc
+    intro P Q _ _ hc
     exact conseq hc (fun s hs => ⟨hs, fun _ h => by cases h⟩) (fun _ _ h => h) (fun _ h => h)
   | cons x xs ih =>
-    intro P hP hc
-    refine dec (P' := fun s => P s ∧ ∃ w, s.locals x = some w) (Q' := fun _ => False)
-      (fun s hs => ⟨0, rfl, hP s x 0 hs (by simp), 0, by simp [setLocal]⟩) ?_ (fun _ _ _ h => h.elim)
+    intro P Q hP hQ hc
+    refine dec (P' := fun s => P s ∧ ∃ w, s.locals x = some w) (Q' := Q)
+      (fun s hs => ⟨0, rfl, hP s x 0 hs (by simp), 0, by simp [setLocal]⟩) ?_
+      (fun s t _ hq => hQ t x (s.locals x) hq (by simp))
     refine ih (P := fun s => P s ∧ ∃ w, s.locals x = some w) (fun s y w ⟨hs, hx⟩ hy => ?_)
+      (fun t y v hq hy => hQ t y v hq (List.mem_cons_of_mem _ hy))
       (conseq hc (fun s ⟨⟨hs, hx⟩, hb⟩ => ⟨hs, fun y hy => ?_⟩) (fun _ _ h => h) (fun _ h => h))
     · refine ⟨hP s y w hs (List.mem_cons_of_mem _ hy), ?_⟩
       by_cases e : x = y
@@ -675,6 +678,14 @@ theorem zeros_run {o : Oracle σ} {R : Ret} (xs : List String) {c : PancakeProg}
     · rcases List.mem_cons.mp hy with rfl | hy
       · exact hx
       · exact hb y hy
+
+/-- …so for a program that never finishes normally, as a function's body, whose declarations'
+scopes then never end. -/
+theorem zeros_run {o : Oracle σ} {R : Ret} (xs : List String) {c : PancakeProg} :
+    ∀ {P : PancakeState σ → Prop}, (∀ s y w, P s → y ∈ xs → P { s with locals := setLocal s.locals y w }) →
+      SafeR o (fun s => P s ∧ Bound xs s) c R (fun _ => False) →
+      SafeR o P (zeros xs c) R (fun _ => False) :=
+  fun hP hc => zeros_runQ xs hP (fun _ _ _ h _ => h) hc
 
 /-- A return can satisfy `R`: `return 7` gives back seven. -/
 theorem wpR_witness :

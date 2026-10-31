@@ -759,10 +759,12 @@ structure LineMem (lim : Nat) (s s' : PancakeState σ) (st : Word) (A' : LineSta
   words : ∀ w, w ≠ st → w ≠ st + 8#64 → w ≠ st + 16#64 → w ≠ st + 24#64 → w ≠ st + 32#64 →
     (∀ j, j < lim → byteAlign (st + 40#64 + BitVec.ofNat 64 j) ≠ w) → s'.memory w = s.memory w
 
-/-- What the framer leaves: where it stopped (`i`), every local it does not write, and memory. -/
+/-- What the framer leaves: where it stopped (`i`), its verdict's code (`kind`), every local it
+does not write, and memory. -/
 structure LineAfter (lim : Nat) (s s' : PancakeState σ) (st : Word) (i : Nat) (A' : LineState)
     (out : Option Line) : Prop where
   i : s'.locals "i" = some (BitVec.ofNat 64 i)
+  kind : s'.locals "kind" = some (kindW out)
   locals : ∀ v, v ∉ lineWrites → s'.locals v = s.locals v
   mem : LineMem lim s s' st A' out
 
@@ -872,6 +874,7 @@ theorem lineFrag_run (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (hpos : 0
   have hfr := frameOnce_fresh lim A (q.drop i0)
   have hle := frameOnce_kept_le lim hpos A (q.drop i0)
   have hi6 := hloc6.i
+  have hkind6 := hloc6.kind
   have hn6 := hI.names
   have hw6 := hI.words
   have hby6 := hI.bytes
@@ -892,11 +895,11 @@ theorem lineFrag_run (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (hpos : 0
   have hwr : ∀ v, v ∉ lineWrites → v ≠ "len" ∧ v ≠ "cr" ∧ v ≠ "bad" ∧ v ≠ "kind" ∧ v ≠ "kept" := by
     intro v hv; simp only [lineWrites, List.mem_cons, List.not_mem_nil, or_false, not_or] at hv
     exact ⟨hv.1, hv.2.1, hv.2.2.1, hv.2.2.2.1, hv.2.2.2.2.1⟩
-  generalize hr : frameOnce lim A (q.drop i0) = r at hmem7 hk1 hfits hfr hle hi6 hmem7' ⊢
+  generalize hr : frameOnce lim A (q.drop i0) = r at hmem7 hk1 hfits hfr hle hi6 hkind6 hmem7' ⊢
   obtain ⟨K, A', out⟩ := r
-  simp only at hfits hk1 hmem7 hi6 hmem7' ⊢
+  simp only at hfits hk1 hmem7 hi6 hkind6 hmem7' ⊢
   have hlen : A'.buf.length ≤ lim := by have := hfits.1; have := hfits.2.1; omega
-  refine ⟨by rw [hloc7]; exact hi6, fun v hv => ?_,
+  refine ⟨by rw [hloc7]; exact hi6, by rw [hloc7]; exact hkind6, fun v hv => ?_,
       ⟨⟨?_, ?_, ?_, ?_⟩, ?_, hma7, hbe7, ?_, ?_, ?_, ?_⟩⟩
   · obtain ⟨a1, a2, a3, a4, a5⟩ := hwr v hv
     rw [hloc7, hn6 v (hnames v hv), l5 v a1 a2 a3 a4 a5]
@@ -2200,7 +2203,7 @@ theorem lineMem_witness : LineMem 4 demo demo 0 demoLine none :=
   ⟨holds_witness, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, fun _ _ _ _ _ _ _ => rfl⟩
 
 theorem lineAfter_witness : LineAfter 4 demo demo 0 0 demoLine none :=
-  ⟨rfl, fun _ _ => rfl, lineMem_witness⟩
+  ⟨rfl, rfl, fun _ _ => rfl, lineMem_witness⟩
 
 /-- The chunk at 64 lies apart from the demo block's bytes. -/
 theorem apart_witness : ∀ j j', j < 4 → j' < [72#8].length →
