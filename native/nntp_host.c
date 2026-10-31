@@ -838,7 +838,7 @@ static void set(const char *name, const char *value) {
     else if (!strcmp(counted_as, "--config")) {
         checking = !strcmp(name, "--check-config");
         read_settings(value);
-    } else if (!dn_store_option(name, value)) dn_harness("%sunknown setting %s", setting_at, name);
+    } else if (!dn_store_option(setting_at, name, value)) dn_harness("%sunknown setting %s", setting_at, name);
 }
 
 /* The settings of the file at `path`, each taken as its option would be. */
@@ -967,16 +967,18 @@ int main(int argc, char **argv) {
     identity("--revision", revision, DN_SESSION_REV_MAX);
     identity("--source", source, DN_SESSION_SRC_MAX);
     if (!tls_cert != !tls_key) dn_harness("--tls-cert and --tls-key are given together");
+    if (users && !given[GIVEN_SPOOL]) dn_harness("--users needs a store, which --spool gives");
+    if (users && !tls_cert) dn_harness("--users needs TLS, as AUTHINFO is taken over TLS only");
+    if (users) dn_store_logins();
+    /* The TLS key and the passwords pass through memory: no core dump writes them out. */
+    if ((tls_cert || users) && prctl(PR_SET_DUMPABLE, 0)) dn_harness("prctl: %s", strerror(errno));
     if (tls_cert) {
         char why[512];
         if (dn_tls_setup(tls_cert, tls_key, why, sizeof why)) dn_harness("TLS: %s", why);
     }
     if (users) {
         char why[512];
-        if (!given[GIVEN_SPOOL]) dn_harness("--users needs a store, which --spool gives");
         if (dn_accounts_load(users, why, sizeof why)) dn_harness("users: %s", why);
-        /* Passwords pass through memory: no core dump writes them out. */
-        if (prctl(PR_SET_DUMPABLE, 0)) dn_harness("prctl: %s", strerror(errno));
     }
     if (checking) say_settings();
     int handed = handed_listener();

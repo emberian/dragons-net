@@ -41,7 +41,8 @@ private def commands : List String :=
    "emit-article-layout", "emit-article-mutant NAME",
    "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
-   "emit-trees", "parse-trees", "emit-cells", "parse-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples", "compile FILE",
+   "emit-trees", "parse-trees", "emit-cells", "parse-cells", "parse-text", "emit-fuzz SEED COUNT VECTORS", "run-fuzz",
+   "fuzz-samples", "compile FILE",
    "emit-corpus", "dump-states"]
 
 /-- The most lines `session-model` reads. -/
@@ -272,6 +273,8 @@ def table : List (String × (List String → IO UInt32)) :=
         match ((c.getObjValD "tree").getObjValD "source").getStr? with
         | .ok source => Parse.programJson source
         | .error _ => .null)).compress))),
+   -- Any text on standard input, as the Lean copy of CakeML's parser reads it, or null.
+   ("parse-text", plain fun _ => (onInput fun input => .ok (Parse.programJson input).compress)),
    ("emit-fuzz", fun
     | [seed, count, vectors] =>
       match seed.toNat?, count.toNat?, vectors.toNat? with

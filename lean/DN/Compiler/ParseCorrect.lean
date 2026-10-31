@@ -2156,8 +2156,11 @@ def cmpOfName : String → Cmp
   | "Less" => .less | "NotLess" => .notLess | _ => .equal
 
 mutual
-/-- **A tree read in the model**, its names' locality aside. Only the trees `tree` builds are read
-so; anything else, a subtraction of other than two operands among them, is read as `0`. -/
+/-- **A tree read in the model**, its names' locality aside: an operator over its operands folded
+from the left, by the names `binopOf` and `cmpOfName` read. Any other operator name reads as `Add`,
+any other comparison as `Equal`, a shift but `Lsr` as `Lsl`, and an operator of no operands or a
+product of other than two as `0`. So this tells apart only the names `tree` gives; that they are
+CakeML's, the parser lane holds against HOL4. -/
 def plain : Exp → PancakeExp
   | .const w => .const (BitVec.ofNat 64 w)
   | .var _ x => .var x

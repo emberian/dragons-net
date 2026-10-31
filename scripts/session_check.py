@@ -94,7 +94,7 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "view-failure-answered", "range-later", "header-stuffed", "xref-folded", "metadata-cased",
            "first-failure-closed", "refused-after-group", "auth-in-clear", "auth-again", "pass-unnamed", "name-kept",
            "auth-unadvertised", "auth-advertised-after", "login-no-post", "answer-while-checking", "check-deadlines",
-           "read-while-checking", "long-name-kept", "auth-unoffered", "first-name-kept")
+           "read-while-checking", "long-name-kept", "auth-unoffered", "first-name-kept", "login-unasked")
 # Those of reading, tried on the scenarios that read first, those of the selected group, on the
 # scenarios that select one, those of the listings, on the scenarios that list, those of READER
 # and MODE READER, on the scenarios that ask for them, and those of OVER and HDR and of AUTHINFO, on
@@ -1444,9 +1444,11 @@ def login_scenarios() -> Iterator[PostScenario]:
     """AUTHINFO USER and PASS: over TLS and in the clear, where the host offers logins and where it
     does not, accounts' names and passwords right and wrong, out of sequence, at the limits and the
     latest of two, lines after a PASS at once, a check slower than the inactivity deadline, one the
-    client resets in, and checks while another connection talks."""
-    yield "a login over TLS, then a POST", [
-        logging_in([(5, ascii_lines("CAPABILITIES", "AUTHINFO USER alice")), (20, ascii_lines("AUTHINFO PASS s3cret")),
+    client resets in, checks while another connection talks, and POSTs before and after a login,
+    where it lets the connection post and where the store has no group."""
+    yield "a POST before a login over TLS, and one after", [
+        logging_in([(5, ascii_lines("CAPABILITIES", "POST", "AUTHINFO USER alice")),
+                    (20, ascii_lines("AUTHINFO PASS s3cret")),
                     (40, ascii_lines("CAPABILITIES", "MODE READER", "POST")), (60, article(*BASIC)),
                     (80, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret", "QUIT"))])], Spool(GROUPS)
     yield "logins refused and out of sequence", [
@@ -1457,8 +1459,8 @@ def login_scenarios() -> Iterator[PostScenario]:
                     (45, ascii_lines("AUTHINFO USER bob")), (50, b"AUTHINFO PASS \xc3\xa9t\xc3\xa9\r\n"),
                     (60, ascii_lines("CAPABILITIES", "QUIT"))])], Spool(GROUPS)
     yield "AUTHINFO in the clear", [
-        Client(1, [(5, ascii_lines("CAPABILITIES", "AUTHINFO USER alice", "AUTHINFO PASS s3cret", "AUTHINFO PASS",
-                                   "QUIT"))], logins=True)], Spool(GROUPS)
+        Client(1, [(5, ascii_lines("CAPABILITIES", "POST", "AUTHINFO USER alice", "AUTHINFO PASS s3cret",
+                                   "AUTHINFO PASS", "QUIT"))], logins=True)], Spool(GROUPS)
     yield "AUTHINFO where the host offers no login", [
         Client(1, [(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret", "CAPABILITIES", "QUIT"))],
                tls=True)], Spool(GROUPS)
@@ -1480,6 +1482,9 @@ def login_scenarios() -> Iterator[PostScenario]:
     yield "a reset during a check, and its index taken again", [
         logging_in([(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret"))], check_time=500, reset=50),
         logging_in([(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS wrong", "QUIT"))], opens=100)], Spool(GROUPS)
+    yield "logins on a store with no group", [
+        logging_in([(5, ascii_lines("POST", "AUTHINFO USER alice")), (10, ascii_lines("AUTHINFO PASS s3cret")),
+                    (20, ascii_lines("POST", "CAPABILITIES", "QUIT"))])], Spool([])
     yield "a check while another connection talks", [
         logging_in([(5, ascii_lines("AUTHINFO USER alice")), (10, ascii_lines("AUTHINFO PASS s3cret")),
                     (20, ascii_lines("QUIT"))], check_time=500),

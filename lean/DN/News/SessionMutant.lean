@@ -306,6 +306,8 @@ inductive Mutant
   | authUnoffered
   /-- the name of the first of two AUTHINFO USER kept -/
   | firstNameKept
+  /-- a POST a login would allow answered 440, not 480 -/
+  | loginUnasked
   deriving DecidableEq, Repr
 
 def names : List (String × Mutant) :=
@@ -372,7 +374,7 @@ def names : List (String × Mutant) :=
    ("auth-advertised-after", .authAdvertisedAfter), ("login-no-post", .loginNoPost),
    ("answer-while-checking", .answerWhileChecking), ("check-deadlines", .checkDeadlines),
    ("read-while-checking", .readWhileChecking), ("long-name-kept", .longNameKept),
-   ("auth-unoffered", .authUnoffered), ("first-name-kept", .firstNameKept)]
+   ("auth-unoffered", .authUnoffered), ("first-name-kept", .firstNameKept), ("login-unasked", .loginUnasked)]
 
 /-- The store's rules with the mutant's broken. -/
 def rulesOf : Mutant → Rules
@@ -610,7 +612,8 @@ def resolveM (m : Mutant) (p : Posting) (c : Conn) : Reply → Reply
     else if (c.greeted || m = .modeUngreeted) && (p.accepting || m = .modeStale) then .readerPosting
     else .readerNoPosting
   | .post =>
-    if !c.greeted && !(m = .postUnpermitted && p.offered) then .notPermitted
+    if !c.greeted && !(m = .postUnpermitted && p.offered) then
+      if loginPosts p c && m != .loginUnasked then .authRequired else .notPermitted
     else if !p.accepting && m != .postAfterStop then .unavailable else .post
   | .select g =>
     if m = .groupCaseless then

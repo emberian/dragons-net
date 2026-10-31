@@ -61,7 +61,7 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .fieldRefused => 47 | .overviewFmt => 48 | .headerList => 49 | .authinfo _ => 50 | .authUser _ => 51
   | .authPass .. => 52 | .authAccepted => 53 | .authFailed => 54 | .authSequence => 55
   | .encryptionRequired => 56 | .authDone => 57 | .capabilitiesAuth => 58 | .capabilitiesReaderAuth => 59
-  | .capabilitiesPostAuth => 60
+  | .capabilitiesPostAuth => 60 | .authRequired => 61
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15
@@ -197,6 +197,7 @@ def tAuthFailed : Nat := 93
 def tAuthSequence : Nat := 94
 def tEncryptionRequired : Nat := 95
 def tAuthDone : Nat := 96
+def tAuthRequired : Nat := 97
 
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
@@ -285,7 +286,7 @@ def connText : PFun :=
       (.noneHdr, tNoneHdr), (.noRange, tNoRange), (.fieldRefused, tFieldRefused),
       (.overviewFmt, tOverviewFmtText), (.headerList, tHeaderList), (.authUser [], tAuthUser),
       (.authAccepted, tAuthAccepted), (.authFailed, tAuthFailed), (.authSequence, tAuthSequence),
-      (.encryptionRequired, tEncryptionRequired), (.authDone, tAuthDone)].map
+      (.encryptionRequired, tEncryptionRequired), (.authDone, tAuthDone), (.authRequired, tAuthRequired)].map
       fun ((r : News.CommandSpec.Reply), k) => text (replyCode r) [appendText k]) ++
     [setf "cb" cOutLen (v "o"), .ret (n 0)] }
 
@@ -825,9 +826,16 @@ def viewLookup : List PStmt :=
              (callS "gs" "groupScan" [v "vg", n 1, v "vcur"] ++
               [.ite (eEq found (n 0)) [reply .noCurrent] (found_ (v "vlg") (v "vcur"))])]]]]
 
+/-- Whether a login would let connection `cb` post (`SessionSpec.loginPosts`): it may log in, over
+TLS, and has not, and the store accepts and carries a group. -/
+def loginPosts : PExpr :=
+  eAnd (eAnd (fld "cb" cLogins) (fld "cb" cTls))
+    (eAnd (ne (fld "cb" cAuth) (n authDone))
+      (eAnd hasStore (eAnd (ownW ownAccepting) (ne (ld (at_ (recOff + News.RecoverProg.rGroupCount))) (n 0)))))
+
 /-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with READER, and with POST
 while the connection may post, MODE READER's 200 or 201 as they name POST or not, the help with POST,
-for a POST 440 or 403 unless it may have a slot, and for a message-id 430 when the store does not
+for a POST 440, 480 or 403 unless it may have a slot, and for a message-id 430 when the store does not
 hold it, 223 for STAT when it does; else the ARTICLE (one),
 HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`, its first line
 giving the number `wno`; the replies of the selected group and the current article, and where they
@@ -844,7 +852,8 @@ def resolve : List PStmt :=
      [.ite (eAnd (fld "cb" cGreeted) (ownW ownAccepting)) [reply .readerPosting] [reply .readerNoPosting]],
    ifs (eAnd (isReply .help) hasStore) [reply .helpPost],
    ifs (isReply .post)
-     [.ite (eEq (fld "cb" cGreeted) (n 0)) [reply .notPermitted]
+     [.ite (eEq (fld "cb" cGreeted) (n 0))
+       [.ite loginPosts [reply .authRequired] [reply .notPermitted]]
        [ifs (eEq (ownW ownAccepting) (n 0)) [reply .unavailable]]],
    ifs (isReply (.lookup .head 0 []))
      ([keptIn (v "l1") 250, .store (at_ (ownOff + ownIdLen)) (v "l1"), .dec "ij" (n 0),
@@ -1806,7 +1815,8 @@ def regression_967 : Bool :=
    (tAuthUser, News.CommandSpec.text i (.authUser [])), (tAuthAccepted, News.CommandSpec.text i .authAccepted),
    (tAuthFailed, News.CommandSpec.text i .authFailed), (tAuthSequence, News.CommandSpec.text i .authSequence),
    (tEncryptionRequired, News.CommandSpec.text i .encryptionRequired),
-   (tAuthDone, News.CommandSpec.text i .authDone)].all (fun (k, t) => texts[k]? == some t) &&
+   (tAuthDone, News.CommandSpec.text i .authDone),
+   (tAuthRequired, News.CommandSpec.text i .authRequired)].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
     (texts[SessionStore.tStatus + j]?).map
       (· ++ News.CommandSpec.decimal 0 ++ [News.CommandSpec.SP] ++ News.CommandSpec.crlf) ==

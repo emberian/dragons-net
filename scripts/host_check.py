@@ -388,7 +388,7 @@ def options(binary: Path) -> dict[str, str]:
                  "a group too long": ([*spool, *run, "--group", "a" * 65], "--group"),
                  "an empty group": ([*spool, *run, "--group", ""], "--group"),
                  "65 groups": ([*spool, *run, *(o for k in range(65) for o in ("--group", f"g{k}"))], "--group"),
-                 "a network that is none": ([*spool, *run, "--post-from", "10.0.0.0/33"], "not a number"),
+                 "a network that is none": ([*spool, *run, "--post-from", "10.0.0.0/33"], "not a network: 10.0.0.0/33"),
                  "an address that is none": ([*spool, *run, "--post-from", "x/8"], "not a network")}
         for options_, said in cases.values():
             refused(binary, options_, 2, said)
@@ -1014,7 +1014,7 @@ DEFECTS = [
     (STORE, "a mark of another boot kept", "if (unlinkat(dir, MARK, 0) && errno != ENOENT)", "if (0)"),
     (STORE, "the run directory's mark unread", "    check_mark(run, run_path, boot);\n", ""),
     (STORE, "the last bits of a prefix ignored", "if (rest && ", "if (0 && "),
-    (STORE, "no network by default", '        add_net("127.0.0.0/8");\n        add_net("::1/128");\n', ""),
+    (STORE, "no network by default", '        add_net("", "127.0.0.0/8");\n        add_net("", "::1/128");\n', ""),
     (STORE, "no random octets", "ssize_t n = getrandom(random_octets + got, sizeof random_octets - got, 0);",
      "ssize_t n = (ssize_t)(sizeof random_octets - got);"),
     (STORE, "a connection logged as the run's second", "    static uint64_t opened, unlogged;\n",

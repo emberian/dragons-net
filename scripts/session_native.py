@@ -57,6 +57,7 @@ POST_DEFECTS = [
     ("AUTHINFO taken in the clear", r"if \(lds 1 \(cb \+ \d+\)\) == 0 \{\n(\s+)r = 56;", r"if 0 {\n\1r = 56;", 2,
      TRACE),
     ("a password checked with no name kept", r"if au == 1 \{", "if au < 2 {", 1, TRACE),
+    ("a POST a login would allow answered 440", r"r = 61;", "r = 11;", 1, TRACE),
     ("an article's dots not stuffed", r"if \(lds 1 \(zs \+ 80\)\) & \(b == 46\) \{", "if 0 {", 1, TRACE),
     ("an article one octet longer taken", r"1000000 < ar", "1000001 < ar", 2, TRACE),
     ("an article's deadline a millisecond late", r"st cb \+ 128, now \+ 1800000;", "st cb + 128, now + 1800001;", 1,

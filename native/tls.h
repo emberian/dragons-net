@@ -15,9 +15,9 @@ struct dn_tls;
 enum dn_tls_state { DN_TLS_DONE, DN_TLS_WANT_READ, DN_TLS_WANT_WRITE, DN_TLS_ENDED, DN_TLS_FAILED };
 
 /* Loads libssl and makes the server's context from the certificate chain and the key, PEM files,
- * the key's file not one others may read or its group write; TLS 1.2 at least, no renegotiation, no
- * session cache; ciphers and their security level are libssl's defaults. On failure it returns
- * nonzero with the reason in `why`. */
+ * the key's file not one others may read or its group write, and the key under no passphrase; TLS
+ * 1.2 at least, no renegotiation, no session cache; ciphers and their security level are libssl's
+ * defaults. On failure it returns nonzero with the reason in `why`. */
 int dn_tls_setup(const char *certificate, const char *key, char *why, size_t why_len);
 
 /* A server side for the connected socket `fd`, or NULL. */

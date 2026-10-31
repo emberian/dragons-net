@@ -3,8 +3,9 @@
  * `NAME:ITERATIONS:SALT:KEY`, the salt and the key in hex, the key PBKDF2-HMAC-SHA256's of the
  * password (RFC 8018 §5.2) through OpenSSL 3's libcrypto, loaded with dlopen when the file is set.
  * The checks run on a thread of their own, so that a slow one holds up no connection but its own;
- * a verdict comes back with a later batch. A name no account has is checked against one that cannot
- * match, as long as a real one, so that the time does not tell which names exist. */
+ * a verdict comes back with a later batch. Each check costs the file's largest iteration count, a
+ * name no account has checked against one that cannot match, so that the time tells neither which
+ * names exist nor their counts. */
 #ifndef DN_ACCOUNTS_H
 #define DN_ACCOUNTS_H
 #include <stddef.h>

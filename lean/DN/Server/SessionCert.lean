@@ -5738,7 +5738,16 @@ def cert_222 : Cert :=
   (.leaf (some { locals := [("j", AVal.mk false 1 25 none)], cells := none })))
   (.leaf (some { locals := [("o", AVal.mk false 25 3781 none)], cells := none }))))
   (.leaf (some { locals := [], cells := none })))
-  (.leaf none))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+  (.seq
+  (.cond
+  (.seq
+  (.leaf (some { locals := [("j", AVal.mk false 0 0 (some 0))], cells := none }))
+  (.seq
+  (.loop { locals := [("j", AVal.mk false 0 29 none)], cells := none }
+  (.leaf (some { locals := [("j", AVal.mk false 1 29 none)], cells := none })))
+  (.leaf (some { locals := [("o", AVal.mk false 29 3810 none)], cells := none }))))
+  (.leaf (some { locals := [], cells := none })))
+  (.leaf none)))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 
 def cert_223 : Cert :=
   (.leaf none)
@@ -7183,7 +7192,7 @@ def cert_237 : Cert :=
   (.chain 4 (some { locals := [], cells := none })
   (.dec
   (.seq
-  (.leaf (some { locals := [("xkq", AVal.mk true 1215208 1220872 (some 0))], cells := none }))
+  (.leaf (some { locals := [("xkq", AVal.mk true 1215240 1220904 (some 0))], cells := none }))
   (.dec
   (.seq
   (.loop { locals := [("xkj", AVal.mk false 0 16 none)], cells := none }
@@ -7277,7 +7286,7 @@ def cert_238 : Cert :=
   (.dec
   (.dec
   (.chain 2 (some { locals :=
-      [("jsc", AVal.mk true 1220352 1220352 (some 0)),
+      [("jsc", AVal.mk true 1220384 1220384 (some 0)),
        ("rgo", AVal.mk false 1 1 (some 1))], cells := none })
   (.seq
   (.loop { locals :=
@@ -7381,7 +7390,7 @@ def cert_238 : Cert :=
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))]
                  cells := some [] }))))
   (.chain 3 (some { locals :=
-      [("rq", AVal.mk true 1214648 1214648 (some 0)),
+      [("rq", AVal.mk true 1214680 1214680 (some 0)),
        ("rk", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.cond
@@ -7405,7 +7414,7 @@ def cert_238 : Cert :=
   (.leaf (some { locals := [], cells := none }))
   (.cond
   (.chain 8 (some { locals :=
-      [("jw", AVal.mk true 1222280 1222280 (some 0)),
+      [("jw", AVal.mk true 1222312 1222312 (some 0)),
        ("jwl", AVal.mk false 0 17776 none)], cells := none })
   (.seq
   (.cond
@@ -7424,9 +7433,9 @@ def cert_238 : Cert :=
       [("jx", AVal.mk false wordMin 16384 none),
        ("jwl", AVal.mk false (-17776) 17776 none)], cells := none }))))
   (.chain 7 (some { locals :=
-      [("jpp", AVal.mk true 1222293 1240069 none),
+      [("jpp", AVal.mk true 1222325 1240101 none),
        ("jwhy", AVal.mk false 0 0 (some 0)),
-       ("jf", AVal.mk true 1222280 1240056 none)], cells := none })
+       ("jf", AVal.mk true 1222312 1240088 none)], cells := none })
   (.seq
   (.cond
   (.leaf (some { locals := [("jwhy", AVal.mk false 1 1 (some 1))], cells := none }))
@@ -7437,11 +7446,11 @@ def cert_238 : Cert :=
   (.leaf (some { locals := [("jwhy", AVal.mk false 1 1 (some 1))], cells := none }))
   (.cond
   (.leaf (some { locals := [("jwhy", AVal.mk false 3 3 (some 3))], cells := none }))
-  (.chain 4 (some { locals := [("k", AVal.mk true 1220872 1240089 none)], cells := none })
+  (.chain 4 (some { locals := [("k", AVal.mk true 1220904 1240121 none)], cells := none })
   (.cond
   (.leaf (some { locals := [("jwhy", AVal.mk false 4 4 (some 4))], cells := none }))
   (.chain 11 (some { locals :=
-      [("p", AVal.mk true 1220888 1220888 (some 0)),
+      [("p", AVal.mk true 1220920 1220920 (some 0)),
        ("ji", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("ji", AVal.mk false 0 1376 none)], cells := none }
@@ -7488,8 +7497,8 @@ def cert_238 : Cert :=
   (.loop { locals := [("jok", AVal.mk false 0 1 none)], cells := none }
   (.chain 5 (some { locals :=
       [("jeq", AVal.mk false 0 0 (some 0)),
-       ("jgb", AVal.mk true 1220512 1226584 (some 0)),
-       ("jga", AVal.mk true 1220488 1226584 (some 0))], cells := none })
+       ("jgb", AVal.mk true 1220544 1226616 (some 0)),
+       ("jga", AVal.mk true 1220520 1226616 (some 0))], cells := none })
   (.seq
   (.cond
   (.chain 6 (some { locals :=
@@ -7534,12 +7543,12 @@ def cert_238 : Cert :=
   (.cond
   (.leaf (some { locals := [("jwhy", AVal.mk false 3 3 (some 3))], cells := none }))
   (.chain 3 (some { locals :=
-      [("k", AVal.mk true 1220872 1220872 (some 0)),
+      [("k", AVal.mk true 1220904 1220904 (some 0)),
        ("jhk", AVal.mk false 1 1 (some 1))], cells := none })
   (.cond
   (.leaf none)
   (.chain 11 (some { locals :=
-      [("p", AVal.mk true 1220888 1220888 (some 0)),
+      [("p", AVal.mk true 1220920 1220920 (some 0)),
        ("ji", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("ji", AVal.mk false 0 1376 none)], cells := none }
@@ -7577,8 +7586,8 @@ def cert_238 : Cert :=
                     cells := some [] })
   (.cond
   (.chain 12 (some { locals :=
-      [("rwp", AVal.mk true 1222280 1222280 (some 0)),
-       ("rsl", AVal.mk true 1241448 2944968 (some 0)),
+      [("rwp", AVal.mk true 1222312 1222312 (some 0)),
+       ("rsl", AVal.mk true 1241480 2945000 (some 0)),
        ("rj", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("rj", AVal.mk false 0 250 none)], cells := none }
@@ -7586,8 +7595,8 @@ def cert_238 : Cert :=
   (.chain 26 (some { locals :=
       [("off", AVal.mk false 0 0 (some 0)),
        ("n", AVal.mk false 0 250 none),
-       ("p", AVal.mk true 1222280 1241448 none),
-       ("k", AVal.mk true 1215208 1215208 (some 0))], cells := none })
+       ("p", AVal.mk true 1222312 1241480 none),
+       ("k", AVal.mk true 1215240 1215240 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("off", AVal.mk false 0 250 (some 0))], cells := none }
   (.leaf (some { locals := [("off", AVal.mk false 8 250 (some 0))], cells := none })))
@@ -7601,14 +7610,14 @@ def cert_238 : Cert :=
   (.loop { locals := [("rg", AVal.mk false 0 16 none)], cells := none }
   (.chain 9 (some { locals :=
       [("rx", AVal.mk false 64 64 (some 0)),
-       ("rgs", AVal.mk true 1220488 1220848 (some 0)),
+       ("rgs", AVal.mk true 1220520 1220880 (some 0)),
        ("rc", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.loop { locals :=
       [("rx", AVal.mk false 0 64 none),
        ("rc", AVal.mk false 0 64 none)], cells := none }
   (.seq
-  (.leaf (some { locals := [("rcp", AVal.mk true 1215232 1219768 (some 0))], cells := none }))
+  (.leaf (some { locals := [("rcp", AVal.mk true 1215264 1219800 (some 0))], cells := none }))
   (.seq
   (.cond
   (.chain 2 (some { locals :=
@@ -7660,12 +7669,12 @@ def cert_238 : Cert :=
       [("ri", AVal.mk false 0 4096 none),
        ("rdup", AVal.mk false 0 1 none)], cells := none }
   (.chain 3 (some { locals :=
-      [("rsl", AVal.mk true 1241448 2944968 (some 0)),
+      [("rsl", AVal.mk true 1241480 2945000 (some 0)),
        ("rj", AVal.mk false 1 4096 none)], cells := none })
   (.seq
   (.loop { locals := [("rdup", AVal.mk false 0 1 none)], cells := none }
   (.leaf (some { locals :=
-      [("rsl", AVal.mk true 1241864 2944968 (some 0)),
+      [("rsl", AVal.mk true 1241896 2945000 (some 0)),
        ("rj", AVal.mk false 2 4096 none)], cells := none })))
   (.leaf (some { locals := [("ri", AVal.mk false 0 4096 none)], cells := none })))))
   (.seq
@@ -7677,13 +7686,13 @@ def cert_238 : Cert :=
       [("ri", AVal.mk false 0 4096 none),
        ("rdup", AVal.mk false 0 2 none)], cells := none }
   (.chain 5 (some { locals :=
-      [("rsl", AVal.mk true 1241448 2944968 (some 0)),
+      [("rsl", AVal.mk true 1241480 2945000 (some 0)),
        ("rj", AVal.mk false 1 4096 none),
        ("rl", AVal.mk false 0 250 none)], cells := none })
   (.seq
   (.loop { locals := [("rdup", AVal.mk false 0 2 none)], cells := none }
   (.seq
-  (.leaf (some { locals := [("rcp", AVal.mk true 1241864 2944968 (some 0))], cells := none }))
+  (.leaf (some { locals := [("rcp", AVal.mk true 1241896 2945000 (some 0))], cells := none }))
   (.seq
   (.cond
   (.chain 2 (some { locals :=
@@ -7720,7 +7729,7 @@ def cert_238 : Cert :=
        ("rc", AVal.mk false 0 64 none)], cells := none }
   (.chain 4 (some { locals :=
       [("rg", AVal.mk false 0 0 (some 0)),
-       ("rsl", AVal.mk true 1241448 2944968 (some 0))], cells := none })
+       ("rsl", AVal.mk true 1241480 2945000 (some 0))], cells := none })
   (.seq
   (.loop { locals :=
       [("rbad", AVal.mk false 0 1 none),
@@ -7754,7 +7763,7 @@ def cert_238 : Cert :=
   (.loop { locals := [("ri", AVal.mk false 0 4096 none)], cells := none }
   (.leaf (some { locals :=
       [("ri", AVal.mk false 1 4096 none),
-       ("rsl", AVal.mk true 1241448 2944968 (some 0))], cells := none })))
+       ("rsl", AVal.mk true 1241480 2945000 (some 0))], cells := none })))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 1 none)], cells := none }))))
   (.cond
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))
@@ -7762,7 +7771,7 @@ def cert_238 : Cert :=
   (.cond
   (.leaf (some { locals := [], cells := none }))
   (.chain 3 (some { locals :=
-      [("rq", AVal.mk true 1214648 1214648 (some 0)),
+      [("rq", AVal.mk true 1214680 1214680 (some 0)),
        ("rk", AVal.mk false 0 0 (some 0))], cells := none })
   (.seq
   (.cond
@@ -7795,7 +7804,7 @@ def cert_238 : Cert :=
        ("rok", AVal.mk false 0 1 none)], cells := none }
   (.leaf (some { locals :=
       [("ri", AVal.mk false 1 4096 none),
-       ("rsl", AVal.mk true 1241448 2944968 (some 0)),
+       ("rsl", AVal.mk true 1241480 2945000 (some 0)),
        ("rok", AVal.mk false 0 1 none)], cells := none })))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))))
   (.leaf (some { locals := [("rgo", AVal.mk false 0 0 (some 0))], cells := none }))))))))
@@ -8169,7 +8178,7 @@ def cert : Cert :=
   (.dec
   (.dec
   (.dec
-  (.chain 12 (some { locals := [("jsc", AVal.mk true 1220352 1220352 (some 0))], cells := none })
+  (.chain 12 (some { locals := [("jsc", AVal.mk true 1220384 1220384 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("dj", AVal.mk false 0 16 none)], cells := none }
   (.leaf (some { locals := [("dj", AVal.mk false 1 16 none)], cells := none })))
@@ -8377,8 +8386,8 @@ def cert : Cert :=
   (.chain 26 (some { locals :=
       [("off", AVal.mk false 0 0 (some 0)),
        ("n", AVal.mk false 45 45 (some 5)),
-       ("p", AVal.mk true 1220888 1220888 (some 0)),
-       ("k", AVal.mk true 1215208 1215208 (some 0))], cells := none })
+       ("p", AVal.mk true 1220920 1220920 (some 0)),
+       ("k", AVal.mk true 1215240 1215240 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("off", AVal.mk false 0 45 (some 0))], cells := none }
   (.leaf (some { locals := [("off", AVal.mk false 8 45 (some 0))], cells := none })))
@@ -8401,15 +8410,15 @@ def cert : Cert :=
   (.cond
   (.chain 11 (some { locals :=
       [("dj", AVal.mk false 0 0 (some 0)),
-       ("dx", AVal.mk true 1215208 1220872 (some 0))], cells := none })
+       ("dx", AVal.mk true 1215240 1220904 (some 0))], cells := none })
   (.seq
   (.loop { locals := [], cells := none }
   (.leaf none))
   (.chain 26 (some { locals :=
       [("off", AVal.mk false 0 0 (some 0)),
        ("n", AVal.mk false 9 9 (some 1)),
-       ("p", AVal.mk true 1220888 1220888 (some 0)),
-       ("k", AVal.mk true 1215208 1220872 (some 0))], cells := none })
+       ("p", AVal.mk true 1220920 1220920 (some 0)),
+       ("k", AVal.mk true 1215240 1220904 (some 0))], cells := none })
   (.seq
   (.loop { locals := [("off", AVal.mk false 0 9 (some 0))], cells := none }
   (.leaf (some { locals := [("off", AVal.mk false 8 9 (some 0))], cells := none })))

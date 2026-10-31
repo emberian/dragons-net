@@ -422,13 +422,19 @@ def viewOf (p : Posting) (c : Conn) (lg : Bool) (f : Option (List Byte)) : Sel �
       if c.current = 0 then .noCurrent
       else ((atNumber p.held g c.current).map fun x => .overview lg f false [x]).getD .noCurrent
 
+/-- Whether a login would let connection `c` post: it may log in, over TLS, and has not, and the
+store accepts and carries a group, as the verdict's `greets` asks. -/
+def loginPosts (p : Posting) (c : Conn) : Bool :=
+  c.logins && c.tls && c.auth != .done && p.offered && p.accepting && !p.groups.isEmpty
+
 /-- The reply a connection gets with a store: the capabilities with READER, and with POST while it
 may post, and MODE READER's 200 or 201 as they name POST or not; the help with POST, for a
-well-formed POST 340, 440 or 403, and for a message-id the store does not hold 430, for one it holds
-with STAT 223; the replies of the selected group and the current article. Without a store, the
-capabilities and the help of 0003, and MODE READER's 502. AUTHINFO USER and PASS (RFC 4643 §2.3)
-where the host offers them: 483 in the clear, and over TLS AUTHINFO USER in the capabilities until
-logged in; 502 once logged in, and where it may not log in. -/
+well-formed POST 340, 440 or 403, or 480 where a login would let it post (RFC 4643 §2.2), and for a
+message-id the store does not hold 430, for one it holds with STAT 223; the replies of the selected
+group and the current article. Without a store, the capabilities and the help of 0003, and MODE
+READER's 502. AUTHINFO USER and PASS (RFC 4643 §2.3) where the host offers them: 483 in the clear,
+and over TLS AUTHINFO USER in the capabilities until logged in; 502 once logged in, and where it may
+not log in. -/
 def resolve (p : Posting) (c : Conn) : Reply → Reply
   | .capabilities =>
     if c.logins && c.tls && c.auth != .done then
@@ -440,7 +446,9 @@ def resolve (p : Posting) (c : Conn) : Reply → Reply
     if !p.offered then .modeReader else if c.greeted && p.accepting then .readerPosting
     else .readerNoPosting
   | .help => if p.offered then .helpPost else .help
-  | .post => if !c.greeted then .notPermitted else if !p.accepting then .unavailable else .post
+  | .post =>
+    if !c.greeted then if loginPosts p c then .authRequired else .notPermitted
+    else if !p.accepting then .unavailable else .post
   | .lookup k n id =>
     if !p.held.any (·.messageId == id) then .noSuchId else if k = .stat then .stat n id else .lookup k n id
   | .select g => if p.groups.contains g then summary p.held g else .noSuchGroup
@@ -1424,7 +1432,8 @@ theorem text_ne_nil (i : Identity) : ∀ r, r ≠ .ignore → text i r ≠ []
   | .newGroups, _ | .date, _ | .modeReader, _ | .readerPosting, _ | .readerNoPosting, _
   | .over .., _ | .hdr .., _ | .noneOver, _ | .noneHdr, _ | .noRange, _ | .fieldRefused, _
   | .overviewFmt, _ | .headerList, _ | .authinfo _, _ | .authUser _, _ | .authPass _ _, _
-  | .authAccepted, _ | .authFailed, _ | .authSequence, _ | .encryptionRequired, _ | .authDone, _ => by
+  | .authAccepted, _ | .authFailed, _ | .authSequence, _ | .encryptionRequired, _ | .authDone, _
+  | .authRequired, _ => by
     simp only [text]; decide +kernel
   | .overview lg f _ _, _ => by
     cases lg <;> cases f <;> (simp only [text, overviewStatus]; decide +kernel)

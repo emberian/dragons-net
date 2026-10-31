@@ -14,8 +14,9 @@
 #include <sys/random.h>
 #include <sys/stat.h>
 
+/* ITERATIONS_MIN is OWASP's count for PBKDF2-HMAC-SHA256 (Password Storage Cheat Sheet). */
 enum { CONNS = DN_SESSION_CONNS, NAME_MAX_ = DN_SESSION_NAME_MAX, PASSWORD_MAX = DN_SESSION_PASSWORD_MAX, SALT_MIN = 8, SALT_MAX = 64, KEY = 32,
-       ACCOUNTS_MAX = 4096, FILE_MAX = 1 << 20, ITERATIONS_MIN = 1000, ITERATIONS_MAX = 100000000 };
+       ACCOUNTS_MAX = 4096, FILE_MAX = 1 << 20, ITERATIONS_MIN = 600000, ITERATIONS_MAX = 100000000 };
 
 struct account {
     unsigned char name[NAME_MAX_], salt[SALT_MAX], key[KEY];
@@ -118,18 +119,19 @@ static int read_accounts(const char *path, char *why, size_t why_len) {
     accounts = calloc(ACCOUNTS_MAX, sizeof *accounts);
     if (!text || !accounts) dn_harness("accounts: out of memory");
     size_t n = 0;
+    int bad = 0;
     for (ssize_t got; n < (size_t)st.st_size && (got = read(fd, text + n, (size_t)st.st_size - n)) != 0;) {
         if (got < 0 && errno == EINTR) continue;
         if (got < 0) {
-            close(fd);
-            return failed(why, why_len, "%s: %s", path, strerror(errno));
+            bad = failed(why, why_len, "%s: %s", path, strerror(errno));
+            break;
         }
         n += (size_t)got;
     }
     close(fd);
     text[n] = 0;
     unsigned line = 0;
-    for (char *p = text, *next; p < text + n; p = next) {
+    for (char *p = text, *next; !bad && p < text + n; p = next) {
         ++line;
         char *end = memchr(p, '\n', (size_t)(text + n - p));
         next = end ? end + 1 : text + n;
@@ -140,12 +142,18 @@ static int read_accounts(const char *path, char *why, size_t why_len) {
         if (!nul && (!*p || *p == '#')) continue;
         if (nul || count == ACCOUNTS_MAX ||
             account_of(p, &accounts[count]) || find(accounts[count].name, accounts[count].name_len))
-            return failed(why, why_len, "%s:%u: not an account, or one more than 4096 or named twice", path, line);
-        ++count;
+            bad = failed(why, why_len, "%s:%u: not an account, or one more than 4096 or named twice", path, line);
+        else ++count;
     }
     explicit_bzero(text, n);
     free(text);
-    return 0;
+    if (bad) {
+        explicit_bzero(accounts, ACCOUNTS_MAX * sizeof *accounts);
+        free(accounts);
+        accounts = NULL;
+        count = 0;
+    }
+    return bad;
 }
 
 static int load(char *why, size_t why_len) {
@@ -159,14 +167,20 @@ static int load(char *why, size_t why_len) {
     return 0;
 }
 
-/* Whether the password is the account's of that name. */
+/* Whether the password is the account's of that name. Every check derives as many iterations as
+ * the file's largest count, those an account lacks over `unknown`, so that the time tells neither
+ * which names exist nor their counts. */
 static int verify(const struct check *c) {
     const struct account *a = find(c->name, c->name_len), *use = a ? a : &unknown;
-    unsigned char out[KEY];
+    unsigned char out[KEY], rest[KEY];
     int ok = crypto.PKCS5_PBKDF2_HMAC((const char *)c->password, (int)c->password_len, use->salt, (int)use->salt_len,
                                       use->iterations, crypto.EVP_sha256(), KEY, out) == 1 &&
              crypto.CRYPTO_memcmp(out, use->key, KEY) == 0 && a;
+    if (use->iterations < unknown.iterations)
+        crypto.PKCS5_PBKDF2_HMAC((const char *)c->password, (int)c->password_len, unknown.salt, (int)unknown.salt_len,
+                                 unknown.iterations - use->iterations, crypto.EVP_sha256(), KEY, rest);
     explicit_bzero(out, sizeof out);
+    explicit_bzero(rest, sizeof rest);
     return ok;
 }
 
@@ -198,8 +212,10 @@ static void *checking(void *unused) {
 
 int dn_accounts_load(const char *path, char *why, size_t why_len) {
     if (load(why, why_len) || read_accounts(path, why, why_len)) return 1;
-    /* The account no name finds: as long to check as the first, with a key no password gives. */
-    unknown.iterations = count ? accounts[0].iterations : ITERATIONS_MIN;
+    /* The account no name finds: the file's largest count, with a key no password gives. */
+    unknown.iterations = ITERATIONS_MIN;
+    for (size_t k = 0; k < count; ++k)
+        if (accounts[k].iterations > unknown.iterations) unknown.iterations = accounts[k].iterations;
     unknown.salt_len = SALT_MIN;
     if (getrandom(unknown.salt, SALT_MIN, 0) != SALT_MIN || getrandom(unknown.key, KEY, 0) != KEY)
         dn_harness("getrandom: %s", strerror(errno));

@@ -8,15 +8,20 @@
 #include <stdio.h>
 #include <sys/socket.h>
 
-/* Take a store option; 0 if `name` is none. The host refuses one given twice that is taken once. */
-int dn_store_option(const char *name, const char *value);
+/* Take a store option; 0 if `name` is none. The host refuses one given twice that is taken once. A
+ * refusal starts with `at`, the line of a file of settings or empty. */
+int dn_store_option(const char *at, const char *name, const char *value);
+
+/* Before the check: clients log in, so no network may post by default, as a proxy on the same host
+ * would make every client one of the loopback's. */
+void dn_store_logins(void);
 
 /* After the options, without starting anything: check them together and that the spool and the run
  * directory open as directories. */
 void dn_store_check(void);
 
 /* Once checked, the options as members of a JSON object on `out`, each after a comma, the networks
- * that may post as given or by default. */
+ * that may post as given or by default: the loopback's, but none where clients log in. */
 void dn_store_settings(FILE *out);
 
 /* After the options: open and lock the spool, refuse a mark of this boot and remove an older one,

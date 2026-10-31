@@ -7,14 +7,16 @@
 #include "tls.h"
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 enum {
-    SSL_FILETYPE_PEM = 1,
+    KEY_MAX = 1 << 20,
     SSL_CTRL_MODE = 33,
     SSL_CTRL_SET_SESS_CACHE_MODE = 44,
     SSL_SESS_CACHE_OFF = 0,
@@ -35,7 +37,11 @@ static struct {
     long (*SSL_CTX_ctrl)(void *ctx, int cmd, long larg, void *parg);
     uint64_t (*SSL_CTX_set_options)(void *ctx, uint64_t options);
     int (*SSL_CTX_use_certificate_chain_file)(void *ctx, const char *file);
-    int (*SSL_CTX_use_PrivateKey_file)(void *ctx, const char *file, int type);
+    int (*SSL_CTX_use_PrivateKey)(void *ctx, void *pkey);
+    void *(*BIO_new_mem_buf)(const void *buf, int len);
+    int (*BIO_free)(void *bio);
+    void *(*PEM_read_bio_PrivateKey)(void *bio, void **x, int (*cb)(char *buf, int size, int rwflag, void *u), void *u);
+    void (*EVP_PKEY_free)(void *pkey);
     void *(*SSL_new)(void *ctx);
     int (*SSL_set_fd)(void *ssl, int fd);
     void (*SSL_set_accept_state)(void *ssl);
@@ -77,7 +83,11 @@ static int load(char *why, size_t why_len) {
     FIND(SSL_CTX_ctrl);
     FIND(SSL_CTX_set_options);
     FIND(SSL_CTX_use_certificate_chain_file);
-    FIND(SSL_CTX_use_PrivateKey_file);
+    FIND(SSL_CTX_use_PrivateKey);
+    FIND(BIO_new_mem_buf);
+    FIND(BIO_free);
+    FIND(PEM_read_bio_PrivateKey);
+    FIND(EVP_PKEY_free);
     FIND(SSL_new);
     FIND(SSL_set_fd);
     FIND(SSL_set_accept_state);
@@ -105,6 +115,64 @@ static int failed(const char *what, char *why, size_t why_len) {
     return 1;
 }
 
+/* No passphrase is asked for: a key under one does not load. */
+static int no_passphrase(char *buf, int size, int rwflag, void *u) {
+    (void)buf, (void)size, (void)rwflag, (void)u;
+    return 0;
+}
+
+/* The key from the file at `path`, opened once: checked by its descriptor and read whole, the copy
+ * wiped once OpenSSL has it. */
+static int use_key(const char *path, char *why, size_t why_len) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        snprintf(why, why_len, "%s: %s", path, strerror(errno));
+        return 1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > KEY_MAX) {
+        close(fd);
+        snprintf(why, why_len, "%s: not a file of at most 1 MiB", path);
+        return 1;
+    }
+    /* The key is the server's alone: a file others may read, or its group write, is refused. */
+    if (st.st_mode & (S_IRWXO | S_IWGRP)) {
+        close(fd);
+        snprintf(why, why_len, "%s: others may read it, or its group write it", path);
+        return 1;
+    }
+    char *text = malloc((size_t)st.st_size + 1);
+    if (!text) {
+        close(fd);
+        snprintf(why, why_len, "%s: out of memory", path);
+        return 1;
+    }
+    size_t n = 0;
+    int bad = 0;
+    for (ssize_t got; n < (size_t)st.st_size && (got = read(fd, text + n, (size_t)st.st_size - n)) != 0;) {
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) {
+            bad = 1;
+            snprintf(why, why_len, "%s: %s", path, strerror(errno));
+            break;
+        }
+        n += (size_t)got;
+    }
+    close(fd);
+    if (!bad) {
+        void *bio = ossl.BIO_new_mem_buf(text, (int)n);
+        void *pkey = bio ? ossl.PEM_read_bio_PrivateKey(bio, NULL, no_passphrase, NULL) : NULL;
+        /* A key that is not the certificate's fails here too. */
+        bad = !pkey || ossl.SSL_CTX_use_PrivateKey(context, pkey) != 1;
+        if (pkey) ossl.EVP_PKEY_free(pkey);
+        if (bio) ossl.BIO_free(bio);
+        if (bad) failed(path, why, why_len);
+    }
+    explicit_bzero(text, n);
+    free(text);
+    return bad;
+}
+
 int dn_tls_setup(const char *certificate, const char *key, char *why, size_t why_len) {
     if (load(why, why_len)) return 1;
     context = ossl.SSL_CTX_new(ossl.TLS_server_method());
@@ -120,19 +188,7 @@ int dn_tls_setup(const char *certificate, const char *key, char *why, size_t why
     ossl.SSL_CTX_ctrl(context, SSL_CTRL_SET_SESS_CACHE_MODE, SSL_SESS_CACHE_OFF, NULL);
     if (ossl.SSL_CTX_use_certificate_chain_file(context, certificate) != 1)
         return failed(certificate, why, why_len);
-    /* The key is the server's alone: a file others may read, or its group write, is refused. */
-    struct stat st;
-    if (stat(key, &st)) {
-        snprintf(why, why_len, "%s: %s", key, strerror(errno));
-        return 1;
-    }
-    if (st.st_mode & (S_IRWXO | S_IWGRP)) {
-        snprintf(why, why_len, "%s: others may read it, or its group write it", key);
-        return 1;
-    }
-    /* A key that is not the certificate's fails here too. */
-    if (ossl.SSL_CTX_use_PrivateKey_file(context, key, SSL_FILETYPE_PEM) != 1) return failed(key, why, why_len);
-    return 0;
+    return use_key(key, why, why_len);
 }
 
 struct dn_tls *dn_tls_new(int fd) {

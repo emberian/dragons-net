@@ -374,9 +374,12 @@ class Backend(unittest.TestCase):
         self.assertIn("scripts/backend.py build hol", workflow)
         # A target that passed on the same inputs is not built again: the proof's key reads what the
         # paths name, and the parser's what its lane reads, the Lean tree that prints the programs too.
+        # The Lean files among the paths trigger the parser's job alone, whose key holds the Lean tree.
         proof, parser = workflow.split("\n  parser:\n", 1)
         keyed = re.findall(r"HEAD:(\S+)", proof)
-        self.assertEqual(sorted(keyed), sorted(p.removesuffix("/**") for p in listed[0]))
+        self.assertEqual(sorted(keyed), sorted(p.removesuffix("/**") for p in listed[0] if not p.startswith("lean/")))
+        self.assertLessEqual({"lean/DN/Compiler/Parse.lean", "lean/DN/Compiler/Checked.lean",
+                              "lean/DN/Compiler/Syntax.lean"}, set(listed[0]))
         self.assertLessEqual({"backend", "lean", "scripts/check_parse.sh", "scripts/parse_check.py",
                               "scripts/parser_contract.py", "scripts/lanes.py"}, set(re.findall(r"HEAD:(\S+)", parser)))
         # The compiler is verified against its pin on every run, not restored with the prover.
@@ -630,6 +633,21 @@ class ParseCheck(unittest.TestCase):
         with self.assertRaisesRegex(parse_check.LaneError, "which its text does not say"):
             parse_check.compared(self.program, [self.function([self.P + "Return", self.var()], export=False)])
 
+    def test_a_record_of_another_shape_is_refused(self) -> None:
+        returned = [self.P + "Return", self.var()]
+        for name, field in {"inlined": ("inline", True), "export not a boolean": ("export", 1)}.items():
+            decl = self.function(returned)
+            decl[1][field[0]] = field[1]
+            with self.subTest(name), self.assertRaisesRegex(parse_check.LaneError, "inlined or returning"):
+                parse_check.compared(self.program, [decl])
+
+    def test_a_shift_by_other_than_a_number_is_refused(self) -> None:
+        shifted = {**self.program, "body": [["return", ["Lsl", ["Var", "a"], ["Const", 1]]]]}
+        tree = [self.P + "Shift", ["ast$Lsl"], self.var(), 1]
+        self.assertEqual(parse_check.compared(shifted, [self.function([self.P + "Return", tree])]), 1)
+        with self.assertRaises(parse_check.LaneError):
+            parse_check.compared(shifted, [self.function([self.P + "Return", [*tree[:3], 1.0]])])
+
     def test_a_field_twice_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp, "t.json")
@@ -661,6 +679,17 @@ class ParseCheck(unittest.TestCase):
                 parse_check.compare(root / "trees.json", root, False, root / "cells.json",
                                     (root / "lean.json", root / "readings.json"))
             return out.getvalue()
+
+    def test_a_program_without_its_theory_is_refused(self) -> None:
+        returned = [self.P + "Return", self.var()]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "trees.json").write_text(json.dumps([self.program, self.program]))
+            (root / "dnParse0.json").write_text(json.dumps([self.function(returned)]))
+            (root / "targets").write_text("dnParse0Theory.uo\n")
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaisesRegex(parse_check.LaneError, "1 theories for 2 printed programs"):
+                parse_check.compare(root / "trees.json", root, False)
 
     def test_the_lean_parser_is_held_to_each_tree_and_refusal(self) -> None:
         place = [self.P + "Annot", "location", "(2:3 2:11)"]

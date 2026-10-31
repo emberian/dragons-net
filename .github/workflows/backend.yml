@@ -10,8 +10,9 @@ name: backend
 # lane itself builds the narrow target the patch touches, which took three minutes on two.
 # Before the proof, scripts/check_semantics.sh proves the HOL copy of the Lean model equal to panSem
 # and runs the state corpus through both. The parser job evaluates CakeML's own parser on every
-# program dn-compiler prints (scripts/check_parse.sh), weekly and when the lane changes; its inputs
-# take in the Lean tree, so a week whose programs changed runs it again.
+# program dn-compiler prints (scripts/check_parse.sh), weekly and when the lane, the printer, the gate
+# or the Lean copy of the parser changes; its inputs take in the Lean tree, so a week whose programs
+# changed runs it again.
 on:
   schedule:
     - cron: "23 5 * * 0"
@@ -29,6 +30,9 @@ on:
       - scripts/state_corpus.py
       - scripts/check_parse.sh
       - scripts/parse_check.py
+      - lean/DN/Compiler/Syntax.lean
+      - lean/DN/Compiler/Checked.lean
+      - lean/DN/Compiler/Parse.lean
       - tools.lock.json
       - .github/workflows/backend.yml
   pull_request:
@@ -44,6 +48,9 @@ on:
       - scripts/state_corpus.py
       - scripts/check_parse.sh
       - scripts/parse_check.py
+      - lean/DN/Compiler/Syntax.lean
+      - lean/DN/Compiler/Checked.lean
+      - lean/DN/Compiler/Parse.lean
       - tools.lock.json
       - .github/workflows/backend.yml
   workflow_dispatch:

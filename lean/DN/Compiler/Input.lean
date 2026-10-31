@@ -13,8 +13,9 @@ with a diagnostic whose code is stable across releases (`Diagnostic.code`). The 
 format's description.
 
 What it refuses, before the gate: a file that is not JSON, of another version, larger than
-`maxBytes`, of more than `maxDepth` levels of JSON, with a field the format does not have, or a form
-that is no expression, statement or function. The gate's refusals keep their reasons, one code each.
+`maxBytes`, with a number other than an integer of at most `maxDigits` digits, of more than
+`maxDepth` levels of JSON, with a field the format does not have, or a form that is no expression,
+statement or function. The gate's refusals keep their reasons, one code each.
 A key given twice takes its last value, as the JSON reader has it.
 -/
 
@@ -28,6 +29,27 @@ def inputVersion : Nat := 1
 /-- The most bytes a file may have, and how many levels of JSON it may nest. -/
 def maxBytes : Nat := 1 <<< 18
 def maxDepth : Nat := 256
+
+/-- The most digits a number may have: enough for any word. -/
+def maxDigits : Nat := 20
+
+/-- Whether every number of `text` outside its strings is an integer of at most `maxDigits` digits:
+no fraction and no exponent. The JSON reader multiplies an exponent out as it reads, so a few bytes
+such as `1e10000000000` would take time and memory without bound; such a number is refused before
+the reader sees it. -/
+def plainNumbers (text : String) : Bool :=
+  go text.toList false false 0
+where
+  /-- The rest of the text, inside a string or not, after a backslash there, after `digits` digits. -/
+  go : List Char → Bool → Bool → Nat → Bool
+    | [], _, _, _ => true
+    | _ :: cs, true, true, _ => go cs true false 0
+    | c :: cs, true, false, _ => go cs (c != '"') (c == '\\') 0
+    | c :: cs, false, _, digits =>
+      if c == '"' then go cs true false 0
+      else if c.isDigit then if digits < maxDigits then go cs false false (digits + 1) else false
+      else if 0 < digits && (c == '.' || c == 'e' || c == 'E') then false
+      else go cs false false 0
 
 /-- Why an input is refused. -/
 inductive Problem
@@ -69,12 +91,21 @@ def Problem.status : Problem → UInt32
   | .refused _ => 1
   | _ => 3
 
+/-- A control character as JSON writes it, `\u001b`; any other as it is. -/
+def visible (c : Char) : String :=
+  if c.toNat < 32 || c.toNat == 127 then
+    let h := String.ofList (Nat.toDigits 16 c.toNat)
+    "\\u" ++ "".pushn '0' (4 - h.length) ++ h
+  else c.toString
+
 /-- How a refusal is printed: `error[DN0107]: variable not in scope`, at most 300 characters of
-message, since a message may quote the input. -/
+message, since a message may quote the input, and its control characters escaped, so that the input
+cannot drive the terminal. -/
 def Problem.render (p : Problem) : String :=
   let digits := toString p.code
   let m := p.message
-  s!"error[DN{"".pushn '0' (4 - digits.length)}{digits}]: {if m.length > 300 then (m.take 300).toString ++ "..." else m}"
+  let m := if m.length > 300 then (m.take 300).toString ++ "..." else m
+  s!"error[DN{"".pushn '0' (4 - digits.length)}{digits}]: {String.join (m.toList.map visible)}"
 
 /-- The fields an object of the format may have, every one of them. -/
 def onlyFields (j : Json) (allowed : List String) : Except Problem Unit := do
@@ -101,6 +132,8 @@ structure Program where
 
 def read (text : String) : Except Problem Program := do
   if text.utf8ByteSize > maxBytes then throw (.tooLarge text.utf8ByteSize)
+  unless plainNumbers text do
+    throw (.malformed s!"a number other than an integer of at most {maxDigits} digits")
   let j ← (Json.parse text).mapError .notJson
   onlyFields j ["dn_input", "function", "calls"]
   -- The number is compared, never printed whole: a version of a million digits is one line.
@@ -133,5 +166,9 @@ theorem codes_distinct : ∀ a b : Checked.Reason, reasonCode a = reasonCode b �
 
 theorem codes_apart (r : Checked.Reason) : 100 ≤ reasonCode r := by
   cases r <;> simp [reasonCode]
+
+/-- **The codes follow `Checked.Reason`'s order** from DN0100, as docs/compiler-input.md says. -/
+theorem codes_in_order (r : Checked.Reason) : reasonCode r = 100 + r.ctorIdx := by
+  cases r <;> rfl
 
 end DN.Compiler.Input

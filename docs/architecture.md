@@ -41,6 +41,8 @@ An OS-specific adapter should translate real completions into a small protocol-n
 
 The session takes from the host on trust which connections may post, may log in and run over TLS, and the verdict on a name and a password. The program checks only that a verdict answers a check it asked for, else it stops the run (code 4); what it lets a connection do holds of what the host reports.
 
+The host takes whether a connection may post from its peer's address. A proxy in front on the same host makes every client the loopback's, so where clients log in no network posts by default ([runbook](runbook.md#logins)).
+
 A password goes from the program's action to the accounts' thread, which wipes its copy once checked; the host wipes the action's. The program's own copies, in the connection's record and line, and the batch's event that brought the line, stay until overwritten. The report of turns, for tests only, holds every octet received.
 
 ## Identities

@@ -449,19 +449,20 @@ Proof
     rename1 `dn_eval_args s args = SOME vs` >>
     Cases_on `dn_lookup_code s.code f vs` >> gvs[pan_res_def] >>
     TRY (imp_res_tac lookup_none >> gvs[pan_res_def] >> NO_TAC) >>
-    rename1 `dn_lookup_code s.code f vs = SOME bp` >> PairCases_on `bp` >> gvs[] >>
+    rename1 `dn_lookup_code s.code f vs = SOME bp` >> Cases_on `bp` >>
+    rename1 `dn_lookup_code s.code f vs = SOME (body, callee_locals)` >> gvs[] >>
     drule_all lookup_some >> strip_tac >> gvs[] >>
     `t.clock = s.clock` by fs[state_rel_def] >>
     Cases_on `s.clock = 0` >> gvs[pan_res_def] >>
     TRY (fs[state_rel_def, mem_rel_def, empty_locals_def, dn_empty_locals_def, locals_rel_empty] >> NO_TAC) >>
-    qpat_x_assum `!t'. state_rel oracle t' (dn_dec_clock s with locals := bp1) ==> _`
+    qpat_x_assum `!t'. state_rel oracle t' (dn_dec_clock s with locals := callee_locals) ==> _`
     (qspec_then `dec_clock t with locals := nl` mp_tac) >>
     impl_tac >- fs[state_rel_def, mem_rel_def, dec_clock_def, dn_dec_clock_def] >>
     strip_tac >> simp[] >>
     imp_res_tac evaluate_clock >> fs[dec_clock_def] >>
-    `(SND (dn_sem oracle bp0 (dn_dec_clock s with locals := bp1))).clock <= s.clock - 1` by fs[state_rel_def] >>
+    `(SND (dn_sem oracle body (dn_dec_clock s with locals := callee_locals))).clock <= s.clock - 1` by fs[state_rel_def] >>
     gvs[clamp_id] >>
-    Cases_on `FST (dn_sem oracle bp0 (dn_dec_clock s with locals := bp1))` >> gvs[pan_res_def, dn_call_ended_def] >>
+    Cases_on `FST (dn_sem oracle body (dn_dec_clock s with locals := callee_locals))` >> gvs[pan_res_def, dn_call_ended_def] >>
     TRY (fs[state_rel_def] >> NO_TAC) >>
     rename1 `_ = SOME res` >> Cases_on `res` >> gvs[pan_res_def, dn_call_ended_def, shape_of_def] >>
     TRY (fs[state_rel_def, mem_rel_def, empty_locals_def, dn_empty_locals_def, locals_rel_empty] >> NO_TAC) >>

@@ -260,6 +260,7 @@ def texts(revision: bytes, source: bytes) -> dict[str, bytes]:
         "auth-failed": b"481 Authentication failed\r\n",
         "auth-sequence": b"482 Authentication commands issued out of sequence\r\n",
         "encryption-required": b"483 Encryption required\r\n",
+        "auth-required": b"480 Authentication required\r\n",
     }
 
 
@@ -570,10 +571,10 @@ class PostJudge(Judge):
     may post and the store accepts and carries a group. Its replies are the 0003 ones, HELP's naming
     POST; the capabilities name READER and LIST ACTIVE NEWSGROUPS, and POST while it was greeted with
     200 and the store accepts, and MODE READER is answered 200 then, else 201, changing nothing
-    (RFC 3977 §5.3.2). A POST is
-    answered at once 440 when it was greeted with 201, 403 once the store has stopped accepting, else
-    340 once one of four slots is free for it: POSTs that wait, unread and with no deadline, get the
-    slots that free in the order they came. The article after a 340 is `post_ref`'s; it has 1,800
+    (RFC 3977 §5.3.2). A POST is answered at once 440 when it was greeted with 201, or 480 where a
+    login would let it post, 403 once the store has stopped accepting, else 340 once one of four slots
+    is free for it: POSTs that wait, unread and with no deadline, get the slots that free in the order
+    they came. The article after a 340 is `post_ref`'s; it has 1,800
     seconds from the 340 to end, and once it has, no deadline runs until it is answered 240 or 441,
     or the connection closed when its outcome is unknown, at once; with the answer, what follows the
     article is read as lines. An ARTICLE, HEAD or BODY of an article the store holds waits, unread
@@ -1225,7 +1226,10 @@ class PostJudge(Judge):
             c.decisions.append("reader-posting" if c.posting and self.store.accepting else "reader-no-posting")
         elif due == "post":
             if not c.posting:
-                c.decisions.append("not-permitted")
+                # RFC 4643 §2.2: 480 where a login over TLS would let it post.
+                login_posts = (c.logins and c.tls and not c.logged and self.store.accepting
+                               and bool(self.store.start.groups))
+                c.decisions.append("auth-required" if login_posts else "not-permitted")
             elif not self.store.accepting:
                 c.decisions.append("unavailable")
             elif self.admitted(idx, gen):

@@ -256,7 +256,7 @@ def texts : List (List (BitVec 8)) :=
    ascii "REFERENCES", ascii ":BYTES", ascii ":LINES", ascii "XREF", ascii "AUTHINFO", ascii "USER",
    ascii "PASS", capabilitiesAuthTail, text ⟨[], []⟩ (.authUser []), text ⟨[], []⟩ .authAccepted,
    text ⟨[], []⟩ .authFailed, text ⟨[], []⟩ .authSequence, text ⟨[], []⟩ .encryptionRequired,
-   text ⟨[], []⟩ .authDone]
+   text ⟨[], []⟩ .authDone, text ⟨[], []⟩ .authRequired]
 
 /-- Where the `k`-th text starts, from `ownTexts`. -/
 def textAt (k : Nat) : Nat := ((texts.take k).map List.length).sum

@@ -26,10 +26,10 @@ Settings come as options or from a file given by `--config FILE`: a setting a li
 | `spool`, `run-dir` | The store's directory and where a failed sync's mark is copied | No store: nobody may post |
 | `path-identity` | The server's name in Path and Xref, at most 200 octets | none |
 | `group` | A group carried, once a group, at most 64 of at most 64 octets | none |
-| `post-from` | A network that may post, as an address and a prefix length, at most 16 | 127.0.0.0/8 and ::1/128 |
+| `post-from` | A network that may post, as an address and a prefix length, at most 16 | 127.0.0.0/8 and ::1/128; none with `users` |
 | `send-buffer` | SO_SNDBUF of each connection, in octets | the kernel's |
 | `tls-cert`, `tls-key` | PEM files of the certificate chain and its key: every connection speaks TLS (RFC 8143) | No TLS |
-| `users` | A file of accounts that log in by AUTHINFO USER and PASS (RFC 4643) over TLS; needs `spool` | No logins |
+| `users` | A file of accounts that log in by AUTHINFO USER and PASS (RFC 4643); needs `spool` and TLS | No logins |
 
 ```
 revision v1
@@ -49,7 +49,7 @@ With `tls-cert` and `tls-key` every connection speaks TLS 1.2 or later from its 
 
 A handshake not done in 10 s, or that fails, closes the connection before the session learns of it. The counters count those, and the first failure of a run says why.
 
-To rotate a certificate, put the new files in place and restart: they are read at start only. A key file others may read, or its group write, refuses the start with status 2.
+To rotate a certificate, put the new files in place and restart: they are read at start only. A key file others may read, or its group write, or a key under a passphrase refuses the start with status 2. The server then makes no core dump, as the key is in its memory.
 
 A handshake holds one of the 64 connections up to its 10 s, and its work runs in the server's one loop, so a server open to the world wants a rate limit in front.
 
@@ -57,15 +57,19 @@ Ciphers, their security level and session tickets are libssl's defaults; there i
 
 ## Logins
 
-With `users` a client logs in by AUTHINFO USER and PASS, over TLS only: in the clear both are answered 483 and CAPABILITIES offers no AUTHINFO. A login lets the connection post, from any network; reading needs none.
+With `users` a client logs in by AUTHINFO USER and PASS, over TLS only, so `users` needs `tls-cert`. A login lets the connection post, from any network; a POST before a login that would allow it is answered 480. Reading needs none.
 
-The file holds a line an account, `NAME:ITERATIONS:SALT:KEY`, the key PBKDF2-HMAC-SHA256's of the password, salt and key in lowercase hex; `#` starts a comment. `scripts/nntp_account.py NAME` prints a line, reading the password from the terminal, with 600,000 iterations and a random salt. Neither a name nor a password may hold white space, as AUTHINFO splits its line there.
+With `users` no network posts without a login unless `post-from` names it. A proxy or rate limit in front on the same host makes every client the loopback's, so with one, name only the networks that may post without a login.
 
-The file is read at start: to change an account, edit it and restart. A file others may read, or its group write, refuses the start with status 2, and so does a line that is no account; the reason names the line, not its contents.
+The file holds a line an account, `NAME:ITERATIONS:SALT:KEY`, the key PBKDF2-HMAC-SHA256's of the password, salt and key in lowercase hex; `#` starts a comment. `scripts/nntp_account.py NAME` prints a line, the password read from the terminal, with a random salt and 600,000 iterations, the fewest the server takes.
+
+Neither a name nor a password may hold white space, as AUTHINFO splits its line there.
+
+The file is read at start: to change an account, edit it and restart. A file others may read, or its group write, refuses the start with status 2, and so does a line that is no account or names one twice; the reason names the line, not its contents.
 
 The server loads `libcrypto.so.3` at start. A check runs on a thread of its own, one at a time: a connection waits for its verdict unread and with no deadline, and the others go on.
 
-A name no account has costs as long as the first account's: while every account has the same iterations, as the script gives them, the time tells nothing of which names exist. With `users` the server makes no core dump, as passwords pass through its memory.
+Every check costs the file's largest iteration count, a name no account has checked against one no password matches, so the time tells neither which names exist nor their counts. With `users` the server makes no core dump, as passwords pass through its memory.
 
 A failed login is answered 481 once checked. One check at a time bounds the guesses of all clients together to what the iterations allow; one client can still make the others wait, so a server open to the world wants a rate limit in front.
 
@@ -98,7 +102,7 @@ ReadWritePaths=/var/spool/dragons-net
 
 ## Stopping and how it ends
 
-SIGTERM or SIGINT closes every socket, drops the file jobs not begun, waits up to 30 s for those running, and ends with status 0.
+SIGTERM or SIGINT closes every socket, drops the file jobs not begun, waits up to 30 s for those running, and ends with status 0. A job still running then is cut off as by a crash; the stop's message counts it, and the next start recovers the store.
 
 Other statuses: 1, the program broke the host's contract; 2, a setting or a system call failed; 3, the host broke the program's, the code named; 4, the store was refused at start, the reason named.
 

@@ -57,7 +57,7 @@ What each command of RFC 3977 gets with a store, and what holds it: the session'
 | LAST, NEXT | §6.1.3, §6.1.4 | 223 with the article moved to; 412, 420, 421, 422 | session lanes, `nntplib`, Net::NNTP |
 | ARTICLE, HEAD, BODY | §6.2.1 to §6.2.3 | By message-id, number or the current article, 220, 221, 222 and the file with Xref; 412, 420, 423, 430, 403 | session lanes, nntp, crash and faults lanes |
 | STAT | §6.2.4 | 223; 412, 420, 423, 430 | session lanes, `nntplib`, Net::NNTP |
-| POST | §6.3.1 | 340, then 240 once the journal is synced, or 441; 440, 403 | session lanes, nntp, crash, power and faults lanes |
+| POST | §6.3.1 | 340, then 240 once the journal is synced, or 441; 440, 403; 480 where a login would allow it (RFC 4643 §2.2) | session lanes, nntp, crash, power and faults lanes |
 | DATE | §7.1 | 111 and the wall clock in UTC | session lanes, `nntplib`, Net::NNTP |
 | HELP | §7.2 | 100, the commands, the revision and the address of the source | session lanes, `nntplib` |
 | NEWGROUPS | §7.3 | 231 and an empty list, as no group has a creation date (#21); a time without GMT is UTC, the server's | session lanes, `nntplib`, Net::NNTP |

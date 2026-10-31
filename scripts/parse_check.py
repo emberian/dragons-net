@@ -166,7 +166,7 @@ def function(decl: Any) -> tuple[str, bool, dict[str, Any]]:
     record = decl[1]
     name, inline, export, params = record["name"], record["inline"], record["export"], record["params"]
     body, returns = record["body"], record["return"]
-    if inline is not False or export not in (True, False) or not one(returns) or not isinstance(name, str):
+    if inline is not False or not isinstance(export, bool) or not one(returns) or not isinstance(name, str):
         raise LaneError(f"{name}: a function inlined or returning other than one word")
     names = []
     for param in params:

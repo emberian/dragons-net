@@ -14,7 +14,7 @@ import os
 import sys
 
 # OWASP's count for PBKDF2-HMAC-SHA256 (Password Storage Cheat Sheet), and the bounds the server takes.
-ITERATIONS, ITERATIONS_MIN, ITERATIONS_MAX = 600_000, 1_000, 100_000_000
+ITERATIONS, ITERATIONS_MIN, ITERATIONS_MAX = 600_000, 600_000, 100_000_000
 NAME_MAX, PASSWORD_MAX = 64, 256
 
 

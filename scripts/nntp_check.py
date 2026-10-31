@@ -252,7 +252,8 @@ class TlsClient:
     """A client over TLS that keeps, as `Client` does, what it sent and what it read in the clear: what
     the host gives the program and what the program hands it."""
 
-    def __init__(self, port: int, timeout: float, context: ssl.SSLContext, receive_buffer: int = 0) -> None:
+    def __init__(self, port: int, timeout: float, context: ssl.SSLContext, receive_buffer: int = 0,
+                 session: ssl.SSLSession | None = None, ragged: bool = True) -> None:
         raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             if receive_buffer:
@@ -261,7 +262,8 @@ class TlsClient:
             raw.settimeout(timeout)
             raw.connect(("127.0.0.1", port))
             self.port: int = raw.getsockname()[1]
-            self.sock = context.wrap_socket(raw, server_hostname="localhost")
+            self.sock = context.wrap_socket(raw, server_hostname="localhost", session=session,
+                                            suppress_ragged_eofs=ragged)
         except BaseException:
             raw.close()
             raise
@@ -294,7 +296,7 @@ class Server:
     replayed through the model."""
 
     def __init__(self, binary: Path, timeout: float, virtual: bool, traced: bool, judged: bool,
-                 options: tuple[str, ...]) -> None:
+                 options: tuple[str, ...], env: dict[str, str] | None = None) -> None:
         self.timeout = timeout
         self.clock_write = -1
         self.lines = lanes.Lines()
@@ -324,7 +326,7 @@ class Server:
         try:
             self.proc = subprocess.Popen(
                 [str(binary), "--port", "0", "--revision", REVISION.decode(), "--source", SOURCE.decode(), *extra,
-                 *options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, pass_fds=theirs, text=True)
+                 *options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, pass_fds=theirs, text=True, env=env)
         except OSError:
             for fd in [*ours, *theirs, self.clock_write]:
                 if fd >= 0:
@@ -381,8 +383,11 @@ class Server:
         self.clients.setdefault(c.port, []).append(c)
         return c
 
-    def tls_client(self, context: ssl.SSLContext, receive_buffer: int = 0) -> TlsClient:
-        c = TlsClient(self.port, self.timeout, context, receive_buffer)
+    def tls_client(self, context: ssl.SSLContext, receive_buffer: int = 0, session: ssl.SSLSession | None = None,
+                   ragged: bool = True) -> TlsClient:
+        """A client over TLS; one that resumes `session`; without `ragged`, one for which an end of
+        input with no close_notify is an error."""
+        c = TlsClient(self.port, self.timeout, context, receive_buffer, session, ragged)
         self.clients.setdefault(c.port, []).append(c)
         return c
 
@@ -607,12 +612,12 @@ def held_to_sockets(trace: list[Turn], clients: dict[int, list[Peer]], batch: in
 
 @contextmanager
 def serving(build: Build, virtual: bool = False, *options: str, traced: bool = True,
-            stale: bool = False, judged: bool = True) -> Iterator[Server]:
+            stale: bool = False, judged: bool = True, env: dict[str, str] | None = None) -> Iterator[Server]:
     """The server of `build`, or with `stale` its program that acts for the generation before, which
     is not judged since it is wrong on purpose; nor, without `judged`, a run with a store, which
-    `session_ref.judge` does not model."""
+    `session_ref.judge` does not model. `env` is its environment, if not the check's."""
     server = Server(build.stale if stale else build.path, build.timeout, virtual, traced, judged and not stale,
-                    options)
+                    options, env)
     try:
         try:
             yield server
@@ -691,6 +696,19 @@ def held(pid: int, c: Client) -> bool:
 
 def descriptors(pid: int) -> int:
     return sum(1 for _ in Path(f"/proc/{pid}/fd").iterdir())
+
+
+def accepted(port: int, peer: int) -> bool:
+    """Whether the server listening on `port` has taken the connection from `peer` off its queue: the
+    kernel gives the server's end an inode only then. It reads no file of the server's, whose memory
+    may be closed to its user."""
+    for table in ("tcp", "tcp6"):
+        for row in Path(f"/proc/self/net/{table}").read_text().splitlines()[1:]:
+            fields = row.split()
+            ends = int(fields[1].split(":")[1], 16), int(fields[2].split(":")[1], 16)
+            if ends == (port, peer) and fields[9] != "0":
+                return True
+    return False
 
 
 def queued(s: socket.socket) -> int:
@@ -1242,11 +1260,13 @@ def over_tls(b: Build) -> str:
     """With a certificate the server speaks TLS from the first octet (RFC 8143). A pipeline of more
     than one read of the host in one record is answered as over TCP, and judged. nntplib's NNTP_SSL is
     greeted, reads the capabilities and quits. A client speaking NNTP in the clear is never greeted
-    nor reported, nor one that resets in its handshake or speaks TLS 1.1; the three are counted, the
-    first failure says why, and a client after them is served. One that says nothing is open at its
-    handshake's 10 s, on the clock the check moves, closed after, and counted; the server stops on
-    SIGTERM with another handshake in flight. An article of 200 KB is posted and read back through a
-    send buffer of 4 KB, which the host fills many times."""
+    nor reported, nor one that resets in its handshake or speaks TLS 1.1, also where libssl's own
+    settings would take it; the three are counted, the first failure says why, and a client after them
+    is served, the end of its QUIT said by a close_notify. The server's memory, which holds the key, is
+    closed even to its user; it keeps no session for a client of TLS 1.2 to resume. One that says
+    nothing is open at its handshake's 10 s, on the clock the check moves, closed after, and counted;
+    the server stops on SIGTERM with another handshake in flight. An article of 200 KB is posted and
+    read back through a send buffer of 4 KB, which the host fills many times."""
     with tempfile.TemporaryDirectory() as temp:
         key, cert = certificate(Path(temp))
         tls = ("--tls-cert", str(cert), "--tls-key", str(key))
@@ -1256,6 +1276,12 @@ def over_tls(b: Build) -> str:
         if len(stream) <= 512:
             raise LaneError("the pipeline over TLS fits one read of the host, so it shows nothing")
         with serving(b, False, *tls) as server:
+            try:
+                Path(f"/proc/{server.proc.pid}/environ").read_bytes()
+            except PermissionError:
+                pass
+            else:
+                raise LaneError("a server that holds a TLS key may dump its memory")
             s = server.tls_client(context)
             s.sendall(stream)
             try:
@@ -1282,11 +1308,40 @@ def over_tls(b: Build) -> str:
                 pass
             else:
                 raise LaneError("a client of TLS 1.1 was served")
-            after = server.tls_client(context)
+            after = server.tls_client(context, ragged=False)
             after.sendall(b"QUIT\r\n")
-            after_got = read_to_end(after)
+            try:
+                after_got = read_to_end(after)
+            except ssl.SSLEOFError:
+                raise LaneError("the server ended a connection over TLS without a close_notify") from None
+            twelve = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            twelve.load_verify_locations(cafile=str(cert))
+            twelve.maximum_version = ssl.TLSVersion.TLSv1_2
+            twelve.options |= ssl.OP_NO_TICKET
+            # Ended by a QUIT, so that the server shuts its side down and a cache would keep the session.
+            first = server.tls_client(twelve)
+            first.sendall(b"QUIT\r\n")
+            read_to_end(first)
+            session = first.sock.session
+            resumed = server.tls_client(twelve, session=session)
+            reused = resumed.sock.session_reused
+            resumed.sock.close()
+            if reused:
+                raise LaneError("a client of TLS 1.2 resumed a session the server kept")
         if after_got != expected(b"QUIT\r\n"):
             raise LaneError(f"after the failed handshakes a client over TLS read {after_got[-80:]!r}")
+        # At its default security level libssl refuses TLS 1.1 by itself; where its settings take it, the
+        # server's own minimum is what refuses it.
+        lowered = Path(temp, "openssl.cnf")
+        lowered.write_text("openssl_conf = dn\n[dn]\nssl_conf = dn_ssl\n[dn_ssl]\nsystem_default = dn_tls\n"
+                           "[dn_tls]\nMinProtocol = TLSv1\nCipherString = DEFAULT@SECLEVEL=0\n")
+        with serving(b, False, *tls, traced=False, env={**os.environ, "OPENSSL_CONF": str(lowered)}) as relaxed:
+            try:
+                relaxed.tls_client(old).close()
+            except ssl.SSLError:
+                pass
+            else:
+                raise LaneError("a client of TLS 1.1 was served where libssl's settings take it")
         if counted(server.said(), "at the stop")[4] != 3 or "TLS: a handshake" not in server.said():
             raise LaneError(f"three handshakes failed, the server said {server.said()[-400:]!r}")
         if got != expected(stream):
@@ -1305,12 +1360,11 @@ def over_tls(b: Build) -> str:
                 capabilities != {"VERSION": ["2"], "IMPLEMENTATION": ["dragons-net", REVISION.decode()]}:
             raise LaneError(f"nntplib over TLS was greeted {welcome!r}, read {capabilities} and quit {bye!r}")
         with serving(b, True, *tls) as server:
-            before = descriptors(server.proc.pid)
             with socket.create_connection(("127.0.0.1", server.port), timeout=b.timeout) as idle:
-                # The turn that took the connection is reported only with the next, so its socket is
-                # what shows that the host has it.
+                # The turn that took the connection is reported only with the next, so the kernel's
+                # table is what shows that the host has it.
                 given_up = time.monotonic() + b.timeout
-                while descriptors(server.proc.pid) <= before:
+                while not accepted(server.port, idle.getsockname()[1]):
                     if time.monotonic() > given_up:
                         raise LaneError("the host did not take a client over TLS")
                     time.sleep(0.01)
@@ -1359,11 +1413,12 @@ def over_tls(b: Build) -> str:
 
 def logins(b: Build) -> str:
     """With `--users`, the accounts of a file (native/accounts.h): over TLS nntplib reads AUTHINFO USER
-    among the capabilities, is refused POST where its network may not post, logs in and posts; a
-    wrong password and a name no account has are answered 481, and the counters count one login
-    taken and two refused. In the clear AUTHINFO USER is answered 483 and not offered. A file of
-    accounts or a key others may read, a line that is no account, and `--users` without a store each
-    end the host with status 2."""
+    among the capabilities, is answered 480 to a POST before it logs in, no network posting by default
+    where clients log in, then logs in and posts; a wrong password and a name no account has are
+    answered 481, and the counters count one login taken and two refused. A file of accounts or a key
+    others may read, a line that breaks any one rule of an account, two accounts of one name, and
+    `--users` without a store or without TLS each end the host with status 2; a file of CRLF lines is
+    taken."""
     nntplib = import_nntplib()
     with tempfile.TemporaryDirectory() as temp:
         where = Path(temp)
@@ -1375,7 +1430,7 @@ def logins(b: Build) -> str:
         spool.mkdir()
         run.mkdir()
         store = ("--users", str(users), "--spool", str(spool), "--run-dir", str(run), "--path-identity",
-                 "dn.example", "--group", "local.test", "--post-from", "10.0.0.0/8")
+                 "dn.example", "--group", "local.test")
         tls = ("--tls-cert", str(cert), "--tls-key", str(key))
         context = ssl.create_default_context(cafile=str(cert))
         article = ["From: a@b.example", "Newsgroups: local.test", "Subject: logged in",
@@ -1393,6 +1448,13 @@ def logins(b: Build) -> str:
                     news.login("alice", "s3cret", usenetrc=False)
                     after = news.getcapabilities()
                     posted = news.post([line.encode() for line in article])
+                # A name of 64 octets is taken for its password, one of 65 is not.
+                limits = server.tls_client(context)
+                read_expected(limits, TEXTS["greeting"], "the greeting")
+                limits.sendall(f"AUTHINFO USER {'a' * 64}\r\nAUTHINFO USER {'a' * 65}\r\nQUIT\r\n".encode())
+                at_limits = read_to_end(limits)
+                if not at_limits.startswith(b"381 ") or b"\r\n481 " not in at_limits:
+                    raise LaneError(f"names of 64 and 65 octets were answered {at_limits[:120]!r}")
                 for name, password in (("alice", "wrong"), ("nobody", "s3cret")):
                     with nntplib.NNTP_SSL("127.0.0.1", server.port, ssl_context=context, timeout=b.timeout) as news:
                         try:
@@ -1407,33 +1469,48 @@ def logins(b: Build) -> str:
             server.proc.send_signal(signal.SIGUSR1)
         if "AUTHINFO" not in before or before["AUTHINFO"] != ["USER"] or "AUTHINFO" in after or "POST" not in after:
             raise LaneError(f"the capabilities before a login were {before}, after it {after}")
-        if not unposted.startswith("440") or not posted.startswith("240"):
+        if not unposted.startswith("480") or not posted.startswith("240"):
             raise LaneError(f"POST was answered {unposted!r} before the login and {posted!r} after it")
         if counted(server.said(), "counters")[8:10] != [1, 2]:
             raise LaneError(f"one login taken and two refused were counted {server.said()[-300:]!r}")
-        with serving(b, False, *store, traced=False) as server:
-            clear = server.client()
-            read_expected(clear, TEXTS["greeting"], "the greeting in the clear")
-            clear.sendall(b"AUTHINFO USER alice\r\nCAPABILITIES\r\nQUIT\r\n")
-            in_clear = read_to_end(clear)
-        if not in_clear.startswith(b"483 ") or b"AUTHINFO" in in_clear:
-            raise LaneError(f"AUTHINFO in the clear was answered {in_clear[:200]!r}")
         named = ("--revision", REVISION.decode(), "--source", SOURCE.decode())
-        key.chmod(0o644)
-        refused = [refused_start(b, *named, *tls, *store)]
+        refused = []
+        for mode in (0o644, 0o620):
+            key.chmod(mode)
+            refused.append((refused_start(b, *named, *tls, *store), f"TLS: {key}: others may read it"))
         key.chmod(0o600)
-        users.chmod(0o604)
-        refused.append(refused_start(b, *named, *tls, *store))
+        for mode in (0o604, 0o620):
+            users.chmod(mode)
+            refused.append((refused_start(b, *named, *tls, *store), f"users: {users}: others may read it"))
         users.chmod(0o600)
-        users.write_text("alice:10:00:00\n")
-        refused.append(refused_start(b, *named, *tls, *store))
-        refused.append(refused_start(b, *named, "--users", str(users)))
-        signs = (f"TLS: {key}: others may read it", f"users: {users}: others may read it",
-                 f"{users}:1: not an account", "--users needs a store")
-        for (status, said), sign in zip(refused, signs, strict=True):
+        good = nntp_account.line(b"alice", b"s3cret", nntp_account.ITERATIONS_MIN)
+        name, iterations, salt, hashed = good.split(":")
+        # Each line breaks one rule of an account and keeps the others.
+        for line in (f"{name}:{nntp_account.ITERATIONS_MIN - 1}:{salt}:{hashed}",
+                     f"{name}:{iterations}:{salt[:14]}:{hashed}", f"{name}:{iterations}:{salt}:{hashed[:62]}",
+                     f"{name}:{iterations}:{salt[:-2]}AB:{hashed}", f"{name}:{iterations}:{salt}",
+                     f"al\x7fce:{iterations}:{salt}:{hashed}", f"{name}:0{iterations}:{salt}:{hashed}",
+                     f"{good}\x00"):
+            users.write_text(f"# accounts\n{line}\n")
+            refused.append((refused_start(b, *named, *tls, *store), f"{users}:2: not an account"))
+        users.write_text(f"{good}\nbob:{iterations}:{salt}:{hashed}\n{good}\n")
+        refused.append((refused_start(b, *named, *tls, *store), f"{users}:3: not an account"))
+        refused.append((refused_start(b, *named, "--users", str(users)), "--users needs a store"))
+        refused.append((refused_start(b, *named, *store), "--users needs TLS"))
+        for (status, said), sign in refused:
             if status != 2 or sign not in said:
-                raise LaneError(f"a refused file of accounts ended the host with status {status}: {said[-200:]!r}")
-    return "nntplib logged in over TLS and posted; two wrong logins refused, AUTHINFO refused in the clear"
+                raise LaneError(f"a refused file of accounts ended the host with status {status}, not with "
+                                f"{sign!r}: {said[-200:]!r}")
+        users.write_bytes(f"# accounts\r\n{good}\r\n".encode())
+        crlf = subprocess.run([str(b.path), *named, *tls, *store, "--check-config",
+                               str(settings_file(where, ""))], capture_output=True, text=True, timeout=b.timeout,
+                              check=False)
+        if crlf.returncode != 0 or json.loads(crlf.stdout or "{}").get("post_from") != []:
+            raise LaneError(f"a file of CRLF lines ended the check with status {crlf.returncode}: "
+                            f"{crlf.stderr[-200:]!r}, or networks post by default where clients log in: "
+                            f"{crlf.stdout[-200:]!r}")
+    return (f"nntplib logged in over TLS and posted, 480 before; two wrong logins refused; {len(refused)} starts "
+            "refused, a CRLF file taken")
 
 
 def over_ipv6(b: Build) -> str:
@@ -2108,8 +2185,8 @@ def configuration(b: Build) -> str:
     """A file of settings: `--check-config` writes them as JSON and starts nothing, comments, blank
     lines, white space and a carriage return at an end taken; the server started with `--config`
     serves its store. A setting unknown, without a value, given twice where it is taken once, an
-    option only, a second file, store settings without a spool, or a spool that is no directory each
-    end the host with status 2, the line named where a file's."""
+    option only, a second file, store settings without a spool, a spool that is no directory, or a
+    network that is none each end the host with status 2, the line named where a file's."""
     with tempfile.TemporaryDirectory() as temp:
         where = Path(temp)
         spool, run = where / "spool", where / "run"
@@ -2149,6 +2226,8 @@ def configuration(b: Build) -> str:
             ("group local.test\n", file, "store options without --spool"),
             (f"spool {spool}\nspool {spool}\n", file, f"{named}:2: --spool given twice"),
             ("port many\n", file, f"{named}:1: --port: not a number from 0 to 65535: many"),
+            ("post-from 10.0.0.0/33\n", file, f"{named}:1: --post-from: not a network: 10.0.0.0/33"),
+            ("\npost-from nowhere\n", file, f"{named}:2: --post-from: not a network: nowhere"),
             (f"spool {full}\nrun-dir {run}\n", ("--check-config", named), "Not a directory"),
             (f"tls-cert {full}\n", file, "--tls-cert and --tls-key are given together"),
             (f"tls-cert {full}\ntls-key {full}\n", file, f"TLS: {full}: "),
@@ -2164,21 +2243,21 @@ def configuration(b: Build) -> str:
     return f"--check-config wrote {len(want)} settings; {len(cases)} refused"
 
 
-def handed(b: Build, fds: str, *more: str, unix: str = "") -> tuple[subprocess.Popen[str], int]:
+def handed(b: Build, fds: str, *more: str, unix: str = "", pid: str = "") -> tuple[subprocess.Popen[str], int]:
     """The server started as systemd starts a socket-activated service: a listening socket at
-    descriptor 3, of loopback or with `unix` at that path, LISTEN_PID naming the process and
-    LISTEN_FDS `fds`; and the socket's port."""
+    descriptor 3, of loopback or with `unix` at that path, LISTEN_PID naming the process, or `pid`,
+    and LISTEN_FDS `fds`; and the socket's port."""
     listener = socket.socket(socket.AF_UNIX if unix else socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(unix or ("127.0.0.1", 0))
     listener.listen(8)
     fd = listener.fileno()
     # The process that takes the socket to descriptor 3 and names itself becomes the server.
     takeover = ("import os, sys\nfd = int(sys.argv[1])\nif fd != 3:\n    os.dup2(fd, 3)\n    os.close(fd)\n"
-                "os.environ['LISTEN_PID'] = str(os.getpid())\nos.environ['LISTEN_FDS'] = sys.argv[2]\n"
-                "os.execv(sys.argv[3], sys.argv[3:])\n")
+                "os.environ['LISTEN_PID'] = sys.argv[3] or str(os.getpid())\nos.environ['LISTEN_FDS'] = sys.argv[2]\n"
+                "os.execv(sys.argv[4], sys.argv[4:])\n")
     port = 0 if unix else listener.getsockname()[1]
     try:
-        return subprocess.Popen([sys.executable, "-c", takeover, str(fd), fds, str(b.path), "--revision",
+        return subprocess.Popen([sys.executable, "-c", takeover, str(fd), fds, pid, str(b.path), "--revision",
                                  REVISION.decode(), "--source", SOURCE.decode(), *more], stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, pass_fds=(fd,)), port
     finally:
@@ -2188,24 +2267,27 @@ def handed(b: Build, fds: str, *more: str, unix: str = "") -> tuple[subprocess.P
 def served_handed(b: Build, proc: subprocess.Popen[str], wanted: int) -> str:
     """What the server started with the socket of port `wanted` wrote to stderr once it served a
     client there and stopped on SIGTERM."""
+    # Both streams are read as they come, so that no full pipe holds the server up.
+    errors = lanes.Lines(Server.pipe(proc.stderr))
     line = lanes.Lines(Server.pipe(proc.stdout)).get(b.timeout)
     if line is None:
-        raise LaneError(f"the server with a handed socket gave no port: {Server.pipe(proc.stderr).read()[-200:]!r}")
+        proc.wait(timeout=b.timeout)
+        said = "".join(iter(lambda: errors.get(b.timeout), None))
+        raise LaneError(f"the server with a handed socket gave no port: {said[-200:]!r}")
     port = int(json.loads(line)["port"])
     if port != wanted:
         raise LaneError(f"the server said port {port}, not the handed socket's {wanted}")
     with socket.create_connection(("127.0.0.1", port), timeout=b.timeout) as c:
         read_expected(c, GREETING, "the greeting on the handed socket")
-    # Standard output has its reader: wait, then take what stderr holds.
     proc.send_signal(signal.SIGTERM)
     proc.wait(timeout=b.timeout)
-    return Server.pipe(proc.stderr).read()
+    return "".join(iter(lambda: errors.get(b.timeout), None))
 
 
 def socket_handed(b: Build) -> str:
     """Started with a socket from systemd the server listens on it, says its port and serves; with
-    none it listens on its own; with `--port` too, two sockets or a socket of the file system, it ends
-    with status 2."""
+    none, or one for another process, it listens on its own; with `--port` too, two sockets or a
+    socket of the file system, it ends with status 2."""
     proc, wanted = handed(b, "1")
     with proc:
         try:
@@ -2215,13 +2297,15 @@ def socket_handed(b: Build) -> str:
             raise
     if proc.returncode != 0 or "stopped: a signal" not in err:
         raise LaneError(f"with a handed socket the server ended with status {proc.returncode}: {err[-200:]!r}")
-    none, other = handed(b, "0")
-    with none:
-        line = lanes.Lines(Server.pipe(none.stdout)).get(b.timeout)
-        none.send_signal(signal.SIGTERM)
-        none.wait(timeout=b.timeout)
-    if line is None or int(json.loads(line)["port"]) == other or none.returncode != 0:
-        raise LaneError(f"with LISTEN_FDS 0 the server said {line!r} and ended with status {none.returncode}")
+    for fds, pid in (("0", ""), ("1", "1")):
+        none, other = handed(b, fds, pid=pid)
+        with none:
+            line = lanes.Lines(Server.pipe(none.stdout)).get(b.timeout)
+            none.send_signal(signal.SIGTERM)
+            none.wait(timeout=b.timeout)
+        if line is None or int(json.loads(line)["port"]) == other or none.returncode != 0:
+            raise LaneError(f"with LISTEN_FDS {fds} and LISTEN_PID {pid or 'its own'} the server said {line!r} "
+                            f"and ended with status {none.returncode}")
     with tempfile.TemporaryDirectory() as temp:
         cases = (("1", ("--port", "0"), "are the socket's", ""), ("2", (), "where the server takes one", ""),
                  ("1", (), "not an IPv4 or IPv6 socket", str(Path(temp, "socket"))))
@@ -2235,7 +2319,7 @@ def socket_handed(b: Build) -> str:
                     raise LaneError(f"LISTEN_FDS {fds} with {more}: the server did not end") from None
             if refused.returncode != 2 or sign not in err or out:
                 raise LaneError(f"LISTEN_FDS {fds} with {more}: status {refused.returncode}, {err[-200:]!r}")
-    return f"served on the handed socket, port {wanted}; with none on its own; {len(cases)} refused"
+    return f"served on the handed socket, port {wanted}; with none or another's on its own; {len(cases)} refused"
 
 
 def posted(port: int, timeout: float, article: bytes) -> None:
@@ -2343,12 +2427,14 @@ CHECKS: dict[str, Callable[[Build], str]] = {
 @dataclass
 class Defect:
     """A defect planted in the host (exact text) or in the program (a pattern), with how many times
-    the text occurs, the check that has to catch it and a part of what that check has to say."""
+    the text occurs, the check that has to catch it and a part of what that check has to say; in the
+    host's `file`, one of its sources."""
     name: str
     edits: list[tuple[str, str, int]]
     check: str
     sign: str
     program: bool = False
+    file: Path = HOST
 
 
 # Not planted, since nothing outside could tell: a batch that does not rotate where it starts, and a
@@ -2356,7 +2442,8 @@ class Defect:
 # connection one batch does not reach the next one does; and a socket whose send failed hangs up at
 # the next poll. Nor TCP_NODELAY left off: it only delays a reply until the one before is
 # acknowledged, which on loopback no check can time reliably, and no portable call reads another
-# process's socket option.
+# process's socket option. Nor a connection in the clear reported over TLS: logins need TLS, and
+# only with logins does the program read whether a connection speaks it.
 DEFECTS = [
     Defect("octets libssl holds left unreported",
            [("                c->ready |= POLLIN;\n                held = 1;\n", "", 1)], "over TLS",
@@ -2371,14 +2458,44 @@ DEFECTS = [
     Defect("a login taken whatever the verdict",
            [("                    (uint64_t)ok);", "                    1u + 0 * ok);", 1)],
            "logins", "logged in with a wrong password"),
-    Defect("a connection in the clear reported over TLS", [(
-        "dn_put_word(slot + DN_SESSION_EVENT_TLS, conns[i].tls != NULL);",
-        "dn_put_word(slot + DN_SESSION_EVENT_TLS, 1);", 1)], "logins", "AUTHINFO in the clear was answered"),
+    Defect("TLS below 1.2 taken",
+           [("SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION", "SSL_CTRL_SET_MIN_PROTO_VERSION, 0", 1)],
+           "over TLS", "where libssl's settings take it", file=NATIVE / "tls.c"),
+    Defect("a TLS key in memory that may be dumped", [("if ((tls_cert || users) && prctl(", "if (users && prctl(", 1)],
+           "over TLS", "may dump its memory"),
+    Defect("networks that post by default where clients log in",
+           [("if (!net_count && !logins)", "if (!net_count && logins >= 0)", 1)],
+           "logins", "posted before it logged in", file=NATIVE / "store.c"),
+    Defect("sessions kept for clients to resume", [("SSL_CTRL_SET_SESS_CACHE_MODE, SSL_SESS_CACHE_OFF",
+                                                     "SSL_CTRL_SET_SESS_CACHE_MODE, 2", 1)],
+           "over TLS", "resumed a session the server kept", file=NATIVE / "tls.c"),
+    Defect("TLS ended without a close_notify",
+           [("    if (gracefully) ossl.SSL_shutdown(t->ssl);\n", "    (void)gracefully;\n", 1)],
+           "over TLS", "without a close_notify", file=NATIVE / "tls.c"),
+    Defect("a TLS key its group may write taken",
+           [("if (st.st_mode & (S_IRWXO | S_IWGRP)) {\n        close(fd);\n        snprintf(",
+             "if (st.st_mode & S_IRWXO) {\n        close(fd);\n        snprintf(", 1)],
+           "logins", "did not end", file=NATIVE / "tls.c"),
+    Defect("a file of accounts its group may write taken",
+           [("st.st_mode & (S_IRWXO | S_IWGRP)", "st.st_mode & S_IRWXO", 1)],
+           "logins", "did not end", file=NATIVE / "accounts.c"),
+    Defect("a socket handed to another process taken",
+           [(" || pid != (uint64_t)getpid() || ", " || (pid & 0) || ", 1)],
+           "a socket from systemd", "LISTEN_PID 1"),
+    Defect("an account of too few iterations taken", [("|| it < ITERATIONS_MIN ", "", 1)],
+           "logins", "did not end", file=NATIVE / "accounts.c"),
+    Defect("a salt shorter than 8 octets taken", [("if (salt < SALT_MIN) return 1;", "if (salt < 1) return 1;", 1)],
+           "logins", "did not end", file=NATIVE / "accounts.c"),
+    Defect("a name given twice taken", [(" || find(accounts[count].name, accounts[count].name_len)", "", 1)],
+           "logins", "did not end", file=NATIVE / "accounts.c"),
+    Defect("lines ended by CRLF refused", [("        if (len && p[len - 1] == '\\r') --len;\n", "", 1)],
+           "logins", "a file of CRLF lines", file=NATIVE / "accounts.c"),
     Defect("a connection not logged", [("    dn_store_log_opened(&conns[i].peer);\n", "", 1)], "a post over sockets",
            "is not in the log"),
     Defect("an unknown setting taken", [(
-        '    } else if (!dn_store_option(name, value)) dn_harness("%sunknown setting %s", setting_at, name);',
-        "    } else (void)dn_store_option(name, value);", 1)], "a file of settings", "colour blue"),
+        ('    } else if (!dn_store_option(setting_at, name, value)) '
+         'dn_harness("%sunknown setting %s", setting_at, name);'),
+        "    } else (void)dn_store_option(setting_at, name, value);", 1)], "a file of settings", "colour blue"),
     Defect("a setting taken twice", [("&& given[k]++) dn_harness", "&& given[k]++ < 0) dn_harness", 1)],
            "a file of settings", "address ::1"),
     Defect("octets read not counted", [("            counted.in += (uint64_t)n;\n", "", 1)], "counters",
@@ -2559,7 +2676,7 @@ def spelled(n: int) -> str:
 
 def planted(source: str, defect: Defect) -> str:
     """The program's text, or the host's, with `defect` planted."""
-    text = source if defect.program else HOST.read_text()
+    text = source if defect.program else defect.file.read_text()
     for pattern, becomes, times in defect.edits:
         what = f"the {'program' if defect.program else 'host'}, for {defect.name},"
         text = lanes.plant(text, pattern, becomes, times, what, exact=not defect.program)
@@ -2574,8 +2691,11 @@ def hosted(index: int, defect: Defect, text: str, build: Build) -> Build:
     host.write_text(text)
     runtime = [NATIVE / "cake_header.c", NATIVE / "cake_runtime.c"]
 
+    sources = [HOST, *STORE]
+    sources[sources.index(defect.file)] = host
+
     def linked(binary: str, program: str) -> Path:
-        return lanes.link(OUT / binary, [host, *STORE, *runtime, OUT / program], includes=[OUT], check=False)
+        return lanes.link(OUT / binary, [*sources, *runtime, OUT / program], includes=[OUT], check=False)
 
     # Only the check of actions for another generation runs the program that acts for the one before.
     stale = linked(f"{name}-stale", "stale.S") if CHECKS[defect.check] is stale_generation else build.stale

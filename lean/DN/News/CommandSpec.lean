@@ -380,6 +380,8 @@ inductive Reply
   | authSequence
   /-- 483: a connection in the clear may not log in (§2.3.2; RFC 3977 §3.2.1) -/
   | encryptionRequired
+  /-- 480: a POST a login would allow, before it (§2.2; RFC 3977 §3.2.1) -/
+  | authRequired
   /-- 502: AUTHINFO once logged in (§2.2), or where the connection may not log in -/
   | authDone
   /-- the capability lists that also offer AUTHINFO USER, to a connection that may log in and has not -/
@@ -599,6 +601,7 @@ def text (i : Identity) : Reply → List Byte
   | .authFailed => ascii "481 Authentication failed\r\n"
   | .authSequence => ascii "482 Authentication commands issued out of sequence\r\n"
   | .encryptionRequired => ascii "483 Encryption required\r\n"
+  | .authRequired => ascii "480 Authentication required\r\n"
   | .authDone => ascii "502 Command unavailable\r\n"
   | .capabilitiesAuth => capabilitiesHead ++ i.revision ++ capabilitiesAuthTail ++ blockEnd
   | .capabilitiesReaderAuth =>

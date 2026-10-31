@@ -35,38 +35,50 @@ static size_t group_count;
 static struct net nets[NETS];
 static const char *net_texts[NETS];
 static size_t net_count;
-static int spool = -1, run = -1;
+static int logins, spool = -1, run = -1;
 static char boot[BOOT_ID + 1];
 static unsigned char random_octets[DN_SESSION_RANDOM_LEN];
 static pthread_mutex_t marking = PTHREAD_MUTEX_INITIALIZER;
 
-static void add_net(const char *text) {
-    if (net_count == NETS) dn_harness("--post-from: more than %d networks", NETS);
+static void add_net(const char *at, const char *text) {
+    if (net_count == NETS) dn_harness("%s--post-from: more than %d networks", at, NETS);
     char address[INET6_ADDRSTRLEN];
     const char *slash = strchr(text, '/');
     size_t n = slash ? (size_t)(slash - text) : strlen(text);
-    if (n >= sizeof address) dn_harness("--post-from: not a network: %s", text);
+    if (n >= sizeof address) dn_harness("%s--post-from: not a network: %s", at, text);
     memcpy(address, text, n);
     address[n] = 0;
     net_texts[net_count] = text;
     struct net *net = &nets[net_count++];
     if (inet_pton(AF_INET, address, net->addr) == 1) net->family = AF_INET;
     else if (inet_pton(AF_INET6, address, net->addr) == 1) net->family = AF_INET6;
-    else dn_harness("--post-from: not a network: %s", text);
-    unsigned most = net->family == AF_INET ? 32 : 128;
-    net->bits = slash ? (unsigned)dn_parse_u64(slash + 1, most) : most;
+    else dn_harness("%s--post-from: not a network: %s", at, text);
+    unsigned long most = net->family == AF_INET ? 32 : 128, bits = most;
+    if (slash) {
+        char *end;
+        errno = 0;
+        bits = strtoul(slash + 1, &end, 10);
+        if (slash[1] < '0' || slash[1] > '9' || errno || *end || bits > most)
+            dn_harness("%s--post-from: not a network: %s", at, text);
+    }
+    net->bits = (unsigned)bits;
 }
 
-int dn_store_option(const char *name, const char *value) {
+int dn_store_option(const char *at, const char *name, const char *value) {
     if (!strcmp(name, "--spool")) spool_path = value;
     else if (!strcmp(name, "--run-dir")) run_path = value;
     else if (!strcmp(name, "--path-identity")) identity = value;
-    else if (!strcmp(name, "--post-from")) add_net(value);
+    else if (!strcmp(name, "--post-from")) add_net(at, value);
     else if (!strcmp(name, "--group")) {
-        if (group_count == DN_SESSION_GROUPS_MAX) dn_harness("--group: more than %d groups", DN_SESSION_GROUPS_MAX);
+        if (group_count == DN_SESSION_GROUPS_MAX)
+            dn_harness("%s--group: more than %d groups", at, DN_SESSION_GROUPS_MAX);
         groups[group_count++] = value;
     } else return 0;
     return 1;
+}
+
+void dn_store_logins(void) {
+    logins = 1;
 }
 
 __attribute__((noreturn, format(printf, 1, 2))) static void refuse(const char *format, ...) {
@@ -120,9 +132,9 @@ static int validated(void) {
     for (size_t g = 0; g < group_count; ++g)
         if (!*groups[g] || strlen(groups[g]) > DN_SESSION_GROUP_MAX)
             dn_harness("--group: 1 to %d bytes: %s", DN_SESSION_GROUP_MAX, groups[g]);
-    if (!net_count) {
-        add_net("127.0.0.0/8");
-        add_net("::1/128");
+    if (!net_count && !logins) {
+        add_net("", "127.0.0.0/8");
+        add_net("", "::1/128");
     }
     return 1;
 }

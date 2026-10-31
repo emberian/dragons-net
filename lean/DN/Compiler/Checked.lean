@@ -172,6 +172,18 @@ def statements (p : Profile) (scope : List String) : List PStmt → Except Reaso
     else statements p (match s with | .dec x _ | .call x _ _ => x :: scope | _ => scope) rest
 end
 
+mutual
+/-- The functions a statement calls, in its blocks too. -/
+def calls : PStmt → List String
+  | .call _ f _ => [f]
+  | .ite _ a b => callsL a ++ callsL b
+  | .while _ b => callsL b
+  | _ => []
+def callsL : List PStmt → List String
+  | [] => []
+  | s :: rest => calls s ++ callsL rest
+end
+
 /-- The scope a parameter list opens, in the order the parameters are bound. -/
 def paramScope : List (Nat × String) → List String → Except Reason (List String)
   | [], scope => .ok scope
@@ -219,8 +231,8 @@ def checkEach (p : Profile) (before : List String) : List PFun → Except Reason
 
 /-- The functions of a program besides its entry `entry`: each named as an identifier, not `main`,
 which CakeML takes for the entry, once and not as `entry`, and not exported, as `checkEach` takes
-them. Its calls go only to functions before it, so the call graph has no cycle, which CakeML needs to
-bound the stack the program takes (Zhao et al. 2025, §4). -/
+them. Its calls go only to functions before it, so the call graph has no cycle (`checkFunctions_calls`),
+which CakeML needs to bound the stack the program takes (Zhao et al. 2025, §4). -/
 def checkFunctions (p : Profile) (entry : String) (funs : List PFun) : Except Reason Unit := do
   let names := funs.map (·.name) ++ [entry]
   unless funs.all (fun g => identifier g.name && g.name != "main" && !g.exported) &&
@@ -578,6 +590,84 @@ theorem checkFunctions_lowers {p : Profile} {entry : String} {funs : List PFun}
   · exact checkEach_lowers funs [] h
   · cases h
 
+/-- What a profile that names its callable functions takes calls only those. -/
+theorem checked_calls (p : Profile) (before : List String) (hp : p.callable = some before) :
+    (∀ (scope : List String) (s : PStmt), statement p scope s = .ok () → ∀ f ∈ calls s, f ∈ before) ∧
+    (∀ (scope : List String) (ss : List PStmt),
+        statements p scope ss = .ok () → ∀ f ∈ callsL ss, f ∈ before) := by
+  apply statement.mutual_induct p
+  all_goals intros
+  all_goals first
+    | (simp only [calls, List.not_mem_nil] at *; done)
+    | skip
+  · rename_i scope e a b iha ihb h f hf
+    simp only [statement] at h
+    obtain ⟨_, hrest⟩ := seq_ok h
+    obtain ⟨ha, hb⟩ := seq_ok hrest
+    simp only [calls, List.mem_append] at hf
+    exact hf.elim (iha ha f) (ihb hb f)
+  · rename_i scope e b ihb h f hf
+    simp only [statement] at h
+    obtain ⟨_, hb⟩ := seq_ok h
+    exact ihb hb f hf
+  · rename_i scope r g args h f hf
+    simp only [calls, List.mem_singleton] at hf
+    subst hf
+    simp only [statement, callCheck, hp, Option.all_some] at h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i hc
+        simpa using hc
+  · rename_i scope f hf
+    simp [callsL] at hf
+  · rename_i scope s rest ihs ihrest h f hf
+    simp only [statements] at h
+    obtain ⟨hs, hrest'⟩ := seq_ok h
+    split at hrest'
+    · exact absurd hrest' (by simp)
+    simp only [callsL, List.mem_append] at hf
+    exact hf.elim (ihs hs f) (ihrest hrest' f)
+
+/-- Each function `checkEach` takes calls only the functions before it. -/
+theorem checkEach_calls {p : Profile} :
+    ∀ (funs : List PFun) (before : List String), checkEach p before funs = .ok () →
+      ∀ i (hi : i < funs.length), ∀ f ∈ callsL funs[i].body, f ∈ before ++ (funs.take i).map (·.name)
+  | [], _, _, i, hi => absurd hi (Nat.not_lt_zero i)
+  | g :: fs, before, h, i, hi => by
+    simp only [checkEach, bind, Except.bind] at h
+    cases hsc : paramScope g.params [] with
+    | error e => simp [hsc] at h
+    | ok sc =>
+      cases hs : statements { p with callable := some before } sc g.body with
+      | error e => simp [hsc, hs] at h
+      | ok u =>
+        cases he : exitsL g.body
+        · simp [hsc, hs, he] at h
+        · simp only [hsc, hs, he, if_true, pure, Except.pure] at h
+          cases i with
+          | zero =>
+            intro f hf
+            cases u
+            exact List.mem_append_left _ ((checked_calls _ before rfl).2 sc g.body hs f hf)
+          | succ i =>
+            intro f hf
+            have := checkEach_calls fs (before ++ [g.name]) h i (by simpa using hi) f hf
+            simpa [List.take_succ_cons, List.map_cons, List.append_assoc] using this
+
+/-- **No cycle among a program's functions**: each function `checkFunctions` takes calls only the
+functions before it, so a chain of calls is shorter than the list. -/
+theorem checkFunctions_calls {p : Profile} {entry : String} {funs : List PFun}
+    (h : checkFunctions p entry funs = .ok ()) :
+    ∀ i (hi : i < funs.length), ∀ f ∈ callsL funs[i].body, f ∈ (funs.take i).map (·.name) := by
+  unfold checkFunctions at h
+  simp only [bind, Except.bind] at h
+  split at h
+  · intro i hi f hf
+    simpa using checkEach_calls funs [] h i hi f hf
+  · cases h
+
 /-- …and so do those of a whole program the gate prints. -/
 theorem emitProgram_lowers {externals : List String} {funs : List PFun} {f : PFun} {src : String}
     (h : emitProgram externals funs f = .ok src) :
@@ -746,6 +836,11 @@ def catalog : List RuleCase :=
      accepted := whole [.call "x" "odd" [.const 1], .ret (.var "x")] },
    { reason := .recursion, functions := [{ inc "inc" with body := [.call "y" "twice" [.var "x"], .ret (.var "y")] },
        inc "twice"],
+     twinFunctions := some [inc "twice", { inc "inc" with body := [.call "y" "twice" [.var "x"], .ret (.var "y")] }],
+     rejected := scalar body1, accepted := scalar body1 },
+   -- A call forward with an argument too many is refused as one forward, the rule checked first.
+   { reason := .recursion,
+     functions := [{ inc "inc" with body := [.call "y" "twice" [.var "x", .var "x"], .ret (.var "y")] }, inc "twice"],
      twinFunctions := some [inc "twice", { inc "inc" with body := [.call "y" "twice" [.var "x"], .ret (.var "y")] }],
      rejected := scalar body1, accepted := scalar body1 }]
 

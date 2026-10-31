@@ -23,8 +23,8 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
 - SIGTERM as each operation begins (`dn/term`): the job running it run out before the server ends,
   with status 0, the spool held as after a crash and served again.
 - Every index taken at once, a 65th connection waiting; slow reads of the large article, posts with
-  slowed syncs and HELP on the rest: all answered, nothing allocated once the server serves, at most
-  `RESIDENT` kB resident and `GROWTH` more than as it began to serve.
+  slowed syncs and HELP on the rest: all answered, the allocator holding no more once the server
+  serves, and at most `GROWTH` kB more resident than as it began to serve.
 - A poll that fails (`dn/poll`): the host ends with status 2.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
@@ -421,8 +421,8 @@ def terminated(binary: Path, base: Image, count: int) -> None:
                 raise LaneError(f"SIGTERM at operation {n}: {why}")
 
 
-# The most a load may add, in kB, to what the server held resident as it began to serve, about 4 MB:
-# the program's heap and stack, 5 MiB allocated at start and touched as it runs, and a megabyte more.
+# The most a load may add, in kB, to what the server held resident as it began to serve: the 5 MiB
+# of the program's heap and stack allocated at start and touched as it runs, and a megabyte more.
 GROWTH = 6_144
 # The server's send buffer and a slow reader's receive buffer: the large article does not fit in both,
 # so the server holds the rest until the reader takes more.
