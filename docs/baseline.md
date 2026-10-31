@@ -73,7 +73,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | LazyFS | Synced data survives a cache clear, unsynced does not, appends tear ([details](#lazyfs)) | Tears a write request, not a block; runs apart |
 | Session model | 402 scenarios and 3,310 turns judged by an independent reference, 156 with a store and 15,098 turns; 145 broken rules caught ([details](#session-model)) | Specification tested, not proven to be decisions 0003's and 0005's |
 | Session program | The compiled session equal to its model on every scenario, those with a store too ([details](#session-program)) | Proven in the model not to fail for any host and clock from a heap covering its layout and code holding its functions (`SessionSafe`); equality tested |
-| NNTP server | The server over loopback held three ways, over TCP and TLS; 76 planted defects caught ([details](#nntp-server)) | Tested, not proven |
+| NNTP server | The server over loopback held three ways, over TCP and TLS, waiting with io_uring and with poll; 92 planted defects caught ([details](#nntp-server)) | Tested, not proven |
 | Crashes | The server killed before each of its file operations and started again, held to `store_safe`; 5 planted defects of the crash lane caught ([details](#crashes)) | Process crashes, the kernel keeping what was written; power loss below |
 | Power loss | The server on LazyFS, power lost before each operation, after a run with each failed with EIO, and at each of 10 journal writes torn; held to `store_safe`; 4 planted defects of the power lane caught ([details](#power-loss)) | Names durable at once: a missing directory sync is not shown here |
 | Faults | The server's test build, each of its 35 and 46 operations failed with ENOSPC and interrupted, writes cut short, syncs slowed; an article's file changed in 6 ways after the start; 11 planted defects of the faults lane caught ([details](#faults)) | Faults at the host's points; the load test holds 64 clients at once, not more |
@@ -212,7 +212,9 @@ It catches 106 planted defects, sixty-eight in the store's side, the selected gr
 
 ### NNTP server
 
-`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. Reader commands on a spool are cut between two reads at each of their octets. It catches 76 planted defects.
+`scripts/nntp_check.py` runs the server over loopback, holds each run to `session_ref`, the model and the sockets, sends three transcripts cut at 1,831 cuts, and starts on every store directory of the store lane. Reader commands on a spool are cut between two reads at each of their octets.
+
+The server waits with io_uring; each check that catches a defect planted where it waits with poll runs with poll too (`--io poll`). It catches 92 planted defects, fourteen in the code only io_uring runs. One, a stop that leaves operations live, only the host's own refusal to close its ring shows.
 
 Over TLS a pipeline is judged as over TCP and nntplib's NNTP_SSL is served. A client in the clear, one reset mid-handshake, one of TLS 1.1 and a silent one are refused and counted; TLS 1.1 also where libssl's settings would take it.
 
@@ -268,7 +270,7 @@ SIGTERM as each operation of the run begins stops the server with status 0 once 
 
 With every index taken at once a 65th connection waits for one to close. Eight slow reads of the large article through small buffers, the server holding what they have not taken, one reset midway, eight posts with every sync slowed and HELP on the rest are all answered.
 
-No file of the spool is left open; without TLS the allocator holds no more once the server serves, and at most 6 MiB more is resident than at start. A poll that fails ends the host with status 2.
+No file of the spool is left open; without TLS the allocator holds no more once the server serves, and at most 6 MiB more is resident than at start. A wait that fails, poll's or io_uring's, ends the host with status 2; io_uring refused at the start does too, naming `--io poll`.
 
 Each spool is held as in the crash lane. It catches 11 planted defects of the faults lane.
 
@@ -306,7 +308,7 @@ ThreadSanitizer cannot run in the sandbox, whose seccomp profile refuses the per
 
 ### Test sensitivity
 
-Each lane catches its planted defects, from copy and reply kernels to the session's program and seventy-six NNTP servers (fifty-six planted in its host and twenty in its program).
+Each lane catches its planted defects, from copy and reply kernels to the session's program and ninety-two NNTP servers (seventy-two planted in its host and twenty in its program).
 
 The Lean build carries no warnings (`--wfail`) and `autoImplicit` is off.
 

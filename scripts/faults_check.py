@@ -25,7 +25,8 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
 - Every index taken at once, a 65th connection waiting; slow reads of the large article, posts with
   slowed syncs and HELP on the rest: all answered, the allocator holding no more once the server
   serves, and at most `GROWTH` kB more resident than as it began to serve.
-- A poll that fails (`dn/poll`): the host ends with status 2.
+- A wait that fails, poll's (`dn/poll`, `--io poll`) and io_uring's (`dn/uring-enter`), and io_uring
+  refused at the start (`dn/uring-setup`): the host ends with status 2, the last naming `--io poll`.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
 
@@ -430,13 +431,21 @@ SEND_BUFFER, RECEIVE_BUFFER = 4_096, 4_096
 
 
 def poll_fails(binary: Path, base: Image) -> None:
-    """A poll that fails but by a signal (`dn/poll`, ENOMEM), the first as the start waits for its
-    jobs: the host ends with status 2, as a fault of what it runs on, naming the poll, rather than
-    wait on without its timer."""
+    """A wait that fails but by a signal, with ENOMEM, the first as the start waits for its jobs:
+    poll's (`dn/poll`, the server run with `--io poll`) and io_uring's (`dn/uring-enter`). The host
+    ends with status 2, as a fault of what it runs on, naming the call, rather than wait on without its
+    timer."""
+    for point, more, call in (("dn/poll", ("--io", "poll"), "poll"), ("dn/uring-enter", (), "io_uring_enter")):
+        with tempfile.TemporaryDirectory() as temp:
+            run = served(binary, base, Path(temp), f"enable name={point},failinfo={errno.ENOMEM}", more=more)
+        if run.started or run.status != 2 or f"{call}: Cannot allocate memory" not in run.said:
+            raise LaneError(f"a wait that fails ({point}): the server started {run.started}, ended with status "
+                            f"{run.status}: {run.said[-200:]!r}")
+    # io_uring refused, as a container's seccomp filter refuses it: the start ends naming the other way.
     with tempfile.TemporaryDirectory() as temp:
-        run = served(binary, base, Path(temp), f"enable name=dn/poll,failinfo={errno.ENOMEM}")
-    if run.started or run.status != 2 or "poll: Cannot allocate memory" not in run.said:
-        raise LaneError(f"a poll that fails: the server started {run.started}, ended with status {run.status}: "
+        run = served(binary, base, Path(temp), f"enable name=dn/uring-setup,failinfo={errno.EPERM}")
+    if run.started or run.status != 2 or "io_uring: refused here" not in run.said or "--io poll" not in run.said:
+        raise LaneError(f"io_uring refused: the server started {run.started}, ended with status {run.status}: "
                         f"{run.said[-200:]!r}")
 
 

@@ -4,12 +4,14 @@
  * its heap (docs/decisions/0003-nntp-slice.md). The host knows sockets and the clock and nothing of
  * the protocol.
  *
- *   dn_next  gives out what one poll reported, at most a batch of events, before polling again:
+ *   dn_next  gives out what one wait reported, at most a batch of events, before waiting again:
  *            connections taken in turn, input only from a connection that asked for it and has
  *            nothing untaken, at most one input a connection a batch, new connections only while
- *            an index is free. The poll waits until something is ready or the time the program
+ *            an index is free. The wait lasts until something is ready or the time the program
  *            asked to be woken at; the first batch does not wait, so that the program can recover
- *            its store before the host listens.
+ *            its store before the host listens. The host waits with io_uring (uring.h): input and
+ *            sends as ring operations, readiness from epoll; or with poll, given `--io poll`. Both
+ *            give the program the same events.
  *   dn_emit  carries out each action for the connection's current generation and writes back how
  *            much of each send the kernel took. A graceful close shuts down sending and reads and
  *            drops what still comes, for 30 s at most and 5 s of silence, outside the table. File
@@ -27,8 +29,8 @@
  * picks, printed as JSON on standard output once it listens. `--revision` and `--source` name the revision and the
  * address of the source the replies give; `--send-buffer N` sets SO_SNDBUF on each connection, and
  * each sends its replies at once (TCP_NODELAY). Only for tests, and costing nothing unless given:
- * `--clock-fd N` takes the time from N instead of CLOCK_MONOTONIC — a line with a number of
- * milliseconds sets it, and it moves only then, so nothing waits for it before that — and
+ * `--clock-fd N` takes the time from N, a pipe or a socket, instead of CLOCK_MONOTONIC — a line with
+ * a number of milliseconds sets it, and it moves only then, so nothing waits for it before that — and
  * `--report-fd N` receives a line for each turn: `turn`, the time handed to the program, its events
  * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`,
  * `verdict` with 1 for a login taken, each with the index and generation), `|`, its actions (`send`
@@ -63,6 +65,7 @@
 #include "session_calls.h"
 #include "store.h"
 #include "tls.h"
+#include "uring.h"
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -73,6 +76,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <malloc.h>
+#include <sys/epoll.h>
 #include <sys/resource.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
@@ -99,9 +103,23 @@ struct conn {
     uint64_t handshake_until;    /* when a handshake not done by then ends the connection */
     struct sockaddr_storage peer; /* the client, for the store once the handshake is done */
     int checking;                /* its name and password are with the accounts' thread */
+    /* With io_uring: */
+    int ops;                     /* its operations in flight */
+    int receiving;               /* a receive in flight, into `in` */
+    int polled;                  /* its events in epoll's set, -1 when it is not in it */
+    int input, got;              /* a receive's result not yet given out: octets, 0, or minus an error */
+    int closing_fd;              /* the descriptor of the connection gone, closed once its operations are
+                                    reaped (or lingered on, with `lingers`); -1 for none */
+    int lingers;                 /* and then lingered on */
+    unsigned char in[DN_SESSION_DATA];
 };
 
-struct lingering { int fd; uint64_t until, quiet_until, since; };
+struct lingering {
+    int fd;
+    uint64_t until, quiet_until, since;
+    int receiving, ending;       /* with io_uring: a receive in flight; cancelled, to close once reaped */
+    unsigned char sink[512];
+};
 
 static struct conn conns[CONNS];
 static struct lingering lingering[LINGERING];
@@ -109,7 +127,8 @@ static int listener = -1, signals = -1, clock_fd = -1, report_fd = -1, jobs_done
 static int accept_ready, started, awaiting_emit, carrying, listening;
 static unsigned start, listen_port;
 static uint64_t now_virtual, accept_paused_until, turn_events, turn_actions, lingered;
-static int send_buffer, pausing, checking;
+static int send_buffer, pausing, checking, io_poll;
+static struct dn_ring ring = {.fd = -1};
 static const char *revision, *source, *address = "127.0.0.1", *tls_cert, *tls_key, *users;
 static unsigned port_wanted;
 /* While a file's settings are taken, where the one taken is. */
@@ -119,6 +138,10 @@ static const char *setting_at = "";
 static struct { uint64_t accepted, ended, graceful, abrupt, in, out, pauses, handshakes_failed, logins, refused; } counted;
 static char clock_text[MAX_LINE], trace[TRACE_BYTES];
 static size_t clock_len, trace_len;
+
+static void retire(struct conn *c, int lingers);
+static void unlinger(int at);
+static void ring_stopped(void);
 
 static uint64_t now_ms(void) {
     if (clock_fd >= 0) return now_virtual;
@@ -217,8 +240,11 @@ static void say_counters(const char *when) {
 
 /* Every socket closed, the file jobs drained, and the run ends inside the call. */
 __attribute__((noreturn)) static void stop_serving(const char *why) {
-    for (int i = 0; i < CONNS; ++i)
+    if (ring.fd >= 0) ring_stopped();
+    for (int i = 0; i < CONNS; ++i) {
         if (conns[i].fd >= 0) close(conns[i].fd);
+        if (conns[i].closing_fd >= 0) close(conns[i].closing_fd);
+    }
     for (int i = 0; i < LINGERING; ++i)
         if (lingering[i].fd >= 0) close(lingering[i].fd);
     close(listener);
@@ -250,6 +276,7 @@ static void free_index(struct conn *c) {
     if (c->checking) dn_accounts_forget((int)(c - conns));
     c->checking = 0;
     end_tls(c, 0);
+    if (!io_poll && c->fd >= 0) retire(c, 0);
     if (c->fd >= 0) close(c->fd);
     c->fd = -1;
     c->reading = c->unsent = c->lost = c->handshaken = 0;
@@ -282,7 +309,7 @@ static int handshake(int i, short r) {
 }
 
 static int usable(int i) {
-    return conns[i].fd < 0 && !conns[i].lost && conns[i].gen < DN_SESSION_GEN_LIMIT;
+    return conns[i].fd < 0 && conns[i].closing_fd < 0 && !conns[i].lost && conns[i].gen < DN_SESSION_GEN_LIMIT;
 }
 
 static int free_indexes(void) {
@@ -306,9 +333,11 @@ static void linger(int fd) {
         }
         if (lingering[i].since < lingering[at].since) at = i;
     }
+    if (!io_poll) unlinger(at);
     if (lingering[at].fd >= 0) close(lingering[at].fd);
     uint64_t now = now_ms();
-    lingering[at] = (struct lingering){fd, now + LINGER_TOTAL_MS, now + LINGER_QUIET_MS, ++lingered};
+    lingering[at] = (struct lingering){.fd = fd, .until = now + LINGER_TOTAL_MS, .quiet_until = now + LINGER_QUIET_MS,
+                                       .since = ++lingered};
 }
 
 /* Read and drop what a lingering socket still receives, a bounded number of reads a turn; close it
@@ -366,6 +395,19 @@ static int until(uint64_t at, int timeout) {
     return timeout < 0 || left < timeout ? left : timeout;
 }
 
+/* A signal taken from the descriptor: SIGUSR1 writes the counters, the others stop the server. */
+static void signalled(void) {
+    struct signalfd_siginfo si;
+    ssize_t r = read(signals, &si, sizeof si);
+    if (r == (ssize_t)sizeof si && si.ssi_signo == SIGUSR1) say_counters("counters");
+    else if (r >= 0 || (errno != EAGAIN && errno != EINTR)) stop_serving("a signal");
+}
+
+/* Whether a wait is over: something is ready to give out, or `wake` has come. */
+static int woken(int news, uint64_t wake) {
+    return news || (wake && now_ms() >= wake);
+}
+
 /* Poll until something is ready to give out or `wake` has come. */
 static void wait_for(uint64_t wake) {
     for (;;) {
@@ -414,12 +456,7 @@ static void wait_for(uint64_t wake) {
             if (errno == EINTR) continue;
             dn_harness("poll: %s", strerror(errno));
         }
-        if (fds[0].revents) {
-            struct signalfd_siginfo si;
-            ssize_t r = read(signals, &si, sizeof si);
-            if (r == (ssize_t)sizeof si && si.ssi_signo == SIGUSR1) say_counters("counters");
-            else if (r >= 0 || (errno != EAGAIN && errno != EINTR)) stop_serving("a signal");
-        }
+        if (fds[0].revents) signalled();
         if (fds[2].revents) read_clock();
         for (int i = 0; i < LINGERING; ++i)
             if (linger_at[i] >= 0) drain(&lingering[i], fds[linger_at[i]].revents);
@@ -439,7 +476,7 @@ static void wait_for(uint64_t wake) {
             news |= revents != 0;
         }
         for (int i = 0; i < CONNS; ++i) news |= conns[i].lost;
-        if (news || (wake && now_ms() >= wake)) return;
+        if (woken(news, wake)) return;
     }
 }
 
@@ -482,6 +519,17 @@ static void give_verdicts(unsigned char *a) {
     }
 }
 
+/* The input a receive took for connection `c`, as recv would return it. */
+static ssize_t taken(struct conn *c, unsigned char *to) {
+    c->input = 0;
+    if (c->got < 0) {
+        errno = -c->got;
+        return -1;
+    }
+    memcpy(to, c->in, (size_t)c->got);
+    return c->got;
+}
+
 /* What one connection has to report, if anything. */
 static void give_out(unsigned char *a, int i) {
     struct conn *c = &conns[i];
@@ -497,6 +545,8 @@ static void give_out(unsigned char *a, int i) {
     }
     short r = c->ready;
     c->ready = 0;
+    /* Input a receive took is given out before a hang-up that came with it, as poll's read would. */
+    if (!io_poll && !c->tls && c->input && c->reading) r |= POLLIN;
     if (c->fd < 0 || c->handshaking || !r) return;
     if (c->tls && c->reading && (r & (POLLIN | c->tls_wants | POLLERR | POLLHUP))) {
         unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + turn_events * DN_SESSION_EVENT_SLOT;
@@ -517,7 +567,8 @@ static void give_out(unsigned char *a, int i) {
     }
     if ((r & POLLIN) && c->reading) {
         unsigned char *slot = a + DN_SESSION_NEXT_EVENTS + turn_events * DN_SESSION_EVENT_SLOT;
-        ssize_t n = recv(c->fd, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA, MSG_DONTWAIT);
+        ssize_t n = io_poll ? recv(c->fd, slot + DN_SESSION_EVENT_HEAD, DN_SESSION_DATA, MSG_DONTWAIT)
+                            : taken(c, slot + DN_SESSION_EVENT_HEAD);
         if (n > 0) {
             counted.in += (uint64_t)n;
             event(a, DN_SESSION_RECEIVED, i, c->gen, (uint64_t)n);
@@ -541,6 +592,8 @@ static void give_out(unsigned char *a, int i) {
         event(a, DN_SESSION_WRITABLE, i, c->gen, 0);
     }
 }
+
+static int admit(int fd, const struct sockaddr_storage *peer, uint64_t now);
 
 /* One connection taken from the listener: its index, -1 when none was taken, or -2 when accepting
  * pauses, descriptors or memory having run out. `accept_ready` is cleared once the listener has none.
@@ -567,6 +620,12 @@ static int accept_next(uint64_t now) {
             dn_harness("accept: %s", strerror(code));
         }
     }
+    return admit(fd, &peer, now);
+}
+
+/* The connection `fd` accepted from `peer`, given the lowest index free: its index, or -1 when its
+ * socket cannot be shaped or its TLS begun. */
+static int admit(int fd, const struct sockaddr_storage *peer, uint64_t now) {
     pausing = 0;
     static const int one = 1;
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) ||
@@ -580,15 +639,16 @@ static int accept_next(uint64_t now) {
     uint64_t past;
     if (DN_FAULT_INFO("dn/generation", past) && conns[i].gen < past && past < DN_SESSION_GEN_LIMIT)
         conns[i].gen = past;
-    in_port_t port = peer.ss_family == AF_INET ? ((struct sockaddr_in *)&peer)->sin_port
-                                               : ((struct sockaddr_in6 *)&peer)->sin6_port;
+    in_port_t port = peer->ss_family == AF_INET ? ((const struct sockaddr_in *)peer)->sin_port
+                                                : ((const struct sockaddr_in6 *)peer)->sin6_port;
     struct dn_tls *tls = NULL;
     if (tls_cert && !(tls = dn_tls_new(fd))) {
         close(fd);
         return -1;
     }
-    conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port), .tls = tls, .peer = peer,
-                             .handshaking = tls != NULL, .handshake_until = now + HANDSHAKE_MS};
+    conns[i] = (struct conn){.fd = fd, .gen = conns[i].gen + 1, .port = ntohs(port), .tls = tls, .peer = *peer,
+                             .handshaking = tls != NULL, .handshake_until = now + HANDSHAKE_MS, .polled = -1,
+                             .closing_fd = -1};
     ++counted.accepted;
     if (conns[i].gen == DN_SESSION_GEN_LIMIT) fprintf(stderr, "index %d given out at its last generation\n", i);
     return i;
@@ -617,6 +677,292 @@ static int take_handshakes(uint64_t now) {
     return done;
 }
 
+/* With io_uring (uring.h), the default way to wait. A plain connection's input comes from a receive
+ * kept in flight while the program asks to read, into the connection's own buffer, and is given out as
+ * poll's would be read; its sends go as a batch that does not wait, one call a turn; a lingering socket
+ * is drained by a receive in flight. Readiness, for the very events poll is asked for, comes from epoll,
+ * on whose descriptor the ring keeps a poll: io_uring's own poll reports a peer that stopped sending
+ * whatever it is asked for, which poll does not. The listener is accepted from as with poll. A
+ * connection's descriptor is closed, and its index given out again, only once every operation on it is
+ * reaped. `--io poll` waits with poll instead. */
+enum { RING_ENTRIES = 512 };
+enum { R_RECV = 1, R_SEND, R_CANCEL, R_READY, R_LINGER, R_LINGER_CANCEL, R_STOP };
+static const uint8_t ring_ops[] = {IORING_OP_RECV, IORING_OP_SEND, IORING_OP_POLL_ADD, IORING_OP_ASYNC_CANCEL};
+/* What epoll watches, by its data: a connection's index, or one of these. */
+enum { E_SIGNALS = CONNS, E_CLOCK, E_JOBS, E_ACCOUNTS, E_LISTENER };
+/* The epoll descriptor, its poll on the ring in flight, readiness it reported not yet read, and the
+ * listener's events in its set (-1 for none). */
+static int ready_fd = -1, ready_armed, ready_pending, listener_mask = -1;
+/* A connection's send of this turn ends with `send_res`; the descriptors to linger on wait in
+ * `to_linger`, as lingering may itself wait, and are taken while none is being taken. */
+static int send_res[CONNS], to_linger[CONNS], to_linger_n, lingering_now;
+static unsigned sends_live;
+
+static struct io_uring_sqe *sqe(uint64_t token) {
+    struct io_uring_sqe *s = dn_ring_get(&ring, token);
+    if (s) return s;
+    int e = dn_ring_enter(&ring, 0, 0);
+    if (e) dn_harness("io_uring_enter: %s", strerror(-e));
+    if (!(s = dn_ring_get(&ring, token))) dn_harness("io_uring: no submission entry free");
+    return s;
+}
+
+static uint64_t conn_token(unsigned kind, int i) { return DN_TOKEN(kind, (unsigned)i, (uint32_t)conns[i].gen); }
+
+/* The descriptor `fd` in epoll's set with `events`, which `*mask` holds: added, changed or, at -1,
+ * taken out. */
+static void watch(int fd, uint64_t what, int *mask, int events) {
+    if (*mask == events) return;
+    struct epoll_event e = {.events = (uint32_t)(events < 0 ? 0 : events), .data.u64 = what};
+    int op = events < 0 ? EPOLL_CTL_DEL : *mask < 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+    if (epoll_ctl(ready_fd, op, fd, &e)) dn_harness("epoll_ctl: %s", strerror(errno));
+    *mask = events;
+}
+
+/* The descriptors lingering is still to take, taken, unless taking them already. */
+static void linger_queued(void) {
+    if (lingering_now) return;
+    lingering_now = 1;
+    while (to_linger_n) linger(to_linger[--to_linger_n]);
+    lingering_now = 0;
+}
+
+static void let_go(struct conn *c, int fd) {
+    if (c->lingers && to_linger_n == CONNS) dn_violation("io_uring: more graceful closes queued than connections");
+    if (c->lingers) to_linger[to_linger_n++] = fd;
+    else close(fd);
+}
+
+/* The connection's descriptor leaves it, out of epoll's set: closed, or lingered on, at once if nothing
+ * is in flight on it, else once its cancelled operations are reaped. */
+static void retire(struct conn *c, int lingers) {
+    int fd = c->fd;
+    watch(fd, 0, &c->polled, -1);
+    c->fd = -1;
+    c->input = 0;
+    c->lingers = lingers;
+    if (!c->ops) {
+        let_go(c, fd);
+        return;
+    }
+    c->closing_fd = fd;
+    dn_prep_cancel_fd(sqe(conn_token(R_CANCEL, (int)(c - conns))), fd);
+    ++c->ops;
+}
+
+/* The events connection `c` waits for beside its receive: the rest of a send, and what TLS waits for;
+ * an error or a hang-up epoll reports anyway. */
+static short wanted_of(const struct conn *c) {
+    if (c->handshaking) return c->tls_wants;
+    /* A send that waits for the peer to send waits for that alone. */
+    if (c->unsent && c->tls_wants == POLLIN) return POLLIN;
+    return (short)((c->tls && c->reading ? POLLIN : 0) | (c->unsent ? (short)POLLOUT : 0) | c->tls_wants);
+}
+
+/* What connection `i` waits for: a receive in flight while the program reads a plain connection and
+ * the last input is given out, and its events in epoll's set. */
+static void interest(int i) {
+    struct conn *c = &conns[i];
+    if (!c->tls && c->reading && !c->receiving && !c->input) {
+        dn_prep_recv(sqe(conn_token(R_RECV, i)), c->fd, c->in, DN_SESSION_DATA);
+        ++c->ops;
+        c->receiving = 1;
+    }
+    watch(c->fd, (uint64_t)i, &c->polled, wanted_of(c));
+}
+
+static void drop_lingering(struct lingering *l) {
+    close(l->fd);
+    l->fd = -1;
+    l->ending = 0;
+}
+
+/* A completion of connection `i`'s, of the kind `kind`, that ended with `res`. */
+static void conn_completed(unsigned kind, int i, uint32_t gen, int res) {
+    struct conn *c = &conns[i];
+    if ((uint32_t)c->gen != gen || c->ops < 1)
+        dn_violation("io_uring: a completion for generation %" PRIu32 " of connection %d, at %" PRIu64 " with %d live",
+                     gen, i, c->gen, c->ops);
+    --c->ops;
+    if (kind == R_RECV) c->receiving = 0;
+    if (kind == R_SEND) send_res[i] = res, --sends_live;
+    if (c->closing_fd >= 0) {
+        if (!c->ops) {
+            int fd = c->closing_fd;
+            c->closing_fd = -1;
+            let_go(c, fd);
+        }
+        return;
+    }
+    if (kind == R_RECV) c->input = 1, c->got = res;
+}
+
+/* A lingering socket's receive, or its cancellation, ended with `res`; the cancellation's own end
+ * may come before or after the receive's. */
+static void lingering_completed(unsigned at, uint32_t since, int res) {
+    if (at >= LINGERING || lingering[at].fd < 0 || (uint32_t)lingering[at].since != since)
+        dn_violation("io_uring: a completion for a lingering socket %u not lingering", at);
+    struct lingering *l = &lingering[at];
+    l->receiving = 0;
+    if (res > 0 && !l->ending) l->quiet_until = now_ms() + LINGER_QUIET_MS;
+    else if (res != -EAGAIN || l->ending) drop_lingering(l);
+}
+
+/* Every completion there is, taken. */
+static void take_completions(void) {
+    struct io_uring_cqe c;
+    while (dn_ring_take(&ring, &c, NULL)) {
+        unsigned kind = DN_TOKEN_KIND(c.user_data), slot = DN_TOKEN_SLOT(c.user_data);
+        uint32_t gen = DN_TOKEN_GEN(c.user_data);
+        switch (kind) {
+        case R_RECV: case R_SEND: case R_CANCEL:
+            if (slot >= CONNS) dn_violation("io_uring: a completion for connection %u", slot);
+            conn_completed(kind, (int)slot, gen, c.res);
+            break;
+        case R_READY:
+            ready_armed = 0;
+            ready_pending = 1;
+            break;
+        case R_LINGER:
+            lingering_completed(slot, gen, c.res);
+            break;
+        case R_LINGER_CANCEL: case R_STOP:
+            break;
+        default:
+            dn_violation("io_uring: a completion of user data %llx", (unsigned long long)c.user_data);
+        }
+    }
+    linger_queued();
+}
+
+/* Waits for at least one completion, or `timeout` milliseconds, and takes them. */
+static void reap(int timeout) {
+    int e = dn_ring_enter(&ring, 1, timeout);
+    if (e) dn_harness("io_uring_enter: %s", strerror(-e));
+    take_completions();
+}
+
+/* The lingering socket at `at` given up: closed, once a receive in flight on it is reaped. */
+static void unlinger(int at) {
+    struct lingering *l = &lingering[at];
+    if (l->fd < 0) return;
+    if (l->receiving && !l->ending) {
+        dn_prep_cancel_fd(sqe(DN_TOKEN(R_LINGER_CANCEL, (unsigned)at, (uint32_t)l->since)), l->fd);
+        l->ending = 1;
+    }
+    while (l->fd >= 0 && l->receiving) reap(-1);
+    if (l->fd >= 0) drop_lingering(l);
+}
+
+/* What epoll reported, as wait_for takes what poll reported: whether there is something to give out. */
+static int readiness(void) {
+    ready_pending = 0;
+    struct epoll_event events[CONNS + 8];
+    int n = epoll_wait(ready_fd, events, (int)(sizeof events / sizeof events[0]), 0);
+    if (n < 0 && errno != EINTR) dn_harness("epoll_wait: %s", strerror(errno));
+    int news = 0;
+    for (int k = 0; k < n; ++k) {
+        uint64_t what = events[k].data.u64;
+        if (what == E_SIGNALS) signalled();
+        else if (what == E_CLOCK) read_clock();
+        else if (what == E_LISTENER && !(events[k].events & POLLIN)) continue;
+        else if (what == E_LISTENER && tls_cert) news |= take_handshakes(now_ms());
+        else if (what == E_LISTENER) news = accept_ready = 1;
+        else if (what < CONNS && conns[what].fd >= 0) {
+            struct conn *c = &conns[what];
+            short revents = (short)(events[k].events & (uint32_t)(wanted_of(c) | POLLERR | POLLHUP | POLLNVAL));
+            if (c->handshaking && revents) news |= handshake((int)what, revents);
+            else if (revents) c->ready |= revents, news = 1;
+        }
+    }
+    return news;
+}
+
+/* With io_uring, as wait_for with poll: until something is ready to give out or `wake` has come. */
+static void wait_ring(uint64_t wake) {
+    for (;;) {
+        uint64_t now = now_ms();
+        int paused = now < accept_paused_until;
+        int timeout = until(wake, -1);
+        timeout = paused ? until(accept_paused_until, timeout) : timeout;
+        int news = 0;
+        /* Out of the set until it listens: a socket bound and not listening reports a hang-up. */
+        if (listening) watch(listener, E_LISTENER, &listener_mask, free_indexes() > 0 && !paused ? POLLIN : 0);
+        /* Input taken off a socket, by a receive or by TLS, and not yet given out no readiness reports. */
+        int held = 0;
+        for (int i = 0; i < CONNS; ++i) {
+            struct conn *c = &conns[i];
+            if (c->fd < 0) continue;
+            if (c->handshaking) {
+                if (now >= c->handshake_until) {
+                    news |= handshake(i, 0);
+                    if (c->fd < 0) continue;
+                }
+                timeout = until(c->handshake_until, timeout);
+            }
+            if (c->reading && ((c->tls && !c->handshaking && dn_tls_pending(c->tls)) || (!c->tls && c->input))) {
+                held = 1;
+                c->ready |= POLLIN;
+            }
+            if (c->fd >= 0) interest(i);
+        }
+        if (held) return;
+        for (int at = 0; at < LINGERING; ++at) {
+            struct lingering *l = &lingering[at];
+            if (l->fd < 0) continue;
+            uint64_t ends = l->until < l->quiet_until ? l->until : l->quiet_until;
+            if (now >= ends && !l->receiving) {
+                drop_lingering(l);
+                continue;
+            }
+            if (now >= ends && !l->ending) {
+                dn_prep_cancel_fd(sqe(DN_TOKEN(R_LINGER_CANCEL, (unsigned)at, (uint32_t)l->since)), l->fd);
+                l->ending = 1;
+            } else if (!l->receiving && !l->ending) {
+                dn_prep_recv(sqe(DN_TOKEN(R_LINGER, (unsigned)at, (uint32_t)l->since)), l->fd, l->sink,
+                             sizeof l->sink);
+                l->receiving = 1;
+            }
+            timeout = until(ends, timeout);
+        }
+        if (!ready_armed) {
+            dn_prep_poll(sqe(DN_TOKEN(R_READY, 0, 0)), ready_fd, POLLIN);
+            ready_armed = 1;
+        }
+        if (!news && !ready_pending) reap(timeout);
+        if (ready_pending) news |= readiness();
+        news |= dn_jobs_ready() | dn_accounts_ready();
+        for (int i = 0; i < CONNS; ++i) news |= conns[i].lost || conns[i].handshaken;
+        if (woken(news, wake)) return;
+    }
+}
+
+/* The ring's epoll set: the signals, the test's clock, the file jobs' and the accounts' completions. */
+static void ready_setup(void) {
+    int mask[4] = {-1, -1, -1, -1};
+    const int fds[4] = {signals, clock_fd, jobs_done, dn_accounts_fd()};
+    for (int k = 0; k < 4; ++k)
+        if (fds[k] >= 0) watch(fds[k], E_SIGNALS + (uint64_t)k, &mask[k], POLLIN);
+}
+
+/* At a stop, with io_uring: every operation cancelled and reaped before the descriptors close. */
+static void ring_stopped(void) {
+    struct io_uring_sqe *s = sqe(DN_TOKEN(R_STOP, 0, 0));
+    s->opcode = IORING_OP_ASYNC_CANCEL;
+    s->fd = -1;
+    s->cancel_flags = IORING_ASYNC_CANCEL_ANY | IORING_ASYNC_CANCEL_ALL;
+    struct io_uring_cqe c;
+    for (int rounds = 0; ring.live && rounds < 100; ++rounds) {
+        int e = dn_ring_enter(&ring, 1, 100);
+        if (e) dn_harness("io_uring_enter: %s", strerror(-e));
+        while (dn_ring_take(&ring, &c, NULL)) {}
+    }
+    if (ring.live) dn_harness("io_uring: %llu operations not reaped at the stop", (unsigned long long)ring.live);
+    dn_ring_close(&ring);
+    close(ready_fd);
+    while (to_linger_n) close(to_linger[--to_linger_n]);
+}
+
 void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_session_call(c, clen, a, alen, DN_SESSION_NEXT_OFF, DN_SESSION_NEXT_LEN, "dn_next");
     if (awaiting_emit) dn_violation("dn_next: the program fetched again without handing over its answers");
@@ -627,7 +973,10 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
         if (report_fd >= 0) report(wake);
     }
     started = 1;
-    if (!carrying && !first) wait_for(wake);
+    if (!carrying && !first) {
+        if (io_poll) wait_for(wake);
+        else wait_ring(wake);
+    }
     uint64_t now = now_ms();
     turn_events = 0;
     give_verdicts(a);
@@ -676,11 +1025,29 @@ static void trace_actions(const unsigned char *a) {
     }
 }
 
+/* What became of a send of `len` octets, `read` saying whether to read once it is taken whole: the
+ * kernel or TLS took `taken`, or the send `failed`. */
+static void sent(struct conn *cn, unsigned char *slot, uint64_t taken, int failed, uint64_t len, uint64_t read) {
+    counted.out += taken;
+    if (failed) {
+        end_tls(cn, 0);
+        if (io_poll) close(cn->fd), cn->fd = -1;
+        else retire(cn, 0);
+        cn->lost = 1;
+        carrying = 1;
+    }
+    dn_put_word(slot + DN_SESSION_ACTION_TAKEN, taken);
+    cn->unsent = !cn->lost && taken < len;
+    cn->reading = !cn->lost && read && taken == len;
+}
+
 void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
     dn_session_call(c, clen, a, alen, DN_SESSION_EMIT_OFF, DN_SESSION_EMIT_LEN, "dn_emit");
     if (!awaiting_emit) dn_violation("dn_emit: the program answered without fetching");
     uint64_t count = dn_word(a + DN_SESSION_EMIT_COUNT);
     turn_actions = 0;
+    /* With io_uring, the plain connections' sends of the turn, submitted together below. */
+    int batched[CONNS] = {0};
     for (int k = 0; k < CONNS; ++k) {
         unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + (size_t)k * DN_SESSION_ACTION_SLOT;
         uint64_t kind = dn_word(slot + DN_SESSION_ACTION_KIND);
@@ -712,6 +1079,12 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             explicit_bzero(password, len - read);
             cn->checking = 1;
             cn->reading = 0;
+        } else if (kind == DN_SESSION_SEND && !io_poll && !cn->tls && len) {
+            dn_prep_send(sqe(conn_token(R_SEND, k)), cn->fd, slot + DN_SESSION_ACTION_HEAD, (unsigned)len,
+                         MSG_DONTWAIT);
+            ++cn->ops;
+            ++sends_live;
+            batched[k] = 1;
         } else if (kind == DN_SESSION_SEND) {
             int failed;
             uint64_t taken;
@@ -725,17 +1098,12 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
                 taken = n > 0 ? (uint64_t)n : 0;
                 failed = n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR;
             }
-            counted.out += taken;
-            if (failed) {
-                end_tls(cn, 0);
-                close(cn->fd);
-                cn->fd = -1;
-                cn->lost = 1;
-                carrying = 1;
-            }
-            dn_put_word(slot + DN_SESSION_ACTION_TAKEN, taken);
-            cn->unsent = !cn->lost && taken < len;
-            cn->reading = !cn->lost && read && taken == len;
+            sent(cn, slot, taken, failed, len, read);
+        } else if (!io_poll) {
+            end_tls(cn, kind == DN_SESSION_CLOSE_GRACEFULLY);
+            ++*(kind == DN_SESSION_CLOSE_GRACEFULLY ? &counted.graceful : &counted.abrupt);
+            retire(cn, kind == DN_SESSION_CLOSE_GRACEFULLY);
+            free_index(cn);
         } else {
             int fd = cn->fd;
             end_tls(cn, kind == DN_SESSION_CLOSE_GRACEFULLY);
@@ -750,6 +1118,17 @@ void ffidn_emit(unsigned char *c, long clen, unsigned char *a, long alen) {
             }
         }
     }
+    /* Sends that do not wait complete as they are submitted. */
+    while (sends_live) reap(-1);
+    for (int k = 0; k < CONNS; ++k) {
+        if (!batched[k]) continue;
+        unsigned char *slot = a + DN_SESSION_EMIT_ACTIONS + (size_t)k * DN_SESSION_ACTION_SLOT;
+        int res = send_res[k];
+        sent(&conns[k], slot, res > 0 ? (uint64_t)res : 0, res < 0 && res != -EAGAIN && res != -EINTR,
+             dn_word(slot + DN_SESSION_ACTION_LEN), dn_word(slot + DN_SESSION_ACTION_READ));
+    }
+    /* The graceful closes of the turn, which no completion may follow. */
+    if (!io_poll) linger_queued();
     dn_jobs_take(a);
     if (turn_actions != count)
         dn_violation("dn_emit: %" PRIu64 " actions counted, %" PRIu64 " in the slots", count, turn_actions);
@@ -804,11 +1183,11 @@ static void identity(const char *name, const char *value, size_t max) {
 static void read_settings(const char *path);
 
 /* Settings taken once at most; the file of settings, given either way, counts as one. */
-enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_SPOOL = 8, GIVEN_ONCE = 14 };
+enum { GIVEN_PORT, GIVEN_ADDRESS, GIVEN_SETTINGS, GIVEN_SPOOL = 8, GIVEN_ONCE = 15 };
 static const char *const taken_once[GIVEN_ONCE] = {
     [GIVEN_PORT] = "--port", [GIVEN_ADDRESS] = "--address", [GIVEN_SETTINGS] = "--config", "--revision", "--source",
     "--send-buffer", "--clock-fd", "--report-fd", [GIVEN_SPOOL] = "--spool", "--run-dir", "--path-identity",
-    "--tls-cert", "--tls-key", "--users"};
+    "--tls-cert", "--tls-key", "--users", "--io"};
 static int given[sizeof taken_once / sizeof *taken_once];
 
 /* A number of the setting `name`, the file's line named. */
@@ -835,6 +1214,11 @@ static void set(const char *name, const char *value) {
     else if (!strcmp(name, "--tls-cert")) tls_cert = value;
     else if (!strcmp(name, "--tls-key")) tls_key = value;
     else if (!strcmp(name, "--users")) users = value;
+    else if (!strcmp(name, "--io")) {
+        if (strcmp(value, "uring") && strcmp(value, "poll"))
+            dn_harness("%s--io: uring or poll, not %s", setting_at, value);
+        io_poll = !strcmp(value, "poll");
+    }
     else if (!strcmp(counted_as, "--config")) {
         checking = !strcmp(name, "--check-config");
         read_settings(value);
@@ -944,7 +1328,7 @@ __attribute__((noreturn)) static void say_settings(void) {
     dn_json_string(stdout, revision);
     fputs(",\"source\":", stdout);
     dn_json_string(stdout, source);
-    printf(",\"send_buffer\":%d,\"tls_cert\":", send_buffer);
+    printf(",\"send_buffer\":%d,\"io\":\"%s\",\"tls_cert\":", send_buffer, io_poll ? "poll" : "uring");
     if (tls_cert) dn_json_string(stdout, tls_cert);
     else fputs("null", stdout);
     fputs(",\"tls_key\":", stdout);
@@ -981,6 +1365,12 @@ int main(int argc, char **argv) {
         if (dn_accounts_load(users, why, sizeof why)) dn_harness("users: %s", why);
     }
     if (checking) say_settings();
+    if (!io_poll) {
+        char why[256];
+        if (dn_ring_open(&ring, RING_ENTRIES, ring_ops, sizeof ring_ops, why, sizeof why))
+            dn_harness("%s; --io poll waits without it", why);
+        if ((ready_fd = epoll_create1(EPOLL_CLOEXEC)) < 0) dn_harness("epoll_create1: %s", strerror(errno));
+    }
     int handed = handed_listener();
     /* Blocked before anything starts, the workers too, so that a signal waits for the loop. */
     sigset_t mask;
@@ -995,8 +1385,9 @@ int main(int argc, char **argv) {
     dn_store_start();
     jobs_done = dn_jobs_start(dn_store_spool());
     if (users) dn_accounts_start();
+    if (!io_poll) ready_setup();
     if (clock_fd >= 0) now_virtual = 1;
-    for (int i = 0; i < CONNS; ++i) conns[i].fd = -1;
+    for (int i = 0; i < CONNS; ++i) conns[i].fd = conns[i].closing_fd = conns[i].polled = -1;
     for (int i = 0; i < LINGERING; ++i) lingering[i].fd = -1;
 
     struct sockaddr_storage where;
