@@ -445,7 +445,7 @@ class CheckScript(unittest.TestCase):
                    "session_native.py": "session",
                    "nntp_check.py": "nntp", "crash_check.py": "crash", "faults_check.py": "faults",
                    "parser_contract.py": "parser",
-                   "native_fuzz.py": "fuzz", "power_check.py": "power"}
+                   "native_fuzz.py": "fuzz", "uring_check.py": "uring", "power_check.py": "power"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
@@ -481,8 +481,8 @@ class CheckScript(unittest.TestCase):
                                               "nntp --cake /pinned/cake", "crash --cake /pinned/cake",
                                               "faults --cake /pinned/cake",
                                               "parser --cake /pinned/cake",
-                                              "fuzz --cake /pinned/cake"]))
-            self.assertEqual(put.read_text().split(), ["abnfgen", "libfiu", "libfiu"])
+                                              "fuzz --cake /pinned/cake", "uring --cake /pinned/cake"]))
+            self.assertEqual(put.read_text().split(), ["abnfgen", "libfiu", "libfiu", "libfiu"])
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
                 if lane != "power":

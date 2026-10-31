@@ -82,7 +82,8 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | Stamp and copy | 3,365 cases: the literal stamped and copied at every pair of offsets of two buffers and at two pages' ends, six broken kernels refused; `stampCopy_run` proves the model's run of the same source | The caller's buffers outside the heap |
 | Stopping states | 146 cases, 144 of which stop, against an independent implementation (`scripts/state_check.py`) and HOL4's `evaluate` (`scripts/check_semantics.sh`, in the backend workflow) | Not a proof against HOL |
 | Test sensitivity | Defects planted for every lane above, each caught ([details](#test-sensitivity)) | Chosen by hand |
-| TCP integration | Binary bytes, chunks, a 512 KiB stream, concurrent and slow clients, resets, admission, expiry | Reference `poll` adapter |
+| TCP integration | Binary bytes, chunks, a 512 KiB stream, concurrent and slow clients, resets, admission, expiry | The `poll` and io_uring echo hosts |
+| io_uring echo | The ring layer's 15 cases on the running kernel; the echo corpus with one thread, a thread a core and sanitized; stops, expiry, pinning, the send buffer, the descriptors counted; faults injected; 10 refusals; 21 planted defects caught ([details](#io_uring-echo)) | Renewal alone by a send or a receive; races uninstrumented |
 | Host/concurrency | Runtime tests and 30 Loom tests | Loom's C11 model |
 
 ### Generated programs
@@ -272,6 +273,32 @@ No file of the spool is left open; without TLS the allocator holds no more once 
 Each spool is held as in the crash lane. It catches 11 planted defects of the faults lane.
 
 An article's file changed after the start in 6 ways after `fn`'s table, of one buffer and of two, is never sent whole; STAT still answers and a post is taken. The next start refuses the store where recovery finds it corrupt or a file opens no more.
+
+### io_uring echo
+
+`scripts/uring_check.py` runs `native/uring_check.c` on the running kernel. It checks what a ring refuses, registration included, and a seccomp filter's EPERM and ENOSYS for io_uring.
+
+The layer's check also takes more submissions and completions than the queues hold, cancels by token and by descriptor, sends a message between two threads' rings, waits until a time or not at all, and closes a ring with an operation live.
+
+It assembles the generated echo and its runtime once a copy, every global symbol prefixed and no other left. It runs the echo corpus against the host with one thread, with a thread a core, and built with AddressSanitizer and UndefinedBehaviorSanitizer.
+
+A stop by SIGTERM or SIGINT with sixteen connections' receives and sends in flight ends with status 0, each operation cancelled and reaped. Eight idle connections each expire once, the four holding replies counted apart.
+
+A reply never taken fills the send queue to a few kilobytes with `--send-buffer 2048`, and to far more without. With exactly the descriptors the host counts, every slot serves at once, and one fewer is refused.
+
+The test build injects faults through libfiu. A receive's completion made stale ends the host with status 1. An interrupted wait, a full completion queue, a shortage of memory and submissions taken one at a time leave a run as without them.
+
+A failed hand-over or socket option costs only its connection, and a connection handed over after the stop is closed at once.
+
+Each start is refused with its reason: io_uring refused, missing or older than 6.6, a feature missing, a thread that cannot start or be created, too few descriptors, a start record that cannot be written. Threads that started are stopped first; a failed wait ends the host with status 2.
+
+The kernel's refusals are injected at the setup's call; the layer's check sees the first two from a real filter.
+
+Run on two cores, the host starts a thread on each, pinned there. A stop a thread cannot be told of ends the host with status 2. The report records the kernel and `kernel.io_uring_disabled`.
+
+Four slow readers at once are kept. That a send's progress alone renews a deadline is not separated, here or by the corpus on this host: its next send goes as the last completes, so a reply reaches the kernel within the time its receive renewed. Nor is a receive's renewal, which a send follows at once.
+
+ThreadSanitizer cannot run in the sandbox, whose seccomp profile refuses the personality call it needs; the threads share only what a lock or a join orders.
 
 ### Host's store
 

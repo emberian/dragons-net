@@ -42,4 +42,16 @@ SIGINT/SIGTERM stops the server, closes its connections, and prints counters to 
 * The listening socket sets `SO_REUSEADDR`, so a restart does not have to wait out `TIME_WAIT` on a fixed port.
 * Cake runtime memory is allocated once (1 MiB heap and 1 MiB stack), and native entry occurs on one thread. Concurrent entry into that shared runtime is unsupported.
 
+## On io_uring
+
+`native/echo_uring.c` serves the same echo on io_uring with the poll host's options, admission and counters, and `tests/echo_integration.py` runs against both. `bash scripts/native_lanes.sh uring` builds and checks it. A send is submitted as soon as the last completes, so a reply reaches the kernel sooner than the poll host's, which waits to be told the socket is writable.
+
+* A thread a core the process may run on, pinned there, at most 8, each with its own ring and copy of the Cake image, since two threads cannot enter one; every global symbol of a copy is prefixed with `copyK_`. `--threads N` sets the count, by default the cores or fewer, to fit the descriptors.
+* The main thread owns the listener and the admission count. It accepts only while fewer than 32 connections are held in all, hands each to a thread as a message on that thread's ring, and is told when one is let go.
+* A connection keeps one receive or send in flight. Its end of input, an error, its idle deadline or the stop cancels that operation; its descriptor closes only once every completion of it is reaped. A completion's token names its slot's generation, and one for another generation is a violation (status 1).
+* SIGTERM or SIGINT stops accepting, stops each thread so, waits for it, and only then closes the rings. Pending replies are not drained. A start that fails once a thread runs stops the threads the same way, with status 1.
+* The rings come from `native/uring.c`: io_uring through its system calls, without liburing, opened disabled, restricted to the operations the host submits, then enabled; no flag and no further registration is taken. It needs Linux 6.6, for the newest setup flag it passes.
+* io_uring missing or refused (seccomp, `kernel.io_uring_disabled`), an older kernel or a missing feature ends the host at the start with status 1. Nothing falls back to `poll`.
+* Nothing is ported from `migration/dataplane`; its [blockers](porting-risks.md) are the design's constraints: a generation in each token, cancellation before close, an ordered stop, bounded tables.
+
 The host is trusted C code compiled with warnings as errors. It is not the optimized dataplane, is not derived from the Rust runtime crate, and is not a formally verified socket adapter. The [baseline](baseline.md) spells out the tests and open connections. The service is TCP byte echo, not NTP and not an NNTP implementation.
