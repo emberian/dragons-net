@@ -47,6 +47,10 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.Compiler.Components`, the clock | No run ends with more clock than it began with, so statements in sequence group either way (`clock_le`, `seq_assoc`) | Item 1 |
 | `DN.Compiler.Wp` | In the model, from `wp c Q` a run of `c` ends as a run may or finishes in `Q`, once `Q` and the invariants ignore the clock and loops keep them (`wp_sound`) | Item 1; termination |
 | `DN.News.SipHashCode`, `DN.News.CrcCode` | The printed programs compute `SipHash.tag` under a sixteen-octet key (`sip_safe`), the CRC table (`fill_safe`) and a buffer's CRC-32C (`crc_safe`); `sipPre_witness`, `fillGiven_witness`, `crcPre_witness` hold the premises | Item 1; termination |
+| `DN.Compiler.WpRet` | In the model, from `wpR c R Q` a run ends as runs may, returns a value and memory in `R`, or finishes in `Q`, once `Q` ignores the clock and `vcR` holds (`wpR_sound`); a fragment without return keeps its `Safe` proof (`ofSafe`) | Item 1; termination |
+| `DN.Compiler.Block` | A block with no declaration or call at its top, followed by more statements, runs as its lowering and then theirs (`fold_append`); a call takes what its callee gives back (`decCallR`, `decCallM`) | Item 1; termination |
+| `DN.Compiler.WpRet`, frames | A program writing no memory leaves it (`noWrite_run`, `keepsMemory`); two endings shown of one run hold together (`both`) | Item 1 |
+| `DN.Server.SessionHash` | The session's `crcTable` builds the CRC-32C's table in its words, `idHash` the cell of a Message-ID up to 250 octets, neither changing other words (`crcTable_run`, `idHash_run`), as its code holds them; its covered heap holds their words | Item 1; termination; the other functions, and the hash's uses inside them |
 | Session program (`scripts/session_native.py`) | The compiled session answers as the model on its scenarios and 200 drawn hosts, and stops on hosts the model cannot describe | That it is the specification on every run |
 | Crashes (`scripts/crash_check.py`) | Killed before each file operation, recovery's too, the server keeps every article held or answered 240, whole, and nothing else; clients read a prefix of an unkilled run's replies; restarted, it recovers as `scripts/recovery_ref.py`, reads all back, takes new posts | Power loss: a killed process loses nothing it wrote |
 | Power loss (`scripts/power_check.py`) | On LazyFS, power lost before each operation, after a run with each failed with EIO, and in each journal write torn, the server keeps every article answered 240, whole, holds none it refused, and restarts as `scripts/recovery_ref.py` | Names durable at once: a missing directory sync is not shown; a failed sync keeps its data unsynced |
@@ -77,7 +81,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 24,566 declarations, including 11,520 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 24,933 declarations, including 11,746 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
