@@ -32,9 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The path above is what makes these importable.
 import lanes
 from lanes import ROOT
+from state_corpus import FIELDS, pairs, parse_cases, parse_sexp
 from words import MASK, signed, word_op
 
-FIELDS = ("RESULT", "FLOCALS", "FMEM", "FCALLS", "FTRACE", "FCLOCK", "FBASE")
+# The corpus the HOL lane runs through panSem (scripts/check_semantics.sh).
+CORPUS = ROOT / "backend/semantics/states.txt"
 # The lowered operators, by the source operator that computes them.
 OPERATORS = {"add": "+", "sub": "-", "and": "&", "mul": "*", "less": "<", "equal": "==", "shr": ">>>",
              "xor": "^", "or": "|", "shl": "<<"}
@@ -62,8 +64,9 @@ class State:
     """The fields of `panSem state` the subset reads."""
 
     def __init__(self, locals_: dict[str, int], memory: dict[int, int], dom: set[int],
-                 be: bool, clock: int, base: int) -> None:
+                 be: bool, clock: int, base: int, code: dict[str, tuple[list[str], Any]]) -> None:
         self.locals = dict(locals_)
+        self.code = code
         self.memory = dict(memory)
         self.dom = dom
         self.be = be
@@ -73,7 +76,7 @@ class State:
         self.trace: list[str] = []
 
     def copy(self) -> State:
-        other = State(self.locals, self.memory, self.dom, self.be, self.clock, self.base)
+        other = State(self.locals, self.memory, self.dom, self.be, self.clock, self.base, self.code)
         other.calls, other.trace = self.calls, list(self.trace)
         return other
 
@@ -270,31 +273,47 @@ def run(prog: Any, s: State, answers: list[str]) -> tuple[Any, State]:
         after = s.copy()
         after.locals = {}
         return (("return", value), after)
+    if head == "deccall":
+        return call(prog, s, answers)
     raise SystemExit(f"unknown statement {head}")
 
 
-def parse_sexp(text: str, at: int = 0) -> tuple[Any, int]:
-    """The printed S-expression back into a nested list."""
-    while text[at] == " ":
-        at += 1
-    if text[at] != "(":
-        start = at
-        while at < len(text) and text[at] not in " ()":
-            at += 1
-        return (text[start:at], at)
-    at += 1
-    items: list[Any] = []
-    while True:
-        while text[at] == " ":
-            at += 1
-        if text[at] == ")":
-            return (items, at + 1)
-        item, at = parse_sexp(text, at)
-        items.append(item)
-
-
-def pairs(text: str) -> list[tuple[str, str]]:
-    return [] if not text else [(p.split("=", 1)[0], p.split("=", 1)[1]) for p in text.split(",")]
+def call(prog: Any, s: State, answers: list[str]) -> tuple[Any, State]:
+    """`DecCall rt One f args cont`: `lookup_code` wants distinct parameters, one per argument;
+    the body runs on them alone with the clock one down, `fix_clock` keeps the clock from
+    growing, and only a return goes on to the continuation, with `rt` restored after it."""
+    rt, fname, argexps, cont = prog[1], prog[2], prog[3], prog[4]
+    args = [evaluate(e, s) for e in argexps]
+    values = [a for a in args if a is not None]
+    found = s.code.get(fname)
+    if len(values) != len(args) or found is None:
+        return (("error",), s)
+    params, body = found
+    if len(set(params)) != len(params) or len(params) != len(values):
+        return (("error",), s)
+    if s.clock == 0:
+        after = s.copy()
+        after.locals = {}
+        return (("timeout",), after)
+    inner = s.copy()
+    inner.clock = s.clock - 1
+    inner.locals = dict(zip(params, values, strict=True))
+    result, after = run(body, inner, answers)
+    after.clock = min(s.clock - 1, after.clock)
+    if result is None or result in (("break",), ("continue",)):
+        return (("error",), after)
+    if result[0] != "return":
+        ended = after.copy()
+        ended.locals = {}
+        return (result, ended)
+    resumed = after.copy()
+    resumed.locals = {**s.locals, rt: result[1]}
+    outcome, final = run(cont, resumed, answers)
+    if rt in s.locals:
+        final.locals[rt] = s.locals[rt]
+    else:
+        final.locals.pop(rt, None)
+    return (outcome, final)
 
 
 def prog_names(prog: Any) -> set[str]:
@@ -315,6 +334,8 @@ def prog_names(prog: Any) -> set[str]:
         return exp_names(prog[1]) | prog_names(prog[2])
     if head == "ret":
         return exp_names(prog[1])
+    if head == "deccall":
+        return {prog[1]} | set().union(*(exp_names(e) for e in prog[3])) | prog_names(prog[4])
     return set()
 
 
@@ -326,26 +347,15 @@ def exp_names(exp: Any) -> set[str]:
     return set().union(*(exp_names(e) for e in exp[1:]))
 
 
-def parse_cases(dump: str) -> list[dict[str, str]]:
-    cases: list[dict[str, str]] = []
-    current: dict[str, str] = {}
-    for line in dump.splitlines():
-        if line == "END":
-            cases.append(current)
-            current = {}
-            continue
-        key, _, value = line.partition(" ")
-        current[key] = value
-    return cases
-
-
 def answer_of(case: dict[str, str]) -> dict[str, str]:
     """What the independent implementation says this case ends in."""
     prog, _ = parse_sexp(case["PROG"])
+    functions, _ = parse_sexp(case["CODE"])
+    code = {f: (params, body) for f, params, body in functions}
     dom = {int(a) for a in case["DOM"].split(",") if a}
     state = State({k: int(v) for k, v in pairs(case["LOCALS"])},
                   {int(a): int(w) for a, w in pairs(case["MEM"])},
-                  dom, case["BE"] == "1", int(case["CLOCK"]), int(case["BASE"]))
+                  dom, case["BE"] == "1", int(case["CLOCK"]), int(case["BASE"]), code)
     answers = [a for a in case["ANSWERS"].split(";") if a]
     result, final = run(prog, state, answers)
     if result is None:
@@ -359,7 +369,8 @@ def answer_of(case: dict[str, str]) -> dict[str, str]:
         printed = result[0]
     names = [n for n in case["NAMES"].split(",") if n]
     # The dump decides which locals are compared, so it has to name them all.
-    expected = prog_names(prog) | {k for k, _ in pairs(case["LOCALS"])}
+    expected = (prog_names(prog) | {k for k, _ in pairs(case["LOCALS"])}
+                | set().union(*(set(params) | prog_names(body) for _, params, body in functions)))
     if not expected <= set(names):
         raise SystemExit(f"state check: {case['CASE']} does not print the names "
                          f"{sorted(expected - set(names))}, so their locals are not compared")
@@ -380,7 +391,7 @@ def write_answer_of(case: dict[str, str]) -> dict[str, str]:
     body = case["WBYTES"]
     bytes_ = [] if body == "-" else [int(body[i:i + 2], 16) for i in range(0, len(body), 2)]
     state = State({}, {int(a): int(w) for a, w in pairs(case["WMEM"])}, dom,
-                  case["WBE"] == "1", 0, 0)
+                  case["WBE"] == "1", 0, 0, {})
     state.write_bytes(int(case["WADDR"]), bytes_)
     return {"WRESULT": ",".join(f"{a}={state.word(a)}" for a in sorted(dom))}
 
@@ -400,9 +411,14 @@ def main() -> int:
         least = 1
     else:
         try:
-            cases = parse_cases(lanes.emit("dump-states", timeout=600, compiler=args.compiler))
+            printed = lanes.emit("dump-states", timeout=600, compiler=args.compiler)
         except lanes.LaneError as error:
             raise SystemExit(f"state check: {error}") from None
+        # The HOL lane reads the corpus from this file, so it has to be what the model prints now.
+        if not CORPUS.exists() or CORPUS.read_text() != printed:
+            raise SystemExit(f"state check: {CORPUS.relative_to(ROOT)} is not what the model prints; "
+                             "write it with `dn-compiler dump-states`")
+        cases = parse_cases(printed)
         least = 80
     # The corpus is the point: a dump that lost most of its cases, or all of them,
     # would otherwise pass this lane in silence.

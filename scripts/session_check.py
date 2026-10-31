@@ -92,15 +92,19 @@ MUTANTS = ("line-renewed", "no-line-deadline", "line-while-busy", "idle-not-rene
            "bytes-stuffed", "bytes-without-xref", "lines-whole", "overview-without-xref", "absent-dropped",
            "absent-listed", "xhdr-numbered", "overview-longer", "overview-early", "status-repeated",
            "view-failure-answered", "range-later", "header-stuffed", "xref-folded", "metadata-cased",
-           "first-failure-closed", "refused-after-group")
+           "first-failure-closed", "refused-after-group", "auth-in-clear", "auth-again", "pass-unnamed", "name-kept",
+           "auth-unadvertised", "auth-advertised-after", "login-no-post", "answer-while-checking", "check-deadlines",
+           "read-while-checking", "long-name-kept", "auth-unoffered", "first-name-kept", "login-unasked")
 # Those of reading, tried on the scenarios that read first, those of the selected group, on the
 # scenarios that select one, those of the listings, on the scenarios that list, those of READER
-# and MODE READER, on the scenarios that ask for them, and those of OVER and HDR, on theirs.
+# and MODE READER, on the scenarios that ask for them, and those of OVER and HDR and of AUTHINFO, on
+# theirs.
 READ_MUTANTS = MUTANTS[MUTANTS.index("ninth-read"):MUTANTS.index("group-keeps-current")]
 GROUP_MUTANTS = MUTANTS[MUTANTS.index("group-keeps-current"):MUTANTS.index("listgroup-keeps-current")]
 LIST_MUTANTS = MUTANTS[MUTANTS.index("listgroup-keeps-current"):MUTANTS.index("reader-unadvertised")]
 MODE_MUTANTS = MUTANTS[MUTANTS.index("reader-unadvertised"):MUTANTS.index("xover-by-id")]
-VIEW_MUTANTS = MUTANTS[MUTANTS.index("xover-by-id"):]
+VIEW_MUTANTS = MUTANTS[MUTANTS.index("xover-by-id"):MUTANTS.index("auth-in-clear")]
+AUTH_MUTANTS = MUTANTS[MUTANTS.index("auth-in-clear"):]
 REQUIREMENTS = lanes.ROOT / "scripts/requirements-tests.txt"
 ARTICLES = lanes.ROOT / "scripts/article_ref.py"
 
@@ -127,8 +131,11 @@ class Client:
     pause: tuple[int, int] = (0, 0)
     # it is reported ready to write even while it takes nothing
     false_ready: bool = False
-    # it may post
+    # it may post, may log in, runs over TLS, and how long the host takes to check a name and password
     post: bool = False
+    logins: bool = False
+    tls: bool = False
+    check_time: int = 3
 
     def stream(self, now: int) -> bytes:
         return b"".join(data for at, data in self.sends if at <= now)
@@ -158,6 +165,9 @@ class Link:
     unsent: bool = False
     ready: int = 0
     ended: bool = False
+    # the name and password with the host, and when its verdict is due
+    checking: tuple[bytes, bytes] | None = None
+    verdict: int = 0
 
     def asked(self) -> bool:
         return self.reading and not self.unsent
@@ -267,7 +277,9 @@ class Speaker:
         """A turn with a store: the wall clock, the completions, and the jobs the session answers."""
         self.say(f"turn {now} {wall}")
         for e in events:
-            extra = [e.data.hex() or "-"] if e.kind == "recv" else ["1"] if e.kind == "open" and e.post else []
+            flags = e.post + 2 * e.logins + 4 * e.tls
+            extra = [e.data.hex() or "-"] if e.kind == "recv" else [str(flags)] if e.kind == "open" and flags else \
+                [str(int(e.ok))] if e.kind == "verdict" else []
             self.say(" ".join([e.kind, str(e.idx), str(e.gen), *extra]))
         for done in dones:
             said = ",".join(f"{a}:{b}" for a, b in done[3]) or "-"
@@ -284,6 +296,9 @@ class Speaker:
                                           read == "1"))
                 case ["graceful" | "close" as kind, idx, gen]:
                     actions.append(Action(kind, int(idx), int(gen)))
+                case ["verify", idx, gen, name, given]:
+                    actions.append(Action("verify", int(idx), int(gen), b"" if name == "-" else bytes.fromhex(name),
+                                          secret=b"" if given == "-" else bytes.fromhex(given)))
                 case ["job", slot, gen, *ops]:
                     jobs.append((int(slot), int(gen), [operation(op) for op in ops]))
                 case _:
@@ -653,6 +668,8 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
                 link.read += len(report.data)
             elif report.kind == "end":
                 link.ended = True
+            elif report.kind == "verdict":
+                link.checking = None
         while waiting and clients[waiting[0]].opens <= now and len(events) < BATCH:
             free = [i for i in range(ref.CONNS) if i not in links]
             if not free:
@@ -661,7 +678,7 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
             gens[idx] += 1
             client = clients[waiting.pop(0)]
             links[idx] = Link(client, idx, gens[idx])
-            events.append(Event("open", idx, gens[idx], post=client.post))
+            events.append(Event("open", idx, gens[idx], post=client.post, logins=client.logins, tls=client.tls))
         dones = host.complete(now)
         wall = host.spool.wall + now
         answer = session.turn_post(now, wall, events, dones)
@@ -679,6 +696,9 @@ def simulate_post(session: Speaker, clients: list[Client], host: Host, trace: li
                 target.unsent = k < len(action.data)
                 target.ready = target.client.ready_at(now)
                 target.reading = action.read
+            elif action.kind == "verify":
+                target.checking, target.verdict = (action.data, action.secret), now + target.client.check_time
+                target.reading = False
             else:
                 del links[action.idx]
         try:
@@ -719,6 +739,9 @@ def news(link: Link, now: int) -> Event | None:
     c = link.client
     if c.reset is not None and c.reset <= now:
         return Event("closed", link.idx, link.gen)
+    if link.checking is not None:
+        return Event("verdict", link.idx, link.gen, ok=ACCOUNTS.get(link.checking[0]) == link.checking[1]) \
+            if now >= link.verdict else None
     if link.unsent:
         return Event("writable", link.idx, link.gen) if now >= link.ready else None
     if link.asked():
@@ -744,11 +767,17 @@ def next_time(now: int, deadline: int, links: dict[int, Link], clients: list[Cli
     for link in links.values():
         c = link.client
         times += [t for t in (c.reset, c.shut) if t is not None]
-        if link.unsent:
+        if link.checking is not None:
+            times.append(link.verdict)
+        elif link.unsent:
             times.append(link.ready)
         elif link.asked():
             times += [at for at, _ in c.sends]
     return min((t for t in times if t > now), default=None)
+
+
+# The accounts the simulated host checks names and passwords against.
+ACCOUNTS = {b"alice": b"s3cret", b"bob": b"\xc3\xa9t\xc3\xa9"}
 
 
 def ascii_lines(*lines: str) -> bytes:
@@ -884,6 +913,11 @@ def plain_scenarios() -> Iterator[tuple[str, list[Client], bool]]:
     yield "a line begun while output is untaken", [
         Client(1, [(5, b"HELP\r\nHE")], take=10, slow=5, pace=60_000)], False
     yield "a reset", [Client(1, [(5, HELP)], reset=6, take=10)], False
+    # A's first command was due at 10001; B, at A's index since 2000, is due at 12000 and sends one at
+    # 11000. A line deadline left over is never seen: a whole line clears it, and before one the first
+    # command's deadline comes sooner.
+    yield "a deadline of a connection gone, its index taken", [
+        Client(1, [], reset=1_000), Client(2_000, [(11_000, HELP), (12_500, QUIT)])], False
     yield "a crowd", [Client(1 + k % 3, [(5, ascii_lines("HELP", "QUIT"))], take=None if k % 2 else 50)
                       for k in range(70)], False
     yield "seventy clients holding sixty-four connections", [Client(1, [(5, HELP)]) for _ in range(70)], False
@@ -1348,6 +1382,40 @@ MARKS_SPOOL = spool_holding([(stored(b"n"), [(b"local.test", 12)]),
                              (stored(b"r"), [(b"local.ten", 100)])])
 
 
+# Each kind of operation a post's jobs run, and a read's, as the simulated host labels them.
+POSTED_OPS = ("create", "write", "datasync", "close", "rename", "syncdir", "journal-write", "journal-sync")
+READ_OPS = ("open", "read", "close")
+
+
+def abandon_scenarios() -> Iterator[PostScenario]:
+    """A connection gone while a job runs an operation of each kind it began, that kind slowed: the
+    store goes on, and a later client posts, or reads, as if it had not been."""
+    later = article(*BASIC, "Message-ID: <later@x.example>")
+    for label in POSTED_OPS:
+        yield f"a poster gone during its job's {label}", [
+            poster(reset=300), Client(1, [(3_000, ascii_lines("POST")), (3_001, later), (3_002, QUIT)], post=True)], \
+            Spool(GROUPS, delays={label: 1_000})
+    for label in READ_OPS:
+        yield f"a reader gone during its job's {label}", [
+            reader(f"ARTICLE {ID2}", reset=300), reader(f"ARTICLE {ID1}", at=3_000)], \
+            Spool(GROUPS, image=TWO, delays={label: 1_000})
+
+
+def gone_while_running(trace: list[Turn], spool: Spool, label: str) -> bool:
+    """Whether connection 0 closed while a job with an operation `label` names was in flight."""
+    host = Host(spool)
+    issued: dict[int, tuple[int, list[P.Op]]] = {}
+    for t in trace:
+        for done in t.dones:
+            if done[0] in issued and issued[done[0]][0] == done[1]:
+                del issued[done[0]]
+        if any(e.kind == "closed" and e.idx == 0 for e in t.events):
+            return any(host.label(op) == label for _, ops in issued.values() for op in ops)
+        for slot, job_gen, ops in t.jobs:
+            issued[slot] = (job_gen, ops)
+    return False
+
+
 def mode_scenarios() -> Iterator[PostScenario]:
     yield "MODE READER of a client that may post", [
         Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "mode reader", "QUIT"))], post=True)], Spool(GROUPS)
@@ -1365,6 +1433,62 @@ def mode_scenarios() -> Iterator[PostScenario]:
         Spool(GROUPS)
     yield "MODE READER of a store with no group", [
         Client(1, [(5, ascii_lines("MODE READER", "CAPABILITIES", "QUIT"))], post=True)], Spool([])
+
+
+def logging_in(sends: list[tuple[int, bytes]], opens: int = 1, **more: Any) -> Client:
+    """A client the host lets log in, over TLS, that sends `sends`."""
+    return Client(opens, sends, logins=True, tls=True, **more)
+
+
+def login_scenarios() -> Iterator[PostScenario]:
+    """AUTHINFO USER and PASS: over TLS and in the clear, where the host offers logins and where it
+    does not, accounts' names and passwords right and wrong, out of sequence, at the limits and the
+    latest of two, lines after a PASS at once, a check slower than the inactivity deadline, one the
+    client resets in, checks while another connection talks, and POSTs before and after a login,
+    where it lets the connection post and where the store has no group."""
+    yield "a POST before a login over TLS, and one after", [
+        logging_in([(5, ascii_lines("CAPABILITIES", "POST", "AUTHINFO USER alice")),
+                    (20, ascii_lines("AUTHINFO PASS s3cret")),
+                    (40, ascii_lines("CAPABILITIES", "MODE READER", "POST")), (60, article(*BASIC)),
+                    (80, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret", "QUIT"))])], Spool(GROUPS)
+    yield "logins refused and out of sequence", [
+        logging_in([(5, ascii_lines("AUTHINFO PASS x")), (10, ascii_lines("AUTHINFO USER alice")),
+                    (15, ascii_lines("AUTHINFO PASS wrong")), (25, ascii_lines("AUTHINFO PASS s3cret")),
+                    (30, ascii_lines("authinfo user nobody", "AUTHINFO SASL PLAIN", "AUTHINFO USER",
+                                     "AUTHINFO USER a b", "AUTHINFO PASS s3cret")),
+                    (45, ascii_lines("AUTHINFO USER bob")), (50, b"AUTHINFO PASS \xc3\xa9t\xc3\xa9\r\n"),
+                    (60, ascii_lines("CAPABILITIES", "QUIT"))])], Spool(GROUPS)
+    yield "AUTHINFO in the clear", [
+        Client(1, [(5, ascii_lines("CAPABILITIES", "POST", "AUTHINFO USER alice", "AUTHINFO PASS s3cret",
+                                   "AUTHINFO PASS", "QUIT"))], logins=True)], Spool(GROUPS)
+    yield "AUTHINFO where the host offers no login", [
+        Client(1, [(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret", "CAPABILITIES", "QUIT"))],
+               tls=True)], Spool(GROUPS)
+    yield "names and passwords at their limits", [
+        logging_in([(5, ascii_lines("AUTHINFO USER " + "a" * 64)), (10, ascii_lines("AUTHINFO PASS " + "p" * 256)),
+                    (20, ascii_lines("AUTHINFO USER " + "a" * 65)), (25, ascii_lines("AUTHINFO PASS x")),
+                    (30, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS " + "p" * 257, "AUTHINFO PASS s3cret",
+                                     "QUIT"))])], Spool(GROUPS)
+    yield "a login and the lines after it at once", [
+        logging_in([(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret", "GROUP local.test", "CAPABILITIES",
+                                    "QUIT"))], check_time=50),
+        Client(1, [(20, ascii_lines("HELP")), (30, ascii_lines("QUIT"))])], Spool(GROUPS)
+    yield "a check slower than the inactivity deadline", [
+        logging_in([(5, ascii_lines("AUTHINFO USER alice")), (10, ascii_lines("AUTHINFO PASS s3cret")),
+                    (20, ascii_lines("QUIT"))], check_time=ref.INACTIVITY + 100)], Spool(GROUPS)
+    yield "the latest name taken, past other commands", [
+        logging_in([(5, ascii_lines("AUTHINFO USER bob", "AUTHINFO USER alice", "HELP", "AUTHINFO PASS s3cret",
+                                    "QUIT"))])], Spool(GROUPS)
+    yield "a reset during a check, and its index taken again", [
+        logging_in([(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS s3cret"))], check_time=500, reset=50),
+        logging_in([(5, ascii_lines("AUTHINFO USER alice", "AUTHINFO PASS wrong", "QUIT"))], opens=100)], Spool(GROUPS)
+    yield "logins on a store with no group", [
+        logging_in([(5, ascii_lines("POST", "AUTHINFO USER alice")), (10, ascii_lines("AUTHINFO PASS s3cret")),
+                    (20, ascii_lines("POST", "CAPABILITIES", "QUIT"))])], Spool([])
+    yield "a check while another connection talks", [
+        logging_in([(5, ascii_lines("AUTHINFO USER alice")), (10, ascii_lines("AUTHINFO PASS s3cret")),
+                    (20, ascii_lines("QUIT"))], check_time=500),
+        Client(1, [(100, ascii_lines("HELP")), (200, ascii_lines("DATE")), (300, ascii_lines("QUIT"))])], Spool(GROUPS)
 
 
 # Articles whose fields test what OVER and HDR take of them: a Subject folded with a TAB, two Keywords, a
@@ -1477,6 +1601,7 @@ def breaches() -> Iterator[tuple[str, list[str], int]]:
     yield "a clock going back", ["turn 5", "go", "took", "turn 4", "go"], 7
     yield "a clock past its limit", [f"turn {2 ** 62}", "go"], 7
     yield "a wall clock past its limit", [f"turn 1 {WALL_LIMIT}", "go"], 7
+    yield "a verdict for a connection that gave no password", [*begin, "turn 2", "verdict 0 1 1", "go"], 4
 
 
 def post_breaches() -> Iterator[tuple[str, list[str], int]]:
@@ -1706,6 +1831,17 @@ def read_moved(trace: list[Turn]) -> None:
     raise LaneError("no read on to plant a defect on")
 
 
+def login_granted(trace: list[Turn]) -> None:
+    """A wrong password answered 281."""
+    failed = ref.texts(*IDENTITY)["auth-failed"]
+    for t in trace:
+        for k, a in enumerate(t.actions):
+            if a.kind == "send" and a.data == failed and any(e.kind == "verdict" for e in t.events):
+                t.actions[k] = a._replace(data=ref.texts(*IDENTITY)["auth-accepted"])
+                return
+    raise LaneError("no refused login to plant a defect on")
+
+
 POST_PLANTS: list[tuple[str, str, str, Plant]] = [
     ("an article's octets changed in a write", "a post", "write", changed_write),
     ("an article number changed in a commit", "posts to groups with articles", "journal", changed_commit),
@@ -1714,6 +1850,7 @@ POST_PLANTS: list[tuple[str, str, str, Plant]] = [
     ("a file that fails its check sent", "a file whose CRC-32C is not its commit's", "unreadable", unreadable_sent),
     ("a read asked past where the last ended", "a big article sent to a slow reader", "read", read_moved),
     ("a number of a listing changed", "a group's articles listed", "listing-out", changed_part),
+    ("a wrong password answered 281", "logins refused and out of sequence", "order", login_granted),
 ]
 
 
@@ -1758,6 +1895,9 @@ def caught(mutant: str, all_scenarios: list[Scenario], posts: list[PostScenario]
     if mutant in VIEW_MUTANTS:
         views = {name for name, _, _ in over_scenarios()}
         posts = sorted(posts, key=lambda p: p[0] not in views)
+    if mutant in AUTH_MUTANTS:
+        logins = {name for name, _, _ in login_scenarios()}
+        posts = sorted(posts, key=lambda p: p[0] not in logins)
     plain, stored = played(mutant, all_scenarios), played_post(mutant, posts)
     order = itertools.chain(stored, plain) if MUTANTS.index(mutant) >= 15 else itertools.chain(plain, stored)
     for name, trace, identity, spool in order:
@@ -1788,8 +1928,8 @@ def runs() -> Iterator[ThreadPoolExecutor]:
 def check() -> Report:
     all_scenarios = list(scenarios())
     broken = [*breaches(), *post_breaches(), *read_breaches()]
-    posts = [*post_scenarios(), *read_scenarios(), *group_scenarios(), *list_scenarios(), *mode_scenarios(),
-             *over_scenarios()]
+    posts = [*post_scenarios(), *read_scenarios(), *abandon_scenarios(), *group_scenarios(), *list_scenarios(),
+             *mode_scenarios(), *over_scenarios(), *login_scenarios()]
     turns = 0
     traces = {}
     post_traces = {}
@@ -1820,6 +1960,9 @@ def check() -> Report:
             except Violation as error:
                 raise LaneError(f"scenario {name!r}: {error}") from None
             post_traces[name] = trace
+            label = name.rpartition("its job's ")[2]
+            if name.endswith(f"its job's {label}") and not gone_while_running(trace, spool, label):
+                raise LaneError(f"scenario {name!r}: no job with its {label} ran as the connection closed")
         caught = [pool.submit(caught_apart, m, all_scenarios, posts) for m in MUTANTS]
         mutants = {m: found.result() for m, found in zip(MUTANTS, caught, strict=True)}
         planted = {}

@@ -56,7 +56,7 @@ def words (l : List Byte) : List (List Byte) := wordsFrom l []
 def upper (b : Byte) : Byte := if 97 ≤ b.toNat ∧ b.toNat ≤ 122 then b - 32#8 else b
 
 inductive Cmd | capabilities | help | quit | head | stat | post | article | body | group | next | last
-  | listgroup | list | date | newgroups | mode | over | hdr | xover | xhdr
+  | listgroup | list | date | newgroups | mode | over | hdr | xover | xhdr | authinfo
   deriving DecidableEq, Repr
 
 /-- The command a word names, in any case. -/
@@ -68,6 +68,7 @@ def command? (w : List Byte) : Option Cmd :=
   else if u = ascii "HEAD" then some .head
   else if u = ascii "STAT" then some .stat
   else if u = ascii "MODE" then some .mode
+  else if u = ascii "AUTHINFO" then some .authinfo
   else none
 
 /-- The command a word names, POST, ARTICLE, BODY, GROUP, NEXT, LAST, LISTGROUP, LIST, DATE, NEWGROUPS,
@@ -365,6 +366,28 @@ inductive Reply
   /-- 215 and the fields of the overview (§8.4), 215 and the fields HDR gives (§8.6) -/
   | overviewFmt
   | headerList
+  /-- an AUTHINFO line and its arguments (RFC 4643); the session decides, and says what a connection
+  that may not log in is answered -/
+  | authinfo (args : List (List Byte))
+  /-- 381 to AUTHINFO USER: the name is kept for the password (§2.3.1) -/
+  | authUser (name : List Byte)
+  /-- an AUTHINFO PASS after a name: the host checks the two, and the session waits -/
+  | authPass (name password : List Byte)
+  /-- 281 and 481: the name and password taken, or not -/
+  | authAccepted
+  | authFailed
+  /-- 482: a password without a name before it -/
+  | authSequence
+  /-- 483: a connection in the clear may not log in (§2.3.2; RFC 3977 §3.2.1) -/
+  | encryptionRequired
+  /-- 480: a POST a login would allow, before it (§2.2; RFC 3977 §3.2.1) -/
+  | authRequired
+  /-- 502: AUTHINFO once logged in (§2.2), or where the connection may not log in -/
+  | authDone
+  /-- the capability lists that also offer AUTHINFO USER, to a connection that may log in and has not -/
+  | capabilitiesAuth
+  | capabilitiesReaderAuth
+  | capabilitiesPostAuth
   deriving DecidableEq, Repr
 
 /-- The reply to a command with these arguments, on a well-formed line. -/
@@ -378,6 +401,7 @@ def answer : Cmd → List (List Byte) → Reply
   | .head, [a] | .stat, [a] =>
     if isArticleNumber a then .noGroup else if isMessageId a then .noSuchId else .syntax
   | .post, [] => .post
+  | .authinfo, args => .authinfo args
   | _, _ => .syntax
 
 /-- An HDR, or with `.xhdr` an XHDR, of field `f` of the articles `s` names: 501 for a field of no
@@ -494,6 +518,7 @@ def blockEnd : List Byte := ascii "\r\n.\r\n"
 def greetingPostHead : List Byte := ascii "200 dragons-net "
 def greetingPostMid : List Byte := ascii " ready, posting allowed; source code at "
 def capabilitiesPostTail : List Byte := ascii "\r\nPOST"
+def capabilitiesAuthTail : List Byte := ascii "\r\nAUTHINFO USER"
 def capabilitiesReaderTail : List Byte :=
   ascii "\r\nREADER\r\nHDR\r\nLIST ACTIVE HEADERS NEWSGROUPS OVERVIEW.FMT\r\nOVER MSGID"
 def helpPostHead : List Byte :=
@@ -569,6 +594,21 @@ def text (i : Identity) : Reply → List Byte
   | .fieldRefused => ascii "503 HDR not permitted on that field\r\n"
   | .overviewFmt => overviewFmtText
   | .headerList => ascii "215 Field list follows\r\n:\r\n:bytes\r\n:lines\r\n.\r\n"
+  | .authinfo _ => ascii "502 Command unavailable\r\n"
+  | .authUser _ => ascii "381 Password required\r\n"
+  | .authPass _ _ => ascii "481 Authentication failed\r\n"
+  | .authAccepted => ascii "281 Authentication accepted\r\n"
+  | .authFailed => ascii "481 Authentication failed\r\n"
+  | .authSequence => ascii "482 Authentication commands issued out of sequence\r\n"
+  | .encryptionRequired => ascii "483 Encryption required\r\n"
+  | .authRequired => ascii "480 Authentication required\r\n"
+  | .authDone => ascii "502 Command unavailable\r\n"
+  | .capabilitiesAuth => capabilitiesHead ++ i.revision ++ capabilitiesAuthTail ++ blockEnd
+  | .capabilitiesReaderAuth =>
+    capabilitiesHead ++ i.revision ++ capabilitiesReaderTail ++ capabilitiesAuthTail ++ blockEnd
+  | .capabilitiesPostAuth =>
+    capabilitiesHead ++ i.revision ++ capabilitiesReaderTail ++ capabilitiesPostTail ++ capabilitiesAuthTail ++
+      blockEnd
 
 /-- The first line of an article sent (§6.2): 220, 221 or 222, its number in the selected group or
 0, and the message-id. -/
@@ -586,6 +626,10 @@ def Reply.currentAfter : Reply → Nat → Nat
   | .selected count low _ _, _ | .listed count low _ _ _ _, _ => if count = 0 then 0 else low
   | .stat n _, k => if n = 0 then k else n
   | _, k => k
+
+/-- The longest name and password AUTHINFO takes; a longer one fails at once, as no account has it. -/
+def nameMax : Nat := 64
+def passwordMax : Nat := 256
 
 /-- A reply's message-id is one a store holds, 250 octets at most (§3.6); its numbers are article
 numbers or counts no larger; its group's name is one a store may carry; a date has at most sixty
@@ -644,18 +688,20 @@ theorem parts_short :
       helpHead.length ≤ 132 ∧ helpMid.length ≤ 40 ∧ blockEnd.length = 5 ∧ crlf.length = 2 ∧
       greetingPostHead.length ≤ 16 ∧ greetingPostMid.length ≤ 40 ∧
       capabilitiesPostTail.length ≤ 6 ∧ helpPostHead.length ≤ 198 ∧ capabilitiesReaderTail.length ≤ 72 ∧
-      overviewFmtText.length ≤ 128 ∧
+      capabilitiesAuthTail.length ≤ 16 ∧ overviewFmtText.length ≤ 128 ∧
       ∀ r, r ≠ .capabilities → r ≠ .help → r ≠ .capabilitiesPost → r ≠ .helpPost → r ≠ .capabilitiesReader →
+        r ≠ .capabilitiesAuth → r ≠ .capabilitiesReaderAuth → r ≠ .capabilitiesPostAuth →
         (∀ n id, r ≠ .stat n id) → (∀ count low high g, r ≠ .selected count low high g) →
         (∀ count low high g lo hi, r ≠ .listed count low high g lo hi) → (∀ d, r ≠ .time d) →
         r ≠ .overviewFmt → ∀ i, (text i r).length ≤ 64 := by
   refine ⟨by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel,
     by decide +kernel, by decide +kernel, rfl, by decide +kernel, by decide +kernel,
-    by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
-  intro r h1 h2 h3 h4 h9 h5 h6 h7 h8 h10 i
+    by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  intro r h1 h2 h3 h4 h9 h11 h12 h13 h5 h6 h7 h8 h10 i
   cases r <;> first
     | exact absurd rfl h1 | exact absurd rfl h2 | exact absurd rfl h3 | exact absurd rfl h4
-    | exact absurd rfl h9 | exact absurd rfl h10
+    | exact absurd rfl h9 | exact absurd rfl h10 | exact absurd rfl h11 | exact absurd rfl h12
+    | exact absurd rfl h13
     | exact absurd rfl (h5 _ _) | exact absurd rfl (h6 _ _ _ _) | exact absurd rfl (h7 _ _ _ _ _ _)
     | exact absurd rfl (h8 _) | (simp only [text]; decide +kernel)
     | (rename_i l f _ _; cases l <;> cases f <;> (simp only [text, overviewStatus]; decide +kernel))
@@ -671,7 +717,7 @@ theorem greeting_fits (i : Identity) (h : i.ok = true) :
 theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded = true) :
     (text i r).length ≤ actionData := by
   simp only [Identity.ok, Bool.and_eq_true, decide_eq_true_eq] at h
-  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h13, h14, h12⟩ := parts_short
+  obtain ⟨_, _, h3, h4, h5, h6, _, _, _, h10, h11, h13, hat, h14, h12⟩ := parts_short
   have hd : ∀ n, n ≤ numberMax → (decimal n).length ≤ 10 := fun n hn =>
     decimal_length n (by simp only [numberMax] at hn; omega)
   by_cases hl : ∃ count low high g lo hi, r = .listed count low high g lo hi
@@ -721,9 +767,15 @@ theorem text_fits (i : Identity) (h : i.ok = true) (r : Reply) (hr : r.bounded =
   · subst hhp; simp only [text, List.length_append, actionData]; omega
   by_cases hcr : r = .capabilitiesReader
   · subst hcr; simp only [text, List.length_append, actionData]; omega
+  by_cases hca : r = .capabilitiesAuth
+  · subst hca; simp only [text, List.length_append, actionData]; omega
+  by_cases hcra : r = .capabilitiesReaderAuth
+  · subst hcra; simp only [text, List.length_append, actionData]; omega
+  by_cases hcpa : r = .capabilitiesPostAuth
+  · subst hcpa; simp only [text, List.length_append, actionData]; omega
   by_cases ho : r = .overviewFmt
   · subst ho; simp only [text, actionData]; omega
-  have := h12 r hc hh hcp hhp hcr hs hg hl ht ho i
+  have := h12 r hc hh hcp hhp hcr hca hcra hcpa hs hg hl ht ho i
   simp only [actionData]; omega
 
 /-! ## Every rule matters -/
@@ -785,7 +837,8 @@ def command?M (m : Mutant) (w : List Byte) : Option Cmd :=
   if m = .caseSensitive then
     if w = ascii "CAPABILITIES" then some .capabilities else if w = ascii "HELP" then some .help
     else if w = ascii "QUIT" then some .quit else if w = ascii "HEAD" then some .head
-    else if w = ascii "STAT" then some .stat else if w = ascii "MODE" then some .mode else none
+    else if w = ascii "STAT" then some .stat else if w = ascii "MODE" then some .mode
+    else if w = ascii "AUTHINFO" then some .authinfo else none
   else command? w
 
 def keywordRest (b : Byte) : Bool := isAlpha b || isDigit b || b == 46#8 || b == 45#8
@@ -819,6 +872,7 @@ def answerM (m : Mutant) (c : Cmd) (args : List (List Byte)) : Reply :=
       if m = .idAsNumber then .noGroup else .noSuchId
     else .syntax
   | .post, [] => .post
+  | .authinfo, args => .authinfo args
   | _, _ => .syntax
 
 def replyM (m : Mutant) (l : Line) : Reply :=

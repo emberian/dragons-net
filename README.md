@@ -48,7 +48,7 @@ bash scripts/check_all.sh
 
 ## Pick up the work
 
-The [roadmap](https://github.com/emberian/dragons-net/issues/28), the [backlog guide](docs/project.md), [CONTRIBUTING](CONTRIBUTING.md), the [handoff](docs/handoff.md), [architecture](docs/architecture.md), the [NNTP plan](docs/nntp.md) and the [decisions](docs/decisions/) say where to start.
+The [roadmap](https://github.com/emberian/dragons-net/issues/28), the [backlog guide](docs/project.md), [CONTRIBUTING](CONTRIBUTING.md), the [handoff](docs/handoff.md), [architecture](docs/architecture.md), the [NNTP plan](docs/nntp.md) and the [decisions](docs/decisions/) say where to start; the [runbook](docs/runbook.md) how to run the server, and [compiler input](docs/compiler-input.md) how to give the compiler a function.
 
 ## Provenance and license
 

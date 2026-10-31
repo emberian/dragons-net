@@ -24,15 +24,17 @@ The offset of every word is a multiple of eight, so a word lies on a word bounda
   the revision and the address of the source the replies name (a length, then the bytes), whether
   there is a store, the wall clock (milliseconds since 1970, UTC), the run's random octets, the path
   identity and the groups (a count, then each a length and the name); the events, each a kind, an
-  index, a generation, a length, whether the connection may post, and the bytes; then the number
+  index, a generation, a length, whether the connection may post (of a verdict, whether it takes the
+  name and the password), may log in and runs over TLS, and the bytes; then the number
   of completions and a slot per file job, kind zero if none: a kind, the job's generation, the
   operations that succeeded, the error's class, two result words per operation, and the bytes
   read.
 - The array `dn_emit` hands over: the number of actions, whether the host is to listen (zero until
   the program has recovered its store, then one), then a slot for each connection, which holds its
   action if it has one and kind zero if not: a kind, an index, a generation, a length, whether to
-  read once the bytes are taken, how many of them the kernel took (written back by the host), and
-  the bytes; then a slot per file job, kind zero if none: a kind, the job's generation,
+  read once the bytes are taken (of a check, how many of the bytes are the name, the password
+  following), how many of them the kernel took (written back by the host), and the bytes; then a
+  slot per file job, kind zero if none: a kind, the job's generation,
   the number of operations, the operations, and the data.
 - The program's own area: the host's clock at the last batch, whether the identity was taken in,
   the code the program stopped with, its copy of the identity, the store's words, the CRC-32C's
@@ -47,7 +49,7 @@ namespace DN.Server.SessionLayout
 
 open DN.News.CommandSpec
 
-def version : Nat := 14
+def version : Nat := 15
 /-- The heap the host provisions for the program, from `@base`: 4 MiB (decision 0005). -/
 def heapBytes : Nat := 4 * 2 ^ 20
 /-- Events in one batch. -/
@@ -94,13 +96,16 @@ def nextGroups : Nat := nextGroupCount + 8
 /-- A group: its length, then its name. -/
 def groupSlot : Nat := 8 + groupMax
 def nextEvents : Nat := nextGroups + groupsMax * groupSlot
-/-- An event: kind, index, generation, length, whether the connection may post, then the bytes. -/
+/-- An event: kind, index, generation, length, whether the connection may post, may log in and runs
+over TLS, then the bytes. -/
 def eventKind : Nat := 0
 def eventIdx : Nat := 8
 def eventGen : Nat := 16
 def eventLen : Nat := 24
 def eventPost : Nat := 32
-def eventHead : Nat := 40
+def eventLogins : Nat := 40
+def eventTls : Nat := 48
+def eventHead : Nat := 56
 def eventSlot : Nat := eventHead + data
 
 /-- File jobs in flight, operations in a job, octets a job moves, and files open at once
@@ -220,7 +225,11 @@ def ownFl : Nat := ownFs + 8
 def ownLine : Nat := ownFl + 8
 /-- The longest line of a listing: a group's name, its highest and lowest numbers and its status. -/
 def lineMax : Nat := 96
-def ownTexts : Nat := ownLine + lineMax
+/-- Where the name of an AUTHINFO USER, or the password of an AUTHINFO PASS, lies in the line, and
+its length. -/
+def ownAs : Nat := ownLine + lineMax
+def ownAl : Nat := ownAs + 8
+def ownTexts : Nat := ownAl + 8
 
 /-- The fixed texts the replies are made of, and the names of the commands, in the order they lie
 from `ownTexts`. -/
@@ -244,7 +253,10 @@ def texts : List (List (BitVec 8)) :=
    overviewStatus false (some []), overviewStatus true (some []), text ⟨[], []⟩ .noneOver,
    text ⟨[], []⟩ .noneHdr, text ⟨[], []⟩ .noRange, text ⟨[], []⟩ .fieldRefused, overviewFmtText,
    text ⟨[], []⟩ .headerList, ascii "SUBJECT", ascii "FROM", ascii "DATE", ascii "MESSAGE-ID",
-   ascii "REFERENCES", ascii ":BYTES", ascii ":LINES", ascii "XREF"]
+   ascii "REFERENCES", ascii ":BYTES", ascii ":LINES", ascii "XREF", ascii "AUTHINFO", ascii "USER",
+   ascii "PASS", capabilitiesAuthTail, text ⟨[], []⟩ (.authUser []), text ⟨[], []⟩ .authAccepted,
+   text ⟨[], []⟩ .authFailed, text ⟨[], []⟩ .authSequence, text ⟨[], []⟩ .encryptionRequired,
+   text ⟨[], []⟩ .authDone, text ⟨[], []⟩ .authRequired]
 
 /-- Where the `k`-th text starts, from `ownTexts`. -/
 def textAt (k : Nat) : Nat := ((texts.take k).map List.length).sum
@@ -271,8 +283,9 @@ time — none (zero), the numbers of a group's articles (one) or the groups (two
 place or that of the next group, the lowest number left, and the highest one or the groups the
 wildmat takes, a bit each, and for the numbers the place among the commits to look from; for an
 OVER or HDR whether it is XOVER's or XHDR's and by message-id, the range's group, lowest and
-highest numbers, and HDR's field and its length; the framer's block, the held input, and the
-output. -/
+highest numbers, and HDR's field and its length; whether the host lets it log in and whether it
+runs over TLS, where it stands with AUTHINFO (`authNone` to `authDone`), the name kept and the
+password to check, each with its length; the framer's block, the held input, and the output. -/
 def cLive : Nat := 0
 def cGen : Nat := 8
 def cPhase : Nat := 16
@@ -309,7 +322,14 @@ def cFieldLen : Nat := 256
 def cField : Nat := 264
 /-- The longest field HDR names: what a line holds. -/
 def fieldMax : Nat := News.SessionSpec.lineLimit
-def cFramer : Nat := cField + fieldMax
+def cLogins : Nat := cField + fieldMax
+def cTls : Nat := cLogins + 8
+def cAuth : Nat := cTls + 8
+def cNameLen : Nat := cAuth + 8
+def cName : Nat := cNameLen + 8
+def cPassLen : Nat := cName + nameMax
+def cPass : Nat := cPassLen + 8
+def cFramer : Nat := cPass + passwordMax
 def cHeld : Nat := cFramer + framerHead + News.SessionSpec.lineLimit
 def cOut : Nat := cHeld + data
 def connSlot : Nat := cOut + data
@@ -506,11 +526,20 @@ def received : Nat := 2
 def writable : Nat := 3
 def inputEnded : Nat := 4
 def closed : Nat := 5
+def verified : Nat := 6
 
 /-- Action kinds. -/
 def send : Nat := 1
 def closeGracefully : Nat := 2
 def closeNow : Nat := 3
+def verify : Nat := 4
+
+/-- Where a connection stands with AUTHINFO, as `SessionSpec.Auth` has it. -/
+def authNone : Nat := 0
+def authNamed : Nat := 1
+def authVerify : Nat := 2
+def authChecking : Nat := 3
+def authDone : Nat := 4
 
 /-- A job slot that holds a job, and a completion slot that holds a completion. -/
 def job : Nat := 1
@@ -581,8 +610,10 @@ def header : String :=
      ("C_HELD_POS", cHeldPos), ("C_ACTED", cActed), ("C_FRAMER", cFramer),
      ("OWN_REV_LEN", ownRevLen), ("OWN_SRC_LEN", ownSrcLen), ("SIZE", size),
      ("OPENED", opened), ("RECEIVED", received), ("WRITABLE", writable),
-     ("INPUT_ENDED", inputEnded), ("CLOSED", closed), ("SEND", send),
-     ("CLOSE_GRACEFULLY", closeGracefully), ("CLOSE_NOW", closeNow),
+     ("INPUT_ENDED", inputEnded), ("CLOSED", closed), ("VERIFIED", verified), ("SEND", send),
+     ("CLOSE_GRACEFULLY", closeGracefully), ("CLOSE_NOW", closeNow), ("VERIFY", verify),
+     ("EVENT_LOGINS", eventLogins), ("EVENT_TLS", eventTls), ("NAME_MAX", nameMax),
+     ("PASSWORD_MAX", passwordMax), ("C_NAME_LEN", cNameLen),
      ("OVER_TAKEN", News.SessionSpec.Breach.overTaken.code), ("GEN_LIMIT", News.SessionSpec.genLimit),
      ("UNKNOWN_EVENT", unknownEvent),
      ("BAD_IDENTITY", badIdentity), ("BROKEN_STATE", brokenState),
@@ -649,7 +680,7 @@ theorem offsets_aligned :
       ownId % 8 = 0 ∧ ownMsg % 8 = 0 ∧ ownCrc % 8 = 0 ∧ slotsOff % 8 = 0 ∧ slotLen % 8 = 0 ∧
       zBuf % 8 = 0 ∧ indexOff % 8 = 0 ∧ ownReaders % 8 = 0 ∧ ownIdLen % 8 = 0 ∧ readsOff % 8 = 0 ∧
       rXref % 8 = 0 ∧ rBuf % 8 = 0 ∧ readLen % 8 = 0 ∧ rSegs % 8 = 0 ∧ rPieces % 8 = 0 ∧
-      cField % 8 = 0 := by
+      cField % 8 = 0 ∧ cName % 8 = 0 ∧ cPass % 8 = 0 ∧ ownAs % 8 = 0 := by
   decide +kernel
 
 /-- The configuration lies past the article's area, which starts where that program's lane has
@@ -669,10 +700,11 @@ theorem context_fits (ctx : News.ArticleSpec.Context) (h : ctx.ok = true) :
   exact ⟨h.1.1.1.1.1.1.1.1.1.2, h.1.1.2, fun g hg => (h.2 g hg).1.1⟩
 
 /-- The sizes are those the specification is stated with: an action carries any reply a connection
-gets (`SessionSpec.reply_fits`), a connection holds a line of the limit, and a read's buffer holds a
-job's octets. -/
+gets (`SessionSpec.reply_fits`), and a name and a password to check; a connection holds a line of the
+limit, and a read's buffer holds a job's octets. -/
 theorem sizes_agree :
-    data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit ∧ jobData ≤ bufLen := by
+    data = actionData ∧ cHeld - cFramer - framerHead = News.SessionSpec.lineLimit ∧ jobData ≤ bufLen ∧
+      nameMax + passwordMax ≤ data := by
   decide +kernel
 
 /-- The layout's bounds on the identity are those of `Identity.ok`. -/

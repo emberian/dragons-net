@@ -58,7 +58,10 @@ def replyCode : News.CommandSpec.Reply → Nat
   | .active _ => 32 | .newsgroups => 33 | .newGroups => 34 | .date => 35 | .time _ => 36
   | .modeReader => 37 | .readerPosting => 38 | .readerNoPosting => 39 | .capabilitiesReader => 40
   | .over .. => 41 | .hdr .. => 42 | .overview .. => 43 | .noneOver => 44 | .noneHdr => 45 | .noRange => 46
-  | .fieldRefused => 47 | .overviewFmt => 48 | .headerList => 49
+  | .fieldRefused => 47 | .overviewFmt => 48 | .headerList => 49 | .authinfo _ => 50 | .authUser _ => 51
+  | .authPass .. => 52 | .authAccepted => 53 | .authFailed => 54 | .authSequence => 55
+  | .encryptionRequired => 56 | .authDone => 57 | .capabilitiesAuth => 58 | .capabilitiesReaderAuth => 59
+  | .capabilitiesPostAuth => 60 | .authRequired => 61
 
 /-- The codes `connText` takes for the greetings, past the replies'. -/
 def greetCode : Nat := 15
@@ -183,6 +186,18 @@ def tNoRange : Nat := 75
 def tFieldRefused : Nat := 76
 def tOverviewFmtText : Nat := 77
 def tHeaderList : Nat := 78
+/-- The names of AUTHINFO and its two forms, and the texts of its replies. -/
+def tAuthinfo : Nat := 87
+def tUser : Nat := 88
+def tPass : Nat := 89
+def tCapabilitiesAuthTail : Nat := 90
+def tAuthUser : Nat := 91
+def tAuthAccepted : Nat := 92
+def tAuthFailed : Nat := 93
+def tAuthSequence : Nat := 94
+def tEncryptionRequired : Nat := 95
+def tAuthDone : Nat := 96
+def tAuthRequired : Nat := 97
 
 /-- The address of the source, of the length `sl` holds. -/
 def appendSource : List PStmt :=
@@ -232,6 +247,13 @@ def connText : PFun :=
        appendText tCapabilitiesReaderTail, appendText tCapabilitiesPostTail, appendText tBlockEnd],
      text (replyCode .capabilitiesReader) [appendText tCapabilitiesHead, appendRevision,
        appendText tCapabilitiesReaderTail, appendText tBlockEnd],
+     text (replyCode .capabilitiesAuth)
+       [appendText tCapabilitiesHead, appendRevision, appendText tCapabilitiesAuthTail, appendText tBlockEnd],
+     text (replyCode .capabilitiesReaderAuth) [appendText tCapabilitiesHead, appendRevision,
+       appendText tCapabilitiesReaderTail, appendText tCapabilitiesAuthTail, appendText tBlockEnd],
+     text (replyCode .capabilitiesPostAuth) [appendText tCapabilitiesHead, appendRevision,
+       appendText tCapabilitiesReaderTail, appendText tCapabilitiesPostTail, appendText tCapabilitiesAuthTail,
+       appendText tBlockEnd],
      text (replyCode .help) [appendText tHelpHead, appendRevision, appendText tHelpMid,
        appendSource, appendText tBlockEnd],
      text (replyCode .helpPost) [appendText tHelpPostHead, appendRevision, appendText tHelpMid,
@@ -262,7 +284,9 @@ def connText : PFun :=
       (.noPrevious, tNoPrevious), (.noNumber, tNoNumber), (.modeReader, tModeReader),
       (.readerPosting, tReaderPosting), (.readerNoPosting, tReaderNoPosting), (.noneOver, tNoneOver),
       (.noneHdr, tNoneHdr), (.noRange, tNoRange), (.fieldRefused, tFieldRefused),
-      (.overviewFmt, tOverviewFmtText), (.headerList, tHeaderList)].map
+      (.overviewFmt, tOverviewFmtText), (.headerList, tHeaderList), (.authUser [], tAuthUser),
+      (.authAccepted, tAuthAccepted), (.authFailed, tAuthFailed), (.authSequence, tAuthSequence),
+      (.encryptionRequired, tEncryptionRequired), (.authDone, tAuthDone), (.authRequired, tAuthRequired)].map
       fun ((r : News.CommandSpec.Reply), k) => text (replyCode r) [appendText k]) ++
     [setf "cb" cOutLen (v "o"), .ret (n 0)] }
 
@@ -580,6 +604,7 @@ def classify : List PStmt :=
      ((List.range 5).flatMap (fun k => nameIs k ++
         [.ite (v "eqk") [.assign "cmd" (n (k + 1))] []]) ++
       nameIsAt tMode ++ [ifs (v "eqk") [.assign "cmd" (n 16)]] ++
+      nameIsAt tAuthinfo ++ [ifs (v "eqk") [.assign "cmd" (n 21)]] ++
       [ifs hasStore (nameIs 5 ++ [ifs (v "eqk") [.assign "cmd" (n 6)]] ++
          nameIsAt tArticle ++ [ifs (v "eqk") [.assign "cmd" (n 7)]] ++
          nameIsAt tBody ++ [ifs (v "eqk") [.assign "cmd" (n 8)]] ++
@@ -596,6 +621,7 @@ def classify : List PStmt :=
          nameIsAt tXhdr ++ [ifs (v "eqk") [.assign "cmd" (n 20)]]),
        .ite (eEq (v "cmd") (n 0)) [reply .unknown]
         [.ite (ne (v "kind") (n (News.FramerProg.kindCode .command))) [reply .syntax]
+         [.ite (eEq (v "cmd") (n 21)) [reply (.authinfo [])]
          [.ite (eLe (n 17) (v "cmd")) (callS "vc" "viewClassify" [v "c", v "cmd"] ++ [.assign "r" found])
           [.ite (eLe (n 12) (v "cmd"))
            (callS "lc" "listClassify" [v "c", v "cmd"] ++ [.assign "r" found])
@@ -631,7 +657,7 @@ def classify : List PStmt :=
                                [.ite (v "ok")
                                  [.ite hasStore [reply (.lookup .head 0 [])] [reply .noSuchId]]
                                  [reply .syntax]])])
-                           [reply .syntax]]]]]]]]]]]]])]
+                           [reply .syntax]]]]]]]]]]]]]])]
 
 /-- The read an ARTICLE (one), HEAD (two) or BODY (three) is answered by, as `wc`, of the commit at
 `wci`, its first line giving the number `no`; or, for STAT, 223. -/
@@ -800,9 +826,16 @@ def viewLookup : List PStmt :=
              (callS "gs" "groupScan" [v "vg", n 1, v "vcur"] ++
               [.ite (eEq found (n 0)) [reply .noCurrent] (found_ (v "vlg") (v "vcur"))])]]]]
 
+/-- Whether a login would let connection `cb` post (`SessionSpec.loginPosts`): it may log in, over
+TLS, and has not, and the store accepts and carries a group. -/
+def loginPosts : PExpr :=
+  eAnd (eAnd (fld "cb" cLogins) (fld "cb" cTls))
+    (eAnd (ne (fld "cb" cAuth) (n authDone))
+      (eAnd hasStore (eAnd (ownW ownAccepting) (ne (ld (at_ (recOff + News.RecoverProg.rGroupCount))) (n 0)))))
+
 /-- The reply as a store makes it (`SessionSpec.resolve`): the capabilities with READER, and with POST
 while the connection may post, MODE READER's 200 or 201 as they name POST or not, the help with POST,
-for a POST 440 or 403 unless it may have a slot, and for a message-id 430 when the store does not
+for a POST 440, 480 or 403 unless it may have a slot, and for a message-id 430 when the store does not
 hold it, 223 for STAT when it does; else the ARTICLE (one),
 HEAD (two) or BODY (three) to be answered by a read, as `wc`, of the commit at `wci`, its first line
 giving the number `wno`; the replies of the selected group and the current article, and where they
@@ -819,7 +852,8 @@ def resolve : List PStmt :=
      [.ite (eAnd (fld "cb" cGreeted) (ownW ownAccepting)) [reply .readerPosting] [reply .readerNoPosting]],
    ifs (eAnd (isReply .help) hasStore) [reply .helpPost],
    ifs (isReply .post)
-     [.ite (eEq (fld "cb" cGreeted) (n 0)) [reply .notPermitted]
+     [.ite (eEq (fld "cb" cGreeted) (n 0))
+       [.ite loginPosts [reply .authRequired] [reply .notPermitted]]
        [ifs (eEq (ownW ownAccepting) (n 0)) [reply .unavailable]]],
    ifs (isReply (.lookup .head 0 []))
      ([keptIn (v "l1") 250, .store (at_ (ownOff + ownIdLen)) (v "l1"), .dec "ij" (n 0),
@@ -832,9 +866,54 @@ def resolve : List PStmt :=
    ifs (isReply .date) [reply (.time [])],
    ifs (or2 (isReply (.byNumber .head 0)) (isReply (.current .head))) numberLookup,
    ifs (isReply (.move true)) moveLookup,
-   ifs (or2 (isReply (.over false .current)) (isReply (.hdr false [] .current))) viewLookup]
+   ifs (or2 (isReply (.over false .current)) (isReply (.hdr false [] .current))) viewLookup,
+   ifs (isReply (.authinfo [])) (callS "au" "authReply" [v "c"] ++ [.assign "r" found]),
+   ifs (eAnd (eAnd (fld "cb" cLogins) (fld "cb" cTls)) (ne (fld "cb" cAuth) (n authDone)))
+     [ifs (isReply .capabilities) [reply .capabilitiesAuth],
+      ifs (isReply .capabilitiesReader) [reply .capabilitiesReaderAuth],
+      ifs (isReply .capabilitiesPost) [reply .capabilitiesPostAuth]]]
+
+/-- The reply to the AUTHINFO line connection `c` keeps, as `SessionSpec.resolve` gives it (RFC 4643
+§2.3): 502 where the host does not let it log in or once it has, 501 for anything but USER or PASS
+and one argument, 483 in the clear; USER's 381, or 481 for a name longer than an account's; PASS's
+482 without a name kept, else its check, or 481 for a password longer than an account's. Where the
+argument lies in the line, and its length, go to `ownAs` and `ownAl`. -/
+def authReply : PFun :=
+  let say (r : News.CommandSpec.Reply) : PStmt := .assign "r" (n (replyCode r))
+  let tls (ok : List PStmt) : PStmt := .ite (eEq (fld "cb" cTls) (n 0)) [say .encryptionRequired] ok
+  { name := "authReply", params := [(1, "c")], body :=
+    [keptIn (v "c") (conns - 1), .dec "cb" (record (v "c")), .dec "blk" (atOff (v "cb") cFramer),
+     .dec "kept" (ld (atOff (v "blk") 32)), keptIn (v "kept") lineLimit] ++ scanWords 3 ++
+    ([1, 2].flatMap fun j => [keptIn (v s!"s{j}") lineLimit, keptIn (v s!"l{j}") lineLimit]) ++
+    [.dec "r" (n (replyCode .syntax)), .dec "eqk" (n 0), .dec "jq" (n 0), .dec "au" (fld "cb" cAuth),
+     .ite (or2 (eEq (fld "cb" cLogins) (n 0)) (eEq (v "au") (n authDone))) [say .authDone]
+       [ifs (eEq (v "w") (n 3))
+         (wordIsAt "s1" "l1" tUser ++
+          [.ite (v "eqk")
+            [tls [.ite (eLt (n News.CommandSpec.nameMax) (v "l2")) [say .authFailed] [say (.authUser [])]]]
+            (wordIsAt "s1" "l1" tPass ++
+             [ifs (v "eqk")
+               [tls [.ite (eEq (v "au") (n authNamed))
+                 [.ite (eLt (n News.CommandSpec.passwordMax) (v "l2")) [say .authFailed] [say (.authPass [] [])]]
+                 [say .authSequence]]]])])],
+     .store (at_ (ownOff + ownAs)) (v "s2"), .store (at_ (ownOff + ownAl)) (v "l2")] ++
+    SessionStore.give (v "r") }
 
 /-! ## A connection's turn -/
+
+/-- Whether a name and a password are for the host to check or with it (`SessionSpec.Auth.pending`).
+-/
+def pending : PExpr := or2 (eEq (fld "cb" cAuth) (n authVerify)) (eEq (fld "cb" cAuth) (n authChecking))
+def notPending : PExpr := eEq pending (n 0)
+
+/-- The argument of the AUTHINFO line answered, as `authReply` placed it, into the record at `to`, of
+at most `most` octets. -/
+def keepArg (j : String) (to : Nat) (most : Nat) : List PStmt :=
+  [.dec s!"{j}l" (ownW ownAl), keptIn (v s!"{j}l") most, .dec s!"{j}s" (ownW ownAs), keptIn (v s!"{j}s") lineLimit,
+   .dec j (n 0),
+   .while (eLt (v j) (v s!"{j}l"))
+     [keptIn (eAdd (v s!"{j}s") (v j)) (lineLimit - 1),
+      .storeb (eAdd (atOff (v "cb") to) (v j)) (kept (eAdd (v s!"{j}s") (v j))), inc j]]
 
 /-- The record's fields as expressions. -/
 def outLen : PExpr := fld "cb" cOutLen
@@ -905,8 +984,9 @@ def listPart : PFun :=
 
 /-- Answer the first held line that gets a reply and frame on past the lines that get none, as
 `DN.News.SessionSpec.serve` does; a POST that may have a slot waits for one, and an ARTICLE, HEAD or
-BODY of an article the store holds for a read, framing on. A LISTGROUP or LIST ACTIVE answered
-leaves what is left of its reply (`cList`), and nothing is answered until it has gone out. -/
+BODY of an article the store holds for a read, framing on, and an AUTHINFO PASS to check for the
+host's verdict. A LISTGROUP or LIST ACTIVE answered leaves what is left of its reply (`cList`), and
+nothing is answered until it has gone out; nor while a name and a password are with the host. -/
 def serve : List PStmt :=
   [.dec "blk" (atOff (v "cb") cFramer), .dec "p" (atOff (v "cb") cHeld),
    .dec "n" (fld "cb" cHeldLen), .dec "i" (fld "cb" cHeldPos), .dec "sv" (n 1),
@@ -920,11 +1000,15 @@ def serve : List PStmt :=
           ([.dec "r" (n (replyCode .ignore))] ++ classify ++ resolve ++
            [.ite (isReply .ignore) []
              [.ite (or2 (or2 (ne outLen (n 0)) (ne (fld "cb" cWant) (n 0)))
-                 (ne (fld "cb" cList) (n 0)))
+                 (or2 (ne (fld "cb" cList) (n 0)) pending))
                [.assign "i" (v "i0"), .assign "sv" (n 0)]
                [.ite (isReply .post)
                  [setf "cb" cWaiting (n 1), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0),
                   .assign "sv" (n 0)]
+                 [.ite (isReply (.authPass [] []))
+                   (keepArg "pj" cPass News.CommandSpec.passwordMax ++
+                    [setf "cb" cPassLen (v "pjl"), setf "cb" cAuth (n authVerify), setf "cb" cIdle (n 0),
+                     .assign "sv" (n 0)])
                  [.ite (v "wc")
                    [setf "cb" cWant (v "wc"), setf "cb" cWantCi (v "wci"),
                     setf "cb" cWantNo (v "wno"), setf "cb" cFirst (n 0), setf "cb" cIdle (n 0),
@@ -948,10 +1032,14 @@ def serve : List PStmt :=
                    ifs (isReply (.active none))
                      [setf "cb" cList (n 2), setf "cb" cListA (n 0),
                       setf "cb" cListC (ownW ownMask)],
+                   ifs (isReply (.authUser []))
+                     (keepArg "nj" cName News.CommandSpec.nameMax ++
+                      [setf "cb" cNameLen (v "njl"), setf "cb" cAuth (n authNamed)]),
+                   ifs (isReply .authFailed) [setf "cb" cAuth (n authNone)],
                    setf "cb" cFirst (n 0),
                    setf "cb" cIdle (eAdd (v "now") (n inactivity)),
                    .ite (or2 (isReply .quit) (isReply .modeReader))
-                     [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]]])])],
+                     [toPhase .quitting, .assign "i" (v "n"), .assign "sv" (n 0)] []])]]]]])])],
    .ite (eEq (v "i") (v "n")) [setf "cb" cHeldPos (n 0), setf "cb" cHeldLen (n 0)]
      [setf "cb" cHeldPos (v "i")]]
 
@@ -984,6 +1072,17 @@ def emptySend : List PStmt :=
    setf "slot" actionIdx (v "c"), setf "slot" actionGen (fld "cb" cGen),
    setf "slot" actionLen (n 0), setf "slot" actionRead (v "wants"), setf "slot" actionTaken (n 0),
    bump, setf "cb" cActed (n 1), setf "cb" cReading (v "wants")]
+
+/-- The name and the password to check, and no more reading till the host's verdict. -/
+def verifying : List PStmt :=
+  [.dec "slot" (actionAt (v "c")), .dec "vnl" (fld "cb" cNameLen), keptIn (v "vnl") News.CommandSpec.nameMax,
+   .dec "vpl" (fld "cb" cPassLen), keptIn (v "vpl") News.CommandSpec.passwordMax,
+   setf "slot" actionKind (n verify), setf "slot" actionIdx (v "c"), setf "slot" actionGen (fld "cb" cGen),
+   setf "slot" actionLen (eAdd (v "vnl") (v "vpl")), setf "slot" actionRead (v "vnl"),
+   setf "slot" actionTaken (n 0)] ++
+  copyNew "vj" (atOff (v "slot") actionHead) (atOff (v "cb") cName) (v "vnl") ++
+  copyNew "vk" (eAdd (atOff (v "slot") actionHead) (v "vnl")) (atOff (v "cb") cPass) (v "vpl") ++
+  [bump, setf "cb" cActed (n 1), setf "cb" cAuth (n authChecking), setf "cb" cReading (n 0)]
 
 /-- The line's deadline runs while the program waits for the rest of a line, as
 `DN.News.SessionSpec.Conn.waitLine` says. -/
@@ -1090,7 +1189,7 @@ ready; a graceful close once everything is answered and taken after a QUIT, a 50
 or a send of nothing when whether to read has changed. No POST or read waits or answers the
 connection, and no reply goes out a part at a time, when it is asked to read. -/
 def emit : List PStmt :=
-  [.dec "wants" (eAnd (eAnd (inPhase .open_) heldEmpty)
+  [.dec "wants" (eAnd (eAnd (eAnd (inPhase .open_) heldEmpty) notPending)
       (eAnd (eAnd (eEq (fld "cb" cWaiting) (n 0)) (eEq (fld "cb" cWant) (n 0)))
         (eEq (fld "cb" cList) (n 0)))),
    ifs (eAnd (v "wants") (ne (fld "cb" cPost) (n 0)))
@@ -1098,8 +1197,10 @@ def emit : List PStmt :=
       [.assign "wants" found]),
    .ite (ne outLen (n 0))
      [ifs (eEq (fld "cb" cBlocked) (n 0)) sending]
-     [.ite (or2 (inPhase .quitting) (eAnd (inPhase .ending) heldEmpty)) (closing closeGracefully)
-       [ifs (eAnd (inPhase .open_) (ne (fld "cb" cReading) (v "wants"))) emptySend]],
+     [.ite (or2 (inPhase .quitting) (eAnd (inPhase .ending) (eAnd heldEmpty notPending)))
+       (closing closeGracefully)
+       [.ite (eEq (fld "cb" cAuth) (n authVerify)) verifying
+         [ifs (eAnd (inPhase .open_) (ne (fld "cb" cReading) (v "wants"))) emptySend]]],
    ifs (fld "cb" cLive) waitLine]
 
 /-- One connection in use, after the batch's events and completions (`SessionSpec.act`). -/
@@ -1147,6 +1248,8 @@ def openConn : List PStmt :=
       setf "cb" cPost (n 0), setf "cb" cArticleDue (n 0), setf "cb" cWant (n 0),
       setf "cb" cWantCi (n 0), setf "cb" cRead (n 0), setf "cb" cGroup (n 0),
       setf "cb" cCurrent (n 0), setf "cb" cWantNo (n 0), setf "cb" cList (n 0), setf "cb" cListD (n 0),
+      setf "cb" cLogins (ne (fld "ev" eventLogins) (n 0)), setf "cb" cTls (ne (fld "ev" eventTls) (n 0)),
+      setf "cb" cAuth (n authNone), setf "cb" cNameLen (n 0), setf "cb" cPassLen (n 0),
       .dec "gt" (n greetCode), ifs (v "gr") [.assign "gt" (n greetPostCode)]] ++
      callS "wg" "connText" [v "ex", v "gt"])]
 
@@ -1161,7 +1264,7 @@ def event : List PStmt :=
    .dec "ek" (fld "ev" eventKind), .dec "ex" (fld "ev" eventIdx), .dec "eg" (fld "ev" eventGen),
    .dec "el" (fld "ev" eventLen),
    .ite (or2 (eLt (v "ex") (n 0)) (eLe (n conns) (v "ex"))) (breach .noSuchIndex) [],
-   .ite (or2 (eLt (v "ek") (n opened)) (eLt (n closed) (v "ek"))) (stop unknownEvent) [],
+   .ite (or2 (eLt (v "ek") (n opened)) (eLt (n verified) (v "ek"))) (stop unknownEvent) [],
    .dec "cb" (record (v "ex")),
    .dec "lv" (eAnd (fld "cb" cLive) (eEq (fld "cb" cGen) (v "eg"))),
    .ite (eEq (v "ek") (n opened)) openConn [],
@@ -1181,7 +1284,19 @@ def event : List PStmt :=
           abandon (v "ex") (v "eg"))
          (breach .unasked)] []] [],
    .ite (eEq (v "ek") (n closed))
-     [.ite (v "lv") (setf "cb" cLive (n 0) :: abandon (v "ex") (v "eg")) []] []]
+     [.ite (v "lv") (setf "cb" cLive (n 0) :: abandon (v "ex") (v "eg")) []] [],
+   .ite (eEq (v "ek") (n verified))
+     [.ite (v "lv")
+       [.ite (eEq (fld "cb" cAuth) (n authChecking))
+         ([.dec "vt" (n (replyCode .authFailed)), setf "cb" cAuth (n authNone),
+           setf "cb" cIdle (eAdd (v "now") (n inactivity)),
+           ifs (ne (fld "ev" eventPost) (n 0))
+             [.assign "vt" (n (replyCode .authAccepted)), setf "cb" cAuth (n authDone),
+              ifs (eAnd hasStore (eAnd (ownW ownAccepting)
+                  (ne (ld (at_ (recOff + News.RecoverProg.rGroupCount))) (n 0))))
+                [setf "cb" cGreeted (n 1)]]] ++
+          callS "wv" "connText" [v "ex", v "vt"])
+         (breach .unasked)] []] []]
 
 /-- What the host took of the connection `sc`'s action: for a send, the output left, whether to
 wait for the host, and activity, which output taken is but in a POST. Of the action slot only the
@@ -1229,7 +1344,7 @@ def wake : List PStmt :=
                         .dec "ws" (eAdd (at_ readsOff) (eMul (v "wq") (n readLen)))] ++
                        callS "wo" "readOutSize" [v "wq"] ++
                        [.assign "ry" (or2 (fld "ws" rBad) (eLt (fld "ws" rGiven) found))])]]
-                [ifs (eEq heldEmpty (n 0))
+                [ifs (eAnd (eEq heldEmpty (n 0)) notPending)
                   [.ite (eEq (fld "cb" cPost) (n 0)) [.assign "ry" (n 1)]
                     ([.dec "wk" (eSub (fld "cb" cPost) (n 1))] ++
                      callS "wt" "postTakes" [v "wk"] ++ [.assign "ry" found])]]]]],
@@ -1629,7 +1744,7 @@ def turn : List PStmt :=
 def functions : List PFun :=
   (News.ArticleProg.program).1 ++ SessionStore.functions ++
     [dateText, connText, textsSet, identityTake, connEvent, groupName, groupNamed, viewClassify, listClassify,
-     listActive, listPart, connAct, connSettle, wakeAt, storeContextF, storeStartF, recoverStep]
+     authReply, listActive, listPart, connAct, connSettle, wakeAt, storeContextF, storeStartF, recoverStep]
 
 /-- `main`: the version, no check of the article's failed, the tables and the texts, no store, an
 empty table and no action or job, the first batch; then with a store, the article's context taken
@@ -1694,7 +1809,14 @@ def regression_967 : Bool :=
    (tCapabilitiesReaderTail, News.CommandSpec.capabilitiesReaderTail),
    (tModeReader, News.CommandSpec.text i .modeReader),
    (tReaderPosting, News.CommandSpec.text i .readerPosting),
-   (tReaderNoPosting, News.CommandSpec.text i .readerNoPosting)].all (fun (k, t) => texts[k]? == some t) &&
+   (tReaderNoPosting, News.CommandSpec.text i .readerNoPosting),
+   (tAuthinfo, News.CommandSpec.ascii "AUTHINFO"), (tUser, News.CommandSpec.ascii "USER"),
+   (tPass, News.CommandSpec.ascii "PASS"), (tCapabilitiesAuthTail, News.CommandSpec.capabilitiesAuthTail),
+   (tAuthUser, News.CommandSpec.text i (.authUser [])), (tAuthAccepted, News.CommandSpec.text i .authAccepted),
+   (tAuthFailed, News.CommandSpec.text i .authFailed), (tAuthSequence, News.CommandSpec.text i .authSequence),
+   (tEncryptionRequired, News.CommandSpec.text i .encryptionRequired),
+   (tAuthDone, News.CommandSpec.text i .authDone),
+   (tAuthRequired, News.CommandSpec.text i .authRequired)].all (fun (k, t) => texts[k]? == some t) &&
   [(0, News.CommandSpec.Cmd.article), (1, .head), (2, .body)].all fun (j, c) =>
     (texts[SessionStore.tStatus + j]?).map
       (· ++ News.CommandSpec.decimal 0 ++ [News.CommandSpec.SP] ++ News.CommandSpec.crlf) ==

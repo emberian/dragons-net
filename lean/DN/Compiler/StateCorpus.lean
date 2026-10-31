@@ -25,7 +25,9 @@ clock — not merely a computed word.
 The cases below are chosen for the stopping branches the review asked for:
 a missing local, an address outside the domain, a timeout, a return (at the top
 level and out of a loop), an external call that ends the run (refused by name, by
-a reply of the wrong length, and by the oracle itself) and a partial writeback.
+a reply of the wrong length, and by the oracle itself), a partial writeback, and each way
+a call ends, in its body and after it. `scripts/check_semantics.sh` runs the same cases
+through HOL4's own `evaluate`.
 -/
 
 namespace DN.Compiler.StateCorpus
@@ -90,6 +92,8 @@ structure Case where
   baseAddr : Word
   /-- What the oracle answers, call by call. -/
   answers : List Answer
+  /-- The functions a call can reach: a name, the parameters, the body. -/
+  code : List (String × List String × PancakeProg) := []
 
 /-- The state a case starts in. -/
 def stateOf (c : Case) : PancakeState World where
@@ -100,6 +104,7 @@ def stateOf (c : Case) : PancakeState World where
   clock := c.clock
   ffi := (0, [])
   baseAddr := c.baseAddr
+  code := fun f => (c.code.find? (fun p => p.1 == f)).map (·.2)
 
 /-- Running a case is running its program from its state under its oracle. -/
 def run (c : Case) : Option Result × PancakeState World :=
@@ -168,10 +173,15 @@ def progNames : PancakeProg → List String
   | .ret e => expNames e
   | .decCall r _ as c => r :: (as.flatMap expNames ++ progNames c)
 
-/-- The names to compare for a case: the ones it binds and the ones its program
-mentions, without repetitions. -/
+/-- The functions as one S-expression, `((name (params) body) ...)`. -/
+def ppCode (code : List (String × List String × PancakeProg)) : String :=
+  "(" ++ " ".intercalate (code.map fun (f, ps, b) =>
+    "(" ++ f ++ " (" ++ " ".intercalate ps ++ ") " ++ ppProg b ++ ")") ++ ")"
+
+/-- The names to compare for a case: the ones it binds and the ones its program and its
+functions mention, without repetitions. A call that ends in error keeps the body's locals. -/
 def caseNames (c : Case) : List String :=
-  (c.locals.map (·.1) ++ progNames c.prog).foldl
+  (c.locals.map (·.1) ++ progNames c.prog ++ c.code.flatMap (fun (_, ps, b) => ps ++ progNames b)).foldl
     (fun acc n => if acc.contains n then acc else acc ++ [n]) []
 
 /-- The result constructor and its payload. -/
@@ -202,28 +212,33 @@ def ppAnswer : Answer → String
   | .final .failed => "final:failed"
   | .final .diverged => "final:diverged"
 
+/-- One line of the dump: the key, and the value after a space unless it is empty. -/
+def field (key value : String) : String :=
+  if value.isEmpty then key else key ++ " " ++ value
+
 /-- The whole case: what it is, and what the model makes of it. -/
 def ppCase (c : Case) : String :=
   let (res, s') := run c
   let names := caseNames c
   String.intercalate "\n"
-    [ "CASE " ++ c.name
-    , "PROG " ++ ppProg c.prog
-    , "LOCALS " ++ ppLocals (c.locals.map (·.1)) (stateOf c).locals
-    , "MEM " ++ ppMemory c.memaddrs (stateOf c).memory
-    , "DOM " ++ String.intercalate "," (c.memaddrs.map ppWord)
-    , "BE " ++ (if c.be then "1" else "0")
-    , "CLOCK " ++ toString c.clock
-    , "BASE " ++ ppWord c.baseAddr
-    , "ANSWERS " ++ String.intercalate ";" (c.answers.map ppAnswer)
-    , "NAMES " ++ String.intercalate "," names
-    , "RESULT " ++ ppResult res
-    , "FLOCALS " ++ ppLocals names s'.locals
-    , "FMEM " ++ ppMemory c.memaddrs s'.memory
-    , "FCALLS " ++ toString s'.ffi.1
-    , "FTRACE " ++ String.intercalate ";" s'.ffi.2
-    , "FCLOCK " ++ toString s'.clock
-    , "FBASE " ++ ppWord s'.baseAddr
+    [ field "CASE" <| c.name
+    , field "PROG" <| ppProg c.prog
+    , field "CODE" <| ppCode c.code
+    , field "LOCALS" <| ppLocals (c.locals.map (·.1)) (stateOf c).locals
+    , field "MEM" <| ppMemory c.memaddrs (stateOf c).memory
+    , field "DOM" <| String.intercalate "," (c.memaddrs.map ppWord)
+    , field "BE" <| (if c.be then "1" else "0")
+    , field "CLOCK" <| toString c.clock
+    , field "BASE" <| ppWord c.baseAddr
+    , field "ANSWERS" <| String.intercalate ";" (c.answers.map ppAnswer)
+    , field "NAMES" <| String.intercalate "," names
+    , field "RESULT" <| ppResult res
+    , field "FLOCALS" <| ppLocals names s'.locals
+    , field "FMEM" <| ppMemory c.memaddrs s'.memory
+    , field "FCALLS" <| toString s'.ffi.1
+    , field "FTRACE" <| String.intercalate ";" s'.ffi.2
+    , field "FCLOCK" <| toString s'.clock
+    , field "FBASE" <| ppWord s'.baseAddr
     , "END" ]
 
 /-! ## The corpus -/
@@ -438,7 +453,101 @@ def generated : List Case :=
         (.extCall "read" (.const (word 32)) (.const (word 1)) (.const (word 8)) (.const (word 1)))
     , gen "gen-dec-return-restores"
         (.seq (.dec "n" (.const (word 9)) (.ret (.var "n"))) (.ret (.var "n"))) ]
-  memory ++ shifts ++ bitwise ++ comparisons ++ clocks ++ replies ++ arithmetic ++ novalue
+  -- Big-endian reads, and replies whose bytes are not all zero, so that their order shows.
+  let order :=
+    ([0, 3, 31] : List Nat).map (fun a =>
+      { gen ("gen-loadb-be-" ++ toString a) (.ret (.loadByte (.const (word a)))) with be := true }) ++
+    [ { gen "gen-ffi-be"
+          (.seq (.extCall "read" (.const (word 0)) (.const (word 1)) (.const (word 8)) (.const (word 3)))
+            (.ret (.loadWord (.const (word 8))))) with
+        be := true, answers := [.ret [0x11, 0x22, 0x33]] }
+    , gen "gen-ffi-past-the-answers"
+        (.seq (.extCall "read" (.const (word 0)) (.const (word 2)) (.const (word 9)) (.const (word 3)))
+          (.ret (.loadWord (.const (word 8)))))
+    , gen "gen-sub" (.ret (.op .sub (.const (word 3)) (.const (word 5)))) ]
+  -- Bytes with the high bit set, loaded and overwritten, so that a byte is neither sign-extended
+  -- nor merged with what it replaces.
+  let high := word 0xff80000000007fff
+  let ones := word 0xffffffffffffffff
+  let bits := ([(0, false), (1, false), (6, false), (7, true), (0, true)] : List (Nat × Bool)).map
+    (fun (a, be) =>
+      { gen s!"gen-loadb-high-{a}{if be then "-be" else ""}" (.ret (.loadByte (.const (word a)))) with
+        memory := [(word 0, high)], be := be })
+  let over := ([(0, 0x00, false), (3, 0x01, false), (7, 0x00, true), (2, 0x01, true)] :
+      List (Nat × Nat × Bool)).map fun (a, b, be) =>
+    { gen s!"gen-storeb-over-{a}-{b}{if be then "-be" else ""}"
+        (.seq (.storeByte (.const (word a)) (.const (word b))) (.ret (.loadWord (.const (word 0))))) with
+      memory := [(word 0, ones)], be := be }
+  let order := order ++ bits ++ over
+  memory ++ shifts ++ bitwise ++ comparisons ++ clocks ++ replies ++ arithmetic ++ novalue ++ order
+
+/-! ## Calls
+
+`DecCall` runs a body on its own locals with the clock one down, and how the call ends decides
+what is left: a return binds the result for the continuation and restores the name after, falling
+off the end is an error in the state the body left, and any other ending ends the run with the
+locals gone.
+-/
+
+/-- The functions the call cases reach. -/
+private def funs : List (String × List String × PancakeProg) :=
+  [ ("inc", ["x"], .ret (.op .add (.var "x") (.const (word 1))))
+  , ("loose", [], .skip)
+  , ("twice", ["x", "x"], .ret (.var "x"))
+  , ("leaves", ["x"], .dec "t" (.const (word 5)) .skip)
+  , ("spin", [], .while_ (.const (word 1)) .skip)
+  , ("halt", [], .extCall "halt" (.const (word 0)) (.const (word 0)) (.const (word 0))
+      (.const (word 1)))
+  , ("peek", [], .ret (.var "n"))
+  , ("poke", ["a"], .seq (.store (.var "a") (.const (word 7))) (.ret (.const (word 0))))
+  , ("outer", ["x"], .decCall "y" "inc" [.var "x"] (.ret (.var "y")))
+  , ("slow", ["k"], .seq (.while_ (.var "k") (.assign "k" (.op .sub (.var "k") (.const (word 1)))))
+      (.ret (.var "k")))
+  , ("pair", ["a", "b"], .ret (.op .sub (.var "a") (.var "b")))
+  , ("fails", ["x"], .assign "q" (.var "x")) ]
+
+/-- A call case: the small world of the generated ones, with the functions above. -/
+private def call (name : String) (prog : PancakeProg) : Case :=
+  { gen name prog with code := funs }
+
+/-- The call cases, one ending apiece. The subset has no `Break` or `Continue`, so a body ends
+by returning, falling off its end, an error, a timeout or the world ending the run. -/
+def calls : List Case :=
+  [ call "call-returns" (.decCall "r" "inc" [.const (word 41)] (.ret (.var "r")))
+  , { call "call-restores-the-result-name"
+        (.seq (.decCall "r" "inc" [.const (word 1)] .skip) (.ret (.var "r"))) with
+      locals := [("n", word 2), ("r", word 7)] }
+  , call "call-unbinds-a-fresh-result-name"
+      (.decCall "r" "inc" [.const (word 1)] (.assign "q" (.var "r")))
+  , call "call-arity" (.decCall "r" "inc" [.const (word 1), .const (word 2)] .skip)
+  , call "call-unknown" (.decCall "r" "none" [] .skip)
+  , call "call-repeated-parameter" (.decCall "r" "twice" [.const (word 1), .const (word 2)] .skip)
+  , call "call-argument-no-value" (.decCall "r" "inc" [.var "missing"] .skip)
+  , call "call-falls-off-the-end" (.decCall "r" "loose" [] .skip)
+  , call "call-falls-off-keeps-the-body-locals" (.decCall "r" "leaves" [.const (word 1)] .skip)
+  , { call "call-no-clock" (.decCall "r" "inc" [.const (word 1)] .skip) with clock := 0 }
+  , call "call-body-times-out" (.decCall "r" "spin" [] .skip)
+  , { call "call-body-ends-the-run" (.decCall "r" "halt" [] .skip) with
+      answers := [.final .failed] }
+  , call "call-body-sees-only-its-parameters" (.decCall "r" "peek" [] .skip)
+  , call "call-shares-memory"
+      (.decCall "r" "poke" [.const (word 8)] (.ret (.loadWord (.const (word 8)))))
+  , call "call-nested" (.decCall "r" "outer" [.const (word 1)] (.ret (.var "r")))
+  , { call "call-spends-the-clock" (.decCall "r" "slow" [.const (word 2)] (.ret (.var "r"))) with
+      clock := 5 }
+  , call "call-body-error-empties-locals" (.decCall "r" "fails" [.const (word 1)] .skip)
+  , call "call-pairs-arguments-with-parameters"
+      (.decCall "r" "pair" [.const (word 5), .const (word 3)] (.ret (.var "r")))
+  , { call "call-restores-a-bound-name-after-a-return"
+        (.decCall "r" "inc" [.const (word 1)] (.ret (.var "r"))) with
+      locals := [("n", word 2), ("r", word 7)] }
+  , { call "call-continuation-times-out"
+        (.decCall "r" "inc" [.const (word 1)] (.while_ (.const (word 1)) .skip)) with
+      locals := [("n", word 2), ("r", word 7)] }
+  , { call "call-continuation-ends-the-run"
+        (.decCall "r" "inc" [.const (word 1)]
+          (.extCall "halt" (.const (word 0)) (.const (word 0)) (.const (word 0)) (.const (word 1)))) with
+      locals := [("n", word 2), ("r", word 7)], answers := [.final .diverged] } ]
 
 /-! ## The write-back clause on its own
 
@@ -475,7 +584,9 @@ def writes : List WriteCase :=
   , { name := "write-big-endian", memaddrs := dom, be := true, addr := word 1,
       bytes := [0xaa, 0xbb], memory := [(word 0, packed)] }
   , { name := "write-nothing", memaddrs := dom, be := false, addr := word 32,
-      bytes := [], memory := [(word 0, packed)] } ]
+      bytes := [], memory := [(word 0, packed)] }
+  , { name := "write-over-set-bits", memaddrs := dom, be := false, addr := word 2,
+      bytes := [0x00, 0x01], memory := [(word 0, word 0xffffffffffffffff)] } ]
 
 /-- What a write case leaves in memory. -/
 def runWrite (w : WriteCase) : Word → Word :=
@@ -485,19 +596,19 @@ def runWrite (w : WriteCase) : Word → Word :=
 /-- A write case and its answer. -/
 def ppWrite (w : WriteCase) : String :=
   String.intercalate "\n"
-    [ "WRITE " ++ w.name
-    , "WDOM " ++ String.intercalate "," (w.memaddrs.map ppWord)
-    , "WBE " ++ (if w.be then "1" else "0")
-    , "WADDR " ++ ppWord w.addr
-    , "WBYTES " ++ hexBytes w.bytes
-    , "WMEM " ++ ppMemory w.memaddrs
+    [ field "WRITE" <| w.name
+    , field "WDOM" <| String.intercalate "," (w.memaddrs.map ppWord)
+    , field "WBE" <| (if w.be then "1" else "0")
+    , field "WADDR" <| ppWord w.addr
+    , field "WBYTES" <| hexBytes w.bytes
+    , field "WMEM" <| ppMemory w.memaddrs
         (fun a => ((w.memory.find? (fun p => p.1 == a)).map (·.2)).getD 0)
-    , "WRESULT " ++ ppMemory w.memaddrs (runWrite w)
+    , field "WRESULT" <| ppMemory w.memaddrs (runWrite w)
     , "END" ]
 
 /-- The corpus as the printer emits it. -/
 def dump : String :=
-  String.intercalate "\n" ((corpus ++ generated).map ppCase ++ writes.map ppWrite)
+  String.intercalate "\n" ((corpus ++ generated ++ calls).map ppCase ++ writes.map ppWrite)
 
 /-! ## Non-vacuity: the corpus really reaches the branches it names -/
 
@@ -526,15 +637,16 @@ def regression_603 : Bool :=
 -- No case uses the name the printer spells the empty external name with, so the
 -- encoding is unambiguous for this corpus.
 def regression_488 : Bool :=
-  (corpus ++ generated).all fun c =>
+  (corpus ++ generated ++ calls).all fun c =>
     let rec names : PancakeProg → Bool
       | .extCall n _ _ _ _ => n != "_"
       | .seq a b => names a && names b
       | .cond _ a b => names a && names b
       | .while_ _ p => names p
       | .dec _ _ p => names p
+      | .decCall _ _ _ p => names p
       | _ => true
-    names c.prog
+    names c.prog && c.code.all fun (_, _, b) => names b
 
 -- A reply of the wrong length ends the run and writes nothing back.
 def regression_604 : Bool :=
@@ -545,5 +657,17 @@ def regression_604 : Bool :=
      | _ => false)
     && ((run c).2.memory (BitVec.ofNat 64 0) == packed)
   | none => false
+
+-- The call cases reach every ending of a call, and an error from a body that falls off its end
+-- keeps the body's locals, not the caller's.
+def regression_605 : Bool :=
+  let ending (n : String) := ((calls.find? (·.name == n)).map fun c => (run c).1).join
+  ending "call-returns" == some (.return_ (word 42)) &&
+  ending "call-falls-off-the-end" == some .error &&
+  ending "call-body-times-out" == some .timeout &&
+  (match ending "call-body-ends-the-run" with | some (.finalFFI _) => true | _ => false) &&
+  (match calls.find? (·.name == "call-falls-off-keeps-the-body-locals") with
+   | some c => (run c).2.locals "x" == some (word 1)
+   | none => false)
 
 end DN.Compiler.StateCorpus

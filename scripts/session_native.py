@@ -54,6 +54,10 @@ RUNS, STEPS, SEED = 200, 60, 20_260_928
 TRACE = "differs at turn"
 # The defects planted in the store's side, which only the scenarios with a store can see.
 POST_DEFECTS = [
+    ("AUTHINFO taken in the clear", r"if \(lds 1 \(cb \+ \d+\)\) == 0 \{\n(\s+)r = 56;", r"if 0 {\n\1r = 56;", 2,
+     TRACE),
+    ("a password checked with no name kept", r"if au == 1 \{", "if au < 2 {", 1, TRACE),
+    ("a POST a login would allow answered 440", r"r = 61;", "r = 11;", 1, TRACE),
     ("an article's dots not stuffed", r"if \(lds 1 \(zs \+ 80\)\) & \(b == 46\) \{", "if 0 {", 1, TRACE),
     ("an article one octet longer taken", r"1000000 < ar", "1000001 < ar", 2, TRACE),
     ("an article's deadline a millisecond late", r"st cb \+ 128, now \+ 1800000;", "st cb + 128, now + 1800001;", 1,
@@ -176,19 +180,22 @@ POST_DEFECTS = [
      "if (h <= f) & (x == 10) {", 1, "scenario 'overview"),
 ]
 DEFECTS = [
+    ("a connection's first command's deadline kept from the one before at its index",
+     r"st cb \+ 40, now \+ 10000;", "if eg == 1 { st cb + 40, now + 10000; }", 1,
+     "scenario 'a deadline of a connection gone, its index taken'"),
     ("the first command's deadline a second late", r"now \+ 10000;", "now + 11000;", 1, TRACE),
     ("an index opened again at its last generation", r"\(eg <= \(lds 1 \(cb \+ 8\)\)\)", "(eg < (lds 1 (cb + 8)))", 1,
      "breach 'an index opened again at its generation'"),
     ("a generation past its limit taken", r"\(4611686018427387904 < eg\)", "(4611686018427387905 < eg)", 1,
      "breach 'a generation past its limit'"),
     ("a line's deadline a millisecond late", r"now \+ 180000;", "now + 180001;", 2, TRACE),
-    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 37, TRACE),
+    ("keywords compared with regard to case", r"\(32 \* \(\(96 <", "(0 * ((96 <", 40, TRACE),
     ("a prefix of READER taken by MODE", r"(if cmd == 16 \{\s+if args == 1 \{\s+eqk = )l1 == 6;", r"\1l1 <= 6;", 1,
      "scenario 'commands'"),
     ("READER compared with regard to case", r"(?s)(if cmd == 16 \{.*?)\(32 \* \(\(96 <", r"\1(0 * ((96 <", 1,
      "scenario 'MODE READER without a store'"),
     ("the first letter of a keyword not compared", r"jq = 0;(\s+)while eqk & \(jq < l", r"jq = 1;\1while eqk & (jq < l",
-     30, "scenario 'every letter of a keyword changed'"),
+     33, "scenario 'every letter of a keyword changed'"),
     ("MODE READER's 502 without the close", r"if 0 < \(\(r == 3\) \+ \(r == 37\)\) \{", "if 0 < ((r == 3) + 0) {", 1,
      "scenario 'MODE READER without a store'"),
     ("an article number of any size", r"val <= 2147483647", "val <= 9999999999999999", 10, TRACE),
@@ -205,8 +212,8 @@ DEFECTS = [
      r"\1st cb + 48, lds 1 (cb + 48);", 1, TRACE),
     ("a send of which nothing was taken counted as activity", r"if \(0 < tk\) &", "if (0 <= tk) &", 1, TRACE),
     ("reading asked with a line held",
-     r"var wants = \(\(\(lds 1 \(cb \+ 16\)\) == 0\) & \(\(lds 1 \(cb \+ 80\)\) == \(lds 1 \(cb \+ 72\)\)\)\) &",
-     "var wants = ((lds 1 (cb + 16)) == 0) &", 1, TRACE),
+     r"var wants = \(\(\(\(lds 1 \(cb \+ 16\)\) == 0\) & \(\(lds 1 \(cb \+ 80\)\) == \(lds 1 \(cb \+ 72\)\)\)\) &",
+     "var wants = (((lds 1 (cb + 16)) == 0) &", 1, TRACE),
     ("received bytes not held", r"st cb \+ 72, el;", "st cb + 72, 0;", 1, TRACE),
     ("input of a connection gone applied", r"(?s)(if ek == 2 \{.*?)if lv \{", r"\1if lds 1 cb {", 1,
      "code 4 on a host that kept the contract"),
@@ -218,7 +225,7 @@ DEFECTS = [
      "code 6 on a host that kept the contract"),
     ("the longest revision refused", r"\(64 < rvl\)", "(63 < rvl)", 1, "code 9 on a host that kept the contract"),
     ("an identity with a space accepted", r"\(cz < 33\)", "(cz < 32)", 2, "not stop 9"),
-    ("an event of an unknown kind accepted", r"\(5 < ek\)", "(6 < ek)", 1, "not stop 8"),
+    ("an event of an unknown kind accepted", r"\(6 < ek\)", "(7 < ek)", 1, "not stop 8"),
     ("a clock going back accepted", r"\(now < \(lds 1 \(@base \+ \d+\)\)\)", "(now < 0)", 1, "not stop 7"),
     ("a clock refused just below its limit", r"4611686018427387904 <= now", "4611686018427387903 <= now", 1,
      "at the edge 'a clock just below its limit'"),
@@ -322,6 +329,11 @@ def own_area_written() -> Iterator[tuple[str, Identity, list[str], int]]:
         ("a held length of the last connection",
          ["turn 1", "open 63 1", "go", f"took {GREETING}", "turn 2",
           f"poke {record + 63 * slot + words['C_HELD_LEN']} 1000"]),
+        ("a name's length",
+         ["turn 1", "open 0 1 6", "go", f"took {GREETING}", "turn 2",
+          "recv 0 1 " + sessions.ascii_lines("AUTHINFO USER alice").hex(), "go",
+          f"took {len(ref.texts(*IDENTITY)['auth-user'])}", "turn 3", f"poke {record + words['C_NAME_LEN']} 65",
+          "recv 0 1 " + sessions.ascii_lines("AUTHINFO PASS x").hex()]),
     ]:
         yield f"{what} written by the host", IDENTITY, [*script, "go", "took"], 10
 
@@ -392,7 +404,7 @@ def program_breaches() -> Iterator[tuple[str, Identity, list[str], int]]:
     yield "an address one byte too long", (b"r", b"s" * 201), first, 9
     yield "a space in the revision", (b"0123 abc", SOURCE), first, 9
     yield "a DEL in the address", (b"r", b"https://x\x7f"), first, 9
-    for kind in (0, 6, 2 ** 63):
+    for kind in (0, 7, 2 ** 63):
         yield f"an event of kind {kind}", IDENTITY, ["turn 1", f"raw {kind} 0 1", "go", "took"], 8
 
 
@@ -632,8 +644,10 @@ def check(cake: str) -> Report:
                               plant(source, placed(pattern), placed(becomes), times), OUT, HOST)
                   for index, (_, pattern, becomes, times, _) in enumerate(defects)]
         scenarios = list(sessions.scenarios())
-        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.group_scenarios(),
-                 *sessions.list_scenarios(), *sessions.mode_scenarios(), *sessions.over_scenarios()]
+        posts = [*sessions.post_scenarios(), *sessions.read_scenarios(), *sessions.abandon_scenarios(),
+                 *sessions.group_scenarios(),
+                 *sessions.list_scenarios(), *sessions.mode_scenarios(), *sessions.over_scenarios(),
+                 *sessions.login_scenarios()]
         model = sessions.model_command()
         scripts = [(name, script, code) for name, script, code in
                    (*sessions.breaches(), *sessions.post_breaches(), *sessions.read_breaches())

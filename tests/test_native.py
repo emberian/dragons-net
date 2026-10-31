@@ -27,6 +27,7 @@ gen_keywords = script("gen_keywords")
 lanes = script("lanes")
 native_baseline = script("native_baseline")
 native_fuzz = script("native_fuzz")
+parse_check = script("parse_check")
 parser_contract = script("parser_contract")
 state_check = script("state_check")
 
@@ -70,6 +71,42 @@ class Emitted(unittest.TestCase):
                               check=False, timeout=600)
         self.assertEqual((done.returncode, done.stdout), (0, "safe\n"), done.stderr)
 
+    def test_the_lean_parser_reads_each_printed_program_as_lowered(self) -> None:
+        """DN.Compiler.Parse, the Lean copy of CakeML's parser, reads every printed program as its
+        lowering in the canonical form, and each cell of the precedence table as the table says.
+        scripts/check_parse.sh holds the same trees and refusals to HOL4's own parser."""
+        programs = json.loads(run([str(DN_COMPILER), "emit-trees"]).stdout)
+        trees = json.loads(run([str(DN_COMPILER), "parse-trees"]).stdout)
+        self.assertEqual(len(trees), len(programs))
+        for program, tree in zip(programs, trees, strict=True):
+            with self.subTest(program=program["name"]):
+                self.assertIsNotNone(tree)
+                parse_check.compared(program, tree)
+        cells = json.loads(run([str(DN_COMPILER), "emit-cells"]).stdout)
+        readings = json.loads(run([str(DN_COMPILER), "parse-cells"]).stdout)
+        self.assertEqual(parse_check.cells_read(cells, readings), len(cells))
+
+    def test_the_lean_parser_refuses_forms_never_printed(self) -> None:
+        """A form the gate never prints is refused, though its like is read; white space is HOL's."""
+        def reading(text: str) -> Any:
+            return json.loads(subprocess.run([str(DN_COMPILER), "parse-text"], input=text, text=True,
+                                             capture_output=True, check=True, timeout=60).stdout)
+
+        def body(*lines: str) -> str:
+            return "fun f(1 a) {\n" + "".join(f"  {line}\n" for line in lines) + "  return a;\n}\n"
+
+        plain = body("var r = g(a);", "@dn_x(a, a, a, a);")
+        self.assertIsNotNone(reading(plain))
+        # HOL's isSpace: the codes 9 to 13 as well as the space.
+        for c in "\t\v\f\r":
+            with self.subTest(space=ord(c)):
+                self.assertEqual(reading(plain.replace(" ", c)), reading(plain))
+        refused = {"the primitive AddCarry": body("var r = __add_with_carry__(a);"),
+                   "@top, a keyword": body("@top(a, a, a, a);"), "@ alone": body("@(a, a, a, a);")}
+        for name, text in refused.items():
+            with self.subTest(name):
+                self.assertIsNone(reading(text))
+
     def test_certificates_of_the_analysis_are_current(self) -> None:
         """The modules whose claims the kernel checks a declaration each are what the generator
         prints for the programs as they are."""
@@ -92,11 +129,11 @@ class Emitted(unittest.TestCase):
         # The whole programs, the differential fixture and the reply cases are too long to read in a
         # diff; their digests catch a change just as well.
         self.assertEqual(hashlib.sha256(emit("session").encode()).hexdigest(),
-                         "97c52756df797e01ed611bda435366aa7d4423a6a8e617387893d818cf5762ae")
+                         "2d243e08c9215ae871124455a4890c590d73bbf809a6d7bad5b9e59a028d3b91")
         self.assertEqual(hashlib.sha256(emit("recover").encode()).hexdigest(),
                          "8f562e94aa1ba27b2c0c00f99fed5732470d27594079e46a8778fbf369b24472")
         self.assertEqual(hashlib.sha256(emit("baseline").encode()).hexdigest(),
-                         "b9a5c824739f6d6fe047d99b6a7a7b150b4c71897d30054a7f3aa5abbcbe51e6")
+                         "1a845eaaa7ab24f9bb87bc80e5e0720642e1a60692168376695f931a659be89a")
         self.assertEqual(hashlib.sha256(emit("reply-cases").encode()).hexdigest(),
                          "e35a50cc0aaff19efdafb7138c2da756c14a3037ce4438abc42b86584e9dd40e")
 
@@ -111,6 +148,80 @@ class Emitted(unittest.TestCase):
             self.assertTrue(first.startswith("export fun dn_region("))
             result = subprocess.run([str(DN_COMPILER), "unknown"], capture_output=True, check=False)
             self.assertEqual(result.returncode, 2)
+
+    def compiled(self, text: str | bytes) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "input.json")
+            path.write_bytes(text if isinstance(text, bytes) else text.encode())
+            return subprocess.run([str(DN_COMPILER), "compile", str(path)], text=True, capture_output=True,
+                                  check=False, timeout=60)
+
+    def test_compile_prints_the_examples_as_the_built_in_programs(self) -> None:
+        for name in ("region", "echo"):
+            done = subprocess.run([str(DN_COMPILER), "compile", str(ROOT / f"examples/{name}.json")], text=True,
+                                  capture_output=True, check=True, timeout=60)
+            self.assertEqual(done.stdout, run([str(DN_COMPILER), f"emit-{name}"]).stdout, name)
+
+    def test_compile_refuses_with_stable_codes(self) -> None:
+        def program(body: list[Any], params: list[str] | None = None, name: str = "dn_x", **more: Any) -> str:
+            function = {"name": name, "params": ["a"] if params is None else params, "body": body}
+            return json.dumps({"dn_input": 1, "function": function, **more})
+
+        def nested(levels: int) -> Any:
+            e: Any = "a"
+            for _ in range(levels):
+                e = ["+", e, 1]
+            return e
+
+        deep = nested(300)
+        small = program([["return", "a"]])
+        cases: list[tuple[str | bytes, str, int]] = [
+            ("{", "DN0001", 3),
+            (b"\xff\xfe", "DN0001", 3),
+            (json.dumps({"dn_input": 2, "function": {}}), "DN0002", 3),
+            ('{"dn_input": 1.0, "function": {}}', "DN0006", 3),
+            ('{"dn_input": 1e1000000, "function": {}}', "DN0006", 3),
+            ('{"dn_input": 1e10000000000, "function": {}}', "DN0006", 3),
+            ('{"dn_input": 1E9, "function": {}}', "DN0006", 3),
+            ('{"dn_input": 1, "function": {}, "x": ' + "1" * 21 + "}", "DN0006", 3),
+            (program([["return", ["+", "a", "1" * 20]]], name="dn_e1e9.5"), "DN0100", 1),
+            (program([["return", "a"]], name='dn_"1e9'), "DN0100", 1),
+            (program([["return", -1]]), "DN0006", 3),
+            (" " * (1 << 20) + "{}", "DN0003", 3),
+            (small + " " * ((1 << 18) + 1 - len(small)), "DN0003", 3),
+            # The file, the function, its body and the statement are four levels around the expression.
+            (program([["return", nested(253)]]), "DN0004", 3),
+            (program([["return", deep]]), "DN0004", 3),
+            (program([["return", "a"]], colour="blue"), "DN0005", 3),
+            (json.dumps({"dn_input": 1, "function": {"name": "dn_x", "params": [], "body": [], "spare": 1}}),
+             "DN0005", 3),
+            (program([["jump", "a"]]), "DN0006", 3),
+            (json.dumps({"function": {}}), "DN0006", 3),
+            (program([["return", "a"]], name="x"), "DN0101", 1),
+            (program([["return", "a"]], params=["a", "a"]), "DN0105", 1),
+            (program([["return", "b"]]), "DN0107", 1),
+            (program([["set", "a", 1]]), "DN0122", 1),
+            (program([["call", "r", "f", ["a"]], ["return", "r"]],
+                     calls=[{"name": "f", "params": ["x"], "body": [["call", "y", "f", ["x"]], ["return", "y"]]}]),
+             "DN0123", 1),
+        ]
+        for text, code, status in cases:
+            done = self.compiled(text)
+            self.assertEqual((done.returncode, done.stdout), (status, ""), (code, done.stderr))
+            self.assertTrue(done.stderr.startswith(f"error[{code}]: "), (code, done.stderr))
+        # At the bounds, 256 KiB and 256 levels, an input is taken.
+        for text in (small + " " * ((1 << 18) - len(small)), program([["return", nested(252)]])):
+            self.assertEqual(self.compiled(text).returncode, 0)
+        # A message that quotes the input escapes its control characters, and is cut at 300 of them.
+        def with_field(name: str) -> str:
+            return json.dumps({"dn_input": 1, "function": json.loads(small)["function"], name: 1})
+
+        done = self.compiled(with_field("\u001b[2J\u007f"))
+        self.assertEqual(done.stderr, "error[DN0005]: a field the format does not have: \\u001b[2J\\u007f\n")
+        message = "a field the format does not have: " + "x" * 400
+        done = self.compiled(with_field("x" * 400))
+        self.assertEqual(done.stderr, f"error[DN0005]: {message[:300]}...\n")
+        self.assertIn("statement 1: a literal", self.compiled(program([["var", "b", 1], ["return", -1]])).stderr)
 
     def test_keyword_table_is_generated_from_the_pinned_lexers(self) -> None:
         lock = json.loads((ROOT / "backend/lock.json").read_text())
@@ -166,7 +277,7 @@ class StateCorpus(unittest.TestCase):
 
     def test_state_check_reads_the_whole_state(self) -> None:
         """The lane compares every printed field, not only the value a run computes."""
-        lines = ["CASE ok", "PROG (seq (assign x (const 1)) (ret (var x)))", "LOCALS x=5",
+        lines = ["CASE ok", "PROG (seq (assign x (const 1)) (ret (var x)))", "CODE ()", "LOCALS x=5",
                  "MEM 0=0", "DOM 0", "BE 0", "CLOCK 4", "BASE 0", "ANSWERS", "NAMES x",
                  "RESULT return:1", "FLOCALS x=", "FMEM 0=0", "FCALLS 0", "FTRACE",
                  "FCLOCK 4", "FBASE 0", "END"]
@@ -218,7 +329,8 @@ class StateCorpus(unittest.TestCase):
         programs = [line for line in dump.splitlines() if line.startswith("PROG ")]
         for construct in ("(skip)", "(dec ", "(assign ", "(store ", "(storeb ", "(extcall ",
                           "(seq ", "(if ", "(while ", "(ret ", "(mul ", "(and ", "(shr ", "(shl ", "(xor ", "(or ",
-                          "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless "):
+                          "(loadb ", "(loadw ", "(base)", "(less ", "(equal ", "(notless ", "(deccall ",
+                          "(sub "):
             with self.subTest(construct=construct):
                 self.assertTrue(any(construct in p for p in programs), construct)
         # The write-back clause an external call cannot reach has its own cases.
@@ -231,6 +343,10 @@ class StateCorpus(unittest.TestCase):
                 self.assertIn(f"{len(results)} cases", text)
         self.assertIn(f"{len(results)} cases, {stopping} of which stop",
                       (ROOT / "docs/baseline.md").read_text())
+        writes = sum(1 for line in dump.splitlines() if line.startswith("WRITE "))
+        for name in ("docs/assurance.md", "docs/pancake-semantics.md"):
+            with self.subTest(document=name):
+                self.assertIn(f"{writes} write-backs", (ROOT / name).read_text())
 
 
 class Replies(unittest.TestCase):

@@ -16,17 +16,20 @@ import DN.News.FsCases
 import DN.News.StoreCases
 import DN.Compiler.Analyzer
 import DN.Compiler.AnalyzerCertGen
+import DN.Compiler.Input
+import DN.Compiler.Parse
 
 /-! `dn-compiler`: prints the checked native examples, the server's loop and the layout it shares
 with its host, runs the framing, grammar, article, journal, recovery, file system, store and session
 models, prints the differential fixtures, the programs and precedence cells the parser contract
-compares, generated programs and their recorded cases, and the corpus of stopping states. Printing
+compares, and what the Lean copy of CakeML's parser reads them as, generated programs and their recorded
+cases, and the corpus of stopping states. Printing
 is not a correctness certificate: see docs/assurance.md for the remaining connections. -/
 
 open DN.Compiler
 
 private def commands : List String :=
-  ["emit-region", "emit-echo", "emit-render", "emit-reply", "emit-skeleton", "emit-crc",
+  ["emit-region", "emit-echo", "emit-render", "emit-stamp", "emit-reply", "emit-skeleton", "emit-crc",
    "emit-sip", "emit-scan", "emit-recover", "emit-grammar", "emit-article", "emit-frame-line", "emit-frame-line-4",
    "emit-frame-block-64", "emit-frame-block-4",
    "frame-model",
@@ -38,7 +41,8 @@ private def commands : List String :=
    "emit-article-layout", "emit-article-mutant NAME",
    "analyze-session", "analyze-recover", "analyze-grammar", "analysis-cert session|recover [BUDGET]",
    "emit-reply-cases", "emit-baseline",
-   "emit-trees", "emit-cells", "emit-fuzz SEED COUNT VECTORS", "run-fuzz", "fuzz-samples",
+   "emit-trees", "parse-trees", "emit-cells", "parse-cells", "parse-text", "emit-fuzz SEED COUNT VECTORS", "run-fuzz",
+   "fuzz-samples", "compile FILE",
    "emit-corpus", "dump-states"]
 
 /-- The most lines `session-model` reads. -/
@@ -117,6 +121,32 @@ private def noMutant (name : String) : IO UInt32 := IO.eprintln s!"error: no mut
 private def plain (run : Unit → IO UInt32) : List String → IO UInt32
   | [] => run ()
   | _ => usageError
+
+/-- A function from `path` through the gate (`DN.Compiler.Input`): the source, or the refusal and its
+code; status 1 if the gate refuses it, 3 if it is not of the format. -/
+private def compileFile (path : String) : IO UInt32 := do
+  let refuse (p : DN.Compiler.Input.Problem) : IO UInt32 := do
+    IO.eprintln p.render
+    return p.status
+  -- Read no more than one byte past the bound, whatever the file is: a device has no size.
+  let readBounded : IO ByteArray := IO.FS.withFile path .read fun h => do
+    let mut got := ByteArray.empty
+    repeat
+      let chunk ← h.read (DN.Compiler.Input.maxBytes + 1 - got.size).toUSize
+      if chunk.isEmpty || got.size + chunk.size > DN.Compiler.Input.maxBytes then
+        return got ++ chunk
+      got := got ++ chunk
+    return got
+  match ← readBounded.toBaseIO with
+  | .error e => IO.eprintln s!"error: {path}: {e}" *> pure 2
+  | .ok bytes =>
+    if bytes.size > DN.Compiler.Input.maxBytes then return ← refuse (.tooLarge bytes.size)
+    match String.fromUTF8? bytes with
+    | none => refuse (.notJson "not UTF-8")
+    | some text =>
+      match DN.Compiler.Input.compile text with
+      | .ok source => IO.print source *> pure 0
+      | .error p => refuse p
 
 /-- What a model answers of the cases on standard input. -/
 private def onInput (answer : String → Except String String) : IO UInt32 := do
@@ -230,9 +260,21 @@ def table : List (String × (List String → IO UInt32)) :=
     | _ => usageError),
    ("emit-reply-cases", plain fun _ => (output (.ok DN.Dsl.Example.cases.compress))),
    ("emit-baseline", plain fun _ => (output ((Baseline.fixture ()).map (·.compress)))),
+   ("compile", fun
+    | [path] => compileFile path
+    | _ => usageError),
    ("emit-trees", plain fun _ => (output ((DN.Printed.all ()).map fun ps =>
       (Lean.Json.arr (ps.map (·.tree)).toArray).compress))),
+   ("parse-trees", plain fun _ => (output ((DN.Printed.all ()).map fun ps =>
+      (Lean.Json.arr (ps.map (Parse.programJson ·.source)).toArray).compress))),
    ("emit-cells", plain fun _ => (output (Precedence.cells.map (·.compress)))),
+   ("parse-cells", plain fun _ => (output (Precedence.cells.map fun cs =>
+      (Lean.Json.arr ((cs.getArr?.toOption.getD #[]).map fun c =>
+        match ((c.getObjValD "tree").getObjValD "source").getStr? with
+        | .ok source => Parse.programJson source
+        | .error _ => .null)).compress))),
+   -- Any text on standard input, as the Lean copy of CakeML's parser reads it, or null.
+   ("parse-text", plain fun _ => (onInput fun input => .ok (Parse.programJson input).compress)),
    ("emit-fuzz", fun
     | [seed, count, vectors] =>
       match seed.toNat?, count.toNat?, vectors.toNat? with

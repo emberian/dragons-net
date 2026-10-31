@@ -13,13 +13,19 @@ capabilities and LIST ACTIVE, POST among the first and `y` in the second only wh
   unanswered and stops the store, its sync leaving the mark; an opening or a read of the article
   answers 403 and the store goes on; a failure at the start ends it with status 4, recovery failed
   of no space. Every point but `dn/read-dir`, which a listing reaches only past `dn/open-dir`, fails
-  in some run.
+  in some run, and the stop's counters count the one failed file job, for want of space.
 - Each operation interrupted once (EINTR): where the host makes the call again, the run as without
-  it, and as a failure where it does not.
+  it, no file job failed, and as a failure where it does not, counted as failing otherwise.
 - Every write cut to one octet: the run as without it; a write of no progress: the start refused, of
   no space.
 - Each index's generations counted up to the last but one (`dn/generation`): every client opens at
   the last generation of an index and the next at another, the run as without it.
+- SIGTERM as each operation begins (`dn/term`): the job running it run out before the server ends,
+  with status 0, the spool held as after a crash and served again.
+- Every index taken at once, a 65th connection waiting; slow reads of the large article, posts with
+  slowed syncs and HELP on the rest: all answered, the allocator holding no more once the server
+  serves, and at most `GROWTH` kB more resident than as it began to serve.
+- A poll that fails (`dn/poll`): the host ends with status 2.
 - Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
   before a post's 240, which comes after its three syncs.
 
@@ -42,15 +48,20 @@ import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
 import errno
+import fcntl
 import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
+import threading
 import time
 from typing import BinaryIO
 
@@ -140,10 +151,11 @@ class Run:
 
 
 def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list[Step] = STEPS,
-           during: Callable[[int, Path], list[list[bytes]]] | None = None, laid: bool = True) -> Run:
-    """The server with the points `enable` names on a spool holding `base`, or, not `laid`, on the
-    spool `where` holds, its clients taking `steps` in turn, or `during` doing what it does given the
-    port and the spool; ended by SIGTERM once done."""
+           during: Callable[[int, Path], list[list[bytes]]] | None = None, laid: bool = True,
+           more: tuple[str, ...] = ()) -> Run:
+    """The server with the points `enable` names and the options `more` on a spool holding `base`,
+    or, not `laid`, on the spool `where` holds, its clients taking `steps` in turn, or `during` doing
+    what it does given the port and the spool; ended by SIGTERM once done."""
     spool, run = C.laid(where, base) if laid else (where / "spool", where / "run")
     env = {k: v for k, v in os.environ.items() if not k.startswith("FIU_")}
     if enable:
@@ -151,7 +163,7 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
     err = where / "stderr"
     got: list[list[bytes]] = []
     port: str | None = None
-    with err.open("w") as said, subprocess.Popen([str(binary), *C.options(spool, run)], stdout=subprocess.PIPE,
+    with err.open("w") as said, subprocess.Popen([str(binary), *C.options(spool, run), *more], stdout=subprocess.PIPE,
                                                  stderr=said, text=True, env=env) as proc:
         try:
             try:
@@ -164,7 +176,8 @@ def served(binary: Path, base: Image, where: Path, enable: str = "", steps: list
                 # A refused post's temporary file goes by a job its 441 does not wait for: the store's
                 # last jobs are given their time before the stop, and a file still there is held.
                 settled = time.monotonic() + C.TIMEOUT
-                while any(f.name.startswith("t") for f in spool.iterdir()) and time.monotonic() < settled:
+                while any(f.name.startswith("t") for f in spool.iterdir()) and time.monotonic() < settled and \
+                        proc.poll() is None:
                     time.sleep(0.01)
                 proc.send_signal(signal.SIGTERM)
             status = proc.wait(C.TIMEOUT)
@@ -223,10 +236,11 @@ def expected(base: Image, outcome: str = "none", at: int = -1) -> list[list[byte
     return rows
 
 
-def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple[str, str | None]:
+def answered(run: Run, base: Image, retried: bool, cls: str, role: str, counter: int = -1) -> tuple[str, str | None]:
     """The outcome of `run`, an operation on the file of `role` failed or interrupted at its point,
     and what of it 0005 does not allow, if anything; with `retried`, the host made the call again,
-    so nothing happened."""
+    so nothing happened. With `counter`, the stop counts one failed file job, there among those that
+    failed for want of space, on an I/O error and otherwise, or none if nothing failed."""
     failed = run.failed()
     point = failed[0] if failed else ""
     marked = run.marks == ["spool", "run"]
@@ -245,6 +259,10 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple
     what = f"{point or 'nothing'} on the {role or 'no'} file failing"
     if not outcome:
         return "", f"{what}, which 0005 does not expect"
+    if counter >= 0:
+        failures = N.counted(run.said, "at the stop")[11:]
+        if failures != [int(point != "" and not retried and k == counter) for k in range(3)]:
+            return "", f"{what}, the stop counted {failures} failed file jobs"
     if (outcome == "none") != (at < 0) or run.got[:LISTING] != expected(base, outcome, at):
         step = STEPS[max(at, 0)][0].decode().strip()
         return "", f"{what}, the client of {step} read {b''.join(run.got[max(at, 0)])[-200:]!r}, not as {outcome}"
@@ -254,10 +272,10 @@ def answered(run: Run, base: Image, retried: bool, cls: str, role: str) -> tuple
 
 
 def judged(run: Run, base: Image, binary: Path, where: Path, retried: bool = False, cls: str = "",
-           role: str = "") -> str | None:
+           role: str = "", counter: int = -1) -> str | None:
     """What `run`, an operation on the file of `role` failed or interrupted, does otherwise than 0005
     says, if anything."""
-    outcome, why = answered(run, base, retried, cls, role)
+    outcome, why = answered(run, base, retried, cls, role, counter)
     if why:
         return why
     try:
@@ -336,7 +354,7 @@ def swept(binary: Path, base: Image, error: int, cls: str,
 
         def judge(k: int) -> str | None:
             why = judged(runs[k], base, binary, Path(temp, str(k + 1)), error == errno.EINTR and points[k] in RETRIED,
-                         cls, files[k])
+                         cls, files[k], 0 if error == errno.ENOSPC else 2)
             return f"operation {k + 1} {errno.errorcode[error]}: {why}" if why else None
 
         why = next(filter(None, pool.map(judge, range(end))), None)
@@ -372,6 +390,181 @@ def spent(binary: Path, base: Image, limit: int) -> None:
             why = str(error)
         if why:
             raise LaneError(f"every index at its last generation: {why}")
+
+
+def terminated(binary: Path, base: Image, count: int) -> None:
+    """SIGTERM as each of the run's `count` operations begins (`dn/term`): the server ends with status
+    0 once the job running that operation has run out, none left running; the spool recovers, not
+    corrupt, with the article held before and each one answered 240, as sent; started again, it
+    serves them."""
+    posted = {C.mid_of(p): p for p in (HELD, *POSTS)}
+    for n in range(1, count + 1):
+        with tempfile.TemporaryDirectory() as temp:
+            run = served(binary, base, Path(temp, "term"), f"enable name=dn/term,failinfo={n}")
+            stop = re.search(r"at the stop: (\d+) jobs run out, (\d+) dropped before they began, (\d+) still running",
+                             run.said)
+            if stop is None or stop[1] == "0" or stop[3] != "0":
+                said = stop[0] if stop else run.said[-300:]
+                raise LaneError(f"SIGTERM at operation {n}: the server said {said!r}")
+            try:
+                commits = R.recover(C.KEY, C.GROUPS, list(run.image.items()))[3]
+            except R.Corrupt as error:
+                raise LaneError(f"SIGTERM at operation {n}: corrupt {error}") from None
+            taken = {C.mid_of(post) for (_, post), got in zip(STEPS, run.got, strict=False)
+                     if post and got[2:3] == [TEXTS["posted"]]}
+            held = {c[1] for c in commits}
+            why = (next((f"{m.decode()}, answered 240, is not held" for m in taken | {C.mid_of(HELD)} if m not in held),
+                        None)
+                   or next(filter(None, (C.unlike(c, run.image, posted) for c in commits)), None)
+                   or C.restarted(binary, run.image, Path(temp, "again"), posted))
+            if why:
+                raise LaneError(f"SIGTERM at operation {n}: {why}")
+
+
+# The most a load may add, in kB, to what the server held resident as it began to serve: the 5 MiB
+# of the program's heap and stack allocated at start and touched as it runs, and a megabyte more.
+GROWTH = 6_144
+# The server's send buffer and a slow reader's receive buffer: the large article does not fit in both,
+# so the server holds the rest until the reader takes more.
+SEND_BUFFER, RECEIVE_BUFFER = 4_096, 4_096
+
+
+def poll_fails(binary: Path, base: Image) -> None:
+    """A poll that fails but by a signal (`dn/poll`, ENOMEM), the first as the start waits for its
+    jobs: the host ends with status 2, as a fault of what it runs on, naming the poll, rather than
+    wait on without its timer."""
+    with tempfile.TemporaryDirectory() as temp:
+        run = served(binary, base, Path(temp), f"enable name=dn/poll,failinfo={errno.ENOMEM}")
+    if run.started or run.status != 2 or "poll: Cannot allocate memory" not in run.said:
+        raise LaneError(f"a poll that fails: the server started {run.started}, ended with status {run.status}: "
+                        f"{run.said[-200:]!r}")
+
+
+def spool_files(spool: Path) -> list[str]:
+    """The descriptors any process of this user holds on a file of the spool but the journal."""
+    held = []
+    for fd in Path("/proc").glob("[0-9]*/fd/*"):
+        try:
+            target = str(fd.readlink())
+        except OSError:
+            continue
+        if target.startswith(f"{spool}/") and not target.endswith("/journal"):
+            held.append(target)
+    return held
+
+
+def bounded(binary: Path, base: Image) -> dict[str, int]:
+    """Every index taken at once: a 65th connection is greeted only once one of them closes; then
+    eight reads of the large article taken slowly through small buffers, so that the server holds what
+    they have not taken, one reset midway, whose file the server then closes; eight posts with every
+    sync slowed, and HELP on the rest, all answered. The allocator holds no more once the server
+    serves than as it began to, and the server holds at most `GROWTH` kB more resident."""
+    large = b"ARTICLE " + C.mid_of(LARGE) + b"\r\n"
+    held: list[list[str]] = []
+    queued: list[int] = []
+
+    def connected(port: int, k: int) -> socket.socket:
+        c = socket.socket()
+        if k < 8:
+            c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER)
+        c.settimeout(C.TIMEOUT)
+        c.connect(("127.0.0.1", port))
+        return c
+
+    def during(port: int, spool: Path) -> list[list[bytes]]:
+        conns = [connected(port, k) for k in range(64)]
+        files = [c.makefile("rb") for c in conns]
+        greeted = [f.readline() for f in files]
+        extra = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+        try:
+            early = extra.recv(1)
+        except TimeoutError:
+            early = b""
+        files[63].close()
+        conns[63].close()
+        extra.settimeout(C.TIMEOUT)
+        conns[63], files[63] = extra, extra.makefile("rb")
+        greeted[63] = files[63].readline()
+        got: list[list[bytes]] = [[g] for g in greeted]
+
+        def client(k: int) -> None:
+            c, f = conns[k], files[k]
+            if k == 7:
+                # A reader gone mid-article, its connection reset: its read's job runs on.
+                c.sendall(large)
+                got[k] += [f.readline(), b".\r\n"]
+                c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                # The socket closes only once its file object, which holds it too, is closed.
+                f.close()
+                c.close()
+                return
+            if k < 8:
+                c.sendall(large)
+                lines = [f.readline()]
+                time.sleep(0.2)
+                # What the kernel queued for the reader once the server has sent all it could.
+                queued.append(int(struct.unpack("i", fcntl.ioctl(c.fileno(), termios.FIONREAD, b"\0" * 4))[0]))
+                while lines[-1] not in (b".\r\n", b""):
+                    lines.append(f.readline())
+                    if len(lines) % 16 == 0:
+                        time.sleep(0.01)
+                got[k] += [lines[0], lines[-1]]
+            elif k < 16:
+                c.sendall(b"POST\r\n")
+                got[k].append(f.readline())
+                c.sendall(C.article(f"<bound{k}@x.example>", "local.a"))
+                got[k].append(f.readline())
+            else:
+                c.sendall(b"HELP\r\n")
+                lines = [f.readline()]
+                while lines[-1] not in (b".\r\n", b""):
+                    lines.append(f.readline())
+                got[k].append(lines[0])
+            c.sendall(b"QUIT\r\n")
+            got[k].append(f.readline())
+            c.close()
+
+        threads = [threading.Thread(target=client, args=(k,)) for k in range(64)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        settled = time.monotonic() + C.TIMEOUT
+        while spool_files(spool) and time.monotonic() < settled:
+            time.sleep(0.01)
+        held.append(spool_files(spool))
+        return [[early], *got]
+
+    with tempfile.TemporaryDirectory() as temp:
+        run = served(binary, base, Path(temp), "enable name=dn/sync-slow,failinfo=100", during=during,
+                     more=("--send-buffer", str(SEND_BUFFER)))
+    if run.got[0] != [b""]:
+        raise LaneError(f"a 65th connection was greeted while 64 were open: {run.got[0]}")
+    for k, lines in enumerate(run.got[1:]):
+        if k == 7:
+            if [line[:3] for line in lines[:2]] != [TEXTS["greeting-post"][:3], b"220"]:
+                raise LaneError(f"the reader that reset read {lines}")
+            continue
+        want = (TEXTS["greeting-post"][:3],
+                b"220" if k < 8 else b"340" if k < 16 else b"100",
+                b".\r\n" if k < 8 else TEXTS["posted"] if k < 16 else None, b"205")
+        seen = (lines[0][:3], lines[1][:3], lines[2] if k < 16 else None, lines[-1][:3])
+        if seen != want:
+            raise LaneError(f"client {k} of 64 read {lines}")
+    found = [re.search(rf"^{when}: (\d+) octets allocated, (\d+) kB resident at most$", run.said, re.MULTILINE)
+             for when in ("serving", "at the stop")]
+    if None in found:
+        raise LaneError(f"the server did not say what it allocated: {run.said[-300:]!r}")
+    (serving, began), (stop, resident) = ((int(m[1]), int(m[2])) for m in found if m)
+    if stop != serving or resident > began + GROWTH:
+        raise LaneError(f"the server allocated {serving} octets serving and {stop} at the stop, and held "
+                        f"{began} kB resident as it began to serve and {resident} kB at most")
+    article = len(LARGE)
+    if len(queued) != 7 or max(queued) >= article:
+        raise LaneError(f"the slow readers had {queued} octets queued of an article of {article}: the server held none")
+    if held != [[]]:
+        raise LaneError(f"after every client the server holds {held} of the spool open")
+    return {"allocated": serving, "resident_kB": resident, "queued_max": max(queued)}
 
 
 def slowed(binary: Path, base: Image) -> dict[str, float]:
@@ -528,6 +721,7 @@ def passes(binary: Path, b: Bases, w: dict[str, int]) -> tuple[dict[str, float],
             raise LaneError("EINTR fails operations at other points than ENOSPC")
         counts.append(sum(map(bool, points)))
         fired |= set(points)
+    terminated(binary, b.held, counts[0])
     unfailed = C.points() - fired - {"dn/read-dir"}
     if unfailed:
         raise LaneError(f"dn/fail never failed {sorted(unfailed)}")
@@ -551,11 +745,13 @@ DEFECTS = [
     C.Defect("the octet past an article's end not read", r"st jb \+ 88, left \+ 1;", "st jb + 88, left;", 1,
              "grown, ARTICLE"),
     C.Defect("a failed commit refused, the store going on",
-             r"(\} else \{\n\s+)(st zs \+ 96, 3;\n\s+st zs \+ 104, 0;\n\s+st @base \+ 1032624, 0;)",
+             r"(\} else \{\n\s+)(st zs \+ 96, 3;\n\s+st zs \+ 104, 0;\n\s+st @base \+ \d+, 0;)",
              r"\g<1>if ok == 0 { st zs + 160, 3; st zs + 88, 1; st zs + 104, 0; } else { \g<2> }", 1,
              "on the journal file failing"),
     C.Defect("LIST ACTIVE says y once the store has stopped", r"var yn = 110;", "var yn = 121;", 1,
              "LIST ACTIVE read"),
+    C.Defect("a stop that does not wait for the jobs running", "if (!counts[2] || elapsed >= ms) return counts[2];",
+             "if (!counts[2] || elapsed + ms >= ms) return counts[2];", 1, "still running", program=False),
     C.Defect("an index used past its last generation", " && conns[i].gen < DN_SESSION_GEN_LIMIT;", ";", 1,
              "the program stopped the run: code 6", program=False, loop=True),
 ]
@@ -575,6 +771,8 @@ def check(cake: str) -> Report:
         clock = time.monotonic()
         b = bases(base.result())
         took, counts = passes(base.result(), b, w)
+        limits = bounded(base.result(), b.both)
+        poll_fails(base.result(), b.held)
         seconds = {"runs": round(time.monotonic() - clock, 1)}
         found = {}
         programs = iter(builds)
@@ -594,7 +792,7 @@ def check(cake: str) -> Report:
         f"each of its {counts[0]} and {counts[1]} operations", f"{len(CHANGES)} ways",
         f"{len(DEFECTS)} planted defects of the faults lane"]})
     return Report("checked", cake, [N.HOST, *N.STORE], {
-        "executable_sha256": lanes.digest(base.result()), "operations": counts, "slowed": took,
+        "executable_sha256": lanes.digest(base.result()), "operations": counts, "slowed": took, "bounds": limits,
         "seconds_by_step": seconds,
         "planted_defects_caught": found})
 

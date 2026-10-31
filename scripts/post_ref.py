@@ -835,10 +835,17 @@ class Store:
                     raise Violation("durable", f"a crash loses article {a.seq}, answered 240")
 
     def finish(self) -> None:
-        """At the end of a run, the spool holds the journal, the files of the articles it commits,
+        """At the end of a run, every read and every place but the journal's given back, on whatever
+        path its connection left; the spool holds the journal, the files of the articles it commits,
         the names it was given, and of a refused article only a name a failed removal left."""
         if self.jobs:
             raise Violation("names", f"jobs still in flight at the end: {sorted(self.jobs)}")
+        held = [k for k, f in enumerate(self.reads) if f is not None and f.held()]
+        if held:
+            raise Violation("leak", f"reads still held at the end: {held}")
+        opened = sorted(p for p in self.places if p != self.start.journal[0])
+        if opened:
+            raise Violation("leak", f"places still open at the end: {opened}")
         allowed = {b"journal", *(R.name_of("a", c[0]) for c in self.commits)}
         allowed |= {name for name, _ in self.start.image} | self.loose
         allowed |= {R.name_of("a", a.seq or 0) for a in self.articles if a.outcome == "lost"}

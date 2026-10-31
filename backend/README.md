@@ -43,6 +43,12 @@ What the lane fixes is the sources and the configuration of the tools built from
 
 Rebuilding the chain establishes the compiler's correctness theorem for the patched source; it is not a compiler bootstrap, and no executable comes from it. The next section is where one does.
 
+`scripts/check_semantics.sh` uses the same trees and gate to ask whether the Lean model of Pancake ends where `panSem`'s `evaluate` does. It builds `panSemTheory`, evaluates every case of `semantics/states.txt` under `EVAL` in a theory outside both trees, and compares each field ([pancake-semantics](../docs/pancake-semantics.md#run-by-hol4)).
+
+It also builds `semantics/dnModelProofScript.sml`, which proves the model written again in HOL equal to `evaluate`, and runs that copy on the same cases.
+
+`scripts/check_parse.sh` builds the Pancake parser of the same tree and, for each program `dn-compiler emit-trees` prints, a theory outside both trees (`parser/`) that evaluates `parse_topdecs_to_ast` on the program's text and saves the equation. The tree it gives is held to the lowering in the canonical form of `scripts/parser_contract.py`.
+
 ## Bootstrap the compiler
 
 From the repository root, after `build hol` above:

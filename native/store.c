@@ -33,38 +33,52 @@ struct net { sa_family_t family; unsigned char addr[16]; unsigned bits; };
 static const char *spool_path, *run_path, *identity, *groups[DN_SESSION_GROUPS_MAX];
 static size_t group_count;
 static struct net nets[NETS];
+static const char *net_texts[NETS];
 static size_t net_count;
-static int spool = -1, run = -1;
+static int logins, spool = -1, run = -1;
 static char boot[BOOT_ID + 1];
 static unsigned char random_octets[DN_SESSION_RANDOM_LEN];
 static pthread_mutex_t marking = PTHREAD_MUTEX_INITIALIZER;
 
-static void add_net(const char *text) {
-    if (net_count == NETS) dn_harness("--post-from: more than %d networks", NETS);
+static void add_net(const char *at, const char *text) {
+    if (net_count == NETS) dn_harness("%s--post-from: more than %d networks", at, NETS);
     char address[INET6_ADDRSTRLEN];
     const char *slash = strchr(text, '/');
     size_t n = slash ? (size_t)(slash - text) : strlen(text);
-    if (n >= sizeof address) dn_harness("--post-from: not a network: %s", text);
+    if (n >= sizeof address) dn_harness("%s--post-from: not a network: %s", at, text);
     memcpy(address, text, n);
     address[n] = 0;
+    net_texts[net_count] = text;
     struct net *net = &nets[net_count++];
     if (inet_pton(AF_INET, address, net->addr) == 1) net->family = AF_INET;
     else if (inet_pton(AF_INET6, address, net->addr) == 1) net->family = AF_INET6;
-    else dn_harness("--post-from: not a network: %s", text);
-    unsigned most = net->family == AF_INET ? 32 : 128;
-    net->bits = slash ? (unsigned)dn_parse_u64(slash + 1, most) : most;
+    else dn_harness("%s--post-from: not a network: %s", at, text);
+    unsigned long most = net->family == AF_INET ? 32 : 128, bits = most;
+    if (slash) {
+        char *end;
+        errno = 0;
+        bits = strtoul(slash + 1, &end, 10);
+        if (slash[1] < '0' || slash[1] > '9' || errno || *end || bits > most)
+            dn_harness("%s--post-from: not a network: %s", at, text);
+    }
+    net->bits = (unsigned)bits;
 }
 
-int dn_store_option(const char *name, const char *value) {
+int dn_store_option(const char *at, const char *name, const char *value) {
     if (!strcmp(name, "--spool")) spool_path = value;
     else if (!strcmp(name, "--run-dir")) run_path = value;
     else if (!strcmp(name, "--path-identity")) identity = value;
-    else if (!strcmp(name, "--post-from")) add_net(value);
+    else if (!strcmp(name, "--post-from")) add_net(at, value);
     else if (!strcmp(name, "--group")) {
-        if (group_count == DN_SESSION_GROUPS_MAX) dn_harness("--group: more than %d groups", DN_SESSION_GROUPS_MAX);
+        if (group_count == DN_SESSION_GROUPS_MAX)
+            dn_harness("%s--group: more than %d groups", at, DN_SESSION_GROUPS_MAX);
         groups[group_count++] = value;
     } else return 0;
     return 1;
+}
+
+void dn_store_logins(void) {
+    logins = 1;
 }
 
 __attribute__((noreturn, format(printf, 1, 2))) static void refuse(const char *format, ...) {
@@ -106,10 +120,11 @@ static int open_dir(const char *path) {
     return fd;
 }
 
-void dn_store_start(void) {
+/* The settings together; 0 without a store. */
+static int validated(void) {
     if (!spool_path) {
         if (run_path || identity || group_count || net_count) dn_harness("store options without --spool");
-        return;
+        return 0;
     }
     if (!run_path) dn_harness("--spool needs --run-dir");
     if (identity && strlen(identity) > DN_SESSION_IDENTITY_MAX)
@@ -117,10 +132,45 @@ void dn_store_start(void) {
     for (size_t g = 0; g < group_count; ++g)
         if (!*groups[g] || strlen(groups[g]) > DN_SESSION_GROUP_MAX)
             dn_harness("--group: 1 to %d bytes: %s", DN_SESSION_GROUP_MAX, groups[g]);
-    if (!net_count) {
-        add_net("127.0.0.0/8");
-        add_net("::1/128");
+    if (!net_count && !logins) {
+        add_net("", "127.0.0.0/8");
+        add_net("", "::1/128");
     }
+    return 1;
+}
+
+void dn_store_check(void) {
+    if (validated()) {
+        close(open_dir(spool_path));
+        close(open_dir(run_path));
+    }
+}
+
+void dn_store_settings(FILE *out) {
+    fputs(",\"spool\":", out);
+    if (spool_path) dn_json_string(out, spool_path);
+    else fputs("null", out);
+    fputs(",\"run_dir\":", out);
+    if (run_path) dn_json_string(out, run_path);
+    else fputs("null", out);
+    fputs(",\"path_identity\":", out);
+    if (identity) dn_json_string(out, identity);
+    else fputs("null", out);
+    fputs(",\"groups\":[", out);
+    for (size_t g = 0; g < group_count; ++g) {
+        if (g) fputc(',', out);
+        dn_json_string(out, groups[g]);
+    }
+    fputs("],\"post_from\":[", out);
+    for (size_t k = 0; spool_path && k < net_count; ++k) {
+        if (k) fputc(',', out);
+        dn_json_string(out, net_texts[k]);
+    }
+    fputc(']', out);
+}
+
+void dn_store_start(void) {
+    if (!validated()) return;
     spool = open_dir(spool_path);
     if (flock(spool, LOCK_EX | LOCK_NB)) {
         if (errno == EWOULDBLOCK) refuse("%s: another process holds the spool", spool_path);

@@ -53,6 +53,7 @@ def exprOfJson : Nat → Json → Except String PExpr
   | 0, _ => throw "an expression nested too deeply"
   | fuel + 1, j => do
     if let .ok k := j.getNat? then return .const k
+    if let .num _ := j then throw "a literal is a natural number"
     if let .ok x := j.getStr? then return .var x
     match (← j.getArr?).toList with
     | [.str "@base"] => return .base
@@ -85,7 +86,8 @@ def stmtOfJson : Nat → Json → Except String PStmt
 
 def funOfJson (j : Json) : Except String PFun := do
   let params := (← j.getObjValAs? (List String) "params").map fun x => (1, x)
-  let body ← (← (← j.getObjVal? "body").getArr?).toList.mapM (stmtOfJson jsonDepth)
+  let body ← (← (← j.getObjVal? "body").getArr?).toList.zipIdx.mapM fun (s, k) =>
+    (stmtOfJson jsonDepth s).mapError (s!"statement {k}: " ++ ·)
   return { name := ← j.getObjValAs? String "name", exported := true, params, body }
 
 end DN.Compiler.SyntaxJson
