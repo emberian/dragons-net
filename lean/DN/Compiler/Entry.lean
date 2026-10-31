@@ -13,9 +13,10 @@ emptied. The run fails if, for some clock, the call ends in anything but a timeo
 call that ends the run, or a return. Running off the end of `main` is therefore a failure.
 
 The compiler's theorem asks this of `semantics_decls`, which first declares the program's
-functions (`evaluate_decls`) and then runs `semantics`. For a program of one `main` without
-parameters, as the server's are, declaring it only puts its body in the code, where the `Call`
-clause finds it; that step is read off the HOL definitions, not modelled here.
+functions (`evaluate_decls`) and then runs `semantics`. Declaring fails on a shape of more than one
+word, and otherwise puts each function's body with its parameters in the code, where the `Call` of
+`main` without parameters, as the server's are, and the calls of the other functions find them;
+that step is read off the HOL definitions, not modelled here.
 -/
 
 namespace DN.Compiler.Entry

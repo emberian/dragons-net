@@ -30,6 +30,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | `scripts/parser_contract.py` | Each of the 246 programs the compiler prints is read by the pinned parsers as its lowering in canonical form, and both agree with every cell of the precedence table | Every possible printed program |
 | `DN.Compiler.Parse` (`tests/test_native.py`) | CakeML's parser in Lean, a token the gate never prints refused, reads each printed program as lowered in canonical form and each table cell as the table says; in `check_parse.sh` its tree, places aside, or refusal is HOL4's on each | That it is CakeML's parser off those texts |
 | `DN.Compiler.ParseCorrect` | Proved: for every program the gate accepts, `Parse` reads the printed text as its functions, every name local, each body read in the model with its lowering's expressions in canonical form | That `Parse` is CakeML's parser, tested only; that the reading in the model is `panSem`'s; the release parser |
+| `DN.Compiler.CanonRun` | In the model, a program runs as its canonical form does from code in canonical form, and fails exactly where it does (`canon_run`, `fails_canon`, `fails_same`) | Item 1 |
 | CakeML's parser in HOL4 (`scripts/check_parse.sh`) | A theorem a program and a table cell, only the disk tag: `parse_topdecs_to_ast` at `ed31510`, `compile_pancake`'s parser, takes the text to a tree; a program's is its lowering, canonically, a cell's as the table says, a planted defect seen | That comparison and the tree's printer, which are not proved; every program the gate accepts; the release compiler's parser (`e8eca63`) |
 | `scripts/native_fuzz.py` | On 300 generated programs, model, interpreter and compiled code agree on the result and memory | Programs outside the generator's reach |
 | Native region check | Generated machine code agrees with a C reference on 99,240 cases | A compiler theorem |
@@ -37,6 +38,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | `DN.Compiler.AnalyzerSound` | In the model, a program decision 0004's analysis accepts never errs from a heap covering its size above the header, even without the header's words (`analyze_safe`, `never_fails`) | Items 1, 2 and 8; anything beyond not failing |
 | `DN.Compiler.AnalyzerCertSound` | So does one a certificate of the analysis in pieces accepts, its claims holding (`analyzeC_safe`, `never_failsC`), and one with functions, each with a certificate of its own (`programC_never_fails`); `programC_witness` holds its premises | As above; with functions, that declaring them puts them in the code |
 | `DN.Server.SessionSafe`, `DN.News.RecoverSafe` | No run of the session's program, its functions and recovery included, fails for any host, clock or heap from code holding its functions (`SessionSafe.never_fails`, `printed_never_fails`), nor recovery's step, whatever its call writes (`RecoverSafe.never_fails`); `premises_witness` and `covers_witness` hold the premises | As above; that declaring the functions puts them in the code |
+| `DN.EndToEnd` | `Parse` reads the session's printed text as functions of distinct names and parameters, all names local, and a `main` without parameters, never failing in the model from a heap covering the layout and code holding them (`text_never_fails`); `text_premises_witness` holds both | That the gate accepts the session (evaluated); that declaring the functions puts them in the code; agreement with `SessionSpec`; the links [trusted](#what-is-trusted) |
 | `DN.Compiler.AnalyzerSound`, calls | In the model, a program whose functions the analysis accepts in the order defined, each from any arguments calling only earlier ones, and whose `main` it accepts never fails from code holding them (`program_never_fails`) | Item 1, including that declaring the functions puts them in the code |
 | `DN.Compiler.Safe` | No run changes the code, the memory's domain, the byte order or `@base` (`sem_same`) | Anything about the memory's contents |
 | `DN.Compiler.Preservation` | In the model, a function `Abi.emitWord` or `emitWordWith` takes lowers, its rewrite to that lowering with returns made slot stores; a run not failing ends the same rewritten, its value at the slot (`emitWord_rewrites`, `rewrites_run`, `wordResult_witness`, `rewritesWith_witness`) | Items 1, 2, 3 and 7; a slot the C caller owns lies outside the memory domain the theorem assumes it in (item 8); runs that fail |
@@ -75,7 +77,7 @@ Each row separates what is proven from what is tested, so that partial work does
 | Journal reading (`DN.News.Journal`) | Records read back as themselves (`scan_encoded`); a frame cut short after them reads as a torn tail (`scan_torn` and kin); a damaged frame with a record after it is corruption (`scan_damaged`); names are injective (`names_injective`) | SipHash-2-4's strength as a MAC |
 | Source and artifact digests | Identity of recorded bytes | Correctness or trustworthy bootstrap by themselves |
 
-The audit covers 24,458 declarations, including 11,448 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
+The audit covers 24,566 declarations, including 11,520 theorems and generated ones, and gate tests require it to reject every forbidden construct, axiom and lookalike.
 
 nanoda, an independent Lean kernel in Rust, re-checks every declaration from `lean4export`'s export and admits only the three allowed axioms, so a wrong proof would have to pass both kernels.
 
@@ -95,6 +97,8 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
    For each printed program HOL4 proves what CakeML's own parser makes of its text (`check_parse.sh`). For every program the gate accepts, Lean proves it of the parser written again in Lean (`ParseCorrect`), which is held to HOL4's on the printed texts only.
 
+   For the session, `DN.EndToEnd` carries the safety proof across that reading: what `Parse` reads from the printed text never fails in the model (`text_never_fails`).
+
 3. **Backend identity.** CI uses the pinned release with `--reg_alg=0`, whose theorem holds for every allocator. The patched source's proof rebuilds without oracle and its bootstrapped compiler passes the native lanes, both reading each of the 246 programs the same way, but no theorem covers the binary.
 
 4. **Shift distances.** `Checked.emit` takes only a literal distance below 64, since the release accepts larger ones the semantics gives no value.
@@ -110,6 +114,22 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
    The stack bound (`max_depth`) is not yet obtained. The gate refuses a call of a function not before its caller, so every printed program's call graph is acyclic (`checkFunctions_calls`), as CakeML needs for a bound; that its bound is `SOME` and below the stack is not shown.
 
 9. **Protocol and persistence.** Decision 0005's store is specified and proven above, and its recovery runs in the session's `main`. The session with POST and reading by message-id is specified, in the program, and tested, not proven.
+
+## What is trusted
+
+CakeML's theorem carries down to the machine code only that the session's program never fails, and it allows an early stop (below). That the program answers as `SessionSpec` says is tested, not proven (item 9). These links below the Lean proofs are taken on trust or on tests:
+
+* **Kernels and their builds.** Lean's kernel, re-checked by nanoda; HOL4's, built with Poly/ML, for CakeML's theorems and `check_parse.sh`; the release archive, trusted by its digest.
+* **Lean's compiler and evaluator.** `dn-compiler` prints the text CakeML compiles, and the gate's accepting the session (`Session.source` is `.ok`) holds by evaluating `regression_824`, not by the kernel.
+* **The model is `panSem`.** A HOL copy is proved equal at `ed31510` on the subset with literal shifts; that it is the Lean text is read and run. Where the release differs, in calls and `Shift`, the model follows `e8eca63` (item 1).
+* **`Parse` is CakeML's parser.** HOL4 proves the parser's reading of each printed program at `ed31510`, its comparison with the lowering tested; the release at `e8eca63` is tested only (item 2).
+* **CakeML's compiler theorem**, read at `ed31510`. No theorem here covers the release binary (item 3), and upstream's bootstrap theorem is not re-checked. It covers `main` (item 7) after `semantics_decls` declares the functions, which fails on a shape of more than one word: a step read off HOL, not modelled.
+* **Its premises**, among others: compiling succeeds (`compile_prog_max` gives `SOME`), `pancake_good_code`, empty code, locals and globals at the start, every external name an `ExtCall`, and `pan_installed` with a heap it admits (item 8).
+* **The configuration's premises**, `backend_config_ok`, `mc_conf_ok` and `mc_init_ok`, proven upstream for the default x64 configuration, while the lanes compile with `--reg_alg=0` and `--main_return=false`. Distinct function names and parameters are proven (`text_never_fails`); the gate's checks aim at the rest.
+* **The stack.** The call graph is acyclic, but no bound below the stack is obtained, so the theorem allows the run to stop after any prefix of its output (`Resource_limit_hit`).
+* **The assembly around the code.** CakeML's hand-written start and FFI trampolines (`export_x64Script.sml`), the build's edit of the `.S` (`scripts/lanes.py`), the assembler and the linker: no theorem covers them.
+* **The processor** runs the x86-64 ISA CakeML's theorem is stated over.
+* **The host.** The C host, its runtime, the C compiler, libc, OpenSSL and Linux act as the world the oracle stands for, changing the heap only through each call's array and writing its header: tested (items 6, 8).
 
 ## Reproducibility boundaries
 
