@@ -113,4 +113,4 @@ The checks' stamps are made by the code they run, so a branch takes up only its 
 
 ## Reproducibility boundaries
 
-`tools.lock.json` pins every tool archive and source by digest, built outside the checkout and checked against a manifest on every use; this is not a hermetic build of system dependencies, and benchmarks are not news-server throughput.
+`tools.lock.json` pins every tool archive and source by digest, built outside the checkout and checked against a manifest on every use; this is not a hermetic build of system dependencies, and the [measurements](bench.md) are of one machine, relative, judged by no check.

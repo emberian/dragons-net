@@ -21,7 +21,8 @@ Start with [the compiler baseline](docs/baseline.md) and [assurance boundaries](
 | [Host primitives](crates/dn-runtime) | A tested Rust slab, connection permits and a partial-write cursor. |
 | [Concurrency exploration](models) | Eight Rust models and 30 Loom tests, with recorded defects the tests must catch. |
 | [Native execution](docs/baseline.md) | 35,520 differential cases, 300 generated programs, 26,039 copy-kernel checks, 311 CRC-32C buffers, 370 SipHash-2-4 messages, 28,704 journal readings, 2,036 recovered directories and 5,790 reply-table calls through the real compiler. |
-| [TCP echo](docs/echo.md) | A bounded `poll` host calling the generated copy kernel. |
+| [TCP echo](docs/echo.md) | Bounded `poll` and io_uring hosts calling the generated copy kernel. |
+| [Measurements](docs/bench.md) | One open-loop load through the echo and NNTP hosts and INN's reader; bottlenecks named, no number judged. |
 | [Backend work](backend/README.md) | Pinned CakeML/HOL source, a curated datacake patch, the proof rebuild and the compiler bootstrap, scripted. |
 | [Migration sources](migration/dataplane/README.md) | The original native host, preserved byte for byte as reference ([porting risks](docs/porting-risks.md)). |
 | [News](lean/DN/News) | Framers ([details](docs/baseline.md#framers)), the session's specification ([details](docs/baseline.md#session-model)) and program, the NNTP server ([details](docs/baseline.md#nntp-server)), and the article store specified and proven in the model ([decision 0005](docs/decisions/0005-article-store.md)), its CRC-32C and SipHash-2-4 proven, its scanner and recovery tested and recovery run at start. |

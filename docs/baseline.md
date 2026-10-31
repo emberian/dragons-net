@@ -85,6 +85,7 @@ The LazyFS lane (`python3 scripts/lazyfs_check.py`, after `python3 scripts/boots
 | TCP integration | Binary bytes, chunks, a 512 KiB stream, concurrent and slow clients, resets, admission, expiry | The `poll` and io_uring echo hosts |
 | io_uring echo | The ring layer's 15 cases on the running kernel; the echo corpus with one thread, a thread a core and sanitized; stops, expiry, pinning, the send buffer, the descriptors counted; faults injected; 10 refusals; 21 planted defects caught ([details](#io_uring-echo)) | Renewal alone by a send or a receive; races uninstrumented |
 | Host/concurrency | Runtime tests and 30 Loom tests | Loom's C11 model |
+| Measurements | The open-loop load held to nine servers of its own, seven faulty; a second of load with slow readers on each host, every reply right and none owed; INN's reader where installed ([details](bench.md)) | No number judged |
 
 ### Generated programs
 

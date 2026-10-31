@@ -2,3 +2,5 @@
 Wisper = "Wisper"
 # HOL4 spells its theorem-checking helper `check_thm`.
 thm = "thm"
+# Gil Tene's load generator is wrk2.
+wrk = "wrk"

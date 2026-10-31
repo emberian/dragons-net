@@ -445,7 +445,8 @@ class CheckScript(unittest.TestCase):
                    "session_native.py": "session",
                    "nntp_check.py": "nntp", "crash_check.py": "crash", "faults_check.py": "faults",
                    "parser_contract.py": "parser",
-                   "native_fuzz.py": "fuzz", "uring_check.py": "uring", "power_check.py": "power"}
+                   "native_fuzz.py": "fuzz", "uring_check.py": "uring", "bench.py": "bench",
+                   "power_check.py": "power"}
         with tempfile.TemporaryDirectory() as temp:
             tree, ran = Path(temp), Path(temp) / "ran"
             (tree / "scripts").mkdir()
@@ -481,7 +482,8 @@ class CheckScript(unittest.TestCase):
                                               "nntp --cake /pinned/cake", "crash --cake /pinned/cake",
                                               "faults --cake /pinned/cake",
                                               "parser --cake /pinned/cake",
-                                              "fuzz --cake /pinned/cake", "uring --cake /pinned/cake"]))
+                                              "fuzz --cake /pinned/cake", "uring --cake /pinned/cake",
+                                              "bench check --cake /pinned/cake"]))
             self.assertEqual(put.read_text().split(), ["abnfgen", "libfiu", "libfiu", "libfiu"])
             # Each lane's output is also kept, under its own name.
             for lane in scripts.values():
@@ -503,7 +505,7 @@ class CheckScript(unittest.TestCase):
             # running beside it, the longest, at once, and no lane is started after it.
             every = sorted(f"{lane} --cake /pinned/cake" for lane in scripts.values() if lane != "power")
             status, said, run_lanes = lanes(parallel="3")
-            self.assertEqual((status, sorted(r.replace("entry check", "entry") for r in run_lanes)), (0, every))
+            self.assertEqual((status, sorted(r.replace(" check", "") for r in run_lanes)), (0, every))
             began = time.monotonic()
             status, said, run_lanes = lanes(failing="baseline", parallel="3", slow="nntp")
             self.assertLess(time.monotonic() - began, 40)

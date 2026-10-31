@@ -44,7 +44,7 @@ Acceptance: transcript tests against an independent client, command/article fram
 
 ### 4. Measure and expand
 
-Benchmark the same workload through a simple reference host and the optimized adapter. Record compiler, CPU, OS, input distribution, connection count, queue bounds, latency distribution, throughput, allocations, and CPU usage. Do not promote the native digest benchmark into a server performance claim.
+[Measurements](bench.md) put one open-loop load through the poll and io_uring hosts of the echo and of the NNTP server, and INN's reader, recording the machine, the load, latencies, throughput, CPU, allocations and system calls. They name the bottlenecks; the optimizations are next. Do not promote the native digest benchmark into a server performance claim.
 
 Add peering, authenticated access, offline bundles, and a human UI after the storage/session contracts stabilize. The initial scope is documented without advertising unfinished features.
 

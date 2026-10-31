@@ -74,20 +74,20 @@ def globals_of(obj: Path, *, defined: bool) -> set[str]:
     return {line.split()[-1] for line in listing.splitlines() if line.strip()}
 
 
-def copies(cake: str) -> list[Path]:
+def copies(cake: str, out: Path = OUT) -> list[Path]:
     """The generated echo and its runtime, once a copy, every global symbol either defines prefixed
-    with `copyK_`; a copy that still defines or needs a name of another is refused."""
-    (OUT / "echo.pnk").write_text(lanes.emit("emit-echo", timeout=60))
-    assembly = lanes.assemble(cake, OUT / "echo.pnk")
-    runtime = lanes.compile_object(NATIVE / "cake_runtime.c", OUT / "cake_runtime.o")
+    with `copyK_`; a copy that still defines or needs a name of another is refused. Built in `out`."""
+    (out / "echo.pnk").write_text(lanes.emit("emit-echo", timeout=60))
+    assembly = lanes.assemble(cake, out / "echo.pnk")
+    runtime = lanes.compile_object(NATIVE / "cake_runtime.c", out / "cake_runtime.o")
     names = globals_of(assembly.with_suffix(".o"), defined=True) | globals_of(runtime, defined=True)
     if not {"cml_main", "cml_heap", "dn_echo", "dn_runtime_setup"} <= names:
         raise LaneError(f"the image lacks a name a copy renames: {sorted(names)}")
     objects = []
     for k in range(COPIES):
         renames = [f"-D{name}=copy{k}_{name}" for name in sorted(names)]
-        for source, obj in ((assembly, OUT / f"copy{k}-echo.o"),
-                            (NATIVE / "cake_runtime.c", OUT / f"copy{k}-runtime.o")):
+        for source, obj in ((assembly, out / f"copy{k}-echo.o"),
+                            (NATIVE / "cake_runtime.c", out / f"copy{k}-runtime.o")):
             lanes.loud([lanes.cc(), *lanes.HARDENING, "-g", f"-I{NATIVE}", *renames, "-c", str(source),
                         "-o", str(obj)], timeout=120, what=f"compiling copy {k} of {source.name}")
             defined, needed = globals_of(obj, defined=True), globals_of(obj, defined=False)
