@@ -1316,4 +1316,67 @@ theorem outWord_witness : OutWord wb 0 (byteAlign (outAt wb 0 + BitVec.ofNat 64 
 
 end Output
 
+section Place
+open SessionLayout
+
+/-- The framer's block within a record. -/
+structure BlockFacts : Prop where
+  framerAl : cFramer % 8 = 0
+  slotAl : connSlot % 8 = 0
+  fits : cFramer + framerHead + News.SessionSpec.lineLimit ≤ connSlot
+  conns : conns = 64
+  slot : connSlot = 2712
+  head : framerHead = 40
+  framer8 : 8 ≤ cFramer
+  limit : News.SessionSpec.lineLimit = 512
+
+theorem block_facts : BlockFacts := by constructor <;> decide +kernel
+
+/-- Where connection `ci`'s framer's block lies, past the base. -/
+theorem blockAt_off (b : Word) (ci : Nat) (x : Nat) :
+    SessionFrame.blockAt b ci + BitVec.ofNat 64 x = b + BitVec.ofNat 64
+        (SessionAppend.tOff + ci * connSlot + cFramer + x) := by
+  simp only [SessionFrame.blockAt, SessionFrame.recordAt, add_ofNat, SessionAppend.tOff_eq]
+
+/-- A place within connection `ci`'s block lies past the own area and within the session's words. -/
+theorem block_in {ci x : Nat} (hci : ci < conns) (hx : x < framerHead + News.SessionSpec.lineLimit) :
+    ownOff + ownTexts + 8 ≤ SessionAppend.tOff + ci * connSlot + cFramer + x ∧
+      SessionAppend.tOff + ci * connSlot + cFramer + x < SessionLayout.size := by
+  obtain ⟨T, hT⟩ := SessionAppend.lay
+  have ht := SessionAppend.table_end
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := block_facts
+  rw [hT.eq] at ht ⊢
+  have := hT.above
+  rw [h4, h5] at ht
+  rw [h4] at hci
+  rw [h5] at h3 ⊢
+  rw [h6, h8] at h3 hx
+  revert ht h3 h7 this
+  generalize SessionLayout.size = S
+  generalize News.RecoverProg.size = RS
+  generalize cFramer = F
+  generalize ownOff + ownTexts = O
+  intro ht h3 h7 this
+  constructor <;> omega
+
+theorem size_lt : SessionLayout.size < 2 ^ 63 := by
+  have := SessionLayout.size_fits
+  have : SessionLayout.heapBytes = 4194304 := by decide +kernel
+  omega
+
+theorem store_facts : (ownOff + ownStore) % 8 = 0 ∧ 64 ≤ ownOff + ownStore ∧
+    ownOff + ownStore + 8 ≤ ownOff + ownTexts ∧ ownOff + ownStore ≠ 0 := by decide +kernel
+
+theorem ret_facts : (ownOff + ownRet) % 8 = 0 ∧ 64 ≤ ownOff + ownRet ∧ ownOff + ownRet + 8 ≤ ownOff + ownTexts ∧
+    ownOff + ownRet ≠ 0 := by decide +kernel
+
+theorem retW_addr {b : Word} {dm : Word → Bool} (hcov : Analyzer.Covers SessionLayout.size dm b) :
+    dm (SessionCheck.retW b) = true := by
+  obtain ⟨T0, hT0⟩ := SessionAppend.lay
+  have := hT0.above
+  obtain ⟨h1, h2, h3, -⟩ := ret_facts
+  exact SessionAppend.own_addr hcov h1 h2 (by rw [hT0.eq]; omega)
+
+end Place
+
 end DN.Server.SessionAppend

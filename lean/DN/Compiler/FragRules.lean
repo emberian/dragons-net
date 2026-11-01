@@ -1,0 +1,344 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+import DN.Compiler.Frag
+
+/-!
+# DN.Compiler.FragRules
+
+More fragments: a branch (`frag_ite`), an assignment (`assign_frag`), declarations from zero (`decs_frag`), a loop
+counting up (`frag_count`, `count_exit`), and a block proven of its lowering (`frag_fold`, `frag_pinned`),
+declarations ahead of it scoping over what follows (`decs_seq`, `frag_dec2`). A block lowering before anything
+(`LowKK`), a fragment shown state by state or under a pure fact (`frag_each`, `frag_pure`). States alike but for the
+clock (`Like`). Like `Frag`, they hold if the run goes on.
+-/
+
+namespace DN.Compiler.Frag
+
+open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Preservation
+
+variable {σ : Type}
+
+/-- A state as `t` but for its clock. -/
+structure Like (t u : PancakeState σ) : Prop where
+  locals : u.locals = t.locals
+  memory : u.memory = t.memory
+  memaddrs : u.memaddrs = t.memaddrs
+  be : u.be = t.be
+  ffi : u.ffi = t.ffi
+  base : u.baseAddr = t.baseAddr
+  code : u.code = t.code
+
+theorem like_clock (t : PancakeState σ) : Safe.ClockFree (Like t) := fun _ _ h => { h with }
+
+theorem like_refl (t : PancakeState σ) : Like t t := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem like_eq {t u : PancakeState σ} (h : Like t u) : u = { t with clock := u.clock } := by
+  cases u; cases t
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := h
+  simp only at h1 h2 h3 h4 h5 h6 h7
+  subst h1 h2 h3 h4 h5 h6 h7
+  rfl
+
+theorem like_eval {t u : PancakeState σ} (h : Like t u) (e : PancakeExp) : eval u e = eval t e := by
+  rw [like_eq h, Safe.eval_clock]
+
+/-- `s` with the local `x` set. -/
+def setL (s : PancakeState σ) (x : String) (v : Value) : PancakeState σ := { s with locals := setLocal s.locals x v }
+
+/-- A block that lowers before whatever follows. -/
+def LowKK (xs : List Syntax.PStmt) : Prop := ∀ k, ∃ c, Block.lowerK xs k = some c
+
+theorem lowKK_append {xs ys : List Syntax.PStmt} (h1 : LowKK xs) (h2 : LowKK ys) : LowKK (xs ++ ys) := fun k => by
+  obtain ⟨c2, h2⟩ := h2 k
+  obtain ⟨c1, h1⟩ := h1 c2
+  exact ⟨c1, by rw [lowerK_append, h2, Option.bind_some, h1]⟩
+
+theorem lowKK_flatten : ∀ (ps : List (List Syntax.PStmt)), (∀ p ∈ ps, LowKK p) → LowKK ps.flatten
+  | [], _ => fun k => ⟨k, rfl⟩
+  | p :: ps, h => lowKK_append (h p (by simp)) (lowKK_flatten ps fun q hq => h q (by simp [hq]))
+
+theorem lowKK_one {x : Syntax.PStmt} (hd : x.isDec = false) {a : PancakeProg} (h : Lower.lowerStmt1 x = some a) :
+    LowKK [x] := fun k => ⟨_, lowerK_one h hd k⟩
+
+theorem lowKK_dec {x : String} {e : Syntax.PExpr} {E : PancakeExp} (h : Lower.lowerExp e = some E) :
+    LowKK [.dec x e] := fun _ => ⟨_, lowerK_dec h rfl⟩
+
+theorem lowKK_call {r f : String} {as : List Syntax.PExpr} {a : List PancakeExp} (h : Lower.lowerArgs as = some a) :
+    LowKK [.call r f as] := fun k => ⟨.decCall r f a k, by simp [Block.lowerK, h]⟩
+
+/-- A fragment shown from each state on its own. -/
+theorem frag_each (o : Oracle σ) {xs : List Syntax.PStmt} (hlow : LowKK xs) {P P' : Assn σ}
+    (h : ∀ s, P s → Frag o xs (Like s) P') : Frag o xs P P' := by
+  intro k R Q hQ hk
+  obtain ⟨c, hc⟩ := hlow k
+  refine ⟨c, hc, fun s hs => ?_⟩
+  obtain ⟨c', hc', hs'⟩ := h s hs k R Q hQ hk
+  rw [hc] at hc'; cases hc'
+  exact hs' s (like_refl s)
+
+theorem lowKK_fold {xs : List Syntax.PStmt} (h : LowKK xs) : ∃ c, Lower.lowerStmtsFold xs = some c := by
+  obtain ⟨c', hc'⟩ := h .skip
+  obtain ⟨c, hc, -⟩ := fold_of_K (σ := Unit) Oracle.idle xs hc'
+  exact ⟨c, hc⟩
+
+theorem lowKK_ite {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C) {t e : List Syntax.PStmt}
+    (ht : LowKK t) (he : LowKK e) : LowKK [.ite c t e] := by
+  obtain ⟨T, hT⟩ := lowKK_fold ht
+  obtain ⟨E, hE⟩ := lowKK_fold he
+  exact lowKK_one rfl (a := .cond C T E) (by simp [Lower.lowerStmt1, hc, hT, hE])
+
+/-- A block that lowers before one continuation lowers before any. -/
+theorem lowK_any : ∀ (xs : List Syntax.PStmt) {k c : PancakeProg}, Block.lowerK xs k = some c → LowKK xs
+  | [], _, _, _ => fun k' => ⟨k', rfl⟩
+  | x :: rest, k, c, h => by
+    cases hx : x.isDec with
+    | false =>
+      obtain ⟨a, r, ha, hr, -⟩ := lowerK_cons_inv hx h
+      exact lowKK_append (xs := [x]) (lowKK_one hx ha) (lowK_any rest hr)
+    | true =>
+      cases x with
+      | dec n v =>
+        obtain ⟨v', r, hv, hr, -⟩ := lowerK_dec_inv h
+        exact lowKK_append (xs := [_]) (lowKK_dec hv) (lowK_any rest hr)
+      | call rt f as =>
+        obtain ⟨a, r, ha, hr, -⟩ := lowerK_call_inv h
+        exact lowKK_append (xs := [_]) (lowKK_call ha) (lowK_any rest hr)
+      | _ => simp [Syntax.PStmt.isDec] at hx
+
+/-- A fragment shown under a fact its states all give. -/
+theorem frag_pure {o : Oracle σ} {xs : List Syntax.PStmt} {P P' : Assn σ} (Q : Prop) (hQ : ∀ s, P s → Q)
+    (hl : LowKK xs) (h : Q → Frag o xs P P') : Frag o xs P P' := by
+  by_cases q : Q
+  · exact h q
+  · intro k R Qa _ _
+    obtain ⟨c, hc⟩ := hl k
+    exact ⟨c, hc, fun s hs => absurd (hQ s hs) q⟩
+
+theorem frag_unsat {o : Oracle σ} {xs : List Syntax.PStmt} {P P' : Assn σ} (hl : LowKK xs) (h : ∀ s, P s → False) :
+    Frag o xs P P' :=
+  frag_pure False h hl False.elim
+
+theorem lowKK_decs (xs : List String) : LowKK (xs.map fun x => .dec x (Syntax.n 0)) := by
+  induction xs with
+  | nil => exact fun k => ⟨k, rfl⟩
+  | cons x xs ih => exact lowKK_append (xs := [_]) (lowKK_dec rfl) ih
+
+/-- **A branch**: each arm a fragment closed on its own, from where the test sends it. -/
+theorem frag_ite (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
+    {t e : List Syntax.PStmt} {P P' : Assn σ} (hP' : Safe.ClockFree P') (hdef : ∀ s, P s → ∃ w, eval s C = some w)
+    (ht : Frag o t (fun s => P s ∧ eval s C ≠ some 0) P') (htc : ∀ u y v, P' u → y ∈ declared t → P' (restore u y v))
+    (he : Frag o e (fun s => P s ∧ eval s C = some 0) P') (hec : ∀ u y v, P' u → y ∈ declared e → P' (restore u y v)) :
+    Frag o [.ite c t e] P P' := by
+  obtain ⟨T, hT, -⟩ := frag_close ht htc (fun _ _ => False)
+  obtain ⟨E, hE, -⟩ := frag_close he hec (fun _ _ => False)
+  refine frag_oneR (a := .cond C T E) (by simp [Lower.lowerStmt1, hc, hT, hE]) rfl hP' fun R => ?_
+  obtain ⟨T', hT', hTs⟩ := frag_close ht htc R
+  obtain ⟨E', hE', hEs⟩ := frag_close he hec R
+  rw [hT] at hT'; cases hT'
+  rw [hE] at hE'; cases hE'
+  exact WpRet.cond hdef hTs hEs
+
+theorem frag_nil (o : Oracle σ) {P P' : Assn σ} (h : ∀ s, P s → P' s) : Frag o [] P P' :=
+  fun k _ _ _ hk => ⟨k, rfl, conseq hk h (fun _ _ h => h) (fun _ h => h)⟩
+
+/-- An assignment, from one state. -/
+theorem assign_frag (o : Oracle σ) {s : PancakeState σ} {x : String} {e : Syntax.PExpr} {E : PancakeExp}
+    (he : Lower.lowerExp e = some E) {v : Value} (hv : eval s E = some v) (hx : ∃ old, s.locals x = some old) :
+    Frag o [.assign x e] (Like s) (Like (setL s x v)) := by
+  obtain ⟨old, hold⟩ := hx
+  exact frag_one (a := .assign x E) (by simp [Lower.lowerStmt1, he]) rfl rfl (like_clock _)
+    (Safe.assign fun u h => ⟨v, old, by rw [like_eval h]; exact hv, by rw [h.locals]; exact hold,
+      ⟨by simp [setL, h.locals], h.memory, h.memaddrs, h.be, h.ffi, h.base, h.code⟩⟩)
+
+/-- The names `ns` declared zero, every other local and the rest of `s0` as they were. -/
+structure Zeros (s0 : PancakeState σ) (ns : List String) (s : PancakeState σ) : Prop where
+  zero : ∀ y ∈ ns, s.locals y = some 0
+  frame : ∀ y, y ∉ ns → s.locals y = s0.locals y
+  memory : s.memory = s0.memory
+  memaddrs : s.memaddrs = s0.memaddrs
+  be : s.be = s0.be
+  ffi : s.ffi = s0.ffi
+  base : s.baseAddr = s0.baseAddr
+  code : s.code = s0.code
+
+theorem decs_frag (o : Oracle σ) (s0 : PancakeState σ) : ∀ (xs pre : List String),
+    Frag o (xs.map fun x => .dec x (Syntax.n 0)) (Zeros s0 pre) (Zeros s0 (pre ++ xs))
+  | [], pre => frag_nil o fun s h => by simpa using h
+  | x :: xs, pre => by
+    have h1 : Frag o [.dec x (Syntax.n 0)] (Zeros s0 pre) (Zeros s0 (pre ++ [x])) :=
+      frag_dec o rfl fun s h => ⟨0, rfl, fun y hy => by
+          rcases List.mem_append.mp hy with hy | hy
+          · by_cases e : y = x
+            · simp [setLocal, e]
+            · simp [setLocal, e, h.zero y hy]
+          · simp at hy; simp [setLocal, hy],
+        fun y hy => by
+          have : y ≠ x := fun e => hy (by simp [e])
+          simp only [setLocal, if_neg this]
+          exact h.frame y fun e => hy (List.mem_append_left _ e),
+        h.memory, h.memaddrs, h.be, h.ffi, h.base, h.code⟩
+    have h2 := decs_frag o s0 xs (pre ++ [x])
+    rw [List.append_assoc, List.singleton_append] at h2
+    exact frag_append (xs := [_]) h1 h2
+
+/-- A block with no declaration or call at its top, lowered with `k` after it, runs as its lowering, then `k`. -/
+theorem lowerK_fold (o : Oracle σ) : ∀ (xs : List Syntax.PStmt), xs ≠ [] → (∀ x ∈ xs, x.isDec = false) →
+    ∀ {a : PancakeProg}, Lower.lowerStmtsFold xs = some a → ∀ k, ∃ c, Block.lowerK xs k = some c ∧
+      ∀ s, PancakeSem o c s = PancakeSem o (.seq a k) s
+  | [], h, _, _, _, _ => absurd rfl h
+  | [x], _, hnd, a, ha, k => by
+    have hx : Lower.lowerStmt1 x = some a := by cases x <;> simpa [Lower.lowerStmtsFold] using ha
+    exact ⟨_, lowerK_one hx (hnd x (by simp)) k, fun _ => rfl⟩
+  | x :: y :: ys, _, hnd, a, ha, k => by
+    have hx0 := hnd x (by simp)
+    obtain ⟨ax, hax⟩ : ∃ ax, Lower.lowerStmt1 x = some ax := by
+      cases h : Lower.lowerStmt1 x with
+      | some ax => exact ⟨ax, rfl⟩
+      | none => cases x <;> simp_all [Lower.lowerStmtsFold, Syntax.PStmt.isDec]
+    obtain ⟨b, hb⟩ : ∃ b, Lower.lowerStmtsFold (y :: ys) = some b := by
+      cases h : Lower.lowerStmtsFold (y :: ys) with
+      | some b => exact ⟨b, rfl⟩
+      | none => cases x <;> simp_all [Lower.lowerStmtsFold, Syntax.PStmt.isDec]
+    rw [Block.fold_cons hax hx0 (by simp) hb] at ha; cases ha
+    obtain ⟨c, hc, hs⟩ := lowerK_fold o (y :: ys) (by simp) (fun z hz => hnd z (by simp [hz])) hb k
+    exact ⟨.seq ax c, by rw [lowerK_cons hax hx0 hc], fun s => by
+      rw [Components.seq_assoc]; exact Block.seq_congr o ax hs s⟩
+
+/-- **A block proven as its lowering**, no declaration or call at its top. -/
+theorem frag_fold (o : Oracle σ) {xs : List Syntax.PStmt} (hne : xs ≠ []) (hnd : ∀ x ∈ xs, x.isDec = false)
+    {a : PancakeProg} (ha : Lower.lowerStmtsFold xs = some a) {P P' : Assn σ} (hP' : Safe.ClockFree P')
+    (h : ∀ R, SafeR o P a R P') : Frag o xs P P' := by
+  intro k R Q _ hk
+  obtain ⟨c, hc, hs⟩ := lowerK_fold o xs hne hnd ha k
+  refine ⟨c, hc, fun s hp => ?_⟩
+  have := WpRet.seq (h R) hk hP' s hp
+  rw [hs]; exact this
+
+/-- A check proven of its lowering, from each state on its own. -/
+theorem frag_pinned (o : Oracle σ) {xs : List Syntax.PStmt} (hne : xs ≠ []) (hnd : ∀ x ∈ xs, x.isDec = false)
+    {c : PancakeProg} (hc : Lower.lowerStmtsFold xs = some c) (hnr : noRet c = true) {P : Assn σ}
+    {Post : PancakeState σ → Assn σ} (hcl : ∀ s, Safe.ClockFree (Post s))
+    (hP : ∀ s, P s → Safe.Safe o (fun u => u = s) c (Post s)) :
+    Frag o xs P (fun u => ∃ s, P s ∧ Post s u) :=
+  frag_fold o hne hnd hc (fun _ _ ⟨s, hs, h⟩ => ⟨s, hs, hcl s _ _ h⟩) fun R s hs =>
+    WpRet.conseq (WpRet.ofSafe R hnr (hP s hs)) (fun _u (hu : _u = s) => hu) (fun _ _ h => h)
+      (fun _ h => ⟨s, hs, h⟩) s rfl
+
+/-- **The declarations' scope may take in what follows**: a block under declarations `ds`, its run from `s`
+coming to `P'`, followed by `k` that from `P'` comes to `Q`, runs as the declarations over both, when `P'` and `Q`
+do not look at the declared locals. -/
+theorem decs_seq (o : Oracle σ) {R : Ret} {F k : PancakeProg} :
+    ∀ (ds : List (String × PancakeExp)) (s : PancakeState σ) (P' Q : PancakeState σ → Prop),
+      (∀ u y w, y ∈ ds.map (·.1) → P' u → P' (restore u y w)) →
+      (∀ u y w, y ∈ ds.map (·.1) → Q u → Q (restore u y w)) →
+      (∀ t, P' t → OkR R Q (PancakeSem o k t)) →
+      OkR R P' (PancakeSem o (Block.decs ds F) s) → OkR R Q (PancakeSem o (Block.decs ds (.seq F k)) s)
+  | [], s, P', Q, _, _, hk, h => by
+    simp only [Block.decs] at h ⊢
+    rw [Components.seq_run]
+    rcases hF : PancakeSem o F s with ⟨_ | r, t⟩
+    · rw [hF] at h; exact hk t h
+    · rw [hF] at h; exact okR_post (by simp) rfl h
+  | (x, E) :: ds, s, P', Q, hP, hQ, hk, h => by
+    simp only [Block.decs] at h ⊢
+    rw [PancakeSem] at h ⊢
+    cases hv : eval s E with
+    | none => simp only [hv] at h ⊢; exact okR_post (by simp) rfl h
+    | some val =>
+      simp only [hv] at h ⊢
+      let P'' : PancakeState σ → Prop := fun u => P' (restore u x (s.locals x))
+      let Q'' : PancakeState σ → Prop := fun u => Q (restore u x (s.locals x))
+      have ih := decs_seq o (F := F) (k := k) ds { s with locals := setLocal s.locals x val } P'' Q''
+        (fun u y w hy hu => by
+          show P' (restore (restore u y w) x (s.locals x))
+          by_cases e : y = x
+          · subst e
+            rw [restore_same]; exact hu
+          · rw [restore_comm _ e]; exact hP _ y w (by simp [hy]) hu)
+        (fun u y w hy hu => by
+          show Q (restore (restore u y w) x (s.locals x))
+          by_cases e : y = x
+          · subst e
+            rw [restore_same]; exact hu
+          · rw [restore_comm _ e]; exact hQ _ y w (by simp [hy]) hu)
+        (fun t ht => by
+          have h1 : P' t := by
+            have := hP _ x (t.locals x) (by simp) ht
+            rwa [restore_restore] at this
+          have h2 := hk t h1
+          rcases hr : PancakeSem o k t with ⟨_ | r, t2⟩
+          · rw [hr] at h2; exact hQ t2 x _ (by simp) h2
+          · rw [hr] at h2; exact okR_post (by simp) rfl h2)
+      have h' : OkR R P'' (PancakeSem o (Block.decs ds F) { s with locals := setLocal s.locals x val }) := by
+        revert h
+        rcases PancakeSem o (Block.decs ds F) { s with locals := setLocal s.locals x val } with ⟨_ | r, t⟩
+        · exact id
+        · exact okR_post (by simp) rfl
+      have := ih h'
+      revert this
+      rcases PancakeSem o (Block.decs ds (.seq F k)) { s with locals := setLocal s.locals x val } with ⟨_ | r, t⟩
+      · exact id
+      · exact okR_post (by simp) rfl
+
+/-- **A block of two declarations ahead of a body, proven of its lowering**, when what it comes to does not look
+at the declared locals. -/
+theorem frag_dec2 (o : Oracle σ) {x1 x2 : String} {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp}
+    (h1 : Lower.lowerExp e1 = some E1) (h2 : Lower.lowerExp e2 = some E2) {body : List Syntax.PStmt}
+    (hne : body ≠ []) (hnd : ∀ y ∈ body, y.isDec = false) {B : PancakeProg} (hB : Lower.lowerStmtsFold body = some B)
+    {P P' : Assn σ} (hcl : ∀ u y w, y ∈ [x1, x2] → P' u → P' (restore u y w))
+    (h : ∀ R, SafeR o P (.dec x1 E1 (.dec x2 E2 B)) R P') :
+    Frag o (.dec x1 e1 :: .dec x2 e2 :: body) P P' := by
+  intro k R Q hQ hk
+  obtain ⟨c, hc, hs⟩ := lowerK_fold o body hne hnd hB k
+  refine ⟨.dec x1 E1 (.dec x2 E2 c), by simp [Block.lowerK, h1, h2, hc], fun s hp => ?_⟩
+  have e : PancakeSem o (.dec x1 E1 (.dec x2 E2 c)) s =
+      PancakeSem o (Block.decs [(x1, E1), (x2, E2)] (.seq B k)) s :=
+    dec_congr o x1 E1 (fun t => dec_congr o x2 E2 hs t) s
+  rw [e]
+  exact decs_seq o [(x1, E1), (x2, E2)] s P' Q (fun u y w hy hu => hcl u y w (by simpa using hy) hu)
+    (fun u y w hy hu => hQ u y w hu (by simp at hy; rcases hy with rfl | rfl <;> simp [declared]))
+    (fun t ht => hk t ht) (h R s hp)
+
+/-- **A loop counting up**: the body takes the invariant at `i` to `i + 1` while the test `g i` holds; if the loop
+ends normally, it ends where the test fails. -/
+theorem frag_count (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
+    {body : List Syntax.PStmt} (hlow : LowKK body) {I : Nat → Assn σ} (hI : ∀ i, Safe.ClockFree (I i))
+    (hr : ∀ i u y v, I i u → y ∈ declared body → I i (restore u y v)) {g : Nat → Bool}
+    (hcond : ∀ i u, I i u → eval u C = some (if g i then 1 else 0))
+    (hbody : ∀ i, g i = true → Frag o body (I i) (I (i + 1))) (i0 : Nat) :
+    Frag o [.while c body] (I i0) (fun u => ∃ i, I i u ∧ g i = false) := by
+  obtain ⟨BODY, hBl⟩ := lowKK_fold hlow
+  have hz : ∀ i u, I i u → eval u C = some 0 → g i = false := fun i u h e => by
+    rw [hcond i u h] at e; cases hg : g i <;> simp_all
+  refine frag_oneR (a := .while_ C BODY) (by simp [Lower.lowerStmt1, hc, hBl]) rfl
+    (fun _ _ ⟨i, h, hg⟩ => ⟨i, hI i _ _ h, hg⟩) fun R => ?_
+  refine conseq (WpRet.while_ (I := fun u => ∃ i, I i u) (fun s ⟨i, h⟩ => ⟨_, hcond i s h⟩) ?_
+    (fun _ _ ⟨i, h⟩ => ⟨i, hI i _ _ h⟩)) (fun s h => ⟨i0, h⟩) (fun _ _ h => h)
+    fun s ⟨⟨i, h⟩, e⟩ => ⟨i, h, hz i s h e⟩
+  intro s ⟨⟨i, h⟩, hne⟩
+  have hg : g i = true := by
+    cases e : g i
+    · exact absurd (by rw [hcond i s h, e]; rfl) hne
+    · rfl
+  obtain ⟨c', hc', hs⟩ := frag_close (hbody i hg) (hr (i + 1)) R
+  rw [hBl] at hc'; cases hc'
+  exact conseq hs (fun _ h => h) (fun _ _ h => h) (fun u hu => ⟨i + 1, hu⟩) s h
+
+/-- Where a count up to `n` stops, a test true of a prefix only if of each shorter one stands as at `n`. -/
+theorem count_exit {p : Nat → Bool} (hmono : ∀ i j, i ≤ j → p j = true → p i = true) {i n : Nat} (hi : i ≤ n)
+    (hz : (p i && decide (i < n)) = false) : p i = p n := by
+  cases hp : p i
+  · cases e : p n
+    · rfl
+    · rw [hmono i n hi e] at hp; exact absurd hp (by decide)
+  · rw [hp, Bool.true_and, decide_eq_false_iff_not] at hz
+    have : i = n := by omega
+    subst this; exact hp.symm
+
+/-! ### The premises can hold -/
+
+theorem like_witness : Like (bareState ()) (bareState ()) := like_refl _
+
+theorem zeros_witness : Zeros (bareState ()) [] (bareState ()) :=
+  ⟨fun _ h => by simp at h, fun _ _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+end DN.Compiler.Frag

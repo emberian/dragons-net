@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Server.SessionAppend
+import DN.Compiler.FragRules
 
 /-!
 # DN.Server.SessionText
@@ -505,27 +506,6 @@ theorem textBranches_length : textBranches.length = 48 := by decide +kernel
 theorem text_bodies : textBranches.map stmtBody = textKinds.map Branch.body := by rfl
 
 /-! ### Every branch lowers -/
-
-/-- A block that lowers before whatever follows. -/
-def LowKK (xs : List Syntax.PStmt) : Prop := ∀ k, ∃ c, Block.lowerK xs k = some c
-
-theorem lowKK_append {xs ys : List Syntax.PStmt} (h1 : LowKK xs) (h2 : LowKK ys) : LowKK (xs ++ ys) := fun k => by
-  obtain ⟨c2, h2⟩ := h2 k
-  obtain ⟨c1, h1⟩ := h1 c2
-  exact ⟨c1, by rw [lowerK_append, h2, Option.bind_some, h1]⟩
-
-theorem lowKK_flatten : ∀ (ps : List (List Syntax.PStmt)), (∀ p ∈ ps, LowKK p) → LowKK ps.flatten
-  | [], _ => fun k => ⟨k, rfl⟩
-  | p :: ps, h => lowKK_append (h p (by simp)) (lowKK_flatten ps fun q hq => h q (by simp [hq]))
-
-theorem lowKK_one {x : Syntax.PStmt} (hd : x.isDec = false) {a : PancakeProg} (h : Lower.lowerStmt1 x = some a) :
-    LowKK [x] := fun k => ⟨_, lowerK_one h hd k⟩
-
-theorem lowKK_dec {x : String} {e : Syntax.PExpr} {E : PancakeExp} (h : Lower.lowerExp e = some E) :
-    LowKK [.dec x e] := fun _ => ⟨_, lowerK_dec h rfl⟩
-
-theorem lowKK_call {r f : String} {as : List Syntax.PExpr} {a : List PancakeExp} (h : Lower.lowerArgs as = some a) :
-    LowKK [.call r f as] := fun k => ⟨.decCall r f a k, by simp [Block.lowerK, h]⟩
 
 theorem lowKK_copyAppend {src len : Syntax.PExpr} {SRC LEN : PancakeExp} (hs : Lower.lowerExp src = some SRC)
     (hl : Lower.lowerExp len = some LEN) :

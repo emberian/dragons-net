@@ -718,4 +718,13 @@ theorem safeR_refutes :
   have k := h (bareState ()) rfl
   simp [PancakeSem, OkR, eval] at k
 
+/-- A result that is not a normal end does not depend on what the normal end would ask. -/
+theorem okR_post {R : Ret} {P Q : PancakeState σ → Prop} {r : Option Result} {t t' : PancakeState σ}
+    (hr : r ≠ none) (hm : t'.memory = t.memory) (h : OkR R P (r, t)) : OkR R Q (r, t') := by
+  cases r with
+  | none => exact absurd rfl hr
+  | some res => cases res <;> simp_all [OkR]
+
+theorem okR_witness : OkR (σ := Unit) (fun _ _ => True) (fun _ => True) (none, bareState ()) := trivial
+
 end DN.Compiler.WpRet

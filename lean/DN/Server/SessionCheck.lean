@@ -234,6 +234,9 @@ theorem byte_eq (y : Byte) (k : Nat) (hk : k < 256) :
 theorem bw_and (a b : Bool) : bw a &&& bw b = bw (a && b) := by
   cases a <;> cases b <;> rfl
 
+theorem bw_ne0 {p : Bool} (h : some (bw p) ≠ some 0) : p = true := by cases p <;> simp_all [bw]
+theorem bw_eq0 {p : Bool} (h : some (bw p) = some 0) : p = false := by cases p <;> simp_all [bw]
+
 /-- `a ≤ b`, of small numbers. -/
 theorem le_eval (a b : Nat) (ha : a < 2 ^ 63) (hb : b < 2 ^ 63) :
     (if signedLt (BitVec.ofNat 64 b) (BitVec.ofNat 64 a) = true then (0 : Word) else 1) = bw (decide (a ≤ b)) := by
@@ -2929,5 +2932,13 @@ theorem gnPre_witness :
     rw [gnBlock_eq, SessionFrame.blockAt_base0]
     exact chk_byte _ rfl
   ret := rfl
+
+/-- A state of no memory, every local zero. -/
+def zeroState : PancakeState Unit := { bareState () with locals := fun _ => some 0 }
+
+theorem midPost_witness : MidPost [] zeroState zeroState := ⟨but_refl _ _, rfl⟩
+
+theorem numPost_witness : NumPost [] zeroState zeroState :=
+  ⟨but_refl _ _, rfl, ⟨0, rfl⟩, ⟨0, rfl⟩, fun h => absurd h (by decide)⟩
 
 end DN.Server.SessionCheck

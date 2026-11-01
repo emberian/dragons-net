@@ -378,6 +378,153 @@ theorem sem_same (o : Oracle σ) :
       · exact same_refl s
     · exact same_refl s
 
+/-! ### No run that goes on unbinds a local -/
+
+/-- A result a run goes on from: an ordinary end, or a loop's break or continue. -/
+def GoesOn : Option Result → Prop
+  | none | some .break_ | some .continue_ => True
+  | _ => False
+
+/-- Every local bound in `s` is bound in `t`. -/
+def Keeps (s t : PancakeState σ) : Prop := ∀ y, (s.locals y).isSome → (t.locals y).isSome
+
+theorem keeps_refl (s : PancakeState σ) : Keeps s s := fun _ h => h
+theorem keeps_trans {s t u : PancakeState σ} (h1 : Keeps s t) (h2 : Keeps t u) : Keeps s u :=
+  fun y h => h2 y (h1 y h)
+
+theorem keeps_set (s : PancakeState σ) (x : String) (v : Value) :
+    Keeps s { s with locals := setLocal s.locals x v } := fun y h => by
+  simp only [setLocal]; split <;> simp_all
+
+theorem keeps_restore {s u t : PancakeState σ} {x : String} {v : Value} (h : Keeps u t)
+    (hu : u.locals = setLocal s.locals x v) :
+    Keeps s { t with locals := resVar t.locals x (s.locals x) } := fun y hy => by
+  simp only [resVar]
+  by_cases e : y = x
+  · subst e; simp [hy]
+  · rw [if_neg e]; exact h y (by rw [hu]; simp only [setLocal, if_neg e]; exact hy)
+
+/-- **No run that goes on unbinds a local.** -/
+theorem sem_keeps (o : Oracle σ) :
+    ∀ (n : Nat) (p : PancakeProg) (s : PancakeState σ), s.clock ≤ n → GoesOn (PancakeSem o p s).1 →
+      Keeps s (PancakeSem o p s).2 := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ihn =>
+  intro p
+  induction p with
+  | skip => intro s _ _; rw [PancakeSem]; exact keeps_refl s
+  | dec v e c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · intro hg; exact keeps_restore (ih _ hc hg) rfl
+    · intro hg; simp [GoesOn] at hg
+  | assign v e =>
+    intro s _
+    rw [PancakeSem]
+    split
+    · intro _; exact keeps_set s v _
+    · intro hg; simp [GoesOn] at hg
+  | store d e =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals intro hg; first | exact keeps_refl s | simp [GoesOn] at hg | exact fun _ h => h
+  | storeByte d e =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals intro hg; first | exact keeps_refl s | simp [GoesOn] at hg | exact fun _ h => h
+  | extCall name c cl a al =>
+    intro s _
+    rw [PancakeSem]
+    repeat' split
+    all_goals intro hg; first | exact keeps_refl s | simp [GoesOn] at hg | exact fun _ h => h
+  | seq c1 c2 ih1 ih2 =>
+    intro s hc
+    have h1 := ih1 s hc
+    rw [PancakeSem]
+    revert h1
+    rcases PancakeSem o c1 s with ⟨r, t⟩
+    intro h1
+    simp only [clampClock]
+    cases r with
+    | none =>
+      intro hg
+      exact keeps_trans (h1 trivial) (ih2 _ (by simp only; omega) hg)
+    | some res =>
+      intro hg
+      exact h1 hg
+  | cond e c1 c2 ih1 ih2 =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · exact ih1 s hc
+      · exact ih2 s hc
+    · intro hg; simp [GoesOn] at hg
+  | while_ e c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · split
+        · intro hg; simp [GoesOn] at hg
+        · have hb := ihn (s.clock - 1) (by omega) c (decClock s) (by simp [decClock])
+          revert hb
+          rcases PancakeSem o c (decClock s) with ⟨r, t⟩
+          intro hb
+          simp only [clampClock]
+          have hw := ihn (s.clock - 1) (by omega) (.while_ e c) { t with clock := min (s.clock - 1) t.clock }
+            (by simp only; omega)
+          split
+          · intro hg; exact keeps_trans (hb (by simp_all only [GoesOn])) (hw hg)
+          · intro hg; exact keeps_trans (hb (by simp_all only [GoesOn])) (hw hg)
+          · intro _; exact hb (by simp_all only [GoesOn])
+          · intro hg; exact hb (by simp_all only [GoesOn])
+      · intro _; exact keeps_refl s
+    · intro hg; simp [GoesOn] at hg
+  | ret e =>
+    intro s _ hg
+    rw [PancakeSem] at hg
+    split at hg <;> simp [GoesOn] at hg
+  | decCall rt f args c ih =>
+    intro s hc
+    rw [PancakeSem]
+    split
+    · split
+      · split
+        · intro hg; simp [GoesOn] at hg
+        · rename_i body params _ _
+          rcases PancakeSem o body { decClock s with locals := params } with ⟨r, t⟩
+          simp only [clampClock]
+          split
+          · rename_i v _
+            intro hg
+            exact keeps_restore (ih _ (by simp only; omega) hg) rfl
+          · rename_i other _ _
+            unfold callEnded
+            split
+            all_goals intro hg; simp_all [GoesOn]
+      · intro hg; simp [GoesOn] at hg
+    · intro hg; simp [GoesOn] at hg
+
+/-- A run proven safe from `s` keeps `s`'s locals bound. -/
+theorem safe_keeps {o : Oracle σ} {s : PancakeState σ} {c : PancakeProg} {Q : PancakeState σ → Prop}
+    (h : Safe.Safe o (fun u => u = s) c Q) : Safe.Safe o (fun u => u = s) c (fun t => Q t ∧ Keeps s t) := by
+  rintro u rfl
+  have k := h u rfl
+  have hk := sem_keeps o u.clock c u (Nat.le_refl _)
+  revert k hk
+  rcases PancakeSem o c u with ⟨_ | r, t⟩
+  · intro k hk; exact ⟨k, hk trivial⟩
+  · intro k _; exact k
+
+theorem goesOn_witness : GoesOn none := trivial
+
+theorem keeps_witness : Keeps (bareState ()) (bareState ()) := keeps_refl _
+
 theorem same_witness : Same (σ := Unit) Entry.bare Entry.bare := same_refl _
 
 /-- The rules ask for assertions free of the clock, and one about a local is. -/

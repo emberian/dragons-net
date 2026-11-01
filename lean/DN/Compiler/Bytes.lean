@@ -620,4 +620,17 @@ theorem memBytes_witness :
   have : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 := by omega
   rcases this with rfl | rfl | rfl | rfl <;> rfl
 
+theorem byteAlign_base {b : Word} (hb : b.toNat % 8 = 0) (x : Nat) :
+    byteAlign (b + BitVec.ofNat 64 x) = b + BitVec.ofNat 64 (x / 8 * 8) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Bytes.byteAlign_toNat, BitVec.toNat_add, BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat]
+  have := b.isLt
+  omega
+
+/-- The word at `X` past an aligned base is not the one holding a place `x` at least eight past it. -/
+theorem own_far {b : Word} (hb : b.toNat % 8 = 0) {X x : Nat} (hX8 : X % 8 = 0) (hlt : X + 8 ≤ x)
+    (hx : x < 2 ^ 64) : byteAlign (b + BitVec.ofNat 64 x) ≠ b + BitVec.ofNat 64 X := by
+  rw [byteAlign_base hb]
+  exact region_addr_inj b _ _ (by omega) (by omega) (by omega)
+
 end DN.Compiler.Bytes
