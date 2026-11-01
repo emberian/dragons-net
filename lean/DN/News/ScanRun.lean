@@ -15,8 +15,8 @@ What `DN.News.Journal.next` decides of a frame before it reads a record (`fault`
 
 namespace DN.News.ScanRun
 
-open DN.Compiler DN.Compiler.Frag DN.News DN.News.Journal
-open DN.News.FramerCode (bw eq_word eval_or2)
+open DN.Compiler DN.Compiler.Wp DN.Compiler.Frag DN.News.Journal
+open DN.News.FramerCode (bw eq_word eval_lt eval_or2)
 
 variable {σ : Type}
 
@@ -234,9 +234,46 @@ theorem kept_set {xs : List String} {w : Word → Prop} {s t : PancakeState σ} 
   ⟨fun y hy => by simp [setL, setLocal, show y ≠ x from fun e => hy (e ▸ hx), h.locals y hy], h.memory,
     h.memaddrs, h.be, h.base, h.ffi, h.code, Safe.keeps_trans h.keeps (Safe.keeps_set t x v)⟩
 
+theorem kept_word {xs : List String} {w : Word → Prop} {s t : PancakeState σ} (h : Kept xs w s t) {a : Word}
+    (ha : w a) (v : Word) : Kept xs w s { t with memory := fun k => if k = a then v else t.memory k } :=
+  ⟨h.locals, fun x hx => by
+    show (if x = a then v else t.memory x) = s.memory x
+    rw [if_neg (fun e : x = a => hx (e ▸ ha))]
+    exact h.memory x hx, h.memaddrs, h.be, h.base, h.ffi, h.code, fun y hy => h.keeps y hy⟩
+
 /-- …so an octet in no word of `w` reads as it did. -/
 theorem kept_load {xs : List String} {w : Word → Prop} {s t : PancakeState σ} (h : Kept xs w s t) {a : Word}
     (ha : ¬ w (byteAlign a)) : memLoadByte t.memory t.memaddrs t.be a = memLoadByte s.memory s.memaddrs s.be a := by
   simp only [memLoadByte, h.memaddrs, h.be, h.memory _ ha]
+
+/-- **A word checked in range**: in it, `fail` is not run. -/
+theorem kept_skip (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
+    {x : String} {hi : Nat} (hhi : hi < 2 ^ 63) {P : Assn σ} (hP : Safe.ClockFree P)
+    (h : ∀ u, P u → ∃ n, u.locals x = some (BitVec.ofNat 64 n) ∧ n ≤ hi) :
+    Frag o [ScanProg.kept fail x hi] P P :=
+  frag_skip o (C := .cmp .less (.const 0) (.op .add (.cmp .less (.var x) (.const 0))
+    (.cmp .less (.const (BitVec.ofNat 64 hi)) (.var x)))) rfl hfl hP (fun u hu => by
+      obtain ⟨n, hn, hle⟩ := h u hu
+      have hv : eval u (.var x) = some (BitVec.ofNat 64 n) := hn
+      rw [e_or2 (eval_lt (x := n) (y := 0) (by omega) (by decide) hv rfl)
+        (eval_lt (x := hi) (y := n) hhi (by omega) rfl hv)]
+      simp [bw]; omega) (noDecl _ hfd)
+
+/-- **A branch on a verdict**: its arm when the verdict holds, nothing when it does not. -/
+theorem flagIf_frag (o : Oracle σ) {x : String} {body : List Syntax.PStmt} (hl : LowKK body)
+    (hd : declared body = []) {b : Bool} {P Q : Assn σ} (hQ : Safe.ClockFree Q)
+    (hx : ∀ u, P u → u.locals x = some (bw b)) (ht : b = true → Frag o body P Q) (he : b = false → ∀ u, P u → Q u) :
+    Frag o [.ite (Syntax.v x) body []] P Q :=
+  frag_ite o (C := .var x) rfl hQ (fun u hu => ⟨_, by simp only [eval]; exact hx u hu⟩)
+    (by
+      cases b with
+      | true => exact frag_conseq (ht rfl) (fun u h => h.1) fun _ h => h
+      | false => exact frag_unsat hl fun u ⟨hu, hne⟩ => hne (by simp only [eval]; rw [hx u hu]; rfl))
+    (noDecl _ hd)
+    (frag_nil o fun u ⟨hu, h0⟩ => by
+      cases b with
+      | true => simp only [eval] at h0; rw [hx u hu] at h0; cases h0
+      | false => exact he rfl u hu)
+    (noDecl _ rfl)
 
 end DN.News.ScanRun

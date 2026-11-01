@@ -9,8 +9,9 @@ A journal read back as `DN.News.Journal.scan` reads it, as the gate prints it: a
 frame from a window of the journal that the caller fills, and leaves in the scanner's area at `jsc`
 what it found — octets wanted (how many, from where the window ends), a record (its fields), or how
 the journal ends; the area is all it keeps between steps. A frame's tag is computed by
-`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`; the check of a frame and the
-reading of its record are proven (`DN.News.ScanFrame`, `DN.News.ScanStep`), if they go on.
+`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`; proven, if it goes on: the kernel's step
+is `DN.News.ScanSpec.stepSpec` (`DN.News.ScanStop`), and steps of `stepSpec` read the journal as `scan` does
+(`DN.News.ScanSpec`).
 
 So that the analysis of decision 0004 sees every access lie in the area, the step keeps no address
 in it, only offsets into the window, and checks each word it reads back before it makes an address
@@ -282,16 +283,25 @@ def recordOf : List PStmt :=
          [.assign "jrec" (lit startType)] []]],
    .ite (eEq (v "jrec") (n 0)) [.assign "jwhy" (lit (whyCode .notARecord))] []]
 
+/-- The record read when the frame checks. -/
+def recordPart : PStmt := .ite (eEq (v "jwhy") (n 0)) (recordOf fail) []
+
+/-- The key's `i`th octet, from a format record's payload at `jpp`. -/
+def keyStore (i : Nat) : PStmt := .storeb (atOff sp (sKey + i)) (byte (atOff (v "jpp") (magic.length + i)))
+
+/-- The key, from a format record's payload. -/
+def keyCopy : List PStmt := (List.range keyLength).map keyStore
+
+/-- A record taken: one more counted, its type, where the next frame starts, the status. -/
+def acceptTail : List PStmt :=
+  [setw sCount (eAdd (word sCount) (n 1)), setw sType (v "jrec"),
+   setw sPos (eAdd (v "jp") (eAdd (v "jpl") (n (headerLength + 1)))), setw sStatus (n record)]
+
 /-- The record read, unless it is a second format: the journal's key taken from the first. -/
 def accept : List PStmt :=
   [.ite (eAnd (eLt (n 0) (word sCount)) (eEq (v "jrec") (n formatType)))
     [setw sStatus (n corrupt), setw sWhy (n (whyCode .formatAgain))]
-    [.ite (eEq (v "jrec") (n formatType))
-       ((List.range keyLength).map (fun i => .storeb (atOff sp (sKey + i))
-          (byte (atOff (v "jpp") (magic.length + i)))) ++ [setw sKeyed (n 1)]) [],
-     setw sCount (eAdd (word sCount) (n 1)), setw sType (v "jrec"),
-     setw sPos (eAdd (v "jp") (eAdd (v "jpl") (n (headerLength + 1)))),
-     setw sStatus (n record)]]
+    (.ite (eEq (v "jrec") (n formatType)) (keyCopy ++ [setw sKeyed (n 1)]) [] :: acceptTail)]
 
 /-- The frame at journal offset `jq` found in the window: its offset there into `jo`, which the
 step keeps within the window, its address into `jf` and its payload's into `jpp`. -/
@@ -299,50 +309,82 @@ def frameAt : List PStmt :=
   [.assign "jo" (eSub (v "jq") (v "jb")), kept fail "jo" windowMax,
    .assign "jf" (eAdd (v "jw") (v "jo")), .assign "jpp" (atOff (v "jf") headerLength)]
 
+/-- A frame that checks ends the search. -/
+def tornNext : PStmt := .ite (eEq (v "jwhy") (n 0)) [.assign "jtorn" (lit 0)] []
+
+/-- Whether the search goes on: none found yet, and the journal not at its end. -/
+def tornGo : PExpr := eAnd (v "jtorn") (eLt (v "jq") (v "jsz"))
+
+/-- The frame at `jq`, checked under the journal's key: one that checks ends the search. -/
+def tornLoop : List PStmt :=
+  frameAt fail ++ [.assign "jr" (eSub (v "jsz") (v "jq"))] ++ frameWhy true ++
+    [tornNext, inc "jq"]
+
+/-- Whether a frame that checks starts after the first octet of the one at `jp`. -/
+def tornSearch : List PStmt :=
+  [.assign "jq" (eAdd (v "jp") (n 1)), .while tornGo (tornLoop fail)]
+
+/-- Whether what is left, `jrem`, fits the append that can have been cut, `jx`, and with the key, whether no frame
+that checks starts in it after its first octet. -/
+def tornCheck : PStmt :=
+  .ite (eLe (v "jrem") (v "jx")) [.assign "jtorn" (lit 1), .ite (v "jky") (tornSearch fail) []] []
+
+/-- A frame a torn append can leave: whether what is left fits the append, and with the key, whether no frame
+that checks starts in it after its first octet. -/
+def tornPart : List PStmt :=
+  [.assign "jx" (lit firstFrame), .ite (v "jky") [.assign "jx" (lit maxFrame)] [], tornCheck fail]
+
+/-- The status where reading stops: torn tail with `jtorn`, else corruption and why, `jmw`. -/
+def stopStatus : PStmt :=
+  .ite (v "jtorn") [setw sStatus (n torn)] [setw sStatus (n corrupt), setw sWhy (v "jmw")]
+
 /-- The frame at `jp` is no record, for `jwhy`: a torn tail if a torn append can leave it, what is
 left fits the append that can have been cut, and no frame that checks starts in it after its first
 octet; else corruption. -/
 def stopped : List PStmt :=
   [.assign "jmw" (v "jwhy"), .assign "jtorn" (lit 0),
-   .ite (eLt (v "jmw") (n (whyCode .notARecord)))
-     [.assign "jx" (lit firstFrame), .ite (v "jky") [.assign "jx" (lit maxFrame)] [],
-      .ite (eLe (v "jrem") (v "jx"))
-        [.assign "jtorn" (lit 1),
-         .ite (v "jky")
-           [.assign "jq" (eAdd (v "jp") (n 1)),
-            .while (eAnd (v "jtorn") (eLt (v "jq") (v "jsz")))
-              (frameAt fail ++ [.assign "jr" (eSub (v "jsz") (v "jq"))] ++ frameWhy true ++
-               [.ite (eEq (v "jwhy") (n 0)) [.assign "jtorn" (lit 0)] [], inc "jq"])] []] []] [],
-   .ite (v "jtorn") [setw sStatus (n torn)] [setw sStatus (n corrupt), setw sWhy (v "jmw")]]
+   .ite (eLt (v "jmw") (n (whyCode .notARecord))) (tornPart fail) [], stopStatus]
+
+/-- The window's octet `ji` from `jx` past its start. -/
+def copyByte : List PStmt :=
+  [.storeb (eAdd (v "jw") (v "ji")) (byte (eAdd (eAdd (v "jw") (v "jx")) (v "ji"))), inc "ji"]
+
+/-- The window's `jcnt` octets from `jx` on moved to its start, unless `jx` is zero. -/
+def windowCopy : PStmt := .ite (v "jx") [.while (eLt (v "ji") (v "jcnt")) copyByte] []
 
 /-- The window moved to start at `jp`, and the octets wanted after it: as many as one read adds,
 or as the journal has left. -/
 def want : List PStmt :=
   [.assign "jx" (eSub (v "jp") (v "jb")), kept fail "jx" windowMax,
    .assign "jcnt" (eSub (v "jwl") (v "jx")), .assign "ji" (lit 0),
-   .ite (v "jx")
-     [.while (eLt (v "ji") (v "jcnt"))
-       [.storeb (eAdd (v "jw") (v "ji")) (byte (eAdd (eAdd (v "jw") (v "jx")) (v "ji"))),
-        inc "ji"]] [],
+   windowCopy,
    .assign "jwl" (v "jcnt"), setw sBase (v "jp"), setw sLen (v "jwl"),
    .assign "jx" (eSub (v "jsz") (eAdd (v "jp") (v "jwl"))),
    .ite (eLt (n chunk) (v "jx")) [.assign "jx" (lit chunk)] [],
    setw sWant (v "jx"), setw sStatus (n wanted)]
 
-/-- **One step**: the end of the journal, octets wanted, or the frame at `jp` read. -/
-def stepWith : List PStmt :=
+/-- The step's head: the area's words it keeps, into locals. -/
+def stepHead : List PStmt :=
   [.assign "jsz" (word sSize), .assign "jb" (word sBase), .assign "jwl" (word sLen),
    kept fail "jwl" windowMax,
    .assign "jp" (word sPos), .assign "jky" (word sKeyed), .assign "jw" (atOff sp sWindow),
-   .assign "jrem" (eSub (v "jsz") (v "jp")),
-   .ite (eEq (v "jrem") (n 0)) [setw sStatus (n clean)]
+   .assign "jrem" (eSub (v "jsz") (v "jp"))]
+
+/-- The frame at `jp` found in the window and checked. -/
+def frameRead : List PStmt :=
+  [.assign "jq" (v "jp")] ++ frameAt fail ++ [.assign "jr" (v "jrem")] ++ frameWhy false
+
+/-- The frame at `jp` read: its record taken, or why reading stops. -/
+def readPart : List PStmt :=
+  frameRead fail ++ [recordPart fail, .ite (v "jwhy") (stopped fail) accept]
+
+/-- **One step**: the end of the journal, octets wanted, or the frame at `jp` read. -/
+def stepWith : List PStmt :=
+  stepHead fail ++
+  [.ite (eEq (v "jrem") (n 0)) [setw sStatus (n clean)]
      [.assign "jneed" (v "jrem"),
       .ite (eLt (n maxFrame) (v "jneed")) [.assign "jneed" (lit maxFrame)] [],
-      .ite (eLt (eAdd (v "jb") (v "jwl")) (eAdd (v "jp") (v "jneed"))) (want fail)
-        ([.assign "jq" (v "jp")] ++ frameAt fail ++ [.assign "jr" (v "jrem")] ++
-         frameWhy false ++
-         [.ite (eEq (v "jwhy") (n 0)) (recordOf fail) [],
-          .ite (v "jwhy") (stopped fail) accept])]]
+      .ite (eLt (eAdd (v "jb") (v "jwl")) (eAdd (v "jp") (v "jneed"))) (want fail) (readPart fail)]]
 
 end
 

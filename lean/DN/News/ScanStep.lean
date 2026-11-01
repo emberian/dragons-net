@@ -83,6 +83,43 @@ theorem recordOf_eq (t : Nat) (pl : Bytes) : Journal.recordOf spec t pl =
     · rw [if_neg (by intro e; exact h (List.length_eq_zero_iff.mpr (List.isEmpty_iff.mp e))), if_neg h]
   rw [if_neg (by simp [h3]), if_neg h3]
 
+/-- A commit record's payload decodes to it. -/
+theorem recordOf_commit {t : Nat} {pl : Bytes} {c : Commit} (h : Journal.recordOf spec t pl = some (.commit c)) :
+    decodeCommit pl = some c := by
+  rw [recordOf_eq] at h
+  by_cases h1 : t = formatType
+  · rw [if_pos h1] at h; split at h <;> cases h
+  rw [if_neg h1] at h
+  by_cases h2 : t = commitType
+  · rw [if_pos h2] at h
+    cases e : decodeCommit pl with
+    | none => rw [e] at h; cases h
+    | some c' => rw [e] at h; simp only [Option.map_some, Option.some.injEq, Record.commit.injEq] at h; rw [h]
+  · rw [if_neg h2] at h
+    split at h
+    · split at h <;> cases h
+    · cases h
+
+/-- A format record's payload: its length, and the key after the journal's name. -/
+theorem recordOf_format {t : Nat} {pl : Bytes} {k : Bytes} (h : Journal.recordOf spec t pl = some (.format k)) :
+    pl.length = 36 ∧ k = pl.drop 20 := by
+  rw [recordOf_eq] at h
+  by_cases h1 : t = formatType
+  · rw [if_pos h1] at h
+    split at h
+    · rename_i hc; simp only [Option.some.injEq, Record.format.injEq] at h; exact ⟨hc.1, h.symm⟩
+    · cases h
+  rw [if_neg h1] at h
+  by_cases h2 : t = commitType
+  · rw [if_pos h2] at h
+    cases e : decodeCommit pl with
+    | none => rw [e] at h; cases h
+    | some c' => rw [e] at h; cases h
+  · rw [if_neg h2] at h
+    split at h
+    · split at h <;> cases h
+    · cases h
+
 /-- **The scanner's reading of a record is `Journal.recordOf`**: if it goes on, `jrec` holds the type of the
 record the frame holds, `jwhy` `notARecord`'s code if it holds none, and the area a commit's fields. -/
 theorem recordOf_frag (o : Oracle σ) {A : Word} {o' t : Nat} {pl : Bytes} {s0 : PancakeState σ}

@@ -34,6 +34,15 @@ def MsgW (A : Word) (a : Word) : Prop := ∃ x, sMessage ≤ x ∧ x < sWindow �
 
 theorem at_add (A : Word) (x y : Nat) : at_ A x + BitVec.ofNat 64 y = at_ A (x + y) := add_ofNat A x y
 
+theorem at_ne {A : Word} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) (h : x ≠ y) : at_ A x ≠ at_ A y :=
+  region_addr_inj A x y hx hy h
+
+theorem at_inj {A : Word} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) (h : at_ A x = at_ A y) : x = y :=
+  Classical.byContradiction fun hne => at_ne hx hy hne h
+
+theorem align_at {A : Word} (hA : A.toNat % 8 = 0) (x : Nat) : byteAlign (at_ A x) = at_ A (x / 8 * 8) := by
+  rw [at_, byteAlign_base hA, at_]
+
 theorem msg_align {A : Word} (hA : A.toNat % 8 = 0) {j : Nat} (hj : j < sWindow - sMessage) :
     MsgW A (byteAlign (at_ A (sMessage + j))) :=
   ⟨sMessage + j / 8 * 8, Nat.le_add_right _ _, by
@@ -394,18 +403,12 @@ theorem bytesAre_eval {u : PancakeState σ} {p : Syntax.PExpr} {P : PancakeExp} 
   exact ⟨E, hE, by rw [hv, Bool.true_and, all_zipWith_eq ys bs hl]⟩
 
 /-- Octets in words a run left alone read as they did. -/
-theorem read_kept {xs : List String} {w : Word → Prop} {u u' : PancakeState σ} (h : Kept xs w u u') :
-    ∀ (n : Nat) (a : Word), (∀ i, i < n → ¬ w (byteAlign (a + BitVec.ofNat 64 i))) →
-      readByteArray u'.memory u'.memaddrs u'.be a n = readByteArray u.memory u.memaddrs u.be a n
-  | 0, _, _ => rfl
-  | n + 1, a, hw => by
-    have h0 : memLoadByte u'.memory u'.memaddrs u'.be a = memLoadByte u.memory u.memaddrs u.be a :=
-      kept_load h (by simpa using hw 0 (by omega))
-    have hr := read_kept h n (a + 1) fun i hi => by
-      have := hw (i + 1) (by omega)
-      rwa [show a + BitVec.ofNat 64 (i + 1) = a + 1 + BitVec.ofNat 64 i by
-        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl] at this
-    simp only [readByteArray, h0, hr]
+theorem read_kept {xs : List String} {w : Word → Prop} {u u' : PancakeState σ} (h : Kept xs w u u') (n : Nat) (a : Word)
+    (hw : ∀ i, i < n → ¬ w (byteAlign (a + BitVec.ofNat 64 i))) :
+    readByteArray u'.memory u'.memaddrs u'.be a n = readByteArray u.memory u.memaddrs u.be a n := by
+  rw [← h.memaddrs, ← h.be]
+  exact readByteArray_congr n a fun j hj => by
+    have e := kept_load h (hw j hj); rwa [h.memaddrs, h.be] at e ⊢
 
 /-! ## The key a frame is checked under -/
 
@@ -592,6 +595,16 @@ theorem keySelK_frag (o : Oracle σ) (keyed : Bool) {A F : Word} {key : Option B
 def codeOf : Option Why → Nat
   | none => 0
   | some w => whyCode w
+
+theorem codeOf_zero {f : Option Why} : codeOf f = 0 ↔ f = none := by
+  cases f with
+  | none => simp [codeOf]
+  | some w => cases w <;> simp [codeOf, whyCode]
+
+theorem codeOf_lt {f : Option Why} : codeOf f < 2 ^ 64 := by
+  cases f with
+  | none => simp [codeOf]
+  | some w => cases w <;> simp [codeOf, whyCode]
 
 /-- What `frameWhy` reads: the area at `A`, the frame at journal offset `q` and `o'` octets into the window, the
 journal's octets from it `bs`, the first `maxFrame` of them in the window, and the journal's key once read. -/

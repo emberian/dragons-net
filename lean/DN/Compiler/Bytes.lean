@@ -675,4 +675,25 @@ theorem own_far {b : Word} (hb : b.toNat % 8 = 0) {X x : Nat} (hX8 : X % 8 = 0) 
   rw [byteAlign_base hb]
   exact region_addr_inj b _ _ (by omega) (by omega) (by omega)
 
+/-- A word stored: an octet in another word reads as it did. -/
+theorem load_word_ne {m : Word → Word} {dm : Word → Bool} {be : Bool} {a b : Word} {v : Word}
+    (h : byteAlign b ≠ a) : memLoadByte (fun k => if k = a then v else m k) dm be b = memLoadByte m dm be b := by
+  simp only [memLoadByte, if_neg h]
+
+/-- Octets read as they were where each loads as it did. -/
+theorem readByteArray_congr {m m' : Word → Word} {dm : Word → Bool} {be : Bool} :
+    ∀ (n : Nat) (a : Word), (∀ j, j < n → memLoadByte m' dm be (a + BitVec.ofNat 64 j) =
+      memLoadByte m dm be (a + BitVec.ofNat 64 j)) → readByteArray m' dm be a n = readByteArray m dm be a n
+  | 0, _, _ => rfl
+  | n + 1, a, h => by
+    have h0 := h 0 (Nat.zero_lt_succ _)
+    simp only [BitVec.add_zero] at h0
+    have ih := readByteArray_congr (m := m) (m' := m') (dm := dm) (be := be) n (a + 1) fun j hj => by
+      have e : a + BitVec.ofNat 64 (j + 1) = a + 1 + BitVec.ofNat 64 j := by
+        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl
+      have := h (j + 1) (by omega)
+      rw [e] at this
+      exact this
+    simp only [readByteArray, h0, ih]
+
 end DN.Compiler.Bytes

@@ -57,46 +57,6 @@ theorem not_field {A : Word} (hA : A.toNat % 8 = 0) {x : Nat} (hx : x < sType �
 /-- A local that holds a small number. -/
 def Small (u : PancakeState σ) (x : String) : Prop := ∃ n, u.locals x = some (BitVec.ofNat 64 n) ∧ n ≤ maxPayload
 
-theorem kept_word {xs : List String} {w : Word → Prop} {s t : PancakeState σ} (h : Kept xs w s t) {a : Word}
-    (ha : w a) (v : Word) : Kept xs w s { t with memory := fun k => if k = a then v else t.memory k } :=
-  ⟨h.locals, fun x hx => by
-    show (if x = a then v else t.memory x) = s.memory x
-    rw [if_neg (fun e : x = a => hx (e ▸ ha))]
-    exact h.memory x hx, h.memaddrs, h.be, h.base, h.ffi, h.code, fun y hy => h.keeps y hy⟩
-
-/-- **A branch on a verdict**: its arm when the verdict holds, nothing when it does not. -/
-theorem flagIf_frag (o : Oracle σ) {x : String} {body : List Syntax.PStmt} (hl : LowKK body)
-    (hd : declared body = []) {b : Bool} {P Q : Assn σ} (hQ : Safe.ClockFree Q)
-    (hx : ∀ u, P u → u.locals x = some (bw b)) (ht : b = true → Frag o body P Q) (he : b = false → ∀ u, P u → Q u) :
-    Frag o [.ite (Syntax.v x) body []] P Q :=
-  frag_ite o (C := .var x) rfl hQ (fun u hu => ⟨_, by simp only [eval]; exact hx u hu⟩)
-    (by
-      cases b with
-      | true => exact frag_conseq (ht rfl) (fun u h => h.1) fun _ h => h
-      | false => exact frag_unsat hl fun u ⟨hu, hne⟩ => hne (by simp only [eval]; rw [hx u hu]; rfl))
-    (noDecl _ hd)
-    (frag_nil o fun u ⟨hu, h0⟩ => by
-      cases b with
-      | true => simp only [eval] at h0; rw [hx u hu] at h0; cases h0
-      | false => exact he rfl u hu)
-    (noDecl _ rfl)
-
-theorem at_ne {A : Word} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) (h : x ≠ y) : at_ A x ≠ at_ A y :=
-  region_addr_inj A x y hx hy h
-
-/-- **A word checked in range**: in it, `fail` is not run. -/
-theorem kept_skip (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
-    {x : String} {hi : Nat} (hhi : hi < 2 ^ 63) {P : Assn σ} (hP : Safe.ClockFree P)
-    (h : ∀ u, P u → ∃ n, u.locals x = some (BitVec.ofNat 64 n) ∧ n ≤ hi) :
-    Frag o [ScanProg.kept fail x hi] P P :=
-  frag_skip o (C := .cmp .less (.const 0) (.op .add (.cmp .less (.var x) (.const 0))
-    (.cmp .less (.const (BitVec.ofNat 64 hi)) (.var x)))) rfl hfl hP (fun u hu => by
-      obtain ⟨n, hn, hle⟩ := h u hu
-      have hv : eval u (.var x) = some (BitVec.ofNat 64 n) := hn
-      rw [e_or2 (eval_lt (x := n) (y := 0) (by omega) (by decide) hv rfl)
-        (eval_lt (x := hi) (y := n) hhi (by omega) rfl hv)]
-      simp [bw]; omega) (noDecl _ hfd)
-
 theorem ofNat_mul24 (g : Nat) : BitVec.ofNat 64 g * BitVec.ofNat 64 24 = BitVec.ofNat 64 (24 * g) := by
   rw [← BitVec.ofNat_mul, Nat.mul_comm]
 
@@ -1889,5 +1849,41 @@ theorem lowKK_decode {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK (Scan
     (hany _ rfl)
 
 end Decode
+
+/-- A commit's groups are sixteen at most. -/
+theorem decode_groups {pl : Bytes} {c : Commit} (h : decodeCommit pl = some c) : c.groups.length ≤ 16 := by
+  have e := scan_okH pl
+  rw [scanCommit_eq] at e
+  rw [e] at h
+  split at h
+  · rename_i hok
+    cases h
+    have hc : okCOf pl = true := by simp [okHOf, okGOf, okFOf, gokOf] at hok; exact hok.1.1.1.1
+    have hgl : (groupsOf pl).length = gcOf pl := by
+      obtain ⟨a, b, hr⟩ : ∃ a b, scanGroups pl (gcOf pl) (10 + mlOf pl) = some (a, b) := by
+        simp [okHOf, okGOf, okFOf, gokOf, Option.isSome_iff_exists] at hok; exact hok.1.1.1.2
+      simp [groupsOf, hr]; exact (scanGroups_le hr).1
+    simp [okCOf] at hc
+    simp only [commitOf]; omega
+  · cases h
+
+/-- A commit's fields kept where only other words changed. -/
+theorem commitAt_of {A : Word} {o' : Nat} {pl : Bytes} {c : Commit} {u u' : PancakeState σ}
+    (hc : CommitAt A o' pl c u) (hg : c.groups.length ≤ 16)
+    (h : ∀ x, sSeq ≤ x → x < sKey → x % 8 = 0 → u'.memory (at_ A x) = u.memory (at_ A x)) : CommitAt A o' pl c u' := by
+  have hn := nums
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := hc
+  have k : ∀ x, sSeq ≤ x → x < sKey → x % 8 = 0 → ∀ v, u.memory (at_ A x) = v → u'.memory (at_ A x) = v :=
+    fun x a b c v e => (h x a b c).trans e
+  refine ⟨k _ (by decide) (by decide) (by decide) _ h1, k _ (by decide) (by decide) (by decide) _ h2,
+    k _ (by decide) (by decide) (by decide) _ h3, k _ (by decide) (by decide) (by decide) _ h4, fun g hgl => ?_,
+    k _ (by decide) (by decide) (by decide) _ h6, k _ (by decide) (by decide) (by decide) _ h7,
+    k _ (by decide) (by decide) (by decide) _ h8⟩
+  obtain ⟨s, e1, e2, e3, e4, e5⟩ := h5 g hgl
+  have hs := Nat.lt_of_lt_of_le hgl hg
+  have b1 : sSeq ≤ sGroups + 24 * g := by simp only [sSeq, sGroups]; omega
+  have hg16 : sGroups = 136 := rfl
+  exact ⟨s, k _ b1 (by omega) (by omega) _ e1, k _ (by simp only [sSeq]; omega) (by omega) (by omega) _ e2,
+    k _ (by simp only [sSeq]; omega) (by omega) (by omega) _ e3, e4, e5⟩
 
 end DN.News.ScanRun
