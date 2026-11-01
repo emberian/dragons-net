@@ -19,6 +19,7 @@ open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Bytes DN.Compiler.
 open DN.Server.SessionLayout (framerHead texts textAt ownOff ownTexts ownRet ownVSel ownVs ownVl ownLo ownHi ownFs
   ownFl ownNamed ownWs ownWl ownStore conns tableOff connSlot cFramer)
 open DN.News.FramerCode (bw)
+open DN.Server.SessionCheck (zeroState)
 
 variable {σ : Type}
 
@@ -795,6 +796,12 @@ def argsOf (L : List Byte) : List (List Byte) := (spans L).tail.map (cut L)
 theorem argsOf_head (L : List Byte) : (argsOf L).getD 0 [] = cut L ((spans L).getD 1 (0, 0)) := by
   rcases h : spans L with _ | ⟨p0, _ | ⟨p1, rest⟩⟩ <;> simp [argsOf, h, cut]
 
+theorem argsOf_second (L : List Byte) : (argsOf L).getD 1 [] = cut L ((spans L).getD 2 (0, 0)) := by
+  rcases h : spans L with _ | ⟨p0, _ | ⟨p1, _ | ⟨p2, rest⟩⟩⟩ <;> simp [argsOf, h, cut]
+
+theorem argsOf_third (L : List Byte) : (argsOf L).getD 2 [] = cut L ((spans L).getD 3 (0, 0)) := by
+  rcases h : spans L with _ | ⟨p0, _ | ⟨p1, _ | ⟨p2, _ | ⟨p3, rest⟩⟩⟩⟩ <;> simp [argsOf, h, cut]
+
 theorem treeAt_set {L : List Byte} {s0 s : PancakeState σ} (h : TreeAt L s0 s) {x : String}
     (hx : x ∈ clsNames ∧ x ∉ ["w", "s0", "l0", "s1", "l1", "r", "cmd", "eqk", "jq", "ok", "val"]) (v : Value) :
     TreeAt L s0 (setL s x v) :=
@@ -987,6 +994,11 @@ structure VEntry (b : Word) (ci K : Nat) (L : List Byte) (s : PancakeState σ) :
     (SessionFrame.blockAt b ci + BitVec.ofNat 64 40 + BitVec.ofNat 64 j) = some L[j]
   short : L.length ≤ News.SessionSpec.lineLimit
   texts : SessionAppend.TextsIn b s.memory s.memaddrs s.be
+
+/-- Such a line is far shorter than a word's range. -/
+theorem VEntry.short62 {b : Word} {ci K : Nat} {L : List Byte} {s : PancakeState σ} (he : VEntry b ci K L s) :
+    L.length < 2 ^ 62 := by
+  have := he.short; simp [News.SessionSpec.lineLimit] at this; omega
 
 /-- What such a function gives back: zero, the reply's code `R` in the return word, every word but `clsWords` as
 it was. -/
@@ -1410,5 +1422,22 @@ theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k 
       rw [hc, ← sp, ho]; simp only [Bool.false_eq_true, if_false, List.append_nil]; rfl
   refine frag_append (frag_append fb fs) ?_
   exact cmd_frag o hs hgn hvc hlc hw1
+
+/-! ### The premises can hold -/
+
+theorem kept_witness : Kept zeroState zeroState := ⟨fun _ _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨0, rfl⟩⟩
+
+theorem treeAt_witness : TreeAt [] zeroState zeroState :=
+  ⟨kept_witness, rfl, rfl, rfl, rfl, rfl, ⟨0, rfl⟩, ⟨0, rfl⟩, ⟨0, rfl⟩, ⟨0, rfl⟩, ⟨0, rfl⟩⟩
+
+theorem after_witness : After 0 zeroState zeroState := ⟨fun _ _ => rfl, fun _ _ => rfl, rfl, rfl, rfl, rfl, ⟨0, rfl⟩⟩
+
+theorem out_witness : Out 0 zeroState 0 zeroState := ⟨fun _ _ => rfl, fun _ _ => rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem pickAt_witness : PickAt zeroState 0 zeroState := ⟨SessionCheck.but_refl _ _, rfl, ⟨0, rfl⟩, ⟨0, rfl⟩⟩
+
+theorem isView_witness : IsView .over := Or.inl rfl
+
+theorem isList_witness : IsList .mode := Or.inr (Or.inr (Or.inr (Or.inr rfl)))
 
 end DN.Server.SessionClassify

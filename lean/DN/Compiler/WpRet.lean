@@ -727,4 +727,16 @@ theorem okR_post {R : Ret} {P Q : PancakeState σ → Prop} {r : Option Result} 
 
 theorem okR_witness : OkR (σ := Unit) (fun _ _ => True) (fun _ => True) (none, bareState ()) := trivial
 
+/-- A run that goes on keeps every local bound, of a proof with returns. -/
+theorem safeR_keeps {o : Oracle σ} {s : PancakeState σ} {c : PancakeProg} {R : Ret}
+    {Q : PancakeState σ → Prop} (h : SafeR o (fun u => u = s) c R Q) :
+    SafeR o (fun u => u = s) c R (fun t => Q t ∧ Safe.Keeps s t) := by
+  rintro u rfl
+  have k := h u rfl
+  have hk := Safe.sem_keeps o u.clock c u (Nat.le_refl _)
+  revert k hk
+  rcases PancakeSem o c u with ⟨_ | r, t⟩
+  · intro k hk; exact ⟨k, hk trivial⟩
+  · intro k _; cases r <;> exact k
+
 end DN.Compiler.WpRet

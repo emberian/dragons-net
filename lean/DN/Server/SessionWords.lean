@@ -1320,7 +1320,6 @@ theorem nm4_ok : NmOk (scanNmFrom 0 4) := ⟨by decide, by decide, by decide⟩
 
 /-! ### The premises can hold -/
 
-/-- A state of no memory, every local zero. -/
 theorem lineIn_witness : LineIn 0 [] zeroState := ⟨rfl, rfl, fun _ h => absurd h (by simp), by decide⟩
 
 theorem scanAt_witness : ScanAt [] [] zeroState 0 0 zeroState :=
