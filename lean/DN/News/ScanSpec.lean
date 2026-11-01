@@ -180,7 +180,8 @@ theorem valid_record {J : Bytes} {st st' : St} {rec : Record} (hv : Valid J st) 
 /-- **Steps read the journal as `scanFrom` does**: from a state that keeps its window, with a host that
 gives after each want at least one and at most the octets wanted, reading ends within one step more than
 is left, as `scanFrom` with fuel enough ends. -/
-theorem drive_scanFrom (J : Bytes) {pick : St → Nat → Nat} (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
+theorem drive_scanFrom (J : Bytes) {pick : St → Nat → Nat}
+    (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
     ∀ (f : Nat) (st : St) (F : Nat), Valid J st → st.left J < f → J.length - st.pos < F →
       drive J pick f st = some (scanFrom spec F (J.drop st.pos) st.pos st.key st.acc)
   | 0, _, _, _, hf, _ => absurd hf (Nat.not_lt_zero _)
@@ -220,12 +221,16 @@ theorem drive_scanFrom (J : Bytes) {pick : St → Nat → Nat} (hp : ∀ st n, 0
 /-- The state reading starts in: an empty window at the journal's start, no key, no record. -/
 def St.start : St := ⟨0, 0, 0, none, []⟩
 
+/-- Reading starts keeping its window. -/
+theorem valid_start (J : Bytes) : Valid J St.start :=
+  ⟨Nat.le_refl _, Nat.le_refl _, Nat.zero_le _, Nat.zero_le _, (fun h => by cases h), Nat.le_refl _⟩
+
 /-- **Steps read the journal as `scan` does**, within one step more than twice its length, whatever
 octets the host gives after each want, at least one and at most the octets wanted. -/
-theorem drive_scan (J : Bytes) {pick : St → Nat → Nat} (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
+theorem drive_scan (J : Bytes) {pick : St → Nat → Nat}
+    (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
     drive J pick (2 * J.length + 1) St.start = some (scan J) := by
-  have := drive_scanFrom J hp (2 * J.length + 1) St.start (J.length + 1)
-    ⟨Nat.le_refl _, Nat.le_refl _, Nat.zero_le _, Nat.zero_le _, (fun h => by cases h), Nat.le_refl _⟩
+  have := drive_scanFrom J hp (2 * J.length + 1) St.start (J.length + 1) (valid_start J)
     (by simp only [St.left, St.start]; omega) (by simp only [St.start]; omega)
   rw [this]; rfl
 
@@ -262,5 +267,97 @@ theorem seen_mono (J k : Bytes) (q : Nat) : ∀ {i n : Nat}, i ≤ n → seen J 
     · rw [seen_mono J k q (n := n) (by omega) h, Bool.true_or]
 
 theorem torn_code (w : Why) : decide (whyCode w < 5) = w.torn := by cases w <;> rfl
+
+/-! ## What a journal holds -/
+
+/-- Before the journal's key, the only frame that reads as a record is its format. -/
+theorem next_none_format {q : Nat} {bs : Bytes} {rec : Record} {taken : Nat} {rest : Bytes}
+    (h : next spec none q bs = .record rec taken rest) : ∃ k, rec = .format k := by
+  obtain ⟨hf, hr, -⟩ := next_record_of h
+  unfold fault at hf
+  split at hf; · cases hf
+  split at hf; · cases hf
+  split at hf; · cases hf
+  split at hf; · cases hf
+  split at hf; · cases hf
+  rename_i htag
+  have hk : (keyIn spec (typeOf bs) (payloadOf bs)).isSome := by
+    cases e : keyIn spec (typeOf bs) (payloadOf bs) with
+    | none => simp [e, tagWrong] at htag
+    | some _ => rfl
+  have ht : typeOf bs = formatType := by
+    simp only [keyIn, spec_shaped, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hk
+    split at hk
+    · rename_i hc; simp only [Bool.and_eq_true, beq_iff_eq] at hc; exact hc.1.1
+    · cases hk
+  simp only [recordOf, ht, beq_self_eq_true, ↓reduceIte] at hr
+  split at hr
+  · exact ⟨_, (Option.some.inj hr).symm⟩
+  · cases hr
+
+/-- A commit a frame reads as is one of the store's. -/
+theorem next_commit_ok {key : Option Bytes} {q : Nat} {bs : Bytes} {c : Commit} {taken : Nat} {rest : Bytes}
+    (h : next spec key q bs = .record (.commit c) taken rest) : c.ok = true := by
+  obtain ⟨-, hr, -⟩ := next_record_of h
+  unfold recordOf at hr
+  split at hr
+  · split at hr <;> cases hr
+  · split at hr
+    · obtain ⟨c', hd, hc⟩ := Option.map_eq_some_iff.mp hr
+      cases hc
+      exact decodeCommit_ok hd
+    · split at hr
+      · split at hr <;> cases hr
+      · cases hr
+
+/-- What reading from somewhere gives starts with the records read before. -/
+theorem scanFrom_prefix (rl : Rules) : ∀ (F : Nat) (bs : Bytes) (off : Nat) (key : Option Bytes) (acc : List Record),
+    ∃ L, (scanFrom rl F bs off key acc).records = acc.reverse ++ L
+  | 0, _, _, _, _ => ⟨[], by simp [scanFrom]⟩
+  | F + 1, bs, off, key, acc => by
+    simp only [scanFrom]
+    split
+    · exact ⟨[], by simp⟩
+    · exact ⟨[], by simp⟩
+    · split
+      · exact ⟨[], by simp⟩
+      · rename_i rec _ _ _ _
+        obtain ⟨L, hL⟩ := scanFrom_prefix rl F _ _ _ (rec :: acc)
+        exact ⟨rec :: L, by rw [hL]; simp⟩
+
+/-- **The journal's first record is its format.** -/
+theorem scan_first {J : Bytes} {rec : Record} {rs : List Record} (h : (scan J).records = rec :: rs) :
+    ∃ k, rec = .format k := by
+  simp only [scan, scanWith, scanFrom] at h
+  split at h
+  · simp at h
+  · simp at h
+  · rename_i rec' taken rest hnx
+    simp only [List.isEmpty_nil, Bool.not_true, Bool.and_false, Bool.false_and, Bool.false_eq_true,
+      ↓reduceIte] at h
+    obtain ⟨L, hL⟩ := scanFrom_prefix spec J.length rest (0 + taken) (none <|> rec'.key) [rec']
+    rw [hL] at h
+    simp only [List.reverse_cons, List.reverse_nil, List.nil_append, List.cons_append, List.cons.injEq] at h
+    rw [← h.1]
+    exact next_none_format hnx
+
+/-- **Every commit read is one of the store's.** -/
+theorem scanFrom_ok : ∀ (F : Nat) (bs : Bytes) (off : Nat) (key : Option Bytes) (acc : List Record),
+    (∀ c, .commit c ∈ acc → c.ok = true) →
+    ∀ c, .commit c ∈ (scanFrom spec F bs off key acc).records → c.ok = true
+  | 0, _, _, _, acc, ha, c, hc => ha c (by simpa [scanFrom] using hc)
+  | F + 1, bs, off, key, acc, ha, c, hc => by
+    simp only [scanFrom] at hc
+    split at hc
+    · exact ha c (by simpa using hc)
+    · exact ha c (by simpa using hc)
+    · rename_i rec taken rest hnx
+      split at hc
+      · exact ha c (by simpa using hc)
+      · refine scanFrom_ok F rest _ _ (rec :: acc) (fun c' hc' => ?_) c hc
+        simp only [List.mem_cons] at hc'
+        rcases hc' with e | hc'
+        · exact next_commit_ok (e ▸ hnx)
+        · exact ha c' hc'
 
 end DN.News.ScanRun
