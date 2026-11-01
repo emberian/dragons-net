@@ -13,7 +13,7 @@ lowering (`frag_fold`, `frag_pinned`), declarations ahead of it scoping over wha
 
 namespace DN.Compiler.Frag
 
-open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Preservation
+open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Preservation DN.Compiler.Bytes
 
 variable {σ : Type}
 
@@ -430,5 +430,61 @@ theorem consts_witness : Consts (bareState ()) [] (bareState ()) :=
 
 theorem zeros_witness : Zeros (bareState ()) [] (bareState ()) :=
   ⟨fun _ h => by simp at h, fun _ _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- An assignment, from what the premise gives. -/
+theorem set_frag (o : Oracle σ) {x : String} {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E)
+    {P P' : Assn σ} (hP' : Safe.ClockFree P')
+    (h : ∀ s, P s → ∃ v, eval s E = some v ∧ (∃ old, s.locals x = some old) ∧ P' (setL s x v)) :
+    Frag o [.assign x e] P P' :=
+  frag_one (a := .assign x E) (by simp [Lower.lowerStmt1, he]) rfl rfl hP'
+    (Safe.assign fun s hs => by
+      obtain ⟨v, hv, ⟨old, hold⟩, hp⟩ := h s hs
+      exact ⟨v, old, hv, hold, hp⟩)
+
+/-- A store of an octet. -/
+theorem storeb_frag (o : Oracle σ) {d e : Syntax.PExpr} {D E : PancakeExp} (hd : Lower.lowerExp d = some D)
+    (he : Lower.lowerExp e = some E) {P P' : Assn σ} (hP' : Safe.ClockFree P')
+    (h : ∀ s, P s → ∃ addr val, eval s D = some addr ∧ eval s E = some val ∧ s.memaddrs (byteAlign addr) = true ∧
+      P' { s with memory := putByte s.memory s.be addr (val.setWidth 8) }) :
+    Frag o [.storeb d e] P P' :=
+  frag_one (a := .storeByte D E) (by simp [Lower.lowerStmt1, hd, he]) rfl rfl hP'
+    (Safe.storeByte fun s hs => by
+      obtain ⟨addr, val, ha, hv, hdm, hp⟩ := h s hs
+      exact ⟨addr, val, _, ha, hv, memStore_eq _ _ _ _ _ hdm, hp⟩)
+
+/-- A store of a word. -/
+theorem store_frag (o : Oracle σ) {d e : Syntax.PExpr} {D E : PancakeExp} (hd : Lower.lowerExp d = some D)
+    (he : Lower.lowerExp e = some E) {P P' : Assn σ} (hP' : Safe.ClockFree P')
+    (h : ∀ s, P s → ∃ addr val, eval s D = some addr ∧ eval s E = some val ∧ s.memaddrs addr = true ∧
+      P' { s with memory := fun k => if k = addr then val else s.memory k }) :
+    Frag o [.store d e] P P' :=
+  frag_one (a := .store D E) (by simp [Lower.lowerStmt1, hd, he]) rfl rfl hP'
+    (Safe.store fun s hs => by
+      obtain ⟨addr, val, ha, hv, hdm, hp⟩ := h s hs
+      exact ⟨addr, val, _, ha, hv, by simp [memStoreWord, hdm], hp⟩)
+
+/-- A fragment from a premise with a witness, shown for each witness. -/
+theorem frag_exists {α : Type} {o : Oracle σ} {xs : List Syntax.PStmt} (hl : LowKK xs) {P : α → Assn σ}
+    {Q : Assn σ} (h : ∀ a, Frag o xs (P a) Q) : Frag o xs (fun u => ∃ a, P a u) Q := by
+  intro k R Q' hQ hk
+  obtain ⟨c, hc⟩ := hl k
+  refine ⟨c, hc, fun s ⟨a, hs⟩ => ?_⟩
+  obtain ⟨c', hc', hs'⟩ := h a k R Q' hQ hk
+  rw [hc] at hc'; cases hc'
+  exact hs' s hs
+
+/-- A block that declares nothing gives back no local. -/
+theorem noDecl {P' : Assn σ} (xs : List Syntax.PStmt) (h : declared xs = []) :
+    ∀ u y v, P' u → y ∈ declared xs → P' (restore u y v) := fun _ _ _ _ hy => by rw [h] at hy; cases hy
+
+/-- A loop lowers before anything when its body does. -/
+theorem lowKK_while {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C) {body : List Syntax.PStmt}
+    (hb : LowKK body) : LowKK [.while c body] := by
+  obtain ⟨B, hB⟩ := lowKK_fold hb
+  exact lowKK_one rfl (a := .while_ C B) (by rw [Lower.lowerStmt1, hc, hB])
+
+/-- A local set twice holds the second value. -/
+theorem setL_setL (s : PancakeState σ) (x : String) (v w : Value) : setL (setL s x v) x w = setL s x w := by
+  simp only [setL]; congr 1; funext y; simp [setLocal]; split <;> rfl
 
 end DN.Compiler.Frag

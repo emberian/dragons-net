@@ -15,7 +15,7 @@ namespace DN.Server.SessionClassify
 open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Frag DN.News DN.News.WordsRun DN.News.FrameSpec
   DN.Server.SessionText DN.Server.SessionWords
 open DN.Server.SessionLayout (texts ownRet ownNamed ownLo ownHi ownWs ownWl)
-open DN.News.FramerCode (bw)
+open DN.News.FramerCode (bw leE bw_ne0 bw_eq0 eval_le eval_and)
 
 variable {σ : Type}
 
@@ -171,15 +171,15 @@ theorem largs_eq (hAe : A = (spans L).length - 1) (hsh : L.length < 2 ^ 62) {R :
 
 theorem largs_le (hAe : A = (spans L).length - 1) (hsh : L.length < 2 ^ 62) {R : Nat} {u : PancakeState σ}
     (h : LAtR R b ci L e u) (k : Nat) (hk : k < 2 ^ 63) :
-    eval u (SessionCheck.leE (.var "args") (.const (BitVec.ofNat 64 k))) = some (bw (decide (A ≤ k))) := by
+    eval u (leE (.var "args") (.const (BitVec.ofNat 64 k))) = some (bw (decide (A ≤ k))) := by
   have := spans_length L
-  exact SessionCheck.eval_le (by omega) hk (by simp only [eval]; rw [hAe]; exact h.args) rfl
+  exact eval_le (by omega) hk (by simp only [eval]; rw [hAe]; exact h.args) rfl
 
 theorem largs_ge (hAe : A = (spans L).length - 1) (hsh : L.length < 2 ^ 62) {R : Nat} {u : PancakeState σ}
     (h : LAtR R b ci L e u) (k : Nat) (hk : k < 2 ^ 63) :
-    eval u (SessionCheck.leE (.const (BitVec.ofNat 64 k)) (.var "args")) = some (bw (decide (k ≤ A))) := by
+    eval u (leE (.const (BitVec.ofNat 64 k)) (.var "args")) = some (bw (decide (k ≤ A))) := by
   have := spans_length L
-  exact SessionCheck.eval_le hk (by omega) rfl (by simp only [eval]; rw [hAe]; exact h.args)
+  exact eval_le hk (by omega) rfl (by simp only [eval]; rw [hAe]; exact h.args)
 
 end Args
 
@@ -200,12 +200,12 @@ theorem lsayIfR_frag (o : Oracle σ) {b : Word} {ci : Nat} {L : List Byte} {e : 
   refine frag_ite o (C := .var x) rfl (fat_and hQc) (fun s h => ⟨_, h.2.1⟩) ?_
     (fun _ _ _ _ h => by simp [declared, fsay] at h) (frag_nil o fun s ⟨h, hc⟩ => ?_)
     (fun _ _ _ _ h => by simp [declared] at h)
-  · refine frag_pure (p = true) (fun s ⟨h, hc⟩ => by simp only [eval, h.2.1] at hc; exact SessionCheck.bw_ne0 hc)
+  · refine frag_pure (p = true) (fun s ⟨h, hc⟩ => by simp only [eval, h.2.1] at hc; exact bw_ne0 hc)
       (lowK_any _ (k := .skip) (c := _) rfl) fun hp => ?_
     rw [if_pos hp]
     exact frag_conseq (lsayR_frag o X hQc hQ) (fun s h => ⟨h.1.1, h.1.2.2⟩) fun _ h => h
   · simp only [eval, h.2.1] at hc
-    rw [if_neg (by rw [SessionCheck.bw_eq0 hc]; decide)]
+    rw [if_neg (by rw [bw_eq0 hc]; decide)]
     exact ⟨h.1, h.2.2⟩
 
 /-- An own word `listClassify` writes, written within. -/
@@ -415,7 +415,7 @@ theorem ng_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : Pan
     simp only [decide_eq_true_eq]
   rw [hR]
   refine frag_bw o rfl lowKK_ngIn (fun k => ⟨k, rfl⟩) (fat_clock _ _ _ _)
-    (fun s h => SessionCheck.eval_and (largs_ge hAe hsh h.1 2 (by decide)) (largs_le hAe hsh h.1 3 (by decide)))
+    (fun s h => eval_and (largs_ge hAe hsh h.1 2 (by decide)) (largs_le hAe hsh h.1 3 (by decide)))
     (fun hc => ?_) (fun _ _ _ _ h => by simp [declared, fsay, Session.wordIsAt, SessionStore.ifs,
       Session.dateTimeCheck, Session.allDigits] at h)
     (fun hc => frag_nil o fun s h => ?_) (fun _ _ _ _ h => by simp [declared] at h)
@@ -431,7 +431,7 @@ theorem ng_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : Pan
         (fun u => LAt b ci L e u ∧ u.locals "ok" = some (bw v)) := by
       refine frag_bw o rfl (lowKK_append (wordIsAt_low "s3" "l3" (by rw [texts_length]; decide))
         (lowK_any _ (k := .skip) (c := _) rfl)) (fun k => ⟨k, rfl⟩) (fat_and fun _ _ h => h)
-        (fun s h => SessionCheck.eval_and (by simp only [eval]; exact h.2.2) (largs_eq hAe hsh h.1 3 (by decide)))
+        (fun s h => eval_and (by simp only [eval]; exact h.2.2) (largs_eq hAe hsh h.1 3 (by decide)))
         (fun hd3 => ?_) (fun _ _ _ _ h => by simp [declared, Session.wordIsAt] at h)
         (fun hd3 => frag_nil o fun s h => ⟨h.1, ?_⟩) (fun _ _ _ _ h => by simp [declared] at h)
       · simp only [Bool.and_eq_true, decide_eq_true_eq] at hd3
@@ -570,7 +570,7 @@ theorem lg_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : Pan
     refine frag_bw o rfl (lowK_any _ (k := .skip) (c := _) rfl) (lowK_any _ (k := .skip) (c := _) rfl)
       (fat_clock _ _ _ _) (p := gl) (fun s h => by
         rw [hgl]
-        exact SessionCheck.eval_le (by omega) (by decide) (by simp only [eval]; rw [h.1.l1, cut_length hb]) rfl)
+        exact eval_le (by omega) (by decide) (by simp only [eval]; rw [h.1.l1, cut_length hb]) rfl)
       (fun hg1 => by rw [if_pos hg1]; exact lgSayR_frag o he 1 fun u h => h.1)
       (fun _ _ _ _ h => by simp [declared, fsay, fset] at h)
       (fun hg1 => by
@@ -587,7 +587,7 @@ theorem lg_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : Pan
     (fun _ _ _ _ h => by simp [declared] at h)
   have hA0' : ¬A = 0 := of_decide_eq_false hA0
   rw [if_neg hA0']
-  refine frag_bw o (C := SessionCheck.leE (.var "args") (.const (BitVec.ofNat 64 2))) rfl
+  refine frag_bw o (C := leE (.var "args") (.const (BitVec.ofNat 64 2))) rfl
     (lowKK_append (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_ite rfl lowKK_lgIn fun k => ⟨k, rfl⟩))
     (fun k => ⟨k, rfl⟩) (fat_clock _ _ _ _) (fun s h => largs_le hAe hsh h.1 2 (by decide)) (fun hle => ?_)
     (fun _ _ _ _ h => by simp [declared, SessionStore.ifs] at h)
@@ -669,20 +669,20 @@ theorem hdrs_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : P
       (fun s h => ⟨_, ev s h 1 (by decide)⟩) ?_ (fun _ _ _ _ h => by simp [declared, fsay] at h)
       (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
     · refine frag_pure (A = 1) (fun s ⟨h, hc⟩ => by
-        rw [ev s h 1 (by decide)] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc))
+        rw [ev s h 1 (by decide)] at hc; exact of_decide_eq_true (bw_ne0 hc))
         (lowK_any _ (k := .skip) (c := _) rfl) fun h1 => ?_
       rw [if_pos h1]
       exact frag_conseq (lsayR_frag o .headerList (Q := fun _ => True) true_clock fun _ _ _ => trivial)
         (fun s h => ⟨h.1, trivial⟩) fun _ h => h.1
     · rw [ev s h 1 (by decide)] at hc
-      rw [if_neg (of_decide_eq_false (SessionCheck.bw_eq0 hc))]; exact h
+      rw [if_neg (of_decide_eq_false (bw_eq0 hc))]; exact h
   refine frag_append (xs := [_]) f1 ?_
   refine frag_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 2))) rfl (fat_clock _ _ _ _)
     (fun s h => ⟨_, ev s h 2 (by decide)⟩) ?_
     (fun _ _ _ _ h => by simp [declared, fsay, Session.wordIsAt, SessionStore.ifs] at h)
     (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
   · refine frag_pure (A = 2) (fun s ⟨h, hc⟩ => by
-      rw [ev s h 2 (by decide)] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc))
+      rw [ev s h 2 (by decide)] at hc; exact of_decide_eq_true (bw_ne0 hc))
       (lowKK_append (lowKK_append (lowKK_append (wordIsAt_low "s2" "l2" (by rw [texts_length]; decide))
         (lowK_any _ (k := .skip) (c := _) rfl)) (wordIsAt_low "s2" "l2" (by rw [texts_length]; decide)))
         (lowK_any _ (k := .skip) (c := _) rfl)) fun h2 => ?_
@@ -709,7 +709,7 @@ theorem hdrs_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : P
         · rw [if_neg hr, if_neg hm, if_neg (fun h => h.elim hm hr)]
     rw [← e]; exact h.1
   · rw [ev s h 2 (by decide)] at hc
-    have hn2 := of_decide_eq_false (SessionCheck.bw_eq0 hc)
+    have hn2 := of_decide_eq_false (bw_eq0 hc)
     by_cases h1 : A = 1
     · rw [if_pos h1] at h ⊢; exact h
     · rw [if_neg h1] at h ⊢; rw [if_neg (fun hh => hn2 hh.1)]; exact h
@@ -745,7 +745,7 @@ theorem active_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e :
         simp only [restore, resVar, if_neg (Ne.symm (hds y hy).2)]; exact h.2⟩)
       (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
     · refine frag_pure (A = 2) (fun s ⟨h, hc⟩ => by
-        rw [ev s (hP s h).1 2 (by decide)] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc))
+        rw [ev s (hP s h).1 2 (by decide)] at hc; exact of_decide_eq_true (bw_ne0 hc))
         (lowKK_append (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_append (xs := [_])
           (lowKK_one rfl (fset_lower rfl)) (lowKK_one rfl (fset_lower rfl)))) fun hA2 => ?_
       have hok : ∀ u, LAt b ci L e u ∧ u.locals "ok" = some (bw wm) → M u := fun u h =>
@@ -758,7 +758,7 @@ theorem active_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e :
         (fun s h => ⟨(hP s h.1).1, (hP s h.1).2.1⟩) fun u h => hok u ⟨h.1, hwm ▸ h.2⟩) (frag_append (xs := [_])
           (sw ownWs (by decide) "s2" fun u h => ⟨_, h.s2⟩) (sw ownWl (by decide) "l2" fun u h => ⟨_, h.l2⟩))
     · rw [ev s (hP s h).1 2 (by decide)] at hc
-      have hn2 := of_decide_eq_false (SessionCheck.bw_eq0 hc)
+      have hn2 := of_decide_eq_false (bw_eq0 hc)
       have h1 : A = 1 := by have := (hP s h).2.2; omega
       exact ⟨(hP s h).1, by rw [(hP s h).2.1, h1]; rfl⟩
   -- the keyword, where the wildmat is good
@@ -770,7 +770,7 @@ theorem active_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e :
       (fun _ _ _ _ h => by simp [declared, fsay, Session.wordIsAt, SessionStore.ifs] at h)
       (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
     · refine frag_pure ((decide (A = 1) || wm) = true ∧ 1 ≤ A) (fun s ⟨h, hc⟩ => by
-        simp only [eval, h.1.2] at hc; exact ⟨SessionCheck.bw_ne0 hc, h.2⟩)
+        simp only [eval, h.1.2] at hc; exact ⟨bw_ne0 hc, h.2⟩)
         (lowKK_append (lowKK_append (lowKK_append (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide))
           (lowK_any _ (k := .skip) (c := _) rfl)) (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide)))
           (lowK_any _ (k := .skip) (c := _) rfl)) fun ⟨hok, hA1⟩ => ?_
@@ -785,23 +785,23 @@ theorem active_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e :
         (frag_conseq (lsayIfR_frag o "eqk" .newsgroups (p := ngs) true_clock (fun _ _ _ => trivial)) (fun _ h => h)
           fun u h => h.1)
     · simp only [eval, h.1.2] at hc
-      rw [if_neg (by rw [SessionCheck.bw_eq0 hc]; decide)]
+      rw [if_neg (by rw [bw_eq0 hc]; decide)]
       exact h.1.1
   refine frag_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) rfl (fat_clock _ _ _ _)
     (fun s h => ⟨_, ev s h.1 0 (by decide)⟩) ?_ (fun _ _ _ _ h => by simp [declared, fsay] at h) ?_
     (fun _ _ _ _ h => by simp [declared, SessionStore.ifs] at h)
   · refine frag_pure (A = 0) (fun s ⟨h, hc⟩ => by
-      rw [ev s h.1 0 (by decide)] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc))
+      rw [ev s h.1 0 (by decide)] at hc; exact of_decide_eq_true (bw_ne0 hc))
       (lowK_any _ (k := .skip) (c := _) rfl) fun hA0 => ?_
     rw [if_pos hA0]
     exact frag_conseq (lsayR_frag o (.active none) (Q := fun _ => True) true_clock (fun _ _ _ => trivial))
       (fun s h => ⟨h.1.1, trivial⟩) fun _ h => h.1
-  refine frag_ite o (C := SessionCheck.leE (.var "args") (.const (BitVec.ofNat 64 2))) rfl (fat_clock _ _ _ _)
+  refine frag_ite o (C := leE (.var "args") (.const (BitVec.ofNat 64 2))) rfl (fat_clock _ _ _ _)
     (fun s h => ⟨_, hle2 s h.1.1⟩) ?_ (fun _ _ _ _ h => by simp [declared, SessionStore.ifs] at h)
     (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
   · refine frag_pure (1 ≤ A ∧ A ≤ 2) (fun s ⟨⟨h, hc0⟩, hc⟩ => by
       rw [ev s h.1 0 (by decide)] at hc0; rw [hle2 s h.1] at hc
-      have := of_decide_eq_false (SessionCheck.bw_eq0 hc0); have := of_decide_eq_true (SessionCheck.bw_ne0 hc)
+      have := of_decide_eq_false (bw_eq0 hc0); have := of_decide_eq_true (bw_ne0 hc)
       omega) (lowKK_append (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_ite rfl (lowKK_append (lowKK_append
         (lowKK_append (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide)) (lowK_any _ (k := .skip) (c := _) rfl))
         (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide))) (lowK_any _ (k := .skip) (c := _) rfl))
@@ -835,7 +835,7 @@ theorem active_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e :
       · rw [if_neg hc, if_neg (fun h => hc (hc2.mp h))]
     rw [← e]; exact h
   · rw [hle2 s h.1.1] at hc
-    have h3 := of_decide_eq_false (SessionCheck.bw_eq0 hc)
+    have h3 := of_decide_eq_false (bw_eq0 hc)
     rw [if_neg (by rw [ev s h.1.1 0 (by decide)] at *; omega), if_neg (by omega)]
     exact h.1.1
 
@@ -917,7 +917,7 @@ theorem list_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : P
       (fun _ _ _ _ h => by simp [declared, Session.wordIsAt] at h)
       (frag_nil o fun s ⟨h, hc⟩ => ?_) (fun _ _ _ _ h => by simp [declared] at h)
     · refine frag_pure (1 ≤ A) (fun s ⟨h, hc⟩ => by
-        rw [h1x s h.1] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc))
+        rw [h1x s h.1] at hc; exact of_decide_eq_true (bw_ne0 hc))
         (lowKK_append (lowKK_append (lowKK_append (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide))
           (lowK_any _ (k := .skip) (c := _) rfl)) (wordIsAt_low "s1" "l1" (by rw [texts_length]; decide)))
           (lowK_any _ (k := .skip) (c := _) rfl)) fun hA1 => ?_
@@ -946,7 +946,7 @@ theorem list_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : P
         (fun s h => h.1) fun u h => ⟨h.1, h.2.1, by rw [h.2.2.1, decide_eq_true hA1]; rfl,
           by rw [h.2.2.2, decide_eq_true hA1]; rfl⟩
     · rw [h1x s h.1] at hc
-      have hA0 := of_decide_eq_false (SessionCheck.bw_eq0 hc)
+      have hA0 := of_decide_eq_false (bw_eq0 hc)
       exact ⟨h.1, h.2.1, by rw [h.2.2.1, decide_eq_false hA0]; rfl, by rw [h.2.2.2, decide_eq_false hA0]; rfl⟩
   -- the branches on the keyword
   have fd : Frag o [.ite (Syntax.v "ovf") [SessionStore.ifs (Syntax.eEq (Syntax.v "args") (Syntax.n 1))

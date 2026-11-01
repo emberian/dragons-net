@@ -22,7 +22,7 @@ namespace DN.Server.SessionCheck
 
 open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Preservation DN.Server DN.Server.SessionLayout
   DN.News DN.News.FrameSpec DN.News.CharsRun
-open DN.News.FramerCode (bw)
+open DN.News.FramerCode (bw leE or2E bw_and le_eval eq_word eval_lt eval_le eval_eq eval_and eval_or2)
 
 variable {σ : Type}
 
@@ -205,14 +205,9 @@ theorem take_succ_value {w : List Byte} {k : Nat} (hk : k < w.length) :
 
 /-! ## Tests of small numbers, as the session evaluates them -/
 
-/-- `a ≤ b`. -/
-def leE (a b : PancakeExp) : PancakeExp := .cmp .notLess b a
 
 /-- `lo ≤ e ≤ hi`. -/
 def betweenE (lo hi : Word) (e : PancakeExp) : PancakeExp := .op .and_ (leE (.const lo) e) (leE e (.const hi))
-
-/-- Either of two flags. -/
-def or2E (a b : PancakeExp) : PancakeExp := .cmp .less (.const 0) (.op .add a b)
 
 theorem sub_small (a b : Nat) (h : b ≤ a) (ha : a < 2 ^ 64) :
     BitVec.ofNat 64 a - BitVec.ofNat 64 b = BitVec.ofNat 64 (a - b) := by
@@ -231,59 +226,12 @@ theorem byte_eq (y : Byte) (k : Nat) (hk : k < 256) :
     rw [if_neg (fun e => h ((FramerCode.widen_eq y k hk).mp e))]
     rfl
 
-theorem bw_and (a b : Bool) : bw a &&& bw b = bw (a && b) := by
-  cases a <;> cases b <;> rfl
-
-theorem bw_ne0 {p : Bool} (h : some (bw p) ≠ some 0) : p = true := by cases p <;> simp_all [bw]
-theorem bw_eq0 {p : Bool} (h : some (bw p) = some 0) : p = false := by cases p <;> simp_all [bw]
-
-/-- `a ≤ b`, of small numbers. -/
-theorem le_eval (a b : Nat) (ha : a < 2 ^ 63) (hb : b < 2 ^ 63) :
-    (if signedLt (BitVec.ofNat 64 b) (BitVec.ofNat 64 a) = true then (0 : Word) else 1) = bw (decide (a ≤ b)) := by
-  rw [WpBytes.signedLt_small (a := b) (b := a) hb ha]
-  by_cases h : b < a <;> simp [h, bw] <;> omega
-
-theorem eq_word {X Y : Word} {n c : Nat} (hX : X = BitVec.ofNat 64 n) (hY : Y = BitVec.ofNat 64 c)
-    (hn : n < 2 ^ 64) (hc : c < 2 ^ 64) : (if X = Y then (1 : Word) else 0) = bw (decide (n = c)) := by
-  subst hX hY
-  by_cases h : n = c
-  · simp [h, bw]
-  · rw [if_neg (fun e => h (NatToDec.ofNat64_inj hn hc e))]
-    simp [h, bw]
-
 section
 
 variable {t : PancakeState σ}
 
 theorem eval_const {c : Word} {n : Nat} (h : c = BitVec.ofNat 64 n) :
     eval t (.const c) = some (BitVec.ofNat 64 n) := by simp [eval, h]
-
-theorem eval_lt {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
-    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
-    eval t (.cmp .less a b) = some (bw (decide (x < y))) := by
-  simp only [eval, ha, hb, WpBytes.signedLt_small (a := x) (b := y) hx hy]
-  rfl
-
-theorem eval_le {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
-    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
-    eval t (leE a b) = some (bw (decide (x ≤ y))) := by
-  simp only [leE, eval, ha, hb]
-  rw [le_eval x y hx hy]
-
-theorem eval_eq {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
-    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
-    eval t (.cmp .equal a b) = some (bw (decide (x = y))) := by
-  simp only [eval, ha, hb]
-  rw [eq_word rfl rfl hx hy]
-
-theorem eval_and {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
-    eval t (.op .and_ a b) = some (bw (p && q)) := by
-  simp only [eval, ha, hb, bw_and]
-
-theorem eval_or2 {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
-    eval t (or2E a b) = some (bw (p || q)) := by
-  simp only [or2E, eval, ha, hb]
-  cases p <;> cases q <;> decide
 
 theorem eval_between {e : PancakeExp} {L H : Word} {x lo hi : Nat} (hx : x < 2 ^ 63) (hlo : lo < 2 ^ 63)
     (hhi : hi < 2 ^ 63) (he : eval t e = some (BitVec.ofNat 64 x)) (hL : L = BitVec.ofNat 64 lo)

@@ -17,7 +17,7 @@ open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Bytes DN.Compiler.
   DN.News DN.News.WordsRun DN.News.FrameSpec DN.Server.SessionText
 open DN.Server.SessionLayout (framerHead texts textAt ownOff ownTexts ownRet ownVSel ownVs ownVl ownLo ownHi ownFs
   ownFl ownNamed ownWs ownWl ownStore conns tableOff connSlot cFramer)
-open DN.News.FramerCode (bw)
+open DN.News.FramerCode (bw leE or2E bw_eq0 eval_lt eval_le eval_eq eval_and eval_or2)
 open DN.Server.SessionCheck (zeroState)
 
 variable {σ : Type}
@@ -1034,7 +1034,7 @@ theorem wordIsAt_frag (o : Oracle σ) {sn ln : String} (hsn : sn ≠ "eqk" ∧ s
           intro e; apply hn; rw [hCv i s h hi hiT]; simp [e, bw]
         exact ⟨SessionCheck.but_set h.1 (by simp) 0, by simp [setLocal, h.2.1], by simp [setLocal, hstep, hne, bw]⟩
       · have he' : CommandSpec.upper w[i] = T[i] := by
-          have := SessionCheck.bw_eq0 ((hCv i s h hi hiT).symm.trans hz)
+          have := bw_eq0 ((hCv i s h hi hiT).symm.trans hz)
           simpa using this
         exact ⟨h.1, h.2.1, by rw [h.2.2.2, hp, hstep, he']; simp⟩
     have f2 : Frag o [SessionStore.inc "jq"] M (I (i + 1)) :=
@@ -1046,8 +1046,8 @@ theorem wordIsAt_frag (o : Oracle σ) {sn ln : String} (hsn : sn ≠ "eqk" ∧ s
     (fun k => ⟨k, rfl⟩)) (lowKK_one rfl rfl)
   let COND : PancakeExp := .op .and_ (.var "eqk") (.cmp .less (.var "jq") (.var ln))
   have hcond : ∀ i u, I i u → eval u COND = some (bw (prefixIs w T i && decide (i < w.length))) := fun i u h =>
-    SessionCheck.eval_and (by simp only [eval]; exact h.2.2.2)
-      (SessionCheck.eval_lt (by omega) (by omega) (by simp only [eval]; exact h.2.1)
+    eval_and (by simp only [eval]; exact h.2.2.2)
+      (eval_lt (by omega) (by omega) (by simp only [eval]; exact h.2.1)
         (by simp only [eval]; rw [keep u ln nln h.1]; exact hw.len))
   have f3 := frag_count o (c := Syntax.eAnd (Syntax.v "eqk") (Syntax.eLt (Syntax.v "jq") (Syntax.v ln))) (C := COND)
     (by simp [Syntax.eAnd, Syntax.eLt, Syntax.v, Lower.lowerExp, COND]) hlow Iclock
@@ -1055,7 +1055,7 @@ theorem wordIsAt_frag (o : Oracle σ) {sn ln : String} (hsn : sn ≠ "eqk" ∧ s
     (fun i hg => by simp only [Bool.and_eq_true, decide_eq_true_eq] at hg; exact hbody i hg.2 hg.1) 0
   have hT64 : T.length < 2 ^ 64 := by omega
   have e0 : eval s1 (.cmp .equal (.var ln) (.const (BitVec.ofNat 64 T.length))) = some (bw (prefixIs w T 0)) := by
-    rw [SessionCheck.eval_eq (x := w.length) (y := T.length) (by omega) hT64 (by simp only [eval]; exact hw.len)
+    rw [eval_eq (x := w.length) (y := T.length) (by omega) hT64 (by simp only [eval]; exact hw.len)
       (SessionCheck.eval_const rfl)]
     simp [prefixIs]
   have f1 := assign_frag o (x := "eqk") (e := Syntax.eEq (Syntax.v ln) (Syntax.n T.length)) rfl e0 he
@@ -1099,13 +1099,13 @@ theorem wordAt_of {B : Word} {L : List Byte} {s : PancakeState σ} (hl : LineIn 
 
 /-- `isAlphaE` as it lowers. -/
 def alphaE (E : PancakeExp) : PancakeExp :=
-  SessionCheck.or2E (.op .and_ (.cmp .less (.const (BitVec.ofNat 64 64)) E)
+  or2E (.op .and_ (.cmp .less (.const (BitVec.ofNat 64 64)) E)
     (.cmp .less E (.const (BitVec.ofNat 64 91))))
     (.op .and_ (.cmp .less (.const (BitVec.ofNat 64 96)) E) (.cmp .less E (.const (BitVec.ofNat 64 123))))
 
 theorem alpha_lower {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E) :
     Lower.lowerExp (Session.isAlphaE e) = some (alphaE E) := by
-  simp [Session.isAlphaE, alphaE, SessionStore.or2, SessionCheck.or2E, Syntax.eAnd, Syntax.eLt, Syntax.eAdd,
+  simp [Session.isAlphaE, alphaE, SessionStore.or2, or2E, Syntax.eAnd, Syntax.eLt, Syntax.eAdd,
     Syntax.n, Lower.lowerExp, he]
 
 theorem alpha_eval {s : PancakeState σ} {E : PancakeExp} {b : Byte} (h : eval s E = some (b.setWidth 64)) :
@@ -1113,10 +1113,10 @@ theorem alpha_eval {s : PancakeState σ} {E : PancakeExp} {b : Byte} (h : eval s
   have hb := b.isLt
   rw [setWidth8_64] at h
   have c : ∀ k : Nat, k < 2 ^ 63 → eval s (.const (BitVec.ofNat 64 k)) = some (BitVec.ofNat 64 k) := fun _ _ => rfl
-  rw [alphaE, SessionCheck.eval_or2 (SessionCheck.eval_and (SessionCheck.eval_lt (by decide) (by omega) (c 64
-    (by decide)) h) (SessionCheck.eval_lt (by omega) (by decide) h (c 91 (by decide))))
-    (SessionCheck.eval_and (SessionCheck.eval_lt (by decide) (by omega) (c 96 (by decide)) h)
-      (SessionCheck.eval_lt (by omega) (by decide) h (c 123 (by decide))))]
+  rw [alphaE, eval_or2 (eval_and (eval_lt (by decide) (by omega) (c 64
+    (by decide)) h) (eval_lt (by omega) (by decide) h (c 91 (by decide))))
+    (eval_and (eval_lt (by decide) (by omega) (c 96 (by decide)) h)
+      (eval_lt (by omega) (by decide) h (c 123 (by decide))))]
   congr 2
   simp only [CommandSpec.isAlpha]
   generalize b.toNat = x
@@ -1159,17 +1159,17 @@ theorem digitE_eval {s : PancakeState σ} {E : PancakeExp} {b : Byte} (h : eval 
 
 /-- The keyword's later octets' test as it lowers. -/
 def restE (E : PancakeExp) : PancakeExp :=
-  SessionCheck.or2E (SessionCheck.or2E (alphaE E) (digitE E))
-    (SessionCheck.or2E (.cmp .equal E (.const (BitVec.ofNat 64 46))) (.cmp .equal E (.const (BitVec.ofNat 64 45))))
+  or2E (or2E (alphaE E) (digitE E))
+    (or2E (.cmp .equal E (.const (BitVec.ofNat 64 46))) (.cmp .equal E (.const (BitVec.ofNat 64 45))))
 
 theorem rest_eval {s : PancakeState σ} {E : PancakeExp} {b : Byte} (h : eval s E = some (b.setWidth 64)) :
     eval s (restE E) = some (bw (CommandSpec.keywordRest b)) := by
   have hb := b.isLt
   have h' := h
   rw [setWidth8_64] at h'
-  rw [restE, SessionCheck.eval_or2 (SessionCheck.eval_or2 (alpha_eval h) (digitE_eval h))
-    (SessionCheck.eval_or2 (SessionCheck.eval_eq (by omega) (by decide) h' (y := 46) rfl)
-      (SessionCheck.eval_eq (by omega) (by decide) h' (y := 45) rfl))]
+  rw [restE, eval_or2 (eval_or2 (alpha_eval h) (digitE_eval h))
+    (eval_or2 (eval_eq (by omega) (by decide) h' (y := 46) rfl)
+      (eval_eq (by omega) (by decide) h' (y := 45) rfl))]
   congr 2
   simp only [CommandSpec.keywordRest]
   have e46 : (b == 46#8) = decide (b.toNat = 46) := by
@@ -1191,9 +1191,9 @@ theorem keyword_frag (o : Oracle σ) {B S : Word} {w : List Byte} {s1 : PancakeS
   have hshort := hw.short
   have keep : ∀ u y, y ∉ ["ok", "jq", "cz"] → SessionCheck.ButFor ["ok", "jq", "cz"] s1 u → u.locals y = s1.locals y :=
     fun u y hy h => h.locals y hy
-  have hle : eval s1 (SessionCheck.leE (.const (BitVec.ofNat 64 3)) (.var "l1")) =
+  have hle : eval s1 (leE (.const (BitVec.ofNat 64 3)) (.var "l1")) =
       some (bw (decide (3 ≤ w.length))) :=
-    SessionCheck.eval_le (by decide) (by omega) rfl (by simp only [eval]; exact hw.len)
+    eval_le (by decide) (by omega) rfl (by simp only [eval]; exact hw.len)
   have f1 := assign_frag o (x := "ok") (e := Syntax.eLe (Syntax.n 3) (Syntax.v "l1")) rfl hle hok
   let s2 := setL s1 "ok" (bw (decide (3 ≤ w.length)))
   have f2 : Frag o [.ite (Syntax.v "ok") [.assign "ok" (Session.isAlphaE (Session.kept (Syntax.v "s1")))] []]
@@ -1226,7 +1226,7 @@ theorem keyword_frag (o : Oracle σ) {B S : Word} {w : List Byte} {s1 : PancakeS
         h.base, h.code⟩
     · have hv : s.locals "ok" = some (bw (decide (3 ≤ w.length))) := by rw [h.locals]; simp [s2, setL, setLocal]
       have hz' : some (bw (decide (3 ≤ w.length))) = some 0 := by simp only [eval] at hz; rw [hv] at hz; exact hz
-      have hd : decide (3 ≤ w.length) = false := SessionCheck.bw_eq0 hz'
+      have hd : decide (3 ≤ w.length) = false := bw_eq0 hz'
       have e1 : kwOk w 1 = false := by simp [kwOk, hd]
       rw [e1, ← hd]
       exact h
@@ -1244,7 +1244,7 @@ theorem keyword_frag (o : Oracle σ) {B S : Word} {w : List Byte} {s1 : PancakeS
   have hrest : Lower.lowerExp (SessionStore.or2 (SessionStore.or2 (Session.isAlphaE (Syntax.v "cz"))
       (Session.isDigitE (Syntax.v "cz"))) (SessionStore.or2 (Syntax.eEq (Syntax.v "cz") (Syntax.n 46))
       (Syntax.eEq (Syntax.v "cz") (Syntax.n 45)))) = some (restE (.var "cz")) := by
-    simp [SessionStore.or2, SessionCheck.or2E, restE, alpha_lower, Session.isDigitE, digitE, Syntax.eAnd, Syntax.eLt,
+    simp [SessionStore.or2, or2E, restE, alpha_lower, Session.isDigitE, digitE, Syntax.eAnd, Syntax.eLt,
       Syntax.eAdd, Syntax.eEq, Syntax.n, Syntax.v, Lower.lowerExp]
   have hbody : ∀ i, i < w.length → kwOk w i = true → Frag o body (I i) (I (i + 1)) := fun i hi hp => by
     let M1 : Assn σ := fun u => SessionCheck.ButFor ["ok", "jq", "cz"] s1 u ∧ u.locals "jq" = some (BitVec.ofNat 64 i) ∧
@@ -1276,8 +1276,8 @@ theorem keyword_frag (o : Oracle σ) {B S : Word} {w : List Byte} {s1 : PancakeS
       (by show Lower.lowerStmt1 (.assign "ok" _) = _; simp only [Lower.lowerStmt1, hrest])) (lowKK_one rfl rfl))
   let COND : PancakeExp := .op .and_ (.var "ok") (.cmp .less (.var "jq") (.var "l1"))
   have hcond : ∀ i u, I i u → eval u COND = some (bw (kwOk w i && decide (i < w.length))) := fun i u h =>
-    SessionCheck.eval_and (by simp only [eval]; exact h.2.2.2.2.2)
-      (SessionCheck.eval_lt (by rcases h.2.2.2.1 with e | e <;> omega) (by omega) (by simp only [eval]; exact h.2.1)
+    eval_and (by simp only [eval]; exact h.2.2.2.2.2)
+      (eval_lt (by rcases h.2.2.2.1 with e | e <;> omega) (by omega) (by simp only [eval]; exact h.2.1)
         (by simp only [eval]; rw [keep u "l1" (by decide) h.1]; exact hw.len))
   have f4 := frag_count o (c := Syntax.eAnd (Syntax.v "ok") (Syntax.eLt (Syntax.v "jq") (Syntax.v "l1"))) (C := COND)
     (by simp [Syntax.eAnd, Syntax.eLt, Syntax.v, Lower.lowerExp, COND]) hlow Iclock

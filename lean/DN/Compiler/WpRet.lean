@@ -642,6 +642,168 @@ theorem keepsMemory {o : Oracle σ} {P Q : PancakeState σ → Prop} {c : Pancak
     | none => intro k hw; exact ⟨k, hw.trans hm⟩
     | some res => intro k _; exact k
 
+/-- The locals a program may set: those it assigns or declares. -/
+def assigned : PancakeProg → List String
+  | .dec x _ c => x :: assigned c
+  | .assign x _ => [x]
+  | .seq c1 c2 | .cond _ c1 c2 => assigned c1 ++ assigned c2
+  | .while_ _ c => assigned c
+  | .decCall rt _ _ c => rt :: assigned c
+  | _ => []
+
+/-- Whether every local the program sets is one of `names`, as a check to compute. -/
+def setsOnly (names : List String) : PancakeProg → Bool
+  | .dec x _ c | .decCall x _ _ c => names.contains x && setsOnly names c
+  | .assign x _ => names.contains x
+  | .seq c1 c2 | .cond _ c1 c2 => setsOnly names c1 && setsOnly names c2
+  | .while_ _ c => setsOnly names c
+  | _ => true
+
+/-- The check is sound: a program it passes sets no local outside `names`. -/
+theorem setsOnly_sound (names : List String) :
+    ∀ p, setsOnly names p = true → ∀ y ∈ assigned p, y ∈ names
+  | .dec x _ c, h, y, hy | .decCall x _ _ c, h, y, hy => by
+    simp only [setsOnly, Bool.and_eq_true, List.contains_iff_mem] at h
+    simp only [assigned, List.mem_cons] at hy
+    rcases hy with rfl | hy
+    · exact h.1
+    · exact setsOnly_sound names c h.2 y hy
+  | .assign x _, h, y, hy => by
+    simp only [setsOnly, List.contains_iff_mem] at h
+    simp only [assigned, List.mem_singleton] at hy
+    exact hy ▸ h
+  | .seq c1 c2, h, y, hy | .cond _ c1 c2, h, y, hy => by
+    simp only [setsOnly, Bool.and_eq_true] at h
+    simp only [assigned, List.mem_append] at hy
+    rcases hy with hy | hy
+    · exact setsOnly_sound names c1 h.1 y hy
+    · exact setsOnly_sound names c2 h.2 y hy
+  | .while_ _ c, h, y, hy => setsOnly_sound names c h y hy
+  | .skip, _, _, hy | .store .., _, _, hy | .storeByte .., _, _, hy | .extCall .., _, _, hy
+  | .ret _, _, _, hy => by simp [assigned] at hy
+
+/-- **A run that goes on, of a program that writes no memory, leaves the world and every local it does not
+set as they were.** -/
+theorem noWrite_locals (o : Oracle σ) :
+    ∀ (n : Nat) (p : PancakeProg) (s : PancakeState σ), s.clock ≤ n → noWrite p = true →
+      Safe.GoesOn (PancakeSem o p s).1 →
+      (PancakeSem o p s).2.ffi = s.ffi ∧ ∀ y, y ∉ assigned p → (PancakeSem o p s).2.locals y = s.locals y := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ihn =>
+  intro p
+  induction p with
+  | skip => intro s _ _ _; rw [PancakeSem.eq_1]; exact ⟨rfl, fun _ _ => rfl⟩
+  | dec x e c ih =>
+    intro s hc hp hg
+    rw [PancakeSem.eq_2] at hg ⊢
+    cases he : eval s e with
+    | none => rw [he] at hg; simp [Safe.GoesOn] at hg
+    | some val =>
+      rw [he] at hg
+      obtain ⟨hf, hl⟩ := ih { s with locals := setLocal s.locals x val } hc hp hg
+      refine ⟨hf, fun y hy => ?_⟩
+      have hyx : y ≠ x := fun e => hy (by simp [assigned, e])
+      simp only [resVar, if_neg hyx]
+      rw [hl y fun h => hy (by simp [assigned, h])]
+      simp [setLocal, hyx]
+  | assign x e =>
+    intro s _ _ hg
+    rw [PancakeSem.eq_3] at hg ⊢
+    cases h1 : eval s e <;> cases h2 : s.locals x <;> simp only [h1, h2, Safe.GoesOn] at hg ⊢
+    refine ⟨by first | rfl | trivial, fun y hy => ?_⟩
+    have hyx : y ≠ x := fun e => hy (by simp [assigned, e])
+    simp [setLocal, hyx]
+  | store d e => intro _ _ hp; cases hp
+  | storeByte d e => intro _ _ hp; cases hp
+  | extCall name a b c d => intro _ _ hp; cases hp
+  | decCall rt f args c _ => intro _ _ hp; cases hp
+  | seq c1 c2 ih1 ih2 =>
+    intro s hc hp hg
+    simp only [noWrite, Bool.and_eq_true] at hp
+    rw [PancakeSem.eq_6] at hg ⊢
+    have h1 := ih1 s hc hp.1
+    have hcl : ∀ t : PancakeState σ, (clampClock s.clock (none, t)).2.clock ≤ n := by
+      intro t; simp only [clampClock]; omega
+    revert h1 hg
+    generalize PancakeSem o c1 s = R
+    obtain ⟨x, t⟩ := R
+    intro hg h1
+    cases x with
+    | none =>
+      simp only [clampClock] at hg ⊢
+      obtain ⟨hf1, hl1⟩ := h1 trivial
+      obtain ⟨hf2, hl2⟩ := ih2 _ (hcl t) hp.2 hg
+      exact ⟨hf2.trans hf1, fun y hy => (hl2 y fun h => hy (by simp [assigned, h])).trans
+        (hl1 y fun h => hy (by simp [assigned, h]))⟩
+    | some r =>
+      simp only [clampClock] at hg ⊢
+      obtain ⟨hf1, hl1⟩ := h1 hg
+      exact ⟨hf1, fun y hy => hl1 y fun h => hy (by simp [assigned, h])⟩
+  | cond e c1 c2 ih1 ih2 =>
+    intro s hc hp hg
+    simp only [noWrite, Bool.and_eq_true] at hp
+    rw [PancakeSem.eq_7] at hg ⊢
+    cases he : eval s e with
+    | none => rw [he] at hg; simp [Safe.GoesOn] at hg
+    | some w =>
+      rw [he] at hg
+      simp only at hg ⊢
+      split at hg
+      · rename_i hw
+        rw [if_pos hw]
+        exact ⟨(ih1 s hc hp.1 hg).1, fun y hy => (ih1 s hc hp.1 hg).2 y fun h => hy (by simp [assigned, h])⟩
+      · rename_i hw
+        rw [if_neg hw]
+        exact ⟨(ih2 s hc hp.2 hg).1, fun y hy => (ih2 s hc hp.2 hg).2 y fun h => hy (by simp [assigned, h])⟩
+  | while_ e c _ =>
+    intro s hc hp hg
+    rw [PancakeSem.eq_8] at hg ⊢
+    cases he : eval s e with
+    | none => rw [he] at hg; simp [Safe.GoesOn] at hg
+    | some w =>
+      rw [he] at hg
+      simp only at hg ⊢
+      split at hg
+      · rename_i hw
+        rw [if_pos hw]
+        split at hg
+        · rename_i hz
+          rw [if_pos hz]
+          simp [Safe.GoesOn] at hg
+        · rename_i h0
+          rw [if_neg h0]
+          have hb := ihn (s.clock - 1) (by omega) c (decClock s) (by simp [decClock]) hp
+          have hcl : ∀ t : PancakeState σ, (clampClock (s.clock - 1) (none, t)).2.clock < n := by
+            intro t; simp only [clampClock]; omega
+          revert hb hg
+          generalize PancakeSem o c (decClock s) = R
+          obtain ⟨x, t⟩ := R
+          intro hg hb
+          have step : ∀ hg' : Safe.GoesOn (PancakeSem o (.while_ e c) { t with clock := min (s.clock - 1) t.clock }).1,
+              Safe.GoesOn x →
+              (PancakeSem o (.while_ e c) { t with clock := min (s.clock - 1) t.clock }).2.ffi = s.ffi ∧
+              ∀ y, y ∉ assigned (.while_ e c) →
+                (PancakeSem o (.while_ e c) { t with clock := min (s.clock - 1) t.clock }).2.locals y =
+                  s.locals y := fun hg' hx => by
+            have hloop := ihn _ (by simpa [clampClock] using hcl t) (.while_ e c)
+              { t with clock := min (s.clock - 1) t.clock } (Nat.le_refl _) hp hg'
+            exact ⟨hloop.1.trans (hb hx).1, fun y hy => (hloop.2 y hy).trans ((hb hx).2 y hy)⟩
+          cases x with
+          | none => simp only [clampClock] at hg ⊢; exact step hg trivial
+          | some r =>
+            cases r with
+            | continue_ => simp only [clampClock] at hg ⊢; exact step hg trivial
+            | break_ => simp only [clampClock] at hg ⊢; exact hb trivial
+            | _ => simp only [clampClock, Safe.GoesOn] at hg
+      · rename_i hw
+        rw [if_neg hw]
+        exact ⟨rfl, fun _ _ => rfl⟩
+  | ret e =>
+    intro s _ _ hg
+    rw [PancakeSem.eq_9] at hg
+    cases he : eval s e <;> rw [he] at hg <;> simp [Safe.GoesOn] at hg
+
 /-- Declarations of locals, each from zero, ahead of a program. -/
 def zeros : List String → PancakeProg → PancakeProg
   | [], c => c

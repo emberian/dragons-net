@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.FramerProg
 import DN.Compiler.Clock
+import DN.Compiler.WpBytes
 
 /-!
 # DN.News.FramerCode
@@ -64,6 +65,75 @@ theorem lineLoop_lower (lim : Nat) :
 
 /-- A flag as the program holds it. -/
 def bw (b : Bool) : Word := if b then 1 else 0
+
+/-! ## Flags and small numbers in expressions -/
+
+/-- `a ≤ b`. -/
+def leE (a b : PancakeExp) : PancakeExp := .cmp .notLess b a
+
+/-- Either of two flags. -/
+def or2E (a b : PancakeExp) : PancakeExp := .cmp .less (.const 0) (.op .add a b)
+
+theorem bw_and (a b : Bool) : bw a &&& bw b = bw (a && b) := by
+  cases a <;> cases b <;> rfl
+
+theorem bw_ne0 {p : Bool} (h : some (bw p) ≠ some 0) : p = true := by cases p <;> simp_all [bw]
+theorem bw_eq0 {p : Bool} (h : some (bw p) = some 0) : p = false := by cases p <;> simp_all [bw]
+
+/-- `a ≤ b`, of small numbers. -/
+theorem le_eval (a b : Nat) (ha : a < 2 ^ 63) (hb : b < 2 ^ 63) :
+    (if signedLt (BitVec.ofNat 64 b) (BitVec.ofNat 64 a) = true then (0 : Word) else 1) = bw (decide (a ≤ b)) := by
+  rw [WpBytes.signedLt_small (a := b) (b := a) hb ha]
+  by_cases h : b < a <;> simp [h, bw] <;> omega
+
+theorem eq_word {X Y : Word} {n c : Nat} (hX : X = BitVec.ofNat 64 n) (hY : Y = BitVec.ofNat 64 c)
+    (hn : n < 2 ^ 64) (hc : c < 2 ^ 64) : (if X = Y then (1 : Word) else 0) = bw (decide (n = c)) := by
+  subst hX hY
+  by_cases h : n = c
+  · simp [h, bw]
+  · rw [if_neg (fun e => h (NatToDec.ofNat64_inj hn hc e))]
+    simp [h, bw]
+
+section
+
+variable {t : PancakeState σ}
+
+theorem eval_lt {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .less a b) = some (bw (decide (x < y))) := by
+  simp only [eval, ha, hb, WpBytes.signedLt_small (a := x) (b := y) hx hy]
+  rfl
+
+theorem eval_le {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (leE a b) = some (bw (decide (x ≤ y))) := by
+  simp only [leE, eval, ha, hb]
+  rw [le_eval x y hx hy]
+
+theorem eval_eq {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .equal a b) = some (bw (decide (x = y))) := by
+  simp only [eval, ha, hb]
+  rw [eq_word rfl rfl hx hy]
+
+theorem eval_and {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
+    eval t (.op .and_ a b) = some (bw (p && q)) := by
+  simp only [eval, ha, hb, bw_and]
+
+theorem eval_or2 {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
+    eval t (or2E a b) = some (bw (p || q)) := by
+  simp only [or2E, eval, ha, hb]
+  cases p <;> cases q <;> decide
+
+/-- A comparison of words evaluates to a verdict. -/
+theorem cmp_bw {u : PancakeState σ} {c : Cmp} {l r : PancakeExp} {a b : Word} (hl : eval u l = some a)
+    (hr : eval u r = some b) : ∃ p, eval u (.cmp c l r) = some (bw p) := by
+  cases c <;> simp only [eval, hl, hr]
+  · exact ⟨signedLt a b, by cases signedLt a b <;> rfl⟩
+  · exact ⟨decide (a = b), by by_cases e : a = b <;> simp [e, bw]⟩
+  · exact ⟨!signedLt a b, by cases signedLt a b <;> rfl⟩
+
+end
 
 /-- The locals of the loop: the arguments, the framer's state `A`, and the verdict so far. -/
 structure LineLocals (s : PancakeState σ) (st p nw : Word) (i : Nat) (A : LineState)

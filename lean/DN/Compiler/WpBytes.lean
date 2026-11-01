@@ -58,6 +58,22 @@ theorem signedLt_small {a b : Nat} (ha : a < 2 ^ 63) (hb : b < 2 ^ 63) :
   rw [Int.bmod_eq_of_le (by omega) (by omega), Int.bmod_eq_of_le (by omega) (by omega)]
   simp
 
+/-- A small number plus a constant. -/
+theorem eval_addc {t : PancakeState σ} {e : PancakeExp} {x : Nat} (c : Nat) (h : eval t e = some (BitVec.ofNat 64 x)) :
+    eval t (.op .add e (.const (BitVec.ofNat 64 c))) = some (BitVec.ofNat 64 (x + c)) := by
+  simp only [eval, h, BitVec.ofNat_add]
+
+/-- The sum of two small numbers. -/
+theorem eval_add {t : PancakeState σ} {e f : PancakeExp} {x y : Nat} (h : eval t e = some (BitVec.ofNat 64 x))
+    (h' : eval t f = some (BitVec.ofNat 64 y)) : eval t (.op .add e f) = some (BitVec.ofNat 64 (x + y)) := by
+  simp only [eval, h, h', BitVec.ofNat_add]
+
+/-- A word loaded from an addressable place. -/
+theorem eval_load {u : PancakeState σ} {E : PancakeExp} {w v : Word} (he : eval u E = some w)
+    (hd : u.memaddrs w = true) (hm : u.memory w = v) : eval u (.loadWord E) = some v := by
+  show (match eval u E with | some w => if u.memaddrs w then some (u.memory w) else none | none => none) = some v
+  rw [he]; simp [hd, hm]
+
 /-! ## A loop over a buffer -/
 
 /-- The octets of `bs` summed as words. -/

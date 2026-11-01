@@ -332,6 +332,48 @@ structure Frame (names : String → Prop) (written : Word → Prop) (s t : Panca
   outside : ∀ a, ¬ written a →
     memLoadByte t.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a
 
+/-- Octets each in memory read as an array. -/
+theorem read_of_bytes {m : Word → Word} {dm : Word → Bool} {be : Bool} :
+    ∀ (bs : List (BitVec 8)) (a : Word),
+      (∀ i (h : i < bs.length), memLoadByte m dm be (a + BitVec.ofNat 64 i) = some bs[i]) →
+      readByteArray m dm be a bs.length = some bs
+  | [], _, _ => rfl
+  | b :: bs, a, h => by
+    have h0 : memLoadByte m dm be a = some b := by simpa using h 0 (by simp)
+    have hr := read_of_bytes bs (a + 1) fun i hi => by
+      have := h (i + 1) (by simp; omega)
+      rw [show a + BitVec.ofNat 64 (i + 1) = a + 1 + BitVec.ofNat 64 i by
+        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl] at this
+      simpa using this
+    simp only [readByteArray, h0, hr]
+
+/-- An octet of a run of octets in memory reads as itself. -/
+theorem memBytesAt_get {m : Word → Word} {dm : Word → Bool} {be : Bool} {a : Word} {bs : List (BitVec 8)}
+    (h : memBytesAt m dm be a bs) :
+    ∀ i (hi : i < bs.length), memLoadByte m dm be (a + BitVec.ofNat 64 i) = some bs[i] :=
+  fun i hi => by rw [h i hi]; simp [List.getElem!_eq_getElem?_getD, List.getElem?_eq_getElem hi]
+
+/-- Octets each in an addressable word can be read. -/
+theorem bytes_exist {u : PancakeState σ} {a : Word} : ∀ (k : Nat),
+    (∀ i, i < k → u.memaddrs (byteAlign (a + BitVec.ofNat 64 i)) = true) →
+    ∃ ys : List (BitVec 8), ys.length = k ∧ ∀ i (h : i < ys.length), memLoadByte u.memory u.memaddrs u.be
+      (a + BitVec.ofNat 64 i) = some ys[i]
+  | k, h => by
+    induction k with
+    | zero => exact ⟨[], rfl, fun i hi => by simp at hi⟩
+    | succ k ih =>
+      obtain ⟨ys, hl, hy⟩ := ih fun i hi => h i (by omega)
+      have hd := h k (by omega)
+      refine ⟨ys ++ [getByte (a + BitVec.ofNat 64 k) (u.memory (byteAlign (a + BitVec.ofNat 64 k))) u.be],
+        by simp [hl], fun i hi => ?_⟩
+      simp only [List.length_append, List.length_singleton] at hi
+      by_cases hik : i < ys.length
+      · rw [List.getElem_append_left hik]; exact hy i hik
+      · have : i = ys.length := by omega
+        subst this
+        rw [List.getElem_append_right (Nat.le_refl _)]
+        simp only [Nat.sub_self, List.getElem_singleton, memLoadByte, hd, if_true, hl]
+
 namespace Frame
 
 variable {names names' : String → Prop} {written written' : Word → Prop}

@@ -18,7 +18,7 @@ open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Bytes DN.Compiler.
   DN.News DN.News.WordsRun DN.News.FrameSpec DN.Server.SessionText DN.Server.SessionWords
 open DN.Server.SessionLayout (framerHead texts textAt ownOff ownTexts ownRet ownVSel ownVs ownVl ownLo ownHi ownFs
   ownFl ownNamed ownWs ownWl ownStore conns tableOff connSlot cFramer)
-open DN.News.FramerCode (bw)
+open DN.News.FramerCode (bw leE or2E bw_ne0 bw_eq0 eval_le eval_eq eval_or2)
 open DN.Server.SessionCheck (zeroState)
 
 variable {σ : Type}
@@ -411,7 +411,7 @@ end Tree
 theorem argsEq_eval {u : PancakeState σ} {A k : Nat} (hA : A < 2 ^ 63) (hk : k < 2 ^ 63)
     (h : u.locals "args" = some (BitVec.ofNat 64 A)) :
     eval u (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 k))) = some (bw (decide (A = k))) :=
-  SessionCheck.eval_eq (by omega) (by omega) (by simp only [eval]; exact h) rfl
+  eval_eq (by omega) (by omega) (by simp only [eval]; exact h) rfl
 
 theorem nodecl {xs : List Syntax.PStmt} (h : declared xs = []) : ∀ y ∈ declared xs, y ∈ clsNames ∧ y ≠ "r" :=
   fun y hy => by rw [h] at hy; simp at hy
@@ -427,20 +427,20 @@ theorem capa_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
   refine tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.2⟩)
     (leaf_frag o b .capabilities fun u ⟨h, hc⟩ => ⟨h.1.toKept, by
-      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (SessionCheck.bw_ne0 hc))]; rfl⟩) ?_
+      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (bw_ne0 hc))]; rfl⟩) ?_
     (nodecl rfl) (nodecl rfl)
   refine tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.1.2⟩) ?_
     (leaf_frag o b .syntax fun u ⟨⟨h, hc0⟩, hc1⟩ => ⟨h.1.toKept, by
       rw [argsEq_eval (by omega) (by decide) h.2] at hc0 hc1
-      have := of_decide_eq_false (SessionCheck.bw_eq0 hc0); have := of_decide_eq_false (SessionCheck.bw_eq0 hc1)
+      have := of_decide_eq_false (bw_eq0 hc0); have := of_decide_eq_false (bw_eq0 hc1)
       rw [h2 (by omega)]; rfl⟩)
     (nodecl rfl) (nodecl rfl)
   let K := cut L ((spans L).getD 1 (0, 0))
   have hA1 : ∀ s, ((TreeAt L s0 s ∧ s.locals "args" = some (BitVec.ofNat 64 A)) ∧
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) = some 0) ∧
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) ≠ some 0 → A = 1 := fun s ⟨⟨h, _⟩, hc⟩ => by
-    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc)
+    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (bw_ne0 hc)
   have fk : Frag o Session.keywordCheck (fun s => ((TreeAt L s0 s ∧ s.locals "args" = some (BitVec.ofNat 64 A)) ∧
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) = some 0) ∧
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) ≠ some 0)
@@ -456,9 +456,9 @@ theorem capa_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
         (leaf_frag o b .syntax fun u ⟨h, hc⟩ => ⟨h.1.toKept, ?_⟩)
     (nodecl rfl) (nodecl rfl))
   · simp only [eval, h.2.2] at hc
-    rw [h1 h.2.1, if_pos (SessionCheck.bw_ne0 hc)]; rfl
+    rw [h1 h.2.1, if_pos (bw_ne0 hc)]; rfl
   · simp only [eval, h.2.2] at hc
-    rw [h1 h.2.1, if_neg (by rw [SessionCheck.bw_eq0 hc]; decide)]; rfl
+    rw [h1 h.2.1, if_neg (by rw [bw_eq0 hc]; decide)]; rfl
 
 /-- The branch on whether there are no arguments: `X`, else 501. -/
 theorem zero_frag (o : Oracle σ) (b : Word) {L : List Byte} {s0 : PancakeState σ} (X : CommandSpec.Reply)
@@ -468,9 +468,9 @@ theorem zero_frag (o : Oracle σ) (b : Word) {L : List Byte} {s0 : PancakeState 
   tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.2⟩)
     (leaf_frag o b X fun u ⟨h, hc⟩ => ⟨h.1.toKept, by
-      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (SessionCheck.bw_ne0 hc))]⟩)
+      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (bw_ne0 hc))]⟩)
     (leaf_frag o b .syntax fun u ⟨h, hc⟩ => ⟨h.1.toKept, by
-      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h1 (of_decide_eq_false (SessionCheck.bw_eq0 hc))]; rfl⟩)
+      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h1 (of_decide_eq_false (bw_eq0 hc))]; rfl⟩)
     (nodecl rfl) (nodecl rfl)
 
 /-- A word of the session's own area before the texts, read at a branch's state. -/
@@ -562,20 +562,20 @@ theorem read_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
       Frag o [.ite Session.hasStore [Session.reply X] [Session.reply Y]] P (Out b s0 R) :=
     fun X Y hk hX hY => tree_ite o store_lower (fun s h => ⟨_, store_eval hs (hk s h)⟩)
       (leaf_frag o b X fun u ⟨h, hc⟩ =>
-        ⟨hk u h, (hX u h (SessionCheck.bw_ne0 (by rwa [store_eval hs (hk u h)] at hc))).symm⟩)
+        ⟨hk u h, (hX u h (bw_ne0 (by rwa [store_eval hs (hk u h)] at hc))).symm⟩)
       (leaf_frag o b Y fun u ⟨h, hc⟩ =>
-        ⟨hk u h, (hY u h (SessionCheck.bw_eq0 (by rwa [store_eval hs (hk u h)] at hc))).symm⟩) (nodecl rfl) (nodecl rfl)
+        ⟨hk u h, (hY u h (bw_eq0 (by rwa [store_eval hs (hk u h)] at hc))).symm⟩) (nodecl rfl) (nodecl rfl)
   refine tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.2⟩)
     (st _ _ (fun u h => h.1.1.toKept) (fun u ⟨h, hc⟩ ho => ?_) (fun u ⟨h, hc⟩ ho => ?_)) ?_ (nodecl rfl)
     (nodecl rfl)
-  · rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (SessionCheck.bw_ne0 hc)), ho]; rfl
-  · rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (SessionCheck.bw_ne0 hc)), ho]; rfl
+  · rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (bw_ne0 hc)), ho]; rfl
+  · rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h0 (of_decide_eq_true (bw_ne0 hc)), ho]; rfl
   refine tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.1.2⟩) ?_
     (leaf_frag o b .syntax fun u ⟨⟨h, hc0⟩, hc1⟩ => ⟨h.1.toKept, by
       rw [argsEq_eval (by omega) (by decide) h.2] at hc0 hc1
-      have := of_decide_eq_false (SessionCheck.bw_eq0 hc0); have := of_decide_eq_false (SessionCheck.bw_eq0 hc1)
+      have := of_decide_eq_false (bw_eq0 hc0); have := of_decide_eq_false (bw_eq0 hc1)
       rw [h2 (by omega)]; rfl⟩)
     (nodecl rfl) (nodecl rfl)
   -- one argument
@@ -583,20 +583,20 @@ theorem read_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 0))) = some 0) ∧
       eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) ≠ some 0
   have hA1 : ∀ s, P1 s → A = 1 := fun s ⟨⟨h, _⟩, hc⟩ => by
-    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc)
+    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (bw_ne0 hc)
   have hP1 : ∀ s, P1 s → TreeAt L s0 s ∧ 2 ≤ (spans L).length := fun s h => ⟨h.1.1.1, by have := hA1 s h; omega⟩
   have fn := number_frag o hs (P := P1) hP1
   refine frag_append fn (tree_ite o (C := .var "ok") rfl (fun u ⟨s, _, hp⟩ => ⟨_, hp.2.1⟩) ?_ ?_ (nodecl rfl)
     (nodecl rfl))
   · refine st _ _ (fun u ⟨⟨s, h, hp⟩, _⟩ => (treeAt_num h.1.1.1 hp).toKept) (fun u ⟨⟨s, h, hp⟩, hc⟩ ho => ?_)
       (fun u ⟨⟨s, h, hp⟩, hc⟩ ho => ?_)
-    · simp only [eval, hp.2.1] at hc; rw [hn (hA1 s h) (SessionCheck.bw_ne0 hc), ho]; rfl
-    · simp only [eval, hp.2.1] at hc; rw [hn (hA1 s h) (SessionCheck.bw_ne0 hc), ho]; rfl
+    · simp only [eval, hp.2.1] at hc; rw [hn (hA1 s h) (bw_ne0 hc), ho]; rfl
+    · simp only [eval, hp.2.1] at hc; rw [hn (hA1 s h) (bw_ne0 hc), ho]; rfl
   · have fm := mid_frag o hs (P := fun u => (∃ s, P1 s ∧ SessionCheck.NumPost a s u) ∧
       eval u (.var "ok") = some 0) (fun u ⟨⟨s, h, hp⟩, _⟩ => ⟨treeAt_num h.1.1.1 hp, (hP1 s h).2⟩)
     have hnum : ∀ u1, (∃ s, P1 s ∧ SessionCheck.NumPost a s u1) ∧ eval u1 (.var "ok") = some 0 →
         A = 1 ∧ CommandSpec.isArticleNumber a = false := fun u1 ⟨⟨s, h, hp⟩, hc⟩ => by
-      simp only [eval, hp.2.1] at hc; exact ⟨hA1 s h, SessionCheck.bw_eq0 hc⟩
+      simp only [eval, hp.2.1] at hc; exact ⟨hA1 s h, bw_eq0 hc⟩
     have hkm : ∀ u, (∃ u1, ((∃ s, P1 s ∧ SessionCheck.NumPost a s u1) ∧ eval u1 (.var "ok") = some 0) ∧
         SessionCheck.MidPost a u1 u) → Kept s0 u := fun u ⟨u1, ⟨⟨s, h, hp⟩, _⟩, hq⟩ =>
       kept_mid (treeAt_num h.1.1.1 hp).toKept hq
@@ -606,14 +606,14 @@ theorem read_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
         (fun u ⟨⟨u1, h1, hq⟩, hc'⟩ ho => ?_)
       · simp only [eval, hq.2] at hc'
         obtain ⟨e1, e2⟩ := hnum u1 h1
-        rw [hm e1 e2 (SessionCheck.bw_ne0 hc'), ho]; rfl
+        rw [hm e1 e2 (bw_ne0 hc'), ho]; rfl
       · simp only [eval, hq.2] at hc'
         obtain ⟨e1, e2⟩ := hnum u1 h1
-        rw [hm e1 e2 (SessionCheck.bw_ne0 hc'), ho]; rfl
+        rw [hm e1 e2 (bw_ne0 hc'), ho]; rfl
     · obtain ⟨u1, h1, hq⟩ := hu
       simp only [eval, hq.2] at hc'
       obtain ⟨e1, e2⟩ := hnum u1 h1
-      rw [hx e1 e2 (SessionCheck.bw_eq0 hc')]; rfl
+      rw [hx e1 e2 (bw_eq0 hc')]; rfl
 
 theorem found_lower : Lower.lowerExp SessionStore.found =
     some (.loadWord (.op .add .base (.const (BitVec.ofNat 64 (ownOff + ownRet))))) := by
@@ -657,12 +657,12 @@ theorem group_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
   refine tree_ite o (C := .cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) rfl
     (fun s h => ⟨_, argsEq_eval (by omega) (by decide) h.2⟩) ?_
     (leaf_frag o b .syntax fun u ⟨h, hc⟩ => ⟨h.1.toKept, by
-      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h2 (of_decide_eq_false (SessionCheck.bw_eq0 hc))]; rfl⟩)
+      rw [argsEq_eval (by omega) (by decide) h.2] at hc; rw [h2 (of_decide_eq_false (bw_eq0 hc))]; rfl⟩)
     (fun y hy => by simp [declared, SessionStore.callS] at hy; subst hy; decide) (nodecl rfl)
   let P1 : Assn σ := fun s => (TreeAt L s0 s ∧ s.locals "args" = some (BitVec.ofNat 64 A)) ∧
     eval s (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 1))) ≠ some 0
   have hA1 : ∀ s, P1 s → A = 1 := fun s ⟨h, hc⟩ => by
-    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (SessionCheck.bw_ne0 hc)
+    rw [argsEq_eval (by omega) (by decide) h.2] at hc; exact of_decide_eq_true (bw_ne0 hc)
   let P2 : Assn σ := fun t => After b s0 t ∧ A = 1 ∧ t.locals "gn" = some 0 ∧
     t.memory (SessionCheck.retW b) = bw (CommandSpec.isGroupName gw) ∧ t.memaddrs = s0.memaddrs ∧ t.baseAddr = b ∧
     t.locals "l1" = some (BitVec.ofNat 64 gw.length)
@@ -712,21 +712,21 @@ theorem group_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
   have hfound : ∀ s, P2 s → eval s (.loadWord (.op .add .base (.const (BitVec.ofNat 64 (ownOff + ownRet))))) =
       some (bw (CommandSpec.isGroupName gw)) := fun s h => by
     rw [found_eval hs h.2.2.2.2.2.1 h.2.2.2.2.1, h.2.2.2.1]
-  have hle : ∀ s, P2 s → eval s (SessionCheck.leE (.var "l1") (.const (BitVec.ofNat 64 CommandSpec.groupNameMax))) =
+  have hle : ∀ s, P2 s → eval s (leE (.var "l1") (.const (BitVec.ofNat 64 CommandSpec.groupNameMax))) =
       some (bw (decide (gw.length ≤ CommandSpec.groupNameMax))) := fun s h =>
-    SessionCheck.eval_le hgl (by decide) (by simp only [eval]; exact h.2.2.2.2.2.2) rfl
+    eval_le hgl (by decide) (by simp only [eval]; exact h.2.2.2.2.2.2) rfl
   refine tree_ite o found_lower (fun s h => ⟨_, hfound s h⟩) ?_
     (leafA_frag o b .syntax fun u ⟨h, hc⟩ => ⟨h.1, ?_⟩) (nodecl rfl) (nodecl rfl)
-  · refine tree_ite o (C := SessionCheck.leE (.var "l1") (.const (BitVec.ofNat 64 CommandSpec.groupNameMax))) rfl
+  · refine tree_ite o (C := leE (.var "l1") (.const (BitVec.ofNat 64 CommandSpec.groupNameMax))) rfl
       (fun s ⟨h, _⟩ => ⟨_, hle s h⟩)
       (leafA_frag o b (.select []) fun u ⟨⟨h, hc⟩, hl⟩ => ⟨h.1, ?_⟩)
       (leafA_frag o b .noSuchGroup fun u ⟨⟨h, hc⟩, hl⟩ => ⟨h.1, ?_⟩) (nodecl rfl) (nodecl rfl)
     · rw [hfound u h] at hc; rw [hle u h] at hl
-      rw [h1 h.2.1, if_pos (SessionCheck.bw_ne0 hc), if_pos (of_decide_eq_true (SessionCheck.bw_ne0 hl))]; rfl
+      rw [h1 h.2.1, if_pos (bw_ne0 hc), if_pos (of_decide_eq_true (bw_ne0 hl))]; rfl
     · rw [hfound u h] at hc; rw [hle u h] at hl
-      rw [h1 h.2.1, if_pos (SessionCheck.bw_ne0 hc), if_neg (of_decide_eq_false (SessionCheck.bw_eq0 hl))]; rfl
+      rw [h1 h.2.1, if_pos (bw_ne0 hc), if_neg (of_decide_eq_false (bw_eq0 hl))]; rfl
   · rw [hfound u h] at hc
-    rw [h1 h.2.1, if_neg (by rw [SessionCheck.bw_eq0 hc]; decide)]; rfl
+    rw [h1 h.2.1, if_neg (by rw [bw_eq0 hc]; decide)]; rfl
 
 /-! ### The branches on the command -/
 
@@ -734,7 +734,7 @@ theorem group_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
 theorem cmd_eval {s : PancakeState σ} {K : Nat} (hK : K < 2 ^ 63) (h : s.locals "cmd" = some (BitVec.ofNat 64 K))
     (j : Nat) (hj : j < 2 ^ 63) :
     eval s (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 j))) = some (bw (decide (K = j))) :=
-  SessionCheck.eval_eq (by omega) (by omega) (by simp only [eval]; exact h) rfl
+  eval_eq (by omega) (by omega) (by simp only [eval]; exact h) rfl
 
 /-- The reply to a command with its arguments, as `replyIn` gives it on a command line. -/
 def ans (offered : Bool) (c : CommandSpec.Cmd) (args : List (List Byte)) : CommandSpec.Reply :=
@@ -868,10 +868,10 @@ theorem args_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
   have dec : ∀ j, K = j → cmdOf j = some c := fun j h => by rw [← h]; exact cmdOf_code (some c)
   have isC : ∀ s, P3 s → ∀ j, j < 2 ^ 63 → eval s (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 j))) ≠ some 0 →
       cmdOf j = some c := fun s h j hj hc => by
-    rw [cmdEq s h j hj] at hc; exact dec j (of_decide_eq_true (SessionCheck.bw_ne0 hc))
+    rw [cmdEq s h j hj] at hc; exact dec j (of_decide_eq_true (bw_ne0 hc))
   have notC : ∀ s, P3 s → ∀ j, j < 2 ^ 63 → eval s (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 j))) = some 0 →
       K ≠ j := fun s h j hj hc => by
-    rw [cmdEq s h j hj] at hc; exact of_decide_eq_false (SessionCheck.bw_eq0 hc)
+    rw [cmdEq s h j hj] at hc; exact of_decide_eq_false (bw_eq0 hc)
   have zero : ∀ (X : CommandSpec.Reply) (j : Nat) (cx : CommandSpec.Cmd), cmdOf j = some cx → j < 2 ^ 63 →
       (c = cx → c = .help ∧ X = .help ∨ c = .quit ∧ X = .quit ∨ (offered = true ∧ c = .post ∧ X = .post) ∨
         (offered = true ∧ (c = .next ∨ c = .last) ∧ X = .move true)) → ∀ {P : Assn σ},
@@ -924,15 +924,15 @@ theorem args_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
     exact frag_conseq (group_frag o hs hgn hA (fun h => by rw [g1 (by omega), hhead]) (fun h => g2 (by omega)))
       (fun s ⟨⟨⟨⟨⟨h, _⟩, _⟩, _⟩, _⟩, _⟩ => ⟨h.1, h.2.2⟩) (fun _ h => h)
   -- NEXT and LAST
-  have hor : ∀ s, P3 s → eval s (SessionCheck.or2E (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 10)))
+  have hor : ∀ s, P3 s → eval s (or2E (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 10)))
       (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 11)))) = some (bw (decide (K = 10) || decide (K = 11))) :=
-    fun s h => SessionCheck.eval_or2 (cmdEq s h 10 (by decide)) (cmdEq s h 11 (by decide))
-  refine tree_ite o (C := SessionCheck.or2E (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 10)))
+    fun s h => eval_or2 (cmdEq s h 10 (by decide)) (cmdEq s h 11 (by decide))
+  refine tree_ite o (C := or2E (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 10)))
       (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 11)))) rfl
     (fun s h => ⟨_, hor s h.1.1.1.1.1⟩) ?_ ?_ (nodecl rfl) (nodecl rfl)
   · refine frag_pure (c = .next ∨ c = .last) (fun s ⟨⟨⟨⟨⟨⟨h, _⟩, _⟩, _⟩, _⟩, _⟩, hc⟩ => by
         rw [hor s h] at hc
-        have := SessionCheck.bw_ne0 hc
+        have := bw_ne0 hc
         simp only [Bool.or_eq_true, decide_eq_true_eq] at this
         rcases this with e | e
         · have := dec 10 e; simp only [cmdOf, Option.some.injEq] at this; exact Or.inl this.symm
@@ -957,7 +957,7 @@ theorem args_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fr
     have n6 := notC s h 6 (by decide) c6
     have n9 := notC s h 9 (by decide) c9
     rw [hor s h] at c10
-    have n10 := SessionCheck.bw_eq0 c10
+    have n10 := bw_eq0 c10
     simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at n10
     rcases hc with e | e | e | e | e | ⟨ho, e | e | e | e | e | e⟩ <;> subst e
     · exact absurd rfl n1
@@ -1170,8 +1170,8 @@ theorem known_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
       eval s (.cmp .equal (.var "cmd") (.const (BitVec.ofNat 64 j))) = some (bw (decide (cmdCode (some c) = j))) :=
     fun s h => cmd_eval (by omega) (hP s h).2
   have le : ∀ s, P s → ∀ j, j < 2 ^ 63 →
-      eval s (SessionCheck.leE (.const (BitVec.ofNat 64 j)) (.var "cmd")) = some (bw (decide (j ≤ cmdCode (some c)))) :=
-    fun s h j hj => SessionCheck.eval_le (by omega) (by omega) rfl (by simp only [eval]; exact (hP s h).2)
+      eval s (leE (.const (BitVec.ofNat 64 j)) (.var "cmd")) = some (bw (decide (j ≤ cmdCode (some c)))) :=
+    fun s h j hj => eval_le (by omega) (by omega) rfl (by simp only [eval]; exact (hP s h).2)
   -- AUTHINFO
   by_cases hca : c = .authinfo
   · subst hca
@@ -1184,7 +1184,7 @@ theorem known_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
     (fun s h => ⟨_, ev s h 21 (by decide)⟩)
     (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨h, hc⟩ => by
       rw [ev s h 21 (by decide)] at hc
-      exact hca (code_auth (of_decide_eq_true (SessionCheck.bw_ne0 hc)))) ?_ (nodecl rfl)
+      exact hca (code_auth (of_decide_eq_true (bw_ne0 hc)))) ?_ (nodecl rfl)
     (nodecl rfl)
   -- OVER, HDR, XOVER and XHDR
   by_cases hv : IsView c
@@ -1193,27 +1193,27 @@ theorem known_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
       · rcases base ho with e | e | e | e | e | e | e <;> subst e <;> simp [IsView] at hv
       · rfl
     have hcv := code_view hv
-    refine tree_ite o (C := SessionCheck.leE (.const (BitVec.ofNat 64 17)) (.var "cmd")) rfl
+    refine tree_ite o (C := leE (.const (BitVec.ofNat 64 17)) (.var "cmd")) rfl
       (fun s h => ⟨_, le s h.1 17 (by decide)⟩) ?_
       (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨h, _⟩, hc⟩ => by
-        rw [le s h 17 (by decide)] at hc; exact absurd hcv.1 (of_decide_eq_false (SessionCheck.bw_eq0 hc)))
+        rw [le s h 17 (by decide)] at hc; exact absurd hcv.1 (of_decide_eq_false (bw_eq0 hc)))
       (callS_decl _ _ _ (by decide)) (nodecl rfl)
     rw [ans, if_pos ho]
     exact callFound_frag o hs hvc (rt := "vc") (by decide) hv hw1 fun s h => hP s h.1.1
   have hnv := code_notView hv hca
-  refine tree_ite o (C := SessionCheck.leE (.const (BitVec.ofNat 64 17)) (.var "cmd")) rfl
+  refine tree_ite o (C := leE (.const (BitVec.ofNat 64 17)) (.var "cmd")) rfl
     (fun s h => ⟨_, le s h.1 17 (by decide)⟩)
     (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨h, _⟩, hc⟩ => by
       rw [le s h 17 (by decide)] at hc
-      exact absurd hnv (Nat.not_lt.mpr (of_decide_eq_true (SessionCheck.bw_ne0 hc)))) ?_
+      exact absurd hnv (Nat.not_lt.mpr (of_decide_eq_true (bw_ne0 hc)))) ?_
     (callS_decl _ _ _ (by decide)) (nodecl rfl)
   -- LISTGROUP, LIST, DATE, NEWGROUPS and MODE
   by_cases hl : IsList c
   · have hcl := code_list hl
-    refine tree_ite o (C := SessionCheck.leE (.const (BitVec.ofNat 64 12)) (.var "cmd")) rfl
+    refine tree_ite o (C := leE (.const (BitVec.ofNat 64 12)) (.var "cmd")) rfl
       (fun s h => ⟨_, le s h.1.1 12 (by decide)⟩) ?_
       (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨⟨h, _⟩, _⟩, hc⟩ => by
-        rw [le s h 12 (by decide)] at hc; exact absurd hcl.1 (of_decide_eq_false (SessionCheck.bw_eq0 hc)))
+        rw [le s h 12 (by decide)] at hc; exact absurd hcl.1 (of_decide_eq_false (bw_eq0 hc)))
       (callS_decl _ _ _ (by decide)) args_decl
     have he : ans offered c (argsOf L) = CommandSpec.answerIn c (argsOf L) := by
       cases ho : offered
@@ -1223,11 +1223,11 @@ theorem known_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : F
     rw [he]
     exact callFound_frag o hs hlc (rt := "lc") (by decide) hl hw1 fun s h => hP s h.1.1.1
   have hnl := code_notList hl hv hca
-  refine tree_ite o (C := SessionCheck.leE (.const (BitVec.ofNat 64 12)) (.var "cmd")) rfl
+  refine tree_ite o (C := leE (.const (BitVec.ofNat 64 12)) (.var "cmd")) rfl
     (fun s h => ⟨_, le s h.1.1 12 (by decide)⟩)
     (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨⟨h, _⟩, _⟩, hc⟩ => by
       rw [le s h 12 (by decide)] at hc
-      exact absurd hnl (Nat.not_lt.mpr (of_decide_eq_true (SessionCheck.bw_ne0 hc)))) ?_
+      exact absurd hnl (Nat.not_lt.mpr (of_decide_eq_true (bw_ne0 hc)))) ?_
     (callS_decl _ _ _ (by decide)) args_decl
   exact frag_conseq (args_frag o hs hgn (rest_cmd base hl hv hca) hw1) (fun s h => hP s h.1.1.1) fun _ h => h
 
@@ -1260,7 +1260,7 @@ theorem cmd_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fra
     (fun s h => ⟨_, ev s _ h 0 (by decide)⟩)
     (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨h, hc⟩ => by
       rw [ev s _ h 0 (by decide)] at hc
-      exact hK0 (of_decide_eq_true (SessionCheck.bw_ne0 hc))) ?_ (nodecl rfl) (nodecl rfl)
+      exact hK0 (of_decide_eq_true (bw_ne0 hc))) ?_ (nodecl rfl) (nodecl rfl)
   simp only
   -- a line not of a command's kind
   by_cases hkn : k ≠ .command
@@ -1270,14 +1270,14 @@ theorem cmd_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : Fra
         (.const (BitVec.ofNat 64 0))) rfl (fun s h => ⟨_, kind_eval (kd s h.1.1)⟩)
       (leaf_frag o b .syntax fun u ⟨⟨h, _⟩, _⟩ => ⟨h.1.toKept, rfl⟩)
       (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨h, _⟩, hc⟩ => by
-        rw [kind_eval (kd s h.1)] at hc; exact hkc (by simpa using SessionCheck.bw_eq0 hc)) (nodecl rfl) (nodecl rfl)
+        rw [kind_eval (kd s h.1)] at hc; exact hkc (by simpa using bw_eq0 hc)) (nodecl rfl) (nodecl rfl)
   have hkc : k = .command := by simpa using hkn
   rw [if_pos hkc]
   refine tree_ite o (C := .cmp .equal (.cmp .equal (.var "kind") (.const (BitVec.ofNat 64 1)))
       (.const (BitVec.ofNat 64 0))) rfl (fun s h => ⟨_, kind_eval (kd s h.1.1)⟩)
     (frag_unsat (lowK_any _ (k := .skip) (c := _) rfl) fun s ⟨⟨h, _⟩, hc⟩ => by
       rw [kind_eval (kd s h.1)] at hc
-      exact absurd hkc (by simpa using SessionCheck.bw_ne0 hc)) ?_ (nodecl rfl) (nodecl rfl)
+      exact absurd hkc (by simpa using bw_ne0 hc)) ?_ (nodecl rfl) (nodecl rfl)
   exact known_frag o hs hgn hvc hlc hw1 (fun ho => commandIn_base w0 (ho ▸ hcv)) fun s ⟨⟨h, _⟩, _⟩ => h
 
 /-! ### `classify` from its entry -/
@@ -1370,7 +1370,7 @@ theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k 
   have hsh := hs.line.short
   have wEq : ∀ s, TreeAt L s0 s → eval s (.cmp .equal (.var "w") (.const (BitVec.ofNat 64 0))) =
       some (bw (decide ((spans L).length = 0))) := fun s h =>
-    SessionCheck.eval_eq (by omega) (by decide) (by simp only [eval]; exact h.w) rfl
+    eval_eq (by omega) (by decide) (by simp only [eval]; exact h.w) rfl
   have kd : ∀ s, TreeAt L s0 s → s.locals "kind" = some (BitVec.ofNat 64 (FramerProg.kindCode k)) := fun s h => by
     rw [h.loc "kind" (by decide)]; exact hs.kind
   refine tree_ite o (C := .cmp .equal (.var "w") (.const (BitVec.ofNat 64 0))) rfl (fun s h => ⟨_, wEq s h.1⟩) ?_ ?_
@@ -1379,7 +1379,7 @@ theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k 
     have hR : ∀ s, TreeAt L s0 s → eval s (.cmp .equal (.var "w") (.const (BitVec.ofNat 64 0))) ≠ some 0 →
         CommandSpec.replyIn offered ⟨k, L⟩ = if k = .overlong then .unknown else .ignore := fun s h hc => by
       rw [wEq s h] at hc
-      have e := of_decide_eq_true (SessionCheck.bw_ne0 hc)
+      have e := of_decide_eq_true (bw_ne0 hc)
       rw [List.length_eq_zero_iff] at e
       simp [CommandSpec.replyIn, words_spans, e]
     refine tree_ite o (C := .cmp .equal (.var "kind") (.const (BitVec.ofNat 64 (FramerProg.kindCode .overlong)))) rfl
@@ -1387,16 +1387,16 @@ theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k 
       (leaf_frag o b .unknown fun u ⟨⟨⟨h, _⟩, hc⟩, hk⟩ => ⟨h.toKept, ?_⟩)
       (leaf_frag o b .ignore fun u ⟨⟨⟨h, _⟩, hc⟩, hk⟩ => ⟨h.toKept, ?_⟩) (nodecl rfl) (nodecl rfl)
     · rw [kindIs_eval (kd u h) .overlong] at hk
-      rw [hR u h hc, if_pos (of_decide_eq_true (SessionCheck.bw_ne0 hk))]
+      rw [hR u h hc, if_pos (of_decide_eq_true (bw_ne0 hk))]
     · rw [kindIs_eval (kd u h) .overlong] at hk
-      rw [hR u h hc, if_neg (of_decide_eq_false (SessionCheck.bw_eq0 hk))]
+      rw [hR u h hc, if_neg (of_decide_eq_false (bw_eq0 hk))]
   -- a command's name tried, the store's ones when there is a store
   have hlow : LowKK (picks baseNames ++ [SessionStore.ifs Session.hasStore (picks storeNames)] ++ cmdTree) :=
     lowKK_append (lowKK_append (lowKK_picks _ fun p hp => (names_ok p (by simp [hp])).1)
       (lowKK_ite store_lower (lowKK_picks _ fun p hp => (names_ok p (by simp [hp])).1) fun k => ⟨k, rfl⟩))
       (lowK_any _ (k := .skip) (c := _) rfl)
   refine frag_pure (1 ≤ (spans L).length) (fun s ⟨⟨h, _⟩, hc⟩ => by
-    rw [wEq s h] at hc; have := of_decide_eq_false (SessionCheck.bw_eq0 hc); omega) hlow fun hw1 => ?_
+    rw [wEq s h] at hc; have := of_decide_eq_false (bw_eq0 hc); omega) hlow fun hw1 => ?_
   let w0 := cut L ((spans L).getD 0 (0, 0))
   let U := w0.map CommandSpec.upper
   have sp := pick_spec offered w0
@@ -1412,13 +1412,13 @@ theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k 
       (fun s h => ⟨_, store_eval hs h.1.toKept⟩) ?_ (fun _ _ _ _ h => by rw [picks_decl] at h; simp at h)
       (frag_nil o fun s ⟨⟨h, hc⟩, hn⟩ => ⟨h, ?_⟩) (fun _ _ _ _ h => by simp [declared] at h)
     · refine frag_pure (offered = true)
-        (fun s ⟨h, hn⟩ => SessionCheck.bw_ne0 (by rwa [store_eval hs h.1.toKept] at hn))
+        (fun s ⟨h, hn⟩ => bw_ne0 (by rwa [store_eval hs h.1.toKept] at hn))
         (lowKK_picks _ fun p hp => (names_ok p (by simp [hp])).1) fun ho => ?_
       refine frag_conseq (picksT_frag o hs storeNames (fun p hp => names_ok p (by simp [hp])) _
         (P := fun s => (TreeAt L s0 s ∧ s.locals "cmd" = some (BitVec.ofNat 64 (pickFold U baseNames 0))) ∧ _)
         fun s ⟨⟨h, hc⟩, _⟩ => ⟨h, hc, hw1⟩) (fun _ h => h) fun v ⟨h, hc⟩ => ⟨h, ?_⟩
       rw [hc, ← sp, ho, if_pos rfl, pickFold_append]
-    · have ho := SessionCheck.bw_eq0 (by rwa [store_eval hs h.toKept] at hn)
+    · have ho := bw_eq0 (by rwa [store_eval hs h.toKept] at hn)
       rw [hc, ← sp, ho]; simp only [Bool.false_eq_true, if_false, List.append_nil]; rfl
   refine frag_append (frag_append fb fs) ?_
   exact cmd_frag o hs hgn hvc hlc hw1

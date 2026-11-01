@@ -9,7 +9,8 @@ A journal read back as `DN.News.Journal.scan` reads it, as the gate prints it: a
 frame from a window of the journal that the caller fills, and leaves in the scanner's area at `jsc`
 what it found — octets wanted (how many, from where the window ends), a record (its fields), or how
 the journal ends; the area is all it keeps between steps. A frame's tag is computed by
-`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`, not proven.
+`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`; the check of a frame and the
+reading of its record are proven (`DN.News.ScanFrame`, `DN.News.ScanStep`), if they go on.
 
 So that the analysis of decision 0004 sees every access lie in the area, the step keeps no address
 in it, only offsets into the window, and checks each word it reads back before it makes an address
@@ -130,30 +131,50 @@ def message : List PStmt :=
       inc "ji"],
    .assign "n" (eAdd (v "jpl") (n 9))]
 
+/-- The tag, once there is a key: SipHash-2-4 over the message, against the frame's. -/
+def tagPart : List PStmt :=
+  [.ite (eEq (v "jhk") (n 0)) [.assign "jwhy" (lit (whyCode .tag))]
+    (message ++ SipProg.sipSrc ++ leS "jtag" (atOff (v "jf") 4) 8 ++
+      [.ite (ne (v "r") (v "jtag")) [.assign "jwhy" (lit (whyCode .tag))] []])]
+
+/-- The type and the key, then the tag. -/
+def markPart (keyed : Bool) : List PStmt := [.assign "jt" (byte (atOff (v "jf") 12))] ++ keySel keyed ++ tagPart
+
+/-- The end mark, then the rest. -/
+def endPart (keyed : Bool) : List PStmt :=
+  [.ite (ne (byte (eAdd (v "jf") (eAdd (v "jpl") (n headerLength)))) (n 0xA5))
+    [.assign "jwhy" (lit (whyCode .unterminated))] (markPart keyed)]
+
+/-- The octets the length says, then the rest. -/
+def cutPart (keyed : Bool) : List PStmt :=
+  [.ite (eLt (v "jr") (eAdd (v "jpl") (n (headerLength + 1)))) [.assign "jwhy" (lit (whyCode .short))]
+    (endPart keyed)]
+
+/-- A length any payload may have, then the rest. A length below zero cannot be read from four octets; it
+is refused with one too long, so that the analysis sees the bound. -/
+def longPart (keyed : Bool) : List PStmt :=
+  [.ite (or2 (eLt (n maxPayload) (v "jpl")) (eLt (v "jpl") (n 0))) [.assign "jwhy" (lit (whyCode .tooLong))]
+    (cutPart keyed)]
+
 /-- Why the frame at journal offset `jq`, at `jf` in the window, `jr` octets of the journal from
 it, does not check, into `jwhy`, zero if it does; its payload's length into `jpl` and its type into
-`jt`. A length below zero cannot be read from four octets; it is refused with one too long, so that
-the analysis sees the bound. -/
+`jt`. -/
 def frameWhy (keyed : Bool) : List PStmt :=
   [.assign "jwhy" (lit 0),
    .ite (eLt (v "jr") (n headerLength)) [.assign "jwhy" (lit (whyCode .short))]
-     (leS "jpl" (v "jf") 4 ++
-      [.ite (or2 (eLt (n maxPayload) (v "jpl")) (eLt (v "jpl") (n 0)))
-        [.assign "jwhy" (lit (whyCode .tooLong))]
-        [.ite (eLt (v "jr") (eAdd (v "jpl") (n (headerLength + 1))))
-          [.assign "jwhy" (lit (whyCode .short))]
-          [.ite (ne (byte (eAdd (v "jf") (eAdd (v "jpl") (n headerLength)))) (n 0xA5))
-            [.assign "jwhy" (lit (whyCode .unterminated))]
-            ([.assign "jt" (byte (atOff (v "jf") 12))] ++ keySel keyed ++
-             [.ite (eEq (v "jhk") (n 0)) [.assign "jwhy" (lit (whyCode .tag))]
-               (message ++ SipProg.sipSrc ++ leS "jtag" (atOff (v "jf") 4) 8 ++
-                [.ite (ne (v "r") (v "jtag")) [.assign "jwhy" (lit (whyCode .tag))] []])])]]])]
+     (leS "jpl" (v "jf") 4 ++ longPart keyed)]
 
 /-- Group `g`'s slot in the area. -/
 def slot (g : String) : PExpr := eAdd (atOff sp sGroups) (eMul (v g) (n groupSlot))
 
 /-- Where octet `i` of the payload lies in the window. -/
 def inWindow (i : PExpr) : PExpr := eAdd (eAdd (v "jo") (n headerLength)) i
+
+/-- Octet `jx` of the two names, compared. -/
+def alikeOctet : List PStmt :=
+  [.ite (ne (byte (eAdd (eAdd (v "jw") (v "jna")) (v "jx"))) (byte (eAdd (eAdd (v "jw") (v "jnb")) (v "jx"))))
+     [.assign "jeq" (lit 0)] [],
+   inc "jx"]
 
 /-- Whether the names of groups `ja` and `jbb` are alike, into `jeq`. -/
 def namesAlike : List PStmt :=
@@ -163,61 +184,91 @@ def namesAlike : List PStmt :=
      [.assign "jna" (.loadw 1 (v "jga")), kept fail "jna" windowRoom,
       .assign "jnb" (.loadw 1 (v "jgb")), kept fail "jnb" windowRoom,
       .assign "jeq" (lit 1), .assign "jx" (lit 0),
-      .while (eLt (v "jx") (v "jla"))
-        [.ite (ne (byte (eAdd (eAdd (v "jw") (v "jna")) (v "jx")))
-            (byte (eAdd (eAdd (v "jw") (v "jnb")) (v "jx")))) [.assign "jeq" (lit 0)] [],
-         inc "jx"]] []]
+      .while (eLt (v "jx") (v "jla")) alikeOctet] []]
 
-/-- The commit the payload at `jpp`, `jpl` octets, holds, if it holds exactly one that a correct
-store writes: its fields into the area, and `jrec` set to the commit's type. -/
-def decode : List PStmt :=
+/-- The commit's sequence number, eight octets. -/
+def seqPart : List PStmt :=
   [.assign "jok" (lit 1), .assign "ji" (lit 8),
-   .ite (eLt (v "jpl") (n 8)) [.assign "jok" (lit 0)] (leS "jseq" (v "jpp") 8),
-   .ite (v "jok")
+   .ite (eLt (v "jpl") (n 8)) [.assign "jok" (lit 0)] (leS "jseq" (v "jpp") 8)]
+
+/-- Its Message-ID, a counted run: where it lies in the window and how long it is, into the area. -/
+def idPart : List PStmt :=
+  [.ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
        [.assign "jml" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
         .ite (eLt (v "jpl") (eAdd (v "ji") (v "jml"))) [.assign "jok" (lit 0)]
           [setw sIdAt (inWindow (v "ji")), setw sIdLen (v "jml"),
-           .assign "ji" (eAdd (v "ji") (v "jml"))]]] [],
-   .ite (v "jok")
+           .assign "ji" (eAdd (v "ji") (v "jml"))]]] []]
+
+/-- How many groups, sixteen at most. -/
+def countPart : List PStmt :=
+  [.ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
        [.assign "jgc" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
-        .ite (eLt (n groupsMax) (v "jgc")) [.assign "jok" (lit 0)] []]] [],
-   .assign "jgi" (lit 0),
-   .while (eAnd (v "jok") (eLt (v "jgi") (v "jgc")))
-     [kept fail "ji" maxPayload,
-      .ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
-       [.assign "jnl" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
-        .ite (eLt (v "jpl") (eAdd (v "ji") (v "jnl"))) [.assign "jok" (lit 0)]
-          ([.assign "jgp" (slot "jgi"), .store (v "jgp") (inWindow (v "ji")),
-            .store (atOff (v "jgp") 8) (v "jnl"), .assign "ji" (eAdd (v "ji") (v "jnl")),
-            .ite (eLt (v "jpl") (eAdd (v "ji") (n 4))) [.assign "jok" (lit 0)]
-              (leS "jnum" (eAdd (v "jpp") (v "ji")) 4 ++
-               [.store (atOff (v "jgp") 16) (v "jnum"), .assign "ji" (eAdd (v "ji") (n 4)),
-                .ite (or2 (or2 (eLt (v "jnl") (n 1)) (eLt (n 64) (v "jnl")))
-                    (or2 (eLt (v "jnum") (n 1)) (eLt (n (2 ^ 31 - 1)) (v "jnum"))))
-                  [.assign "jok" (lit 0)] []])])],
-      inc "jgi"],
-   kept fail "ji" maxPayload,
+        .ite (eLt (n groupsMax) (v "jgc")) [.assign "jok" (lit 0)] []]] []]
+
+/-- Group `jgi`: its name, a counted run, and its article number, into its slot, and checked. -/
+def groupBody : List PStmt :=
+  [kept fail "ji" maxPayload,
+   .ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
+    [.assign "jnl" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
+     .ite (eLt (v "jpl") (eAdd (v "ji") (v "jnl"))) [.assign "jok" (lit 0)]
+       ([.assign "jgp" (slot "jgi"), .store (v "jgp") (inWindow (v "ji")),
+         .store (atOff (v "jgp") 8) (v "jnl"), .assign "ji" (eAdd (v "ji") (v "jnl")),
+         .ite (eLt (v "jpl") (eAdd (v "ji") (n 4))) [.assign "jok" (lit 0)]
+           (leS "jnum" (eAdd (v "jpp") (v "ji")) 4 ++
+            [.store (atOff (v "jgp") 16) (v "jnum"), .assign "ji" (eAdd (v "ji") (n 4)),
+             .ite (or2 (or2 (eLt (v "jnl") (n 1)) (eLt (n 64) (v "jnl")))
+                 (or2 (eLt (v "jnum") (n 1)) (eLt (n (2 ^ 31 - 1)) (v "jnum"))))
+               [.assign "jok" (lit 0)] []])])],
+   inc "jgi"]
+
+/-- The groups, each read, until one is not one or all are read. -/
+def groupsPart : List PStmt :=
+  [.assign "jgi" (lit 0), .while (eAnd (v "jok") (eLt (v "jgi") (v "jgc"))) (groupBody fail)]
+
+/-- The header's and the file's sizes and the file's CRC, four octets each. -/
+def tailPart : List PStmt :=
+  [kept fail "ji" maxPayload,
    .ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 12))) [.assign "jok" (lit 0)]
        (leS "jhs" (eAdd (v "jpp") (v "ji")) 4 ++
         leS "jfs" (eAdd (v "jpp") (eAdd (v "ji") (n 4))) 4 ++
         leS "jcrc" (eAdd (v "jpp") (eAdd (v "ji") (n 8))) 4 ++
-        [.assign "ji" (eAdd (v "ji") (n 12))])] [],
-   .ite (eAnd (v "jok") (ne (v "ji") (v "jpl"))) [.assign "jok" (lit 0)] [],
-   .ite (eAnd (v "jok") (or2 (or2 (eEq (v "jseq") (n 0)) (eLt (v "jml") (n 1)))
+        [.assign "ji" (eAdd (v "ji") (n 12))])] []]
+
+/-- No octet after the commit. -/
+def exactPart : List PStmt := [.ite (eAnd (v "jok") (ne (v "ji") (v "jpl"))) [.assign "jok" (lit 0)] []]
+
+/-- What a correct store writes: a sequence number, a Message-ID of 1 to 250 octets, a group, a header no
+larger than its file. -/
+def checkPart : List PStmt :=
+  [.ite (eAnd (v "jok") (or2 (or2 (eEq (v "jseq") (n 0)) (eLt (v "jml") (n 1)))
        (or2 (or2 (eLt (n 250) (v "jml")) (eLt (v "jgc") (n 1))) (eLt (v "jfs") (v "jhs")))))
-     [.assign "jok" (lit 0)] [],
-   .assign "ja" (lit 0),
-   .while (eAnd (v "jok") (eLt (v "ja") (v "jgc")))
-     [.assign "jbb" (eAdd (v "ja") (n 1)),
-      .while (eLt (v "jbb") (v "jgc"))
-        (namesAlike fail ++ [.ite (v "jeq") [.assign "jok" (lit 0)] [], inc "jbb"]),
-      inc "ja"],
-   .ite (v "jok")
+     [.assign "jok" (lit 0)] []]
+
+/-- Group `ja`'s name against group `jbb`'s. -/
+def pairBody : List PStmt := namesAlike fail ++ [.ite (v "jeq") [.assign "jok" (lit 0)] [], inc "jbb"]
+
+/-- Group `ja`'s name against those after it. -/
+def pairRow : List PStmt :=
+  [.assign "jbb" (eAdd (v "ja") (n 1)), .while (eLt (v "jbb") (v "jgc")) (pairBody fail), inc "ja"]
+
+/-- No two group names alike. -/
+def pairsPart : List PStmt :=
+  [.assign "ja" (lit 0), .while (eAnd (v "jok") (eLt (v "ja") (v "jgc"))) (pairRow fail)]
+
+/-- The commit's fields into the area, its type into `jrec`. -/
+def storePart : List PStmt :=
+  [.ite (v "jok")
      [.assign "jrec" (lit commitType), setw sSeq (v "jseq"), setw sGroupCount (v "jgc"),
       setw sHeader (v "jhs"), setw sFileSize (v "jfs"), setw sCrc (v "jcrc")] []]
+
+/-- The commit the payload at `jpp`, `jpl` octets, holds, if it holds exactly one that a correct
+store writes: its fields into the area, and `jrec` set to the commit's type. -/
+def decode : List PStmt :=
+  seqPart ++ idPart ++ countPart ++ groupsPart fail ++ tailPart fail ++ exactPart ++ checkPart ++
+    pairsPart fail ++ storePart
 
 /-- The record the checked frame at `jf` holds, its type into `jrec`; else `jwhy` says it holds
 none. -/

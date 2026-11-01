@@ -16,7 +16,7 @@ namespace DN.Server.SessionClassify
 open DN.Compiler DN.Compiler.Wp DN.Compiler.WpRet DN.Compiler.Bytes DN.Compiler.Frag DN.News DN.News.WordsRun
   DN.News.FrameSpec DN.Server.SessionWords
 open DN.Server.SessionLayout (texts ownOff ownTexts ownRet conns connSlot cFramer)
-open DN.News.FramerCode (bw)
+open DN.News.FramerCode (bw bw_ne0 bw_eq0 eval_eq)
 
 variable {σ : Type}
 
@@ -74,9 +74,9 @@ theorem frag_bw (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.
     (htc : ∀ u y v, P' u → y ∈ declared t → P' (restore u y v)) (he : p = false → Frag o e P P')
     (hec : ∀ u y v, P' u → y ∈ declared e → P' (restore u y v)) : Frag o [.ite c t e] P P' :=
   frag_ite o hc hP' (fun s h => ⟨_, hev s h⟩)
-    (frag_pure (p = true) (fun s ⟨h, hne⟩ => by rw [hev s h] at hne; exact SessionCheck.bw_ne0 hne) hlt
+    (frag_pure (p = true) (fun s ⟨h, hne⟩ => by rw [hev s h] at hne; exact bw_ne0 hne) hlt
       fun hp => frag_conseq (ht hp) (fun _ h => h.1) fun _ h => h) htc
-    (frag_pure (p = false) (fun s ⟨h, h0⟩ => by rw [hev s h] at h0; exact SessionCheck.bw_eq0 h0) hle
+    (frag_pure (p = false) (fun s ⟨h, h0⟩ => by rw [hev s h] at h0; exact bw_eq0 h0) hle
       fun hp => frag_conseq (he hp) (fun _ h => h.1) fun _ h => h) hec
 
 /-! ### The state within -/
@@ -214,7 +214,7 @@ theorem fargs_eval {b : Word} {ci : Nat} {L : List Byte} {e u : PancakeState σ}
     eval u (.cmp .equal (.var "args") (.const (BitVec.ofNat 64 k))) =
       some (bw (decide ((spans L).length - 1 = k))) := by
   have := spans_length L
-  exact SessionCheck.eval_eq (by omega) (by omega) (by simp only [eval]; exact h.args) rfl
+  exact eval_eq (by omega) (by omega) (by simp only [eval]; exact h.args) rfl
 
 theorem fcmd {b : Word} {ci K : Nat} {L : List Byte} {e u : PancakeState σ} (he : VEntry b ci K L e)
     (h : FAt nms bnd offs R b ci L e u) (hc : "cmd" ∉ nms) : u.locals "cmd" = some (BitVec.ofNat 64 K) := by
@@ -247,7 +247,7 @@ theorem ne0_eval {u : PancakeState σ} {x : String} {n : Nat} (hn : n < 2 ^ 63)
     (h : u.locals x = some (BitVec.ofNat 64 n)) :
     eval u (.cmp .equal (.cmp .equal (.var x) (.const (BitVec.ofNat 64 0))) (.const (BitVec.ofNat 64 0))) =
       some (bw (decide (n ≠ 0))) := by
-  have e1 := SessionCheck.eval_eq (t := u) (a := .var x) (b := .const (BitVec.ofNat 64 0)) (x := n) (y := 0)
+  have e1 := eval_eq (t := u) (a := .var x) (b := .const (BitVec.ofNat 64 0)) (x := n) (y := 0)
     (by omega) (by decide) (by simp only [eval]; exact h) rfl
   simp only [eval] at e1 ⊢
   rw [e1]
