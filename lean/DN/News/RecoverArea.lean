@@ -268,12 +268,14 @@ theorem free_scalar : ∀ x ∈ scalarOffs, Free x ∧ x % 8 = 0 := by
   rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
 
-/-- Offsets of words a phase's state between stores lists: of what a step gives, and of the scanner's. -/
-def Known (x : Nat) : Prop := x ∈ outOffs ∨ (rScan ≤ x ∧ x < rSlots)
+/-- Offsets of words a phase's state between stores lists: of what a step gives, of the scanner's, and the number
+asked about. -/
+def Known (x : Nat) : Prop := x ∈ outOffs ∨ (rScan ≤ x ∧ x < rSlots) ∨ x = rSeq
 
 theorem out_range : ∀ x ∈ outOffs, x = rStatus ∨ (rAct ≤ x ∧ x ≤ rFaultLen) := by decide
 
-theorem known_range {x : Nat} (h : Known x) : (x = rStatus ∨ (rAct ≤ x ∧ x ≤ rFaultLen)) ∨ (rScan ≤ x ∧ x < rSlots) :=
+theorem known_range {x : Nat} (h : Known x) :
+    (x = rStatus ∨ (rAct ≤ x ∧ x ≤ rFaultLen)) ∨ (rScan ≤ x ∧ x < rSlots) ∨ x = rSeq :=
   h.elim (fun h => .inl (out_range x h)) .inr
 
 theorem free_out : ∀ x ∈ outOffs, Free x ∧ x % 8 = 0 := by
@@ -376,11 +378,11 @@ theorem rest_frame {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes} 
     exact h.high h5 y hy
 
 /-- Offsets of words `Rest` of `r` does not read: of `Free`, of the highest article numbers before the rules hold, of
-the scanner's before it reads, of the first group the configuration lacks while there is none, and of the slot after
-the commits'. -/
+the scanner's before it reads, the number asked about outside phases 9 and 12, of the first group the configuration
+lacks while there is none, and of the slot after the commits'. -/
 def Away (r : RSt) (x : Nat) : Prop :=
   Free x ∨ (rHigh ≤ x ∧ x < rScan ∧ r.phase < 5) ∨ (rScan ≤ x ∧ x < rSlots ∧ r.phase < 3) ∨
-    (rUnknownLen ≤ x ∧ x < rTorn ∧ r.unknown = none) ∨
+    (x = rSeq ∧ r.phase ≠ 9 ∧ r.phase ≠ 12) ∨ (rUnknownLen ≤ x ∧ x < rTorn ∧ r.unknown = none) ∨
     (slotAt r.commits.length ≤ x ∧ x < slotAt r.commits.length + slotSize ∧ r.commits.length < capacity)
 
 /-- A word `Rest` does not read is none it reads, and below the area's end. -/
@@ -400,10 +402,12 @@ theorem away_reads {r : RSt} {x y : Nat} (hx : Away r x) (hy : Reads r y) : y �
   have e15 : RecoverProg.size = 1730792 := rfl
   simp only [Away, Free, slotAt, e11] at hx
   simp only [Reads, e11] at hy
-  rcases hx with hx | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩
+  rcases hx with hx | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨rfl, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩
   · rcases hy with ⟨_, rfl⟩ | hy | ⟨_, hy⟩ | hy | hy | ⟨_, hy⟩ | hy <;> omega
   · rcases hy with ⟨_, rfl⟩ | hy | ⟨_, hy⟩ | hy | hy | ⟨_, _⟩ | hy <;> omega
   · rcases hy with ⟨_, rfl⟩ | hy | ⟨_, hy⟩ | hy | hy | ⟨_, _⟩ | hy <;> omega
+  · rcases hy with ⟨hp, rfl⟩ | hy | ⟨_, hy⟩ | hy | hy | ⟨_, hy⟩ | hy
+    all_goals first | omega | (rcases hp with hp | hp <;> contradiction)
   · rcases hy with ⟨_, rfl⟩ | hy | ⟨hs, hy⟩ | hy | hy | ⟨_, hy⟩ | hy
     all_goals first | omega | (rw [h3] at hs; cases hs)
   · have : r.commits.length * 416 ≤ 4095 * 416 := Nat.mul_le_mul_right _ (by omega)
@@ -439,6 +443,7 @@ theorem away_scan {r : RSt} {x : Nat} (hx : Away r x) (h3 : 3 ≤ r.phase) : x <
   have e13 : capacity = 4096 := rfl
   have e14 : rGroupCount = 632 := rfl
   have e15 : ScanProg.size = 21096 := rfl
+  have e2 : rSeq = 312 := rfl
   simp only [Away, Free, slotAt, e11] at hx
   omega
 
@@ -587,6 +592,30 @@ theorem rsc_kept {A : Word} {s0 u : PancakeState σ} (h : PBase A s0)
     {w : Word → Prop} (hk : Kept stepLocals w s0 u) : u.locals "rsc" = some A := by
   rw [hk.locals _ (by decide)]; exact h.rsc
 
+/-- The address `base + i * sz` into the area at `A`, the area's address in `rsc` and `i` in the local `x`. -/
+theorem index_eval {A : Word} {u : PancakeState σ} (hA : u.locals "rsc" = some A) {x : String} {i : Nat}
+    (hx : u.locals x = some (.ofNat 64 i)) (base sz : Nat) :
+    eval u (.op .add (.op .add (.var "rsc") (.const (.ofNat 64 base))) (.mul (.var x) (.const (.ofNat 64 sz)))) =
+      some (at_ A (base + i * sz)) := by
+  simp only [eval, hA, hx]
+  rw [← BitVec.ofNat_mul, BitVec.add_assoc, ← BitVec.ofNat_add]; rfl
+
+/-- The word at `base + i * sz` of the area read, it addressable. -/
+theorem load_index_eval {A : Word} {u : PancakeState σ} (hA : u.locals "rsc" = some A) {x : String} {i : Nat}
+    (hx : u.locals x = some (.ofNat 64 i)) {base sz : Nat} (hd : u.memaddrs (at_ A (base + i * sz)) = true) :
+    eval u (.loadWord (.op .add (.op .add (.var "rsc") (.const (.ofNat 64 base)))
+      (.mul (.var x) (.const (.ofNat 64 sz))))) = some (u.memory (at_ A (base + i * sz))) := by
+  show (match eval u _ with | some w => _ | none => none) = _
+  rw [index_eval hA hx base sz]
+  exact if_pos hd
+
+/-- A word of the area addressable where the step keeps the addresses. -/
+theorem area_dom {A : Word} {s0 u : PancakeState σ} (h : PBase A s0) (hk : u.memaddrs = s0.memaddrs) {x : Nat}
+    (hx : x < RecoverProg.size) (h8 : x % 8 = 0) : u.memaddrs (at_ A x) = true := by
+  have := h.dom x hx
+  rw [hk]; simp only [at_] at this ⊢
+  rwa [byteAlign_of_aligned h.hA (X := x) h8] at this
+
 theorem jz_kept {A : Word} {s0 u : PancakeState σ} (h : PBase A s0)
     {w : Word → Prop} (hk : Kept stepLocals w s0 u) : u.locals "jz" = some 0 := by
   rw [hk.locals _ (by decide)]; exact h.jz
@@ -621,8 +650,9 @@ theorem mid_set_and (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : R
   have hxs := (free_scalar x hx).1
   simp only [Free] at hxs
   have hne : q.1 ≠ x := by
-    rcases hu.outIn q hq with hq' | hq'
+    rcases hu.outIn q hq with hq' | hq' | hq'
     · exact fun e => apart x hx (by rw [← e]; exact hq')
+    · omega
     · omega
   have := known_range (hu.outIn q hq)
   rw [stW_word (x := x) (y := q.1) (by omega) (by omega) hne]
@@ -662,6 +692,52 @@ theorem mid_out (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} 
     rcases hq with rfl | hq
     · exact .inl hx
     · exact hu.outIn q hq
+
+/-- **The number asked about stored**, outside phases 9 and 12. -/
+theorem mid_seq (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
+    (h : PBase A s0) (hp : r.phase ≠ 9 ∧ r.phase ≠ 12) {ws : Nat → Word} {os : List (Nat × Word)}
+    {l : List (String × Value)} (hos : ∀ q ∈ os, q.1 ≠ rSeq) {e : Syntax.PExpr} {E : PancakeExp}
+    (he : Lower.lowerExp e = some E) {val : Word} (hv : ∀ u, Mid A cfg J r s0 ws os l u → eval u E = some val) :
+    Frag o [rset rSeq e] (Mid A cfg J r s0 ws os l) (Mid A cfg J r s0 ws ((rSeq, val) :: os) l) := by
+  have hn := nums
+  have hx64 : rSeq < RecoverProg.size := by decide
+  refine rset_frag o h.hA (by decide) hx64 he mid_clock fun u hu => ⟨rsc_kept h hu.kept,
+    by rw [hu.kept.memaddrs]; exact h.dom, val, hv u hu, kept_word hu.kept ⟨rSeq, hx64, rfl⟩ val, fun y hy => ?_,
+    fun q hq => ?_, fun q hq => ?_, rest_stW h.hA hu.rest (.inr (.inr (.inr (.inl ⟨rfl, hp⟩)))) (by decide) val,
+    hu.vals⟩
+  · have hq2 := (free_scalar _ hy).1
+    simp only [Free] at hq2
+    rw [stW_word (by omega) (by omega) (by omega)]
+    exact hu.words y hy
+  · simp only [List.mem_cons] at hq
+    rcases hq with rfl | hq
+    · simp [stW]
+    · have := known_range (hu.outIn q hq)
+      rw [stW_word (by omega) (by omega) (hos q hq)]; exact hu.outs q hq
+  · simp only [List.mem_cons] at hq
+    rcases hq with rfl | hq
+    · exact .inr (.inr rfl)
+    · exact hu.outIn q hq
+
+/-- The number asked about stored, of any value, outside phases 9 and 12. -/
+theorem mid_seq_any (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
+    (h : PBase A s0) (hp : r.phase ≠ 9 ∧ r.phase ≠ 12) {ws : Nat → Word} {os : List (Nat × Word)}
+    {l : List (String × Value)} (hos : ∀ q ∈ os, q.1 ≠ rSeq) {e : Syntax.PExpr} {E : PancakeExp}
+    (he : Lower.lowerExp e = some E) (hv : ∀ u, Mid A cfg J r s0 ws os l u → ∃ val, eval u E = some val) :
+    Frag o [rset rSeq e] (Mid A cfg J r s0 ws os l) (Mid A cfg J r s0 ws os l) := by
+  have hn := nums
+  have hx64 : rSeq < RecoverProg.size := by decide
+  refine rset_frag o h.hA (by decide) hx64 he mid_clock fun u hu => ?_
+  obtain ⟨val, hval⟩ := hv u hu
+  refine ⟨rsc_kept h hu.kept, by rw [hu.kept.memaddrs]; exact h.dom, val, hval,
+    kept_word hu.kept ⟨rSeq, hx64, rfl⟩ val, fun y hy => ?_, fun q hq => ?_, hu.outIn,
+    rest_stW h.hA hu.rest (.inr (.inr (.inr (.inl ⟨rfl, hp⟩)))) (by decide) val, hu.vals⟩
+  · have hq2 := (free_scalar _ hy).1
+    simp only [Free] at hq2
+    rw [stW_word (by omega) (by omega) (by omega)]
+    exact hu.words y hy
+  · have := known_range (hu.outIn q hq)
+    rw [stW_word (by omega) (by omega) (hos q hq)]; exact hu.outs q hq
 
 /-- A local of the step's set. -/
 theorem mid_assign (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
@@ -806,7 +882,7 @@ theorem mid_far {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeSta
   have hb := far_bounds hx
   have hxs : x < RecoverProg.size := by omega
   refine ⟨kept_word hu.kept ⟨x, hxs, rfl⟩ v, fun y hy => ?_, fun q hq => ?_, hu.outIn,
-    rest_stW h.hA hu.rest (.inr (.inr (.inr hx))) hx8 v, hu.vals⟩
+    rest_stW h.hA hu.rest (.inr (.inr (.inr (.inr hx)))) hx8 v, hu.vals⟩
   · have := (free_scalar y hy).1
     simp only [Free] at this
     rw [stW_word (by omega) (by omega) (by omega)]; exact hu.words y hy

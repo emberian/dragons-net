@@ -192,8 +192,8 @@ def files (r : RSt) : RSt × Option ROut :=
   | none => ({ r with phase := 6 }, none)
   | some c =>
     if r.wait then
-      if !r.found then (r, some (.refused (.missingFile c.seq)))
-      else if r.fileSize ≠ c.fileSize then (r, some (.refused (.wrongSize c.seq)))
+      if !r.found then ({ r with wait := false }, some (.refused (.missingFile c.seq)))
+      else if r.fileSize ≠ c.fileSize then ({ r with wait := false }, some (.refused (.wrongSize c.seq)))
       else ({ r with wait := false, i := r.i + 1 }, none)
     else ({ r with seq := c.seq, wait := true }, some (.askFile c.seq))
 

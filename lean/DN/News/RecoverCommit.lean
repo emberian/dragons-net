@@ -79,8 +79,9 @@ theorem mid_swOut {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeS
     (hxs : x < ScanProg.size) : eval u (swE x) = some v := by
   rw [mid_sw h hu h8 hxs]; have e := hu.outs _ hm; dsimp only at e; rw [e]
 
-theorem hos_fst {os : List (Nat × Word)} {x : Nat} (h : ∀ k ∈ os.map Prod.fst, k ≠ x) : ∀ q ∈ os, q.1 ≠ x :=
-  fun q hq => h q.1 (List.mem_map_of_mem hq)
+/-- Offsets `os` lists, none of them `x`: checked by evaluation. -/
+theorem apart_of {x : Nat} {os : List (Nat × Word)} (h : (os.map Prod.fst).all (fun y => decide (y ≠ x)) = true) :
+    ∀ q ∈ os, q.1 ≠ x := fun q hq => of_decide_eq_true (List.all_eq_true.1 h q.1 (List.mem_map_of_mem hq))
 
 /-! ## What lowers -/
 
@@ -573,20 +574,17 @@ theorem search_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : R
           (.mul (.var "rc") (.const (.ofNat 64 rGroupSlot)))) rfl
         (F := fun u => ScanRun.Vals u L ∧ G u ∧ k < cfg.groups.length)
         (F' := fun u => ScanRun.Vals u (("rcp", pa) :: L) ∧ G u ∧ k < cfg.groups.length)
-        (fun s k' ⟨h1, h2, h3⟩ => ⟨h1, hGc s k' h2, h3⟩) fun u hu ⟨hvs, hg, hk'⟩ => ⟨pa, by
-          simp only [eval, rsc_kept h hu.kept, vals_lookup hvs (lookup_head _ _ _)]
-          rw [← BitVec.ofNat_mul, BitVec.add_assoc, ← BitVec.ofNat_add]; rfl,
+        (fun s k' ⟨h1, h2, h3⟩ => ⟨h1, hGc s k' h2, h3⟩) fun u hu ⟨hvs, hg, hk'⟩ => ⟨pa,
+          index_eval (rsc_kept h hu.kept) (vals_lookup hvs (lookup_head _ _ _)) rGroups rGroupSlot,
           ScanRun.vals_cons hvs (fresh_cons (by decide) (fresh_cons (by decide) (hfr "rcp" (by decide)))) _,
           hGs u _ _ (by decide) hg, hk'⟩)
         (fun u ⟨h1, h2, h3, _⟩ => ⟨h1, h2, h3, hk⟩) fun _ h => h) ?_
     let N : Assn σ := fun u => Mid A cfg J r s0 ws os l u ∧ ScanRun.Vals u (("rcp", pa) :: L1) ∧ G u ∧
       k < cfg.groups.length
     have hNc : Safe.ClockFree N := fun s k ⟨h1, h2, h3, h4⟩ => ⟨mid_clock s k h1, h2, hGc s k h3, h4⟩
-    have hdom : ∀ u, Mid A cfg J r s0 ws os l u → u.memaddrs pa = true := fun u hu => by
-      have := h.dom (rGroups + k * rGroupSlot) (by omega)
-      rw [hu.kept.memaddrs]; simp only [pa, at_] at this ⊢
+    have hdom : ∀ u, Mid A cfg J r s0 ws os l u → u.memaddrs pa = true := fun u hu =>
       have h72 : k * rGroupSlot = k * 72 := rfl
-      rwa [byteAlign_of_aligned h.hA (X := rGroups + k * rGroupSlot) (by rw [h72]; omega)] at this
+      area_dom h hu.kept.memaddrs (by omega) (by rw [h72]; omega)
     refine frag_append (xs := [_]) (M := N) (frag_if o (C := .cmp .equal (.loadWord (.var "rcp")) (.var "rgl")) rfl
       (lowK_any _ (k := .skip) (c := _) rfl) (fun k => ⟨k, rfl⟩) rfl rfl hNc
       (b := decide (cfg.groups[k].length = name.length)) (fun u ⟨hu, hvs, _, _⟩ => by

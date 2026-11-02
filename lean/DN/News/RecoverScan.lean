@@ -76,7 +76,7 @@ theorem mid_after {A : Word} {cfg : Config} {J : Bytes} {r r' : RSt} {s0 u : Pan
     rw [← at_at]; exact scanAt_mem hxs p hp
   · obtain ⟨p, hp, rfl⟩ := List.mem_map.1 hq
     have := of_decide_eq_true (List.all_eq_true.1 hb p.1 (List.mem_map_of_mem hp))
-    exact .inr ⟨Nat.le_add_right _ _, by omega⟩
+    exact .inr (.inl ⟨Nat.le_add_right _ _, by omega⟩)
   · simp only [List.mem_singleton] at hq; subst hq; exact hrgo
 
 theorem valid_want0 {J : Bytes} {st st' : St} {n : Nat} (hv : Valid J st) (h : stepSpec J st = .want st' n) :
@@ -259,7 +259,7 @@ theorem scanning_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fa
     refine frag_if o (C := .cmp .equal (.var "rst") (.const (.ofNat 64 ScanProg.wanted))) rfl
       (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_rest hfl) rfl rfl pout_clock
       (b := true) (fun u hu => rst_eval (by decide) (by decide) u hu) (fun _ => ?_) fun e => absurd e (by decide)
-    exact frag_conseq (stop_frag o hb asksOctets (hos_fst (by simp only [List.map]; decide))) (fun _ h => h)
+    exact frag_conseq (stop_frag o hb asksOctets (apart_of (by rfl))) (fun _ h => h)
       fun u hu => mid_end hu (offs_all (by and_intros <;> rfl)) (fun hr => hr)
         ⟨vals_lookup hu.vals rfl, outs_lookup hu.outs rfl, outs_lookup hu.outs rfl⟩
   case record rec st' =>
@@ -411,15 +411,15 @@ theorem scanning_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fa
         (lowK_any _ (k := .skip) (c := _) rfl) (lowK_any _ (k := .skip) (c := _) rfl) rfl rfl pout_clock (b := true)
         (fun u hu => by rw [rst_eval (by decide) (by decide) u hu]; rfl) (fun _ => ?_) fun e => absurd e (by decide)
       refine frag_append (xs := [_]) (mid_out o hb (x := rFaultA) (by decide)
-        (hos_fst (by simp only [List.map]; decide)) (sw_lower _) (val := .ofNat 64 p)
+        (apart_of (by rfl)) (sw_lower _) (val := .ofNat 64 p)
         fun u hu => mid_swOut hb hu (by simp) (by decide) (by decide)) ?_
       refine frag_append (xs := [_]) (mid_out o hb (x := rFaultB) (by decide)
-        (hos_fst (by simp only [List.map]; decide)) (sw_lower _) (val := .ofNat 64 (ScanProg.whyCode w))
+        (apart_of (by rfl)) (sw_lower _) (val := .ofNat 64 (ScanProg.whyCode w))
         fun u hu => mid_swOut hb hu (by simp) (by decide) (by decide)) ?_
       refine frag_append (xs := [_]) (mid_out o hb (x := rFault) (by decide)
-        (hos_fst (by simp only [List.map]; decide)) (E := .const (.ofNat 64 (faultCode (.journal 0 .short)))) rfl
+        (apart_of (by rfl)) (E := .const (.ofNat 64 (faultCode (.journal 0 .short)))) rfl
         fun _ _ => rfl) ?_
-      exact frag_conseq (stop_frag o hb refused (hos_fst (by simp only [List.map]; decide))) (fun _ h => h)
+      exact frag_conseq (stop_frag o hb refused (apart_of (by rfl))) (fun _ h => h)
         fun u hu => mid_end hu (fun _ _ => rfl) (fun hr => hr) ⟨vals_lookup hu.vals rfl, outs_lookup hu.outs rfl,
           outs_lookup hu.outs rfl, outs_lookup hu.outs rfl, outs_lookup hu.outs rfl⟩
 

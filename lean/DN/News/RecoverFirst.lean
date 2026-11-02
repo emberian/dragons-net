@@ -511,36 +511,35 @@ theorem highZ_scalar {A : Word} {u : PancakeState σ} (h : HighZ A u) {y : Nat} 
 def freshSets (synced : Bool) : List (Nat × Nat) :=
   [(rFresh, 1), (rNext, 1), (rJournalEnd, firstFrame), (rI, 0), (rWait, if synced then 1 else 0)]
 
-/-- **A new journal**: phase 10 next, and no group with an article number yet. -/
-theorem fresh_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
-    (h : PBase A s0) (hp : r.phase < 5) {ws : Nat → Word} {os : List (Nat × Word)} {l : List (String × Value)}
-    (synced : Bool) :
-    Frag o (RecoverProg.fresh synced) (Mid A cfg J r s0 ws os l)
-      (fun u => Mid A cfg J r s0 (upd ((freshSets synced).foldl (fun ws p => upd ws p.1 (.ofNat 64 p.2)) ws) rPhase
-        (.ofNat 64 10)) os (("rc", .ofNat 64 groupsMax) :: without "rc" l) u ∧ HighZ A u) := by
+/-- **The highest numbers all zero**, `rc` past them. -/
+theorem zeroHigh_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
+    (h : PBase A s0) (hp : r.phase < 5) {ws : Nat → Word} {os : List (Nat × Word)} {l : List (String × Value)} :
+    Frag o RecoverProg.zeroHigh (Mid A cfg J r s0 ws os l)
+      (fun u => Mid A cfg J r s0 ws os (("rc", .ofNat 64 groupsMax) :: without "rc" l) u ∧ HighZ A u) := by
   have hn := nums
-  let ws5 := (freshSets synced).foldl (fun ws p => upd ws p.1 (.ofNat 64 p.2)) ws
-  refine frag_append (xs := (freshSets synced).map fun p => rset p.1 (Syntax.n p.2))
-    (mid_consts o h (freshSets synced) ws (by cases synced <;> decide)) ?_
   refine frag_append (xs := [_]) (mid_assign o h (y := "rc") (by decide)
     (E := .op .add (.var "jz") (.const (.ofNat 64 0))) rfl (val := .ofNat 64 0)
     fun u hu => by simp [eval, jz_kept h hu.kept]) ?_
-  let I (i : Nat) : Assn σ := fun u => Mid A cfg J r s0 ws5 os (("rc", .ofNat 64 i) :: without "rc" l) u ∧
+  let I (i : Nat) : Assn σ := fun u => Mid A cfg J r s0 ws os (("rc", .ofNat 64 i) :: without "rc" l) u ∧
     (∀ x, x < i → u.memory (at_ A (rHigh + x * 8)) = 0) ∧ i ≤ groupsMax
   have hIc : ∀ i, Safe.ClockFree (I i) := fun _ s k ⟨h1, h2⟩ => ⟨mid_clock s k h1, h2⟩
-  have hbody : ∀ i, decide (i < groupsMax) = true → Frag o
-      [.store (Syntax.eAdd (Syntax.atOff rp rHigh) (Syntax.eMul (Syntax.v "rc") (Syntax.n 8))) (Syntax.n 0),
-       ScanProg.inc "rc"] (I i) (I (i + 1)) := fun i hi => by
-    simp only [decide_eq_true_eq] at hi
-    let M (u : PancakeState σ) : Prop := Mid A cfg J r s0 ws5 os (("rc", .ofNat 64 i) :: without "rc" l) u ∧
+  refine frag_conseq (frag_count o (c := Syntax.eLt (Syntax.v "rc") (Syntax.n groupsMax))
+    (C := .cmp .less (.var "rc") (.const (.ofNat 64 groupsMax))) rfl (lowK_any _ (k := .skip) (c := _) rfl) hIc
+    (fun i => noDecl (P' := I i) _ rfl) (g := fun i => decide (i < groupsMax))
+    (fun i u ⟨hu, _, _⟩ => by
+      rw [FramerCode.eval_lt (t := u) (a := .var "rc") (b := .const _) (x := i) (y := groupsMax) (by omega)
+        (by decide) (ScanRun.vals_lookup hu.vals (by simp)) rfl]; rfl) (fun i hi => ?_) 0)
+    (fun u hu => ⟨hu, fun _ h => absurd h (Nat.not_lt_zero _), Nat.zero_le _⟩) fun u ⟨i, ⟨hu, hz, hi⟩, hg⟩ => by
+      have : i = groupsMax := by simp only [decide_eq_false_iff_not] at hg; omega
+      subst this; exact ⟨hu, hz⟩
+  · simp only [decide_eq_true_eq] at hi
+    let M (u : PancakeState σ) : Prop := Mid A cfg J r s0 ws os (("rc", .ofNat 64 i) :: without "rc" l) u ∧
       (∀ x, x < i + 1 → u.memory (at_ A (rHigh + x * 8)) = 0)
     have hMc : Safe.ClockFree M := fun s k ⟨h1, h2⟩ => ⟨mid_clock s k h1, h2⟩
     refine frag_append (xs := [_]) (M := M) (store_frag o (D := .op .add (.op .add (.var "rsc")
       (.const (.ofNat 64 rHigh))) (.mul (.var "rc") (.const (.ofNat 64 8)))) (E := .const (.ofNat 64 0)) rfl rfl hMc
       fun u ⟨hu, hz, _⟩ => ⟨at_ A (rHigh + i * 8), 0, ?_, rfl, ?_, mid_high h hp hu hi 0, fun x hx => ?_⟩) ?_
-    · have hrc : u.locals "rc" = some (.ofNat 64 i) := ScanRun.vals_lookup hu.vals (by simp)
-      simp only [eval, rsc_kept h hu.kept, hrc]
-      rw [← BitVec.ofNat_mul, BitVec.add_assoc, ← BitVec.ofNat_add]; rfl
+    · exact index_eval (rsc_kept h hu.kept) (ScanRun.vals_lookup hu.vals (by simp)) rHigh 8
     · have := h.dom (rHigh + i * 8) (by omega)
       rw [hu.kept.memaddrs]; simp only [at_] at this ⊢
       rwa [byteAlign_of_aligned h.hA (X := rHigh + i * 8) (by omega)] at this
@@ -555,18 +554,17 @@ theorem fresh_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RS
             u.memory (at_ A (rHigh + x * 8)) = 0) (fun _ _ h => h) fun _ h => h)
         (fun u hu => hu) fun u ⟨hu, hz⟩ => ⟨mid_vals hu fun q hq => ?_, hz, by omega⟩
       rw [without_cons_self]; exact hq
-  refine frag_append (xs := [_]) (M := fun u => ∃ i, I i u ∧ decide (i < groupsMax) = false)
-    (frag_conseq (frag_count o (c := Syntax.eLt (Syntax.v "rc") (Syntax.n groupsMax))
-      (C := .cmp .less (.var "rc") (.const (.ofNat 64 groupsMax))) rfl (lowK_any _ (k := .skip) (c := _) rfl) hIc
-      (fun i => noDecl (P' := I i) _ rfl) (g := fun i => decide (i < groupsMax))
-      (fun i u ⟨hu, _, _⟩ => by
-        rw [FramerCode.eval_lt (t := u) (a := .var "rc") (b := .const _) (x := i) (y := groupsMax) (by omega)
-          (by decide) (ScanRun.vals_lookup hu.vals (by simp)) rfl]; rfl) hbody 0)
-      (fun u hu => ⟨hu, fun _ h => absurd h (Nat.not_lt_zero _), Nat.zero_le _⟩) fun _ h => h) ?_
-  refine frag_conseq (P0 := fun u => Mid A cfg J r s0 ws5 os (("rc", .ofNat 64 groupsMax) :: without "rc" l) u ∧
-    HighZ A u) ?_ (fun u ⟨i, ⟨hu, hz, hi⟩, hg⟩ => by
-      have : i = groupsMax := by simp only [decide_eq_false_iff_not] at hg; omega
-      subst this; exact ⟨hu, hz⟩) fun _ h => h
+
+/-- **A new journal**: phase 10 next, and no group with an article number yet. -/
+theorem fresh_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
+    (h : PBase A s0) (hp : r.phase < 5) {ws : Nat → Word} {os : List (Nat × Word)} {l : List (String × Value)}
+    (synced : Bool) :
+    Frag o (RecoverProg.fresh synced) (Mid A cfg J r s0 ws os l)
+      (fun u => Mid A cfg J r s0 (upd ((freshSets synced).foldl (fun ws p => upd ws p.1 (.ofNat 64 p.2)) ws) rPhase
+        (.ofNat 64 10)) os (("rc", .ofNat 64 groupsMax) :: without "rc" l) u ∧ HighZ A u) := by
+  refine frag_append (xs := (freshSets synced).map fun p => rset p.1 (Syntax.n p.2))
+    (mid_consts o h (freshSets synced) ws (by cases synced <;> decide)) ?_
+  refine frag_append (xs := RecoverProg.zeroHigh) (zeroHigh_frag o h hp) ?_
   exact mid_set_and o h (x := rPhase) (by decide) (E := .const (.ofNat 64 10)) rfl (fun _ _ _ => rfl)
     (fun _ _ h => h) fun u v hz => highZ_scalar hz (by decide) v
 

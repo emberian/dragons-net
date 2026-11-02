@@ -124,6 +124,10 @@ theorem phase_renamed (h : r.phase = 12) : phase cfg J r = renamed r := by unfol
 /-- Phase 13 is `askNext`. -/
 theorem phase_askNext (h : r.phase = 13) : phase cfg J r = askNext r := by unfold phase; rw [h]
 
+/-- A phase past 12 is `askNext`. -/
+theorem phase_late (h : 13 ≤ r.phase) : phase cfg J r = askNext r := by
+  unfold phase; split <;> first | rfl | omega
+
 end Phases
 
 /-! ## The first pass -/
@@ -522,14 +526,14 @@ theorem files_drives {cs : List Commit} {h : Host} {x : Except Fault (Store × L
         simp [hc, hi, hcs, hsz]
     have hsize : ∀ fl : Bytes, fl.length ≠ cs[i].fileSize →
         phase cfg J { r with seq := cs[i].seq, wait := true, found := true, fileSize := fl.length } =
-          ({ r with seq := cs[i].seq, wait := true, found := true, fileSize := fl.length },
+          ({ r with seq := cs[i].seq, wait := false, found := true, fileSize := fl.length },
             some (.refused (.wrongSize cs[i].seq))) :=
       fun fl hsz => by
         rw [phase_files (r := { r with seq := cs[i].seq, wait := true, found := true, fileSize := fl.length }) hph,
           files]
         simp [hc, hi, hcs, hsz]
     have hmiss : phase cfg J { r with seq := cs[i].seq, wait := true, found := false, fileSize := 0 } =
-        ({ r with seq := cs[i].seq, wait := true, found := false, fileSize := 0 },
+        ({ r with seq := cs[i].seq, wait := false, found := false, fileSize := 0 },
           some (.refused (.missingFile cs[i].seq))) := by
       rw [phase_files (r := { r with seq := cs[i].seq, wait := true, found := false, fileSize := 0 }) hph, files]
       simp [hc, hi, hcs]
