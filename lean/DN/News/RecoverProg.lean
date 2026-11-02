@@ -11,9 +11,10 @@ something of its caller — the next name of the directory, the journal's length
 journal for its scanner (`DN.News.ScanProg`), whether an article's final file is there and its size,
 whether a name set aside is — or has something for it: an action, a number set aside, the store it
 starts with, or why it does not start. Commits go into the index, a slot each. The configuration's
-key is of sixteen octets, so `badKey` is never found. Tested against `dn-compiler recovery-model`,
-not proven. As the scanner does, it checks each word it reads back before it makes an address of
-it, and runs `fail` on one out of range.
+key is of sixteen octets, so `badKey` is never found. Tested against `dn-compiler recovery-model`;
+phases 0 to 3 are shown to be `DN.News.RecoverSpec.phase`'s, if they end (`DN.News.RecoverScan`). As the
+scanner does, it checks each word it reads back before it makes an address of it, and runs `fail` on one
+out of range.
 -/
 
 namespace DN.News.RecoverProg
@@ -226,55 +227,64 @@ def journalGiven : List PStmt :=
 section
 variable (fail : List PStmt)
 
+/-- A commit's number, sizes, CRC and lengths into its slot at `rsl`, its Message-ID copied after them, and the
+inputs of its tag: the key, the Message-ID in the window and its length. -/
+def slotHead : List PStmt :=
+  [.store (v "rsl") (sw ScanProg.sSeq),
+   .store (atOff (v "rsl") slotSizes)
+     (eOr (.shl (sw ScanProg.sHeader) (n 32)) (sw ScanProg.sFileSize)),
+   .assign "rgc" (sw ScanProg.sGroupCount), kept fail "rgc" ScanProg.groupsMax,
+   .assign "ril" (sw ScanProg.sIdLen), kept fail "ril" 250,
+   .assign "rio" (sw ScanProg.sIdAt), kept fail "rio" ScanProg.windowRoom,
+   .assign "rwp" (atOff (v "jsc") ScanProg.sWindow),
+   .store (atOff (v "rsl") slotMisc) (eOr (eOr (.shl (sw ScanProg.sCrc) (n 16))
+     (.shl (v "ril") (n 8))) (v "rgc")),
+   .assign "rj" (lit 0),
+   .while (eLt (v "rj") (v "ril"))
+     [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
+        (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
+   .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
+   .assign "n" (v "ril")]
+
+/-- Group `rg` of the commit: its place in the configuration found, the first group the configuration lacks noted,
+and the place and article number into the slot. -/
+def groupNote : List PStmt :=
+  [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
+     (eMul (v "rg") (n ScanProg.groupSlot))),
+   .assign "rga" (.loadw 1 (v "rgs")), kept fail "rga" ScanProg.windowRoom,
+   .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)), kept fail "rgl" groupNameMax,
+   .assign "rx" (lit groupsMax), .assign "rc" (lit 0), .assign "rgn" (rw rGroupCount),
+   .ite (eLt (n groupsMax) (v "rgn")) [.assign "rgn" (lit groupsMax)] [],
+   .while (eLt (v "rc") (v "rgn"))
+     [.assign "rcp" (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))),
+      .ite (eEq (.loadw 1 (v "rcp")) (v "rgl"))
+        [.assign "rok" (lit 1), .assign "rj" (lit 0),
+         .while (eLt (v "rj") (v "rgl"))
+           [.ite (ne (.loadb (eAdd (atOff (v "rcp") 8) (v "rj")))
+               (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))))
+             [.assign "rok" (lit 0)] [],
+            inc "rj"],
+         .ite (v "rok") [.assign "rx" (v "rc")] []] [],
+      inc "rc"],
+   .ite (eEq (v "rx") (n groupsMax))
+     [.ite (rw rUnknown) []
+       [rset rUnknown (n 1), rset rUnknownLen (v "rgl"), .assign "rj" (lit 0),
+        .while (eLt (v "rj") (v "rgl"))
+          [.storeb (eAdd (atOff rp rUnknownName) (v "rj"))
+             (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))), inc "rj"]]] [],
+   .store (eAdd (atOff (v "rsl") slotGroups) (eMul (v "rg") (n 8)))
+     (eOr (.shl (v "rx") (n 32)) (.loadw 1 (atOff (v "rgs") 16))),
+   inc "rg"]
+
 /-- A commit read: into its slot while there is one, its Message-ID's tag under the key, so that
 two are compared by a word, its groups by their index in the configuration, and the first group
 the configuration lacks noted. -/
 def commitRead : List PStmt :=
   [.assign "rcm" (eAdd (rw rCommits) (n 1)), rset rCommits (v "rcm"),
    .ite (eAnd (eLt (n 0) (v "rcm")) (eLe (v "rcm") (n Recovery.capacity)))
-     ([slotOf (eSub (v "rcm") (n 1)), .store (v "rsl") (sw ScanProg.sSeq),
-       .store (atOff (v "rsl") slotSizes)
-         (eOr (.shl (sw ScanProg.sHeader) (n 32)) (sw ScanProg.sFileSize)),
-       .assign "rgc" (sw ScanProg.sGroupCount), kept fail "rgc" ScanProg.groupsMax,
-       .assign "ril" (sw ScanProg.sIdLen), kept fail "ril" 250,
-       .assign "rio" (sw ScanProg.sIdAt), kept fail "rio" ScanProg.windowRoom,
-       .assign "rwp" (atOff (v "jsc") ScanProg.sWindow),
-       .store (atOff (v "rsl") slotMisc) (eOr (eOr (.shl (sw ScanProg.sCrc) (n 16))
-         (.shl (v "ril") (n 8))) (v "rgc")),
-       .assign "rj" (lit 0),
-       .while (eLt (v "rj") (v "ril"))
-         [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
-            (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
-       .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
-       .assign "n" (v "ril")] ++ SipProg.sipSrc ++
+     ([slotOf (eSub (v "rcm") (n 1))] ++ slotHead fail ++ SipProg.sipSrc ++
       [.store (atOff (v "rsl") slotTag) (v "r"), .assign "rg" (lit 0),
-       .while (eLt (v "rg") (v "rgc"))
-         [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
-            (eMul (v "rg") (n ScanProg.groupSlot))),
-          .assign "rga" (.loadw 1 (v "rgs")), kept fail "rga" ScanProg.windowRoom,
-          .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)), kept fail "rgl" groupNameMax,
-          .assign "rx" (lit groupsMax), .assign "rc" (lit 0), .assign "rgn" (rw rGroupCount),
-          .ite (eLt (n groupsMax) (v "rgn")) [.assign "rgn" (lit groupsMax)] [],
-          .while (eLt (v "rc") (v "rgn"))
-            [.assign "rcp" (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))),
-             .ite (eEq (.loadw 1 (v "rcp")) (v "rgl"))
-               [.assign "rok" (lit 1), .assign "rj" (lit 0),
-                .while (eLt (v "rj") (v "rgl"))
-                  [.ite (ne (.loadb (eAdd (atOff (v "rcp") 8) (v "rj")))
-                      (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))))
-                    [.assign "rok" (lit 0)] [],
-                   inc "rj"],
-                .ite (v "rok") [.assign "rx" (v "rc")] []] [],
-             inc "rc"],
-          .ite (eEq (v "rx") (n groupsMax))
-            [.ite (rw rUnknown) []
-              [rset rUnknown (n 1), rset rUnknownLen (v "rgl"), .assign "rj" (lit 0),
-               .while (eLt (v "rj") (v "rgl"))
-                 [.storeb (eAdd (atOff rp rUnknownName) (v "rj"))
-                    (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))), inc "rj"]]] [],
-          .store (eAdd (atOff (v "rsl") slotGroups) (eMul (v "rg") (n 8)))
-            (eOr (.shl (v "rx") (n 32)) (.loadw 1 (atOff (v "rgs") 16))),
-          inc "rg"]]) []]
+       .while (eLt (v "rg") (v "rgc")) (groupNote fail)]) []]
 
 /-- Phase 3: the scanner run until it wants octets or the journal ends. -/
 def scanning : List PStmt :=

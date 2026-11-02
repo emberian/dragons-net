@@ -276,4 +276,18 @@ theorem flagIf_frag (o : Oracle σ) {x : String} {body : List Syntax.PStmt} (hl 
       | false => exact he rfl u hu)
     (noDecl _ rfl)
 
+/-- **A branch on a flag known**: its arm when the flag is set, the other when not. -/
+theorem frag_if (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
+    {t e : List Syntax.PStmt} (hlt : LowKK t) (hle : LowKK e) (hdt : declared t = []) (hde : declared e = [])
+    {P Q : Assn σ} (hQ : Safe.ClockFree Q) {b : Bool} (hv : ∀ u, P u → eval u C = some (bw b))
+    (ht : b = true → Frag o t P Q) (he : b = false → Frag o e P Q) : Frag o [.ite c t e] P Q := by
+  refine frag_ite o hc hQ (fun u hu => ⟨_, hv u hu⟩) ?_ (noDecl _ hdt) ?_ (noDecl _ hde)
+  · cases b with
+    | true => exact frag_conseq (ht rfl) (fun u h => h.1) fun _ h => h
+    | false => exact frag_unsat hlt fun u ⟨hu, hne⟩ => hne (by rw [hv u hu]; rfl)
+  · cases b with
+    | true => exact frag_unsat hle fun u ⟨hu, h0⟩ =>
+        absurd (Option.some.inj ((hv u hu).symm.trans h0)) (by decide)
+    | false => exact frag_conseq (he rfl) (fun u h => h.1) fun _ h => h
+
 end DN.News.ScanRun

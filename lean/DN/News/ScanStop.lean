@@ -304,7 +304,7 @@ theorem stopped_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panc
     simp only [eval]; exact vals_lookup hu.vals rfl
   have s4 : Frag o [ScanProg.stopStatus] (Ctx A J st s0 (("jtorn", bw tb) :: R)) (StopOut A J st s0 why) := by
     refine frag_ite o (C := .var "jtorn") rfl hSc (fun u hu => ⟨_, hjt u hu⟩) ?_ (noDecl _ rfl) ?_ (noDecl _ rfl)
-    · refine setw_frag o h.hA (by decide) (by decide) (by decide) (E := .const (BitVec.ofNat 64 torn)) rfl hSc
+    · refine setw_frag o h.hA (by decide) (by decide) (E := .const (BitVec.ofNat 64 torn)) rfl hSc
         fun u ⟨hu, hne⟩ => ⟨ctx_jsc h hu, ctx_dom h hu, _, rfl, ?_⟩
       rw [hjt u hu] at hne
       have htb := bw_ne0 hne
@@ -318,10 +318,10 @@ theorem stopped_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panc
       let Q1 (u : PancakeState σ) : Prop := Ctx A J st s0 (("jtorn", bw tb) :: R) u ∧
         u.memory (at_ A sStatus) = BitVec.ofNat 64 corrupt
       have hQ1c : Safe.ClockFree Q1 := fun _ _ ⟨h1, h2⟩ => ⟨ctx_clock _ _ h1, h2⟩
-      refine frag_append (xs := [_]) (setw_frag o h.hA (by decide) (by decide) (by decide)
+      refine frag_append (xs := [_]) (setw_frag o h.hA (by decide) (by decide)
         (E := .const (BitVec.ofNat 64 corrupt)) rfl hQ1c fun u ⟨hu, _⟩ => ⟨ctx_jsc h hu, ctx_dom h hu, _, rfl,
           ctx_word h hu (x := sStatus) (Nat.le_refl _) (by decide) _, by simp⟩)
-        (setw_frag o h.hA (by decide) (by decide) (by decide) (E := .var "jmw") rfl hSc fun u hu =>
+        (setw_frag o h.hA (by decide) (by decide) (E := .var "jmw") rfl hSc fun u hu =>
           ⟨ctx_jsc h hu.1, ctx_dom h hu.1, wc, by simp only [eval]; exact vals_lookup hu.1.vals (x := "jmw") rfl, ?_⟩)
       have htb' : tornHere spec st.pos (J.drop st.pos) st.key why = false := by rw [← hbs, ← htbd]; exact htb
       have hu' := ctx_word h hu.1 (by decide) (by decide) (x := sWhy) wc
@@ -369,7 +369,7 @@ theorem step_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Pancake
   refine frag_ite o (C := .cmp .equal (.var "jrem") (.const 0)) rfl hSc (fun u hu => ⟨_, hev0 u hu⟩) ?_
     (noDecl _ rfl) ?_ (noDecl _ rfl)
   · -- the journal's end
-    refine setw_frag o h.hA (by decide) (by decide) (by decide) (E := .const (BitVec.ofNat 64 clean)) rfl hSc
+    refine setw_frag o h.hA (by decide) (by decide) (E := .const (BitVec.ofNat 64 clean)) rfl hSc
       fun u ⟨hu, hne⟩ => ⟨kept_jsc h hu.kept, kept_dom h hu.kept, _, rfl, ?_⟩
     rw [hev0 u hu] at hne
     have h0 : J.length ≤ st.pos := by have := bw_ne0 hne; simp at this; omega

@@ -36,23 +36,11 @@ structure AreaAt (A : Word) (J : Bytes) (st : St) (s : PancakeState σ) : Prop w
   window : ∀ i, i < st.len → memLoadByte s.memory s.memaddrs s.be (at_ A (sWindow + i)) = some (J.getD (st.base + i) 0)
   key : ∀ k, st.key = some k → readByteArray s.memory s.memaddrs s.be (at_ A sKey) 16 = some k
 
-theorem at_zero (A : Word) : at_ A 0 = A := by simp [at_]
-
 /-- A word of the area, read. -/
 theorem e_word {u : PancakeState σ} {A : Word} (hA : A.toNat % 8 = 0) (hd : Dom A u.memaddrs)
     (hsp : u.locals "jsc" = some A) {x : Nat} (hx : x % 8 = 0) (hxs : x < ScanProg.size) :
-    ∃ E, Lower.lowerExp (ScanProg.word x) = some E ∧ eval u E = some (u.memory (at_ A x)) := by
-  have hdm : u.memaddrs (at_ A x) = true := by
-    have := hd x hxs; rwa [at_, byteAlign_of_aligned hA hx] at this
-  by_cases h0 : x = 0
-  · subst h0
-    refine ⟨.loadWord (.var "jsc"), rfl, ?_⟩
-    rw [at_zero] at hdm ⊢
-    simp [eval, hsp, hdm]
-  · refine ⟨.loadWord (.op .add (.var "jsc") (.const (BitVec.ofNat 64 x))), by
-      simp [ScanProg.word, ScanProg.sp, Syntax.atOff, h0, Lower.lowerExp, Syntax.eAdd, Syntax.n, Syntax.v], ?_⟩
-    simp only [eval, hsp, at_] at hdm ⊢
-    simp [hdm]
+    ∃ E, Lower.lowerExp (ScanProg.word x) = some E ∧ eval u E = some (u.memory (at_ A x)) :=
+  e_loadw hA hd hsp hx hxs
 
 /-- What a step needs: the area at `A` holding a state of reading `J` that keeps its window, a journal
 shorter than `2 ^ 62` octets, and the step's locals. -/
@@ -191,16 +179,12 @@ theorem areaAt_keep {A : Word} (hA : A.toNat % 8 = 0) {J : Bytes} {st : St} {u u
 
 /-- A word of the area stored. -/
 theorem setw_frag (o : Oracle σ) {A : Word} (hA : A.toNat % 8 = 0) {x : Nat} (hx : x % 8 = 0)
-    (hxs : x < ScanProg.size) (hx0 : x ≠ 0) {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E)
+    (hxs : x < ScanProg.size) {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E)
     {P P' : Assn σ} (hP' : Safe.ClockFree P')
     (h : ∀ u, P u → u.locals "jsc" = some A ∧ Dom A u.memaddrs ∧ ∃ val, eval u E = some val ∧
       P' { u with memory := fun k => if k = at_ A x then val else u.memory k }) :
     Frag o [ScanProg.setw x e] P P' :=
-  store_frag o (D := .op .add (.var "jsc") (.const (BitVec.ofNat 64 x))) (by
-      rw [atOff_lower (p := sp) (P := .var "jsc") rfl x, if_neg hx0]) he hP' fun u hu => by
-    obtain ⟨h1, h2, val, hv, hp⟩ := h u hu
-    refine ⟨at_ A x, val, by simp [eval, h1, at_], hv, ?_, hp⟩
-    have := h2 x hxs; rwa [at_, byteAlign_of_aligned hA hx] at this
+  store_at_frag o hA hx hxs he hP' h
 
 /-- What the area holds, kept where a word from the status's to the key's is stored. -/
 theorem areaAt_word {A : Word} (hA : A.toNat % 8 = 0) {J : Bytes} {st : St} {u : PancakeState σ}
@@ -272,6 +256,85 @@ theorem vals_update {u : PancakeState σ} {pre l : List (String × Value)} {x : 
 theorem vals_kept {u u' : PancakeState σ} {l : List (String × Value)} (h : Vals u l) {xs : List String}
     {w : Word → Prop} (hk : Kept xs w u u') (ho : Outside xs l = true) : Vals u' l := fun q hq => by
   rw [hk.locals _ (outside_ne ho q hq)]; exact h q hq
+
+/-- `l` but for `y`. -/
+def without (y : String) (l : List (String × Value)) : List (String × Value) := l.filter fun q => q.1 != y
+
+/-- Fewer names outside. -/
+theorem outside_sub {xs ys : List String} {l : List (String × Value)} (h : Outside xs l = true)
+    (hs : ∀ y ∈ ys, y ∈ xs) : Outside ys l = true := by
+  simp only [Outside, List.all_eq_true, Bool.not_eq_true'] at h ⊢
+  intro q hq
+  have := h q hq
+  rw [Bool.eq_false_iff] at this ⊢
+  intro hm
+  rw [List.contains_iff_mem] at hm
+  exact this (List.contains_iff_mem.mpr (hs _ hm))
+
+/-- Fresh past a pair of another name. -/
+theorem fresh_cons {y x : String} {v : Value} {l : List (String × Value)} (hne : x ≠ y)
+    (h : Fresh y l = true) : Fresh y ((x, v) :: l) = true := by
+  simp only [Fresh, List.all_cons] at h ⊢; simp [hne, h]
+
+/-- Locals kept where one not listed is set. -/
+theorem vals_setL {u : PancakeState σ} {l : List (String × Value)} (h : Vals u l) {y : String}
+    (hy : Fresh y l = true) (v : Value) : Vals (setL u y v) l :=
+  fun q hq => vals_cons h hy v q (List.mem_cons_of_mem _ hq)
+
+/-- A lookup past a pair of another name. -/
+theorem lookup_cons_ne {x y : String} (h : y ≠ x) (v : Value) (l : List (String × Value)) :
+    ((x, v) :: l).lookup y = l.lookup y := by
+  rw [List.lookup_cons, beq_eq_false_iff_ne.mpr h]
+
+/-- A lookup at the head. -/
+theorem lookup_head (y : String) (w : Value) (l : List (String × Value)) : ((y, w) :: l).lookup y = some w := by
+  rw [List.lookup_cons, beq_self_eq_true]
+
+/-- A lookup past the pairs of another name dropped. -/
+theorem lookup_without {x y : String} (h : y ≠ x) : ∀ (l : List (String × Value)), (without x l).lookup y = l.lookup y
+  | [] => rfl
+  | (k, v) :: l => by
+    by_cases hk : k = x
+    · subst hk
+      have : without k ((k, v) :: l) = without k l := by simp [without]
+      rw [this, lookup_without h l, lookup_cons_ne h]
+    · have : without x ((k, v) :: l) = (k, v) :: without x l := by simp [without, hk]
+      rw [this]
+      by_cases hy : y = k
+      · subst hy; rw [List.lookup_cons, List.lookup_cons, beq_self_eq_true]
+      · rw [lookup_cons_ne hy, lookup_cons_ne hy, lookup_without h l]
+
+/-- A local set, listed on top. -/
+theorem vals_set {u : PancakeState σ} {l : List (String × Value)} (h : Vals u l) (y : String) (v : Value) :
+    Vals (setL u y v) ((y, v) :: without y l) := fun q hq => by
+  simp only [List.mem_cons, without, List.mem_filter, bne_iff_ne] at hq
+  rcases hq with rfl | ⟨hq, hne⟩
+  · simp [setL, setLocal]
+  · simp only [setL, setLocal, if_neg hne]; exact h q hq
+
+/-- Dropping a name twice. -/
+theorem without_cons_self (y : String) (v : Value) (l : List (String × Value)) :
+    without y ((y, v) :: without y l) = without y l := by
+  simp [without, List.filter_filter]
+
+/-- The head set again. -/
+theorem vals_head {u : PancakeState σ} {y : String} {w : Value} {l : List (String × Value)}
+    (h : Vals u ((y, w) :: l)) (hl : Fresh y l = true) (v : Value) : Vals (setL u y v) ((y, v) :: l) :=
+  vals_cons (fun q hq => h q (List.mem_cons_of_mem _ hq)) hl v
+
+/-- A state but for its locals and clock as it was. -/
+theorem kept_false_eq {xs : List String} {u u' : PancakeState σ} (h : Kept xs (fun _ => False) u u') :
+    u' = { u with locals := u'.locals, clock := u'.clock } := by
+  have hm : u'.memory = u.memory := funext fun a => h.memory a id
+  have hd := h.memaddrs
+  have hb := h.be
+  have hf := h.ffi
+  have hba := h.base
+  have hc := h.code
+  cases u; cases u'
+  simp only at hm hd hb hf hba hc ⊢
+  subst hm hd hb hf hba hc
+  rfl
 
 /-- **The step's state**: the locals but the step's and the memory but the area as in `s0`, the area as `st`
 says, and the locals `l` lists with their values. -/
@@ -595,13 +658,13 @@ theorem want_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Pancake
       ⟨BitVec.ofNat 64 L, by simp only [eval]; exact vals_lookup hu.2 rfl, hTb [] V5 u hu "jwl" (by decide),
         tail_set hu.1 (by decide) _, vals_cons hu.2 rfl _⟩
   have w7 : Frag o [ScanProg.setw sBase (Syntax.v "jp")] (T [] V6) (T [(sBase, BitVec.ofNat 64 st.pos)] V6) :=
-    setw_frag o h.hA (by decide) (by decide) (by decide) (E := .var "jp") rfl (hTc _ _) fun u hu =>
+    setw_frag o h.hA (by decide) (by decide) (E := .var "jp") rfl (hTc _ _) fun u hu =>
       ⟨(hTz _ _ u hu).2.1, (hTz _ _ u hu).2.2, BitVec.ofNat 64 st.pos,
         by simp only [eval]; exact vals_lookup hu.2 rfl,
         tail_store h.hA hu.1 (by decide) (by decide) (by simp) _, hu.2⟩
   have w8 : Frag o [ScanProg.setw sLen (Syntax.v "jwl")] (T [(sBase, BitVec.ofNat 64 st.pos)] V6)
       (T [(sLen, BitVec.ofNat 64 L), (sBase, BitVec.ofNat 64 st.pos)] V6) :=
-    setw_frag o h.hA (by decide) (by decide) (by decide) (E := .var "jwl") rfl (hTc _ _) fun u hu =>
+    setw_frag o h.hA (by decide) (by decide) (E := .var "jwl") rfl (hTc _ _) fun u hu =>
       ⟨(hTz _ _ u hu).2.1, (hTz _ _ u hu).2.2, BitVec.ofNat 64 L,
         by simp only [eval]; exact vals_lookup hu.2 rfl,
         tail_store h.hA hu.1 (by decide) (by decide) (by simp [sBase, sLen]) _, hu.2⟩
@@ -639,13 +702,13 @@ theorem want_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Pancake
       exact hu
   have w11 : Frag o [ScanProg.setw sWant (Syntax.v "jx")] (T W2 (("jx", BitVec.ofNat 64 (min chunk N)) :: V6))
       (T ((sWant, BitVec.ofNat 64 (min chunk N)) :: W2) []) :=
-    setw_frag o h.hA (by decide) (by decide) (by decide) (E := .var "jx") rfl (hTc _ _) fun u hu =>
+    setw_frag o h.hA (by decide) (by decide) (E := .var "jx") rfl (hTc _ _) fun u hu =>
       ⟨(hTz _ _ u hu).2.1, (hTz _ _ u hu).2.2, BitVec.ofNat 64 (min chunk N),
         by simp only [eval]; exact vals_lookup hu.2 rfl,
         tail_store h.hA hu.1 (by decide) (by decide) (by simp [W2, sWant, sLen, sBase]) _, fun _ hq => (nomatch hq)⟩
   have w12 : Frag o [ScanProg.setw sStatus (Syntax.n wanted)] (T ((sWant, BitVec.ofNat 64 (min chunk N)) :: W2) [])
       (T ((sStatus, BitVec.ofNat 64 wanted) :: (sWant, BitVec.ofNat 64 (min chunk N)) :: W2) []) :=
-    setw_frag o h.hA (by decide) (by decide) (by decide) (E := .const (BitVec.ofNat 64 wanted)) rfl (hTc _ _)
+    setw_frag o h.hA (by decide) (by decide) (E := .const (BitVec.ofNat 64 wanted)) rfl (hTc _ _)
       fun u hu => ⟨(hTz _ _ u hu).2.1, (hTz _ _ u hu).2.2, BitVec.ofNat 64 wanted, rfl,
         tail_store h.hA hu.1 (by decide) (by decide) (by simp [W2, sWant, sLen, sBase, sStatus]) _,
         fun _ hq => (nomatch hq)⟩

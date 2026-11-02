@@ -133,6 +133,55 @@ theorem cmp_bw {u : PancakeState σ} {c : Cmp} {l r : PancakeExp} {a b : Word} (
   · exact ⟨decide (a = b), by by_cases e : a = b <;> simp [e, bw]⟩
   · exact ⟨!signedLt a b, by cases signedLt a b <;> rfl⟩
 
+/-- A local's value. -/
+theorem ev_var {x : String} {v : Word} (h : t.locals x = some v) : eval t (.var x) = some v := h
+
+/-- Two words or-ed. -/
+theorem eval_or {a b : PancakeExp} {x y : Word} (ha : eval t a = some x)
+    (hb : eval t b = some y) : eval t (.op .or_ a b) = some (x ||| y) := by
+  simp only [eval, ha, hb]
+
+/-- A word shifted left by a constant. -/
+theorem eval_shl {a : PancakeExp} {w : Word} (ha : eval t a = some w) {k : Nat} (hk : k < 64) :
+    eval t (.shiftL a (.const (.ofNat 64 k))) = some (w <<< k) := by
+  have e : (BitVec.ofNat 64 k).toNat = k := by rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+  simp only [eval, ha, e]
+  rw [if_neg (by simp; omega)]
+
+/-- A number below `2 ^ 64` with its top bit flipped. -/
+theorem xor_top {x : Nat} (hx : x < 2 ^ 64) : x ^^^ 2 ^ 63 = if x < 2 ^ 63 then x + 2 ^ 63 else x - 2 ^ 63 := by
+  have h1 := Nat.div_add_mod (x ^^^ 2 ^ 63) (2 ^ 63)
+  rw [Nat.xor_div_two_pow, Nat.xor_mod_two_pow, Nat.div_self (by decide), Nat.mod_self, Nat.xor_zero] at h1
+  by_cases h : x < 2 ^ 63
+  · rw [if_pos h]
+    have h0 : x / 2 ^ 63 = 0 := Nat.div_eq_of_lt h
+    rw [h0, Nat.mod_eq_of_lt h] at h1
+    have : (0 : Nat) ^^^ 1 = 1 := by decide
+    rw [this] at h1; omega
+  · rw [if_neg h]
+    have h0 : x / 2 ^ 63 = 1 := by omega
+    rw [h0] at h1
+    have : (1 : Nat) ^^^ 1 = 0 := by decide
+    rw [this] at h1; omega
+
+/-- A word with its top bit flipped, read signed. -/
+theorem toInt_flip {z : Nat} (hz : z < 2 ^ 64) :
+    (BitVec.ofNat 64 z ^^^ BitVec.ofNat 64 (2 ^ 63)).toInt = (z : Int) - 2 ^ 63 := by
+  rw [BitVec.toInt_eq_toNat_cond, BitVec.toNat_xor, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt hz, Nat.mod_eq_of_lt (by decide : 2 ^ 63 < 2 ^ 64), xor_top hz]
+  split <;> split <;> omega
+
+/-- **The unsigned comparison**: both sides flipped at the top bit, then compared signed. -/
+theorem ult_eval {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .less (.op .xor a (.const (.ofNat 64 (2 ^ 63)))) (.op .xor b (.const (.ofNat 64 (2 ^ 63))))) =
+      some (bw (decide (x < y))) := by
+  have e : signedLt (BitVec.ofNat 64 x ^^^ BitVec.ofNat 64 (2 ^ 63)) (BitVec.ofNat 64 y ^^^ BitVec.ofNat 64 (2 ^ 63)) =
+      decide (x < y) := by
+    simp only [signedLt, BitVec.slt, toInt_flip hx, toInt_flip hy, decide_eq_decide]; omega
+  simp only [eval, ha, hb, e]
+  cases decide (x < y) <;> rfl
+
 end
 
 /-- The locals of the loop: the arguments, the framer's state `A`, and the verdict so far. -/

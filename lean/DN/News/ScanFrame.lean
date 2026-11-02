@@ -43,6 +43,71 @@ theorem at_inj {A : Word} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) (h : a
 theorem align_at {A : Word} (hA : A.toNat % 8 = 0) (x : Nat) : byteAlign (at_ A x) = at_ A (x / 8 * 8) := by
   rw [at_, byteAlign_base hA, at_]
 
+/-- Octets `bs` written from offset `x` of the area at `A` on, little-endian. -/
+def putBytes (m : Word → Word) (A : Word) (x : Nat) : Bytes → Word → Word
+  | [] => m
+  | b :: bs => putBytes (putByte m false (at_ A x) b) A (x + 1) bs
+
+theorem load_putBytes_other {A : Word} : ∀ {m : Word → Word} {x : Nat} {bs : Bytes} {y : Nat},
+    (y < x ∨ x + bs.length ≤ y) → x + bs.length < 2 ^ 63 → y < 2 ^ 63 →
+    memLoadByte (putBytes m A x bs) (fun _ => true) false (at_ A y) = memLoadByte m (fun _ => true) false (at_ A y)
+  | _, _, [], _, _, _, _ => rfl
+  | m, x, b :: bs, y, hy, hx, hy' => by
+    simp only [List.length_cons] at hy hx
+    simp only [putBytes]
+    rw [load_putBytes_other (by omega) (by omega) hy',
+      load_putByte_diff _ _ _ _ _ _ (at_ne (by omega) (by omega) (by omega))]
+
+theorem load_putBytes {A : Word} : ∀ {m : Word → Word} {x : Nat} {bs : Bytes}, x + bs.length < 2 ^ 63 →
+    ∀ i (hi : i < bs.length), memLoadByte (putBytes m A x bs) (fun _ => true) false (at_ A (x + i)) = some bs[i]
+  | m, x, b :: bs, hx, 0, _ => by
+    simp only [List.length_cons] at hx
+    simp only [putBytes, Nat.add_zero, List.getElem_cons_zero]
+    rw [load_putBytes_other (.inl (by omega)) (by omega) (by omega), load_putByte_same _ _ _ _ _ rfl]
+  | m, x, b :: bs, hx, i + 1, hi => by
+    simp only [List.length_cons] at hx hi
+    simp only [putBytes, List.getElem_cons_succ]
+    rw [show x + (i + 1) = x + 1 + i by omega]
+    exact load_putBytes (by omega) i (by omega)
+
+/-- Octets read alike where the words holding them are alike. -/
+theorem load_eq {m m' : Word → Word} {a : Word} (h : m (byteAlign a) = m' (byteAlign a)) :
+    memLoadByte m (fun _ => true) false a = memLoadByte m' (fun _ => true) false a := by
+  simp only [memLoadByte, h]
+
+/-- **A word of an area** at `A`, `n` octets long, its address in the local `p`, read. -/
+theorem e_loadw {u : PancakeState σ} {A : Word} {p : String} {n : Nat} (hA : A.toNat % 8 = 0)
+    (hd : ∀ x, x < n → u.memaddrs (byteAlign (at_ A x)) = true) (hsp : u.locals p = some A) {x : Nat}
+    (hx : x % 8 = 0) (hxs : x < n) :
+    ∃ E, Lower.lowerExp (.loadw 1 (Syntax.atOff (Syntax.v p) x)) = some E ∧ eval u E = some (u.memory (at_ A x)) := by
+  have hdm : u.memaddrs (at_ A x) = true := by
+    have := hd x hxs; rwa [at_, byteAlign_of_aligned hA hx] at this
+  by_cases h0 : x = 0
+  · subst h0
+    refine ⟨.loadWord (.var p), by simp [Syntax.atOff, Lower.lowerExp, Syntax.v], ?_⟩
+    rw [show at_ A 0 = A by simp [at_]] at hdm ⊢
+    simp [eval, hsp, hdm]
+  · refine ⟨.loadWord (.op .add (.var p) (.const (BitVec.ofNat 64 x))), by
+      simp [Syntax.atOff, h0, Lower.lowerExp, Syntax.eAdd, Syntax.n, Syntax.v], ?_⟩
+    simp only [eval, hsp, at_] at hdm ⊢
+    simp [hdm]
+
+/-- **A word of an area stored**. -/
+theorem store_at_frag (o : Oracle σ) {A : Word} (hA : A.toNat % 8 = 0) {p : String} {n x : Nat} (hx : x % 8 = 0)
+    (hxs : x < n) {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E)
+    {P P' : Assn σ} (hP' : Safe.ClockFree P')
+    (h : ∀ u, P u → u.locals p = some A ∧ (∀ y, y < n → u.memaddrs (byteAlign (at_ A y)) = true) ∧
+      ∃ val, eval u E = some val ∧ P' { u with memory := fun k => if k = at_ A x then val else u.memory k }) :
+    Frag o [.store (Syntax.atOff (Syntax.v p) x) e] P P' :=
+  store_frag o (D := if x = 0 then .var p else .op .add (.var p) (.const (BitVec.ofNat 64 x)))
+    (atOff_lower (p := Syntax.v p) (P := .var p) rfl x) he hP' fun u hu => by
+    obtain ⟨h1, h2, val, hv, hp⟩ := h u hu
+    refine ⟨at_ A x, val, ?_, hv, ?_, hp⟩
+    · split
+      · rename_i h0; subst h0; simp [eval, h1, at_]
+      · simp [eval, h1, at_]
+    · have := h2 x hxs; rwa [at_, byteAlign_of_aligned hA hx] at this
+
 theorem msg_align {A : Word} (hA : A.toNat % 8 = 0) {j : Nat} (hj : j < sWindow - sMessage) :
     MsgW A (byteAlign (at_ A (sMessage + j))) :=
   ⟨sMessage + j / 8 * 8, Nat.le_add_right _ _, by

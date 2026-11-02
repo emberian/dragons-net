@@ -419,9 +419,9 @@ theorem accept_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panca
   have hkept : ∀ kf ws u, W kf ws u → Kept ScanProg.locals (AreaW A) s0 u := fun _ _ u hu =>
     kept_trans hur.kept (kept_widen hu.kept (fun _ h => nomatch h) fun _ h => h)
   have store : ∀ kf ws (x : Nat) (e : Syntax.PExpr) (E : PancakeExp), Lower.lowerExp e = some E → x < sKey →
-      x % 8 = 0 → x ≠ 0 → (∀ q ∈ ws, q.1 ≠ x) → ∀ (val : Word), (∀ u, W kf ws u → eval u E = some val) →
-      Frag o [ScanProg.setw x e] (W kf ws) (W kf ((x, val) :: ws)) := fun kf ws x e E he hx hx8 hx0 hxw val hv =>
-    setw_frag o h.hA hx8 (by simp only [ScanProg.size]; omega) hx0 he (hWc _ _) fun u hu =>
+      x % 8 = 0 → (∀ q ∈ ws, q.1 ≠ x) → ∀ (val : Word), (∀ u, W kf ws u → eval u E = some val) →
+      Frag o [ScanProg.setw x e] (W kf ws) (W kf ((x, val) :: ws)) := fun kf ws x e E he hx hx8 hxw val hv =>
+    setw_frag o h.hA hx8 (by simp only [ScanProg.size]; omega) he (hWc _ _) fun u hu =>
       ⟨(hsw kf ws u hu).1, (hsw kf ws u hu).2, val, hv u hu, accAt_store h.hA hu hx hx8 hxw val⟩
   refine frag_conseq (P0 := W false []) ?_ (fun u hu => ⟨kept_of_like hu, fun _ hq => (nomatch hq),
     fun _ hq => (nomatch hq), fun x _ _ _ _ => by rw [hu.memory], fun e => by cases e⟩) fun _ h => h
@@ -433,9 +433,9 @@ theorem accept_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panca
     refine frag_pure (0 < st.acc.length ∧ rec.type = formatType) (fun u ⟨hu, hne⟩ => by
       rw [hev0 u hu] at hne; simpa using bw_ne0 hne) (lowK_any _ (k := .skip) (c := _) rfl) fun hc => ?_
     refine frag_conseq (frag_append (xs := [_])
-      (store false [] sStatus _ (.const (BitVec.ofNat 64 corrupt)) rfl (by decide) (by decide) (by decide)
+      (store false [] sStatus _ (.const (BitVec.ofNat 64 corrupt)) rfl (by decide) (by decide)
         (fun _ hq => (nomatch hq)) _ fun _ _ => rfl)
-      (store false _ sWhy _ (.const (BitVec.ofNat 64 (whyCode .formatAgain))) rfl (by decide) (by decide) (by decide)
+      (store false _ sWhy _ (.const (BitVec.ofNat 64 (whyCode .formatAgain))) rfl (by decide) (by decide)
         (by simp [sStatus, sWhy]) _ fun _ _ => rfl)) (fun u hu => hu.1) fun u hu => ⟨hkept _ _ u hu, ?_⟩
     have hif : (!st.acc.isEmpty && rec.key.isSome) = true := by
       rw [record_key, decide_eq_true hc.2]
@@ -471,21 +471,21 @@ theorem accept_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panca
       have hne : ∀ x, x ≠ sKeyed → ∀ q ∈ ws0, q.1 ≠ x := fun x hx q hq e => hx (e ▸ hws q hq)
       refine frag_append (xs := [_]) (store kf ws0 sCount _
         (.op .add (.loadWord (.op .add (.var "jsc") (.const (BitVec.ofNat 64 sCount)))) (.const (BitVec.ofNat 64 1)))
-        rfl (by decide) (by decide) (by decide) (hne _ (by decide)) (BitVec.ofNat 64 (st.acc.length + 1))
+        rfl (by decide) (by decide) (hne _ (by decide)) (BitVec.ofNat 64 (st.acc.length + 1))
         fun u hu => eval_addc 1 (hcount kf ws0 u hu (hne _ (by decide)))) ?_
-      refine frag_append (xs := [_]) (store kf _ sType _ (.var "jrec") rfl (by decide) (by decide) (by decide)
+      refine frag_append (xs := [_]) (store kf _ sType _ (.var "jrec") rfl (by decide) (by decide)
         (by simp only [List.mem_cons, forall_eq_or_imp]; exact ⟨by decide, hne _ (by decide)⟩)
         (BitVec.ofNat 64 rec.type) fun u hu => by simp only [eval]; rw [hloc _ _ u hu]; exact hjrec) ?_
       refine frag_append (xs := [_]) (store kf _ sPos _
         (.op .add (.var "jp") (.op .add (.var "jpl") (.const (BitVec.ofNat 64 (headerLength + 1))))) rfl (by decide)
-        (by decide) (by decide)
+        (by decide)
         (by simp only [List.mem_cons, forall_eq_or_imp]; exact ⟨by decide, by decide, hne _ (by decide)⟩)
         (BitVec.ofNat 64 (st.pos + taken)) fun u hu => ?_) ?_
       · rw [eval_add (by simp only [eval]; rw [hloc _ _ u hu]; exact hjp)
           (eval_addc _ (by simp only [eval]; rw [hloc _ _ u hu]; exact hjpl))]
         congr 2; simp only [headerLength]; omega
       · exact store kf _ sStatus _ (.const (BitVec.ofNat 64 ScanProg.record)) rfl (by decide) (by decide)
-          (by decide) (by simp only [List.mem_cons, forall_eq_or_imp]; exact ⟨by decide, by decide, by decide,
+          (by simp only [List.mem_cons, forall_eq_or_imp]; exact ⟨by decide, by decide, by decide,
             hne _ (by decide)⟩) _ fun _ _ => rfl
     -- the record's state in the area
     have final : ∀ kf (ws0 : List (Nat × Word)) u, (∀ q ∈ ws0, q.1 = sKeyed) → W kf (Wfin ++ ws0) u →
@@ -584,7 +584,7 @@ theorem accept_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Panca
             rcases hk with hk | hk
             · cases hk
             · exact hu.2 x hx hx8 hk, fun _ => hrd⟩ : W true [] u))
-          (store true [] sKeyed _ (.const (BitVec.ofNat 64 1)) rfl (by decide) (by decide) (by decide)
+          (store true [] sKeyed _ (.const (BitVec.ofNat 64 1)) rfl (by decide) (by decide)
             (fun _ hq => (nomatch hq)) _ fun _ _ => rfl)
       · rw [hkey0]
         simpa [Record.key, bw] using hu.stored (sKeyed, BitVec.ofNat 64 1) (by simp [Wfin])
