@@ -12,6 +12,7 @@
 #include <time.h>
 
 _Static_assert(DN_GRAMMAR_AT + DN_GRAMMAR_AREA <= DN_RUNTIME_SEGMENT_BYTES, "the area does not fit the heap");
+_Static_assert(DN_GRAMMAR_INPUT + DN_GRAMMAR_INPUT_MAX <= DN_GRAMMAR_IO, "the input passes the host's span");
 
 #define FILL UINT64_C(0x5A5A5A5A5A5A5A5A)
 
@@ -48,8 +49,8 @@ static int hex_digit(char c) {
 void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     long took = micros();
     dn_header_checked("dn_next");
-    if (c != dn_heap_at(DN_GRAMMAR_AT) || clen != 8 || a != dn_heap_at(DN_GRAMMAR_AT) || alen != DN_GRAMMAR_AREA)
-        dn_violation("dn_next: the arrays are not the area");
+    if (c != dn_heap_at(DN_GRAMMAR_AT) || clen != 8 || a != dn_heap_at(DN_GRAMMAR_AT) || alen != DN_GRAMMAR_IO)
+        dn_violation("dn_next: the arrays are not the area's header, starts and input");
     fill_checked("dn_next");
     if (asked) {
         uint64_t answer = dn_word(a + DN_GRAMMAR_ANSWER);

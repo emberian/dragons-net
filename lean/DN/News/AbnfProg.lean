@@ -217,9 +217,10 @@ def sBits : Nat := 16
 def setSize : Nat := sBits + 8 * setWords
 
 /-! The area: the rule asked, the input's length and the answer; the flag of a failed check; the
-positions the matches start from, as many as the word before them says; the powers of two below
-2^64 and the masks of a word's bytes; each class, four words; each string's place among the
-strings' bytes, its length and whether it is caseless; the strings' bytes; the input; the slots. -/
+positions the matches start from, as many as the word before them says; the input. The host writes
+these for each case (`aIO`), and nothing past them: the powers of two below 2^64 and the masks of a
+word's bytes; each class, four words; each string's place among the strings' bytes, its length and
+whether it is caseless; the strings' bytes; the slots. -/
 
 def aRule : Nat := 0
 def aLen : Nat := 8
@@ -228,7 +229,13 @@ def aBroken : Nat := 24
 def startsMax : Nat := 16
 def aStarts : Nat := 32
 def aStartList : Nat := aStarts + 8
-def aPow : Nat := aStartList + 8 * startsMax
+def aInput : Nat := aStartList + 8 * startsMax
+/-- Every position a set can hold and a string past it: no read passes the input's length, but the
+analysis, which does not relate a position to it, sees each read in the area. -/
+def inputRoom : Nat := 64 * (setWords + 1)
+/-- The end of what the host writes for a case. -/
+def aIO : Nat := aInput + inputRoom
+def aPow : Nat := aIO
 /-- The masks of a word's eight bytes. -/
 def aMask : Nat := aPow + 8 * 64
 def aClass : Nat := aMask + 8 * 8
@@ -236,11 +243,7 @@ def aTexts : Nat := aClass + 32 * classes.length
 def textBytes : Nat := (texts.map (·.1.length)).sum
 def aTextBytes : Nat := aTexts + 24 * texts.length
 /-- Past the strings' bytes, room for a comparison from any place `leafText` accepts. -/
-def aInput : Nat := aTextBytes + (textBytes + textMax + 1 + 7) / 8 * 8
-/-- Every position a set can hold and a string past it: no read passes the input's length, but the
-analysis, which does not relate a position to it, sees each read in the area. -/
-def inputRoom : Nat := 64 * (setWords + 1)
-def aSets : Nat := aInput + inputRoom
+def aSets : Nat := aTextBytes + (textBytes + textMax + 1 + 7) / 8 * 8
 def size : Nat := aSets + slots * setSize
 
 /-! ## Statements -/
@@ -269,11 +272,26 @@ def bitWord (p : String) (w : PExpr) : PExpr := eAdd (atOff (v p) sBits) (eMul w
 /-- The power of two `j`. -/
 def pow (j : PExpr) : PExpr := .loadw 1 (eAdd (atOff (v "a") aPow) (eMul j (n 8)))
 
+/-- The window of the set at `p` read into `lo` and `hi`, each checked. -/
+def readWin (p lo hi : String) : List PStmt :=
+  [.dec lo (word (v p) sLo), kept lo (setWords - 1), .dec hi (word (v p) sHi), kept hi (setWords - 1)]
+
+/-- Word by word from `w` to `hi`, the word of the set at `q` what `f` makes of it and the word of the set at `p`. -/
+def wordLoop (w hi : String) (f : PExpr → PExpr → PExpr) : PStmt :=
+  .while (eLe (v w) (v hi))
+    [.store (bitWord "q" (v w)) (f (.loadw 1 (bitWord "q" (v w))) (.loadw 1 (bitWord "p" (v w)))), inc w]
+
+/-- Position `y`'s word into `yw`, checked, and its bit into `yj`. -/
+def posParts (y : PExpr) : List PStmt :=
+  [.dec "yw" (.shr y (n 6)), kept "yw" (setWords - 1), .dec "yj" (eAnd y (n 63))]
+
+/-- The bit `yj` of word `yw` of the set at `q` set. -/
+def setBit : PStmt := .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj")))
+
 /-- The set at `q` given position `y` too, its window's ends so far in `dl` and `dh`, `df` set
 while it is empty: the positions may come in any order. -/
 def addBit (m : Mutant) (y : PExpr) : List PStmt :=
-  [.dec "yw" (.shr y (n 6)), kept "yw" (setWords - 1), .dec "yj" (eAnd y (n 63)),
-   .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj")))] ++
+  posParts y ++ [setBit] ++
   if m == .windowOrder then
     [.ite (v "df") [.assign "dl" (v "yw"), .assign "df" (n 0)] [], .assign "dh" (v "yw")]
   else
@@ -285,9 +303,8 @@ def addBit (m : Mutant) (y : PExpr) : List PStmt :=
 least one byte (`regression_959`) and a comment starts with one. A word's bits are tried only in
 its bytes that hold one. -/
 def eachPos (body : List PStmt) : List PStmt :=
-  [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-   .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-   .dec "w" (v "lo"),
+  readWin "p" "lo" "hi" ++
+  [.dec "w" (v "lo"),
    .while (eLe (v "w") (v "hi"))
      [.dec "wd" (.loadw 1 (bitWord "p" (v "w"))),
       .ite (ne (v "wd") (n 0))
@@ -318,11 +335,61 @@ def epilogue : List PStmt :=
 
 /-- The set at `q` emptied: the words of its window cleared. -/
 def clearQ : List PStmt :=
-  [.dec "cl" (word (v "q") sLo), kept "cl" (setWords - 1),
-   .dec "ch" (word (v "q") sHi), kept "ch" (setWords - 1),
-   .dec "cw" (v "cl"),
-   .while (eLe (v "cw") (v "ch")) [.store (bitWord "q" (v "cw")) (n 0), inc "cw"],
+  readWin "q" "cl" "ch" ++
+  [.dec "cw" (v "cl"), wordLoop "cw" "ch" (fun _ _ => n 0),
    .store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
+
+/-- The window of the set at `q`, read into `dl` and `dh`, widened to take `[lo, hi]`: an empty one, `dh < dl`,
+becomes it; another takes the lower start, as the test `cLo` says, and the higher end. -/
+def widen (lo hi : String) (cLo : PExpr) : PStmt :=
+  .ite (eLt (v "dh") (v "dl"))
+    [.store (atOff (v "q") sLo) (v lo), .store (atOff (v "q") sHi) (v hi)]
+    [.ite cLo [.store (atOff (v "q") sLo) (v lo)] [],
+     .ite (eLt (v "dh") (v hi)) [.store (atOff (v "q") sHi) (v hi)] []]
+
+/-- Position `y` checked, its word into `yw` and its bit into `yj`. -/
+def posOf : List PStmt := kept "y" inputMax :: posParts (v "y")
+
+/-- The window's start moved past the words that hold nothing. -/
+def trimLo : PStmt :=
+  .while (v "go")
+    [.ite (eLe (v "lo") (v "hi"))
+      [.ite (eEq (.loadw 1 (bitWord "q" (v "lo"))) (n 0)) [inc "lo"] [.assign "go" (n 0)]]
+      [.assign "go" (n 0)]]
+
+/-- The window's end moved back past the words that hold nothing. -/
+def trimHi : PStmt :=
+  .while (v "go")
+    [.ite (eLe (v "lo") (v "hi"))
+      [.ite (eEq (.loadw 1 (bitWord "q" (v "hi"))) (n 0)) [.assign "hi" (eSub (v "hi") (n 1))] [.assign "go" (n 0)]]
+      [.assign "go" (n 0)]]
+
+/-- The window cut to `[lo, hi]` stored, an empty one when nothing is left. -/
+def cutWin : PStmt :=
+  .ite (eLt (v "hi") (v "lo"))
+    [.store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
+    [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
+
+/-- `setAdd`'s middle: the bit set, the window read into `dl` and `dh` and widened to the bit's word. -/
+def addPos : List PStmt :=
+  [setBit, .dec "dl" (word (v "q") sLo), .dec "dh" (word (v "q") sHi), widen "yw" "yw" (eLt (v "yw") (v "dl"))]
+
+/-- `setUnion`'s middle: when the set at `p` holds a word, its words or-ed in and the window widened. -/
+def unionBits (m : Mutant) : PStmt :=
+  .ite (eLe (v "lo") (v "hi"))
+    [.dec "w" (v "lo"), wordLoop "w" "hi" eOr,
+     widen "lo" "hi" (eAnd (eLt (v "lo") (v "dl")) (n (if m == .unionWindow then 0 else 1)))] []
+
+/-- `setCopy`'s middle: the words of the set at `p` copied, and its window. -/
+def copyBits : List PStmt :=
+  [.dec "w" (v "lo"), wordLoop "w" "hi" (fun _ p => p),
+   .store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
+
+/-- `setMinus`'s middle: the bits of the set at `p` taken out of the words of the window. -/
+def minusBits : List PStmt := [.dec "w" (v "lo"), wordLoop "w" "hi" (fun q p => eAnd q (eXor p (n all1)))]
+
+/-- `setMinus`'s end: the window cut to the words still holding one. -/
+def trimWin : List PStmt := [.dec "go" (n 1), trimLo, .assign "go" (n 1), trimHi, cutWin]
 
 /-! ## The operations on sets -/
 
@@ -336,46 +403,18 @@ def setClear : PFun :=
 /-- The set `d` given position `y` too. -/
 def setAdd : PFun :=
   { name := "setAdd", params := [(1, "d"), (1, "y")], body :=
-    prologue m ofs [("d", "q")] ++
-    [kept "y" inputMax, .dec "yw" (.shr (v "y") (n 6)), kept "yw" (setWords - 1),
-     .dec "yj" (eAnd (v "y") (n 63)),
-     .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj"))),
-     .dec "dl" (word (v "q") sLo), .dec "dh" (word (v "q") sHi),
-     .ite (eLt (v "dh") (v "dl"))
-       [.store (atOff (v "q") sLo) (v "yw"), .store (atOff (v "q") sHi) (v "yw")]
-       [.ite (eLt (v "yw") (v "dl")) [.store (atOff (v "q") sLo) (v "yw")] [],
-        .ite (eLt (v "dh") (v "yw")) [.store (atOff (v "q") sHi) (v "yw")] []],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q")] ++ posOf ++ addPos ++ [.ret (n 0)] }
 
 /-- The set `d` given the positions of `s` too. -/
 def setUnion : PFun :=
   { name := "setUnion", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++
-    [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-     .dec "dl" (word (v "q") sLo), kept "dl" (setWords - 1),
-     .dec "dh" (word (v "q") sHi), kept "dh" (setWords - 1),
-     .ite (eLe (v "lo") (v "hi"))
-       [.dec "w" (v "lo"),
-        .while (eLe (v "w") (v "hi"))
-          [.store (bitWord "q" (v "w"))
-             (eOr (.loadw 1 (bitWord "q" (v "w"))) (.loadw 1 (bitWord "p" (v "w")))), inc "w"],
-        .ite (eLt (v "dh") (v "dl"))
-          [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
-          [.ite (eAnd (eLt (v "lo") (v "dl")) (n (if m == .unionWindow then 0 else 1)))
-             [.store (atOff (v "q") sLo) (v "lo")] [],
-           .ite (eLt (v "dh") (v "hi")) [.store (atOff (v "q") sHi) (v "hi")] []]] [],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ readWin "p" "lo" "hi" ++ readWin "q" "dl" "dh" ++
+    [unionBits m] ++ [.ret (n 0)] }
 
 /-- The set `s` copied into `d`, another slot. -/
 def setCopy : PFun :=
   { name := "setCopy", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++ clearQ ++
-    [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-     .dec "w" (v "lo"),
-     .while (eLe (v "w") (v "hi")) [.store (bitWord "q" (v "w")) (.loadw 1 (bitWord "p" (v "w"))), inc "w"],
-     .store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi"), .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ clearQ ++ readWin "p" "lo" "hi" ++ copyBits ++ [.ret (n 0)] }
 
 /-- 1, and `d` emptied, when the set `s` is empty; 0 when it is not. -/
 def setVoid : PFun :=
@@ -386,29 +425,7 @@ def setVoid : PFun :=
 /-- The set `d` without the positions of `s`, its window cut to the words still holding one. -/
 def setMinus : PFun :=
   { name := "setMinus", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++
-    [.dec "lo" (word (v "q") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "q") sHi), kept "hi" (setWords - 1),
-     .dec "w" (v "lo"),
-     .while (eLe (v "w") (v "hi"))
-       [.store (bitWord "q" (v "w"))
-          (eAnd (.loadw 1 (bitWord "q" (v "w"))) (eXor (.loadw 1 (bitWord "p" (v "w"))) (n all1))),
-        inc "w"],
-     .dec "go" (n 1),
-     .while (v "go")
-       [.ite (eLe (v "lo") (v "hi"))
-          [.ite (eEq (.loadw 1 (bitWord "q" (v "lo"))) (n 0)) [inc "lo"] [.assign "go" (n 0)]]
-          [.assign "go" (n 0)]],
-     .assign "go" (n 1),
-     .while (v "go")
-       [.ite (eLe (v "lo") (v "hi"))
-          [.ite (eEq (.loadw 1 (bitWord "q" (v "hi"))) (n 0))
-             [.assign "hi" (eSub (v "hi") (n 1))] [.assign "go" (n 0)]]
-          [.assign "go" (n 0)]],
-     .ite (eLt (v "hi") (v "lo"))
-       [.store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
-       [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ readWin "q" "lo" "hi" ++ minusBits ++ trimWin ++ [.ret (n 0)] }
 
 /-- The set `x` without the positions of `d`, and `d` given them: one round's new positions. -/
 def setGrow : PFun :=
@@ -425,10 +442,8 @@ def setEmpty : PFun :=
 /-- Whether the set `s` holds position `y`: 1 if it does. -/
 def setHas : PFun :=
   { name := "setHas", params := [(1, "s"), (1, "y")], body :=
-    prologue m ofs [("s", "p")] ++
-    [kept "y" inputMax, .dec "yw" (.shr (v "y") (n 6)), kept "yw" (setWords - 1),
-     .dec "yj" (eAnd (v "y") (n 63)),
-     .ret (ne (eAnd (.loadw 1 (bitWord "p" (v "yw"))) (pow (v "yj"))) (n 0))] }
+    prologue m ofs [("s", "p")] ++ posOf ++
+    [.ret (ne (eAnd (.loadw 1 (bitWord "p" (v "yw"))) (pow (v "yj"))) (n 0))] }
 
 /-- The positions one past those of `s` whose byte is in class `k`, into `d`. -/
 def leafClass : PFun :=
@@ -670,7 +685,7 @@ def main (ofs : Nat) : PFun :=
   { name := "main", body :=
     [areaAt ofs, .call "t" "tables" [],
      .while (n 1)
-       [.ffi "dn_next" [v "a", n 8, v "a", n size],
+       [.ffi "dn_next" [v "a", n 8, v "a", n aIO],
         .store (atOff (v "a") aBroken) (n 0),
         .dec "r" (word (v "a") aRule), .dec "nn" (word (v "a") aLen), .dec "ans" (n 2),
         .ite (or2 (or2 (eLt (v "nn") (n 0)) (eLt (n inputMax) (v "nn")))
@@ -699,7 +714,7 @@ def program (m : Mutant := .none) : List PFun × PFun := (functions m areaOffset
 /-- The area as a C header for the lane's host. -/
 def header : String :=
   let defs : List (String × Nat) :=
-    [("AT", areaOffset), ("RULE", aRule), ("LEN", aLen), ("ANSWER", aAnswer), ("INPUT", aInput),
+    [("AT", areaOffset), ("RULE", aRule), ("LEN", aLen), ("ANSWER", aAnswer), ("INPUT", aInput), ("IO", aIO),
      ("INPUT_MAX", inputMax), ("STARTS", aStarts), ("START_LIST", aStartList),
      ("STARTS_MAX", startsMax), ("AREA", size), ("RULES", grammar.size)]
   "/* Generated by dn-compiler emit-grammar-layout from DN.News.AbnfProg. */\n" ++
