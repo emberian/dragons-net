@@ -139,7 +139,7 @@ theorem runF_store (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ}
     Frag o [.store d e] (RunF s0 l F) (RunF s0 l G) :=
   store_frag o hd he (runF_clock _ _ _) fun u h =>
     ⟨_, _, hD u h, hE u h, by rw [h.1.memaddrs]; exact hA.dom y hy hy8,
-      ⟨h.1.vals, h.1.memaddrs, h.1.base, h.1.code⟩, hG _ h.2⟩
+      ⟨h.1.vals, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, hG _ h.2⟩
 
 /-- A word of the area read. -/
 theorem load_eval {ofs : Nat} {A : Word} {s0 u : PancakeState σ} (hA : Area ofs A s0)
@@ -584,21 +584,29 @@ theorem and63_eval {y : Syntax.PExpr} {Ey E : PancakeExp} (hy0 : Lower.lowerExp 
   have : Y % 2 ^ 6 < 2 ^ 64 := by omega
   rw [Nat.mod_eq_of_lt this]
 
+/-- The power of two `j`, read from the table, `j` the value of `J`. -/
+theorem powAt_eval {ofs : Nat} {A : Word} {s0 u : PancakeState σ} (hA : Area ofs A s0) (hm : u.memaddrs = s0.memaddrs)
+    (hP : Pows u.memory A) (ha : u.locals "a" = some A) {J : PancakeExp} {j : Nat} (hj : j < 64)
+    (hJ : eval u J = some (BitVec.ofNat 64 j)) :
+    eval u (.loadWord (.op .add (.op .add (.var "a") (.const (BitVec.ofNat 64 aPow))) (.mul J
+      (.const (BitVec.ofNat 64 8))))) = some (BitVec.twoPow 64 j) := by
+  have hl := pow_lt
+  have e : eval u (.op .add (.op .add (.var "a") (.const (BitVec.ofNat 64 aPow))) (.mul J
+      (.const (BitVec.ofNat 64 8)))) = some (at_ A (aPow + 8 * j)) := by
+    simp only [eval, ha, hJ]
+    rw [← BitVec.ofNat_mul]
+    show some (at_ A aPow + BitVec.ofNat 64 (j * 8)) = some (at_ A (aPow + 8 * j))
+    rw [at_add]
+    exact congrArg (fun y => some (at_ A y)) (by omega)
+  rw [load_eval hA hm (y := aPow + 8 * j) (by omega) (by rw [aPow_eq]; omega) e, hP j hj]
+
 /-- The power of two `j`, read from the table, `j` in `x`. -/
 theorem pow_eval {E : PancakeExp} {x : String} (he : Lower.lowerExp (pow (Syntax.v x)) = some E) {ofs : Nat}
     {A : Word} {s0 u : PancakeState σ} (hA : Area ofs A s0) (hm : u.memaddrs = s0.memaddrs) (hP : Pows u.memory A)
     (ha : u.locals "a" = some A) {j : Nat} (hj : j < 64) (hx : u.locals x = some (BitVec.ofNat 64 j)) :
     eval u E = some (BitVec.twoPow 64 j) := by
   cases he
-  have hl := pow_lt
-  have e : eval u (.op .add (.op .add (.var "a") (.const (BitVec.ofNat 64 aPow))) (.mul (.var x)
-      (.const (BitVec.ofNat 64 8)))) = some (at_ A (aPow + 8 * j)) := by
-    simp only [eval, ha, hx]
-    rw [← BitVec.ofNat_mul]
-    show some (at_ A aPow + BitVec.ofNat 64 (j * 8)) = some (at_ A (aPow + 8 * j))
-    rw [at_add]
-    exact congrArg (fun y => some (at_ A y)) (by omega)
-  rw [load_eval hA hm (y := aPow + 8 * j) (by omega) (by rw [aPow_eq]; omega) e, hP j hj]
+  exact powAt_eval hA hm hP ha hj (ev_var hx)
 
 /-- Position `y`'s word into `yw` and its bit into `yj`, `y` any expression of value `Y` in a set's words. -/
 theorem posParts_frag (o : Oracle σ) {s1 : PancakeState σ} {l : List (String × Value)} {m0 : Word → Word}
@@ -1139,8 +1147,8 @@ theorem setCopy_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ}
         rcases hq with rfl | rfl | hq
         · rw [vals_lookup h.1.vals (lookup_head _ _ _), hks' _ hs.2 1 (by decide)]
         · rw [vals_lookup h.1.vals rfl, hks' _ hs.2 0 (by decide)]
-        · exact h.1.vals q (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hq)), h.1.memaddrs, h.1.base, h.1.code⟩,
-        by rw [h.2]; exact hs.2⟩
+        · exact h.1.vals q (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hq)),
+        h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, by rw [h.2]; exact hs.2⟩
   refine fragR_conseq (P0 := RunF s1 [("d", BitVec.ofNat 64 kd), ("s", BitVec.ofNat 64 ks)] (· = m0))
     (fragR_append (fragR_of (frag_append (frag_append (frag_append (start2_frag o hA (by decide) (by decide)
       (by decide) (by decide) hkd hks rfl rfl rfl rfl rfl) (clearQ_frag o hA hkd (l := l1') rfl rfl rfl rfl hSd)) hR)
@@ -1366,7 +1374,7 @@ theorem trimWin_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState �
   -- setting `go` or `lo` keeps the rest
   have setB : ∀ (u : PancakeState σ) (x : String) (v : Value), Fresh x lB = true → RunF s1 lB (· = M) u →
       RunF s1 lB (· = M) (setL u x v) := fun u x v hx h =>
-    ⟨⟨ScanRun.vals_setL h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+    ⟨⟨ScanRun.vals_setL h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
   refine frag_append (xs := [_]) (frag_conseq (runF_dec o rfl (l := [("hi", BitVec.ofNat 64 dhi),
     ("lo", BitVec.ofNat 64 dlo)] ++ l) (by simpa [Fresh] using f3) (v := 1) fun _ _ => rfl) (fun u h => h)
     (P' := I1 0) fun u h => ⟨runF_mono h (fun q hq => by
@@ -1450,9 +1458,9 @@ theorem trimWin_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState �
   have hI2 : ∀ j, Safe.ClockFree (I2 j) := fun j s k h => ⟨runF_clock _ _ _ s k h.1, h.2⟩
   have setC : ∀ (u : PancakeState σ) (x : String) (v : Value), Fresh x lC = true → RunF s1 lC (· = M) u →
       RunF s1 lC (· = M) (setL u x v) := fun u x v hx h =>
-    ⟨⟨ScanRun.vals_setL h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+    ⟨⟨ScanRun.vals_setL h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
   refine frag_append (xs := [_]) (set_frag o rfl (hI2 0) fun u h => ⟨1, rfl, h.2.2, ⟨⟨fun q hq => ?_,
-    h.1.1.memaddrs, h.1.1.base, h.1.1.code⟩, h.1.2⟩, by
+    h.1.1.memaddrs, h.1.1.base, h.1.1.code, h.1.1.be⟩, h.1.2⟩, by
       show (if "go" = "go" then some (1 : Word) else u.locals "go") = _
       rw [if_pos rfl, decide_eq_true (Nat.zero_le _)]; rfl, by
       show (if "hi" = "go" then some (1 : Word) else u.locals "hi") = _
@@ -1487,7 +1495,7 @@ theorem trimWin_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState �
       simp only [List.mem_cons] at hq
       rcases hq with rfl | hq
       · rw [h.2.2.1, if_neg (by simpa using hg)]
-      · exact h.1.1.vals q hq, h.1.1.memaddrs, h.1.1.base, h.1.1.code⟩, h.1.2⟩) ?_
+      · exact h.1.1.vals q hq, h.1.1.memaddrs, h.1.1.base, h.1.1.code, h.1.1.be⟩, h.1.2⟩) ?_
   · have hj : j ≤ t2 := of_decide_eq_true hg
     refine ScanRun.frag_if o rfl (lowK_any _ (k := .skip) rfl)
       (lowK_any _ (k := .skip) rfl) rfl rfl (hI2 _) (b := decide (z1 ≤ dhi - j))
@@ -1596,8 +1604,9 @@ theorem setCall_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
     (has : Lower.lowerArgs as = some args) {body : PancakeProg} (hcode : s0.code f = some (ps, body))
     {l : List (String × Value)} {F : (Word → Word) → Prop} {vs : List Value} (hlen : ps.length = vs.length)
     (hargs : ∀ u, RunF s0 l F u → evalArgs u args = some vs) {R : (Word → Word) → Ret}
-    (hbody : ∀ s1 : PancakeState σ, Area ofs A s1 → s1.code = s0.code → (∀ k, s1.locals k = (ps.zip vs).lookup k) →
-      F s1.memory → SafeR o (fun s => s = s1) body (R s1.memory) fun _ => False)
+    (hbody : ∀ s1 : PancakeState σ, Area ofs A s1 → s1.code = s0.code → s1.memaddrs = s0.memaddrs → s1.be = s0.be →
+      (∀ k, s1.locals k = (ps.zip vs).lookup k) → F s1.memory →
+      SafeR o (fun s => s = s1) body (R s1.memory) fun _ => False)
     (hrt : Fresh rt l = true) {G : Value → (Word → Word) → Prop} (hG : ∀ m m' v, F m → R m v m' → G v m') :
     Frag o [.call rt f as] (RunF s0 l F) (fun u => ∃ v, RunF s0 ((rt, v) :: l) (G v) u) := by
   refine frag_call o has (body := body)
@@ -1605,9 +1614,10 @@ theorem setCall_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
     (Rc := fun s => R s.memory) (fun s h => ?_) (fun s h => ⟨vs, _, hargs s h,
       Block.lookupCode_of (by rw [h.1.code]; exact hcode) hnd hlen, rfl⟩) fun s t v h hr hsame => ?_
   · refine hbody _ ⟨by rw [← hA.base]; show s.baseAddr + _ = _; rw [h.1.base], hA.hA, fun x hx h8 => by
-      show s.memaddrs _ = true; rw [h.1.memaddrs]; exact hA.dom x hx h8⟩ h.1.code (fun _ => rfl) h.2
+      show s.memaddrs _ = true; rw [h.1.memaddrs]; exact hA.dom x hx h8⟩ h.1.code h.1.memaddrs h.1.be (fun _ => rfl)
+      h.2
   · exact ⟨v, ⟨⟨vals_cons h.1.vals hrt v, hsame.1.trans h.1.memaddrs, hsame.2.1.trans h.1.base,
-      hsame.2.2.2.trans h.1.code⟩, hG _ _ v h.2 hr⟩⟩
+      hsame.2.2.2.trans h.1.code, hsame.2.2.1.trans h.1.be⟩, hG _ _ v h.2 hr⟩⟩
 
 /-! ### Each operation called -/
 
@@ -1623,7 +1633,7 @@ theorem setClear_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
   setCall_frag o hA (ps := ["d"]) (args := [E1]) (vs := [BitVec.ofNat 64 k])
       (by decide) (by simp [Lower.lowerArgs, he1]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h]) (R := ClearRet A k)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setClear_ok o hA1 hk ((hloc "d").trans rfl) (hS _ hF))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-- **A call of `setEmpty`.** -/
@@ -1638,7 +1648,7 @@ theorem setEmpty_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
   setCall_frag o hA (ps := ["s"]) (args := [E1]) (vs := [BitVec.ofNat 64 k])
       (by decide) (by simp [Lower.lowerArgs, he1]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h]) (R := EmptyRet S)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setEmpty_ok o hA1 hk ((hloc "s").trans rfl) (hS _ hF))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-- **A call of `setHas`.** -/
@@ -1655,7 +1665,7 @@ theorem setHas_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ
   setCall_frag o hA (ps := ["s", "y"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 k, BitVec.ofNat 64 Y]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := HasRet S Y)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
       (setHas_ok o hA1 hk hY ((hloc "s").trans rfl) ((hloc "y").trans rfl) (hS _ hF).1 (hS _ hF).2)) hrt
     fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1673,7 +1683,7 @@ theorem setAdd_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ
   setCall_frag o hA (ps := ["d", "y"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 k, Y]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := AddRet A k S Y)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
       (setAdd_ok o hA1 hk ((hloc "d").trans rfl) ((hloc "y").trans rfl) (hS _ hF).1 (hS _ hF).2)) hrt
     fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1691,7 +1701,7 @@ theorem setUnion_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
   setCall_frag o hA (ps := ["d", "s"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 kd, BitVec.ofNat 64 ks]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := UnionRet A kd Sd Ss)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setUnion_ok o hA1 h1 h2 ((hloc "d").trans rfl) ((hloc "s").trans rfl) (hS _ hF).1
         (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1709,7 +1719,7 @@ theorem setMinus_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
   setCall_frag o hA (ps := ["d", "s"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 kd, BitVec.ofNat 64 ks]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := MinusRet A kd Sd Ss)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setMinus_ok o hA1 h1 h2 ((hloc "d").trans rfl) ((hloc "s").trans rfl) (hS _ hF).1
         (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1727,7 +1737,7 @@ theorem setCopy_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
   setCall_frag o hA (ps := ["d", "s"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 kd, BitVec.ofNat 64 ks]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := CopyRet A kd Ss)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setCopy_ok o hA1 h1 h2 hne ((hloc "d").trans rfl) ((hloc "s").trans rfl) (hS _ hF).1
         (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1745,7 +1755,7 @@ theorem setVoid_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
   setCall_frag o hA (ps := ["s", "d"]) (args := [E1, E2])
     (vs := [BitVec.ofNat 64 ks, BitVec.ofNat 64 kd]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := VoidRet A kd Ss)
-    (fun s1 hA1 _ hloc hF => body_eq hb
+    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
         (setVoid_ok o hA1 h1 h2 ((hloc "s").trans rfl) ((hloc "d").trans rfl) (hS _ hF).1
         (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1809,7 +1819,7 @@ theorem setGrow_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
   setCall_frag o hA (ps := ["x", "d"]) (args := [E1, E2]) (vs := [BitVec.ofNat 64 kx, BitVec.ofNat 64 kd])
     (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
     (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := GrowRet A kx kd Sx Sd)
-    (fun s1 hA1 hc hloc hF => body_eq hb
+    (fun s1 hA1 hc _ _ hloc hF => body_eq hb
         (setGrow_ok o hA1 hkx hkd hne ((hloc "x").trans rfl) ((hloc "d").trans rfl) (hS _ hF).1 (hS _ hF).2 hbm
         (by rw [hc]; exact hcm) hbu (by rw [hc]; exact hcu))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
@@ -1831,7 +1841,8 @@ theorem setAt_witness : SetAt emptyMem 0 0 (fun _ => false) := by
     if_neg (slotW_ne (by omega) (by rw [setSize_eq]; omega) (by decide) (by omega))]
   simp
 
-theorem run_witness : Run (σ := Unit) (bareState ()) [] (bareState ()) := ⟨(fun _ h => nomatch h), rfl, rfl, rfl⟩
+theorem run_witness : Run (σ := Unit) (bareState ()) [] (bareState ()) :=
+  ⟨(fun _ h => nomatch h), rfl, rfl, rfl, rfl⟩
 
 theorem runF_witness : RunF (σ := Unit) (bareState ()) [] (fun _ => True) (bareState ()) := ⟨run_witness, trivial⟩
 

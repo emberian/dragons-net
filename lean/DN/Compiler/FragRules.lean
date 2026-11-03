@@ -483,6 +483,21 @@ theorem lowKK_while {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c =
   obtain ⟨B, hB⟩ := lowKK_fold hb
   exact lowKK_one rfl (a := .while_ C B) (by rw [Lower.lowerStmt1, hc, hB])
 
+/-- **A loop** with an invariant: it holds after the loop, the condition false. -/
+theorem frag_while (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
+    {body : List Syntax.PStmt} (hlow : LowKK body) {I : Assn σ} (hI : Safe.ClockFree I)
+    (hr : ∀ u y v, I u → y ∈ declared body → I (restore u y v)) (hdef : ∀ u, I u → ∃ w, eval u C = some w)
+    (hbody : Frag o body (fun u => I u ∧ eval u C ≠ some 0) I) :
+    Frag o [.while c body] I (fun u => I u ∧ eval u C = some 0) := by
+  obtain ⟨BODY, hBl⟩ := lowKK_fold hlow
+  refine frag_oneR (a := .while_ C BODY) (by simp [Lower.lowerStmt1, hc, hBl]) rfl
+    (fun s k ⟨h, e⟩ => ⟨hI _ _ h, by rw [Safe.eval_clock]; exact e⟩) fun R => ?_
+  refine conseq (WpRet.while_ (I := I) hdef ?_ hI) (fun s h => h) (fun _ _ h => h) fun s h => h
+  intro s hs
+  obtain ⟨c', hc', hsafe⟩ := frag_close hbody hr R
+  rw [hBl] at hc'; cases hc'
+  exact hsafe s hs
+
 /-- A local set twice holds the second value. -/
 theorem setL_setL (s : PancakeState σ) (x : String) (v w : Value) : setL (setL s x v) x w = setL s x w := by
   simp only [setL]; congr 1; funext y; simp [setLocal]; split <;> rfl

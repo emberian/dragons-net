@@ -25,6 +25,7 @@ structure Run (s0 : PancakeState σ) (l : List (String × Value)) (u : PancakeSt
   memaddrs : u.memaddrs = s0.memaddrs
   base : u.baseAddr = s0.baseAddr
   code : u.code = s0.code
+  be : u.be = s0.be
 
 /-- …and memory as `F` says. -/
 def RunF (s0 : PancakeState σ) (l : List (String × Value)) (F : (Word → Word) → Prop) (u : PancakeState σ) :
@@ -32,17 +33,17 @@ def RunF (s0 : PancakeState σ) (l : List (String × Value)) (F : (Word → Word
   Run s0 l u ∧ F u.memory
 
 theorem runF_clock (s0 : PancakeState σ) (l : List (String × Value)) (F : (Word → Word) → Prop) :
-    Safe.ClockFree (RunF s0 l F) := fun _ _ h => ⟨⟨h.1.vals, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+    Safe.ClockFree (RunF s0 l F) := fun _ _ h => ⟨⟨h.1.vals, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
 
 theorem runF_mono {s0 u : PancakeState σ} {l l' : List (String × Value)} {F F' : (Word → Word) → Prop}
     (h : RunF s0 l F u) (hl : ∀ q ∈ l', q ∈ l) (hF : ∀ m, F m → F' m) : RunF s0 l' F' u :=
-  ⟨⟨fun q hq => h.1.vals q (hl q hq), h.1.memaddrs, h.1.base, h.1.code⟩, hF _ h.2⟩
+  ⟨⟨fun q hq => h.1.vals q (hl q hq), h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, hF _ h.2⟩
 
 /-- A state alike but for the clock to one of `RunF` is one, with that state's memory. -/
 theorem runF_like {s0 s u : PancakeState σ} {l : List (String × Value)} {F : (Word → Word) → Prop}
     (hs : RunF s0 l F s) (hu : Like s u) : RunF s0 l (· = s.memory) u :=
   ⟨⟨fun q hq => by rw [hu.locals]; exact hs.1.vals q hq, by rw [hu.memaddrs]; exact hs.1.memaddrs,
-    by rw [hu.base]; exact hs.1.base, by rw [hu.code]; exact hs.1.code⟩, hu.memory⟩
+    by rw [hu.base]; exact hs.1.base, by rw [hu.code]; exact hs.1.code, by rw [hu.be]; exact hs.1.be⟩, hu.memory⟩
 
 /-- A word stored. -/
 def upd (m : Word → Word) (a v : Word) : Word → Word := fun k => if k = a then v else m k
@@ -52,7 +53,7 @@ theorem runF_dec (o : Oracle σ) {s0 : PancakeState σ} {l : List (String × Val
     {x : String} {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E) (hx : Fresh x l = true)
     {v : Value} (hv : ∀ u, RunF s0 l F u → eval u E = some v) :
     Frag o [.dec x e] (RunF s0 l F) (RunF s0 ((x, v) :: l) F) :=
-  frag_dec o he fun u h => ⟨v, hv u h, ⟨vals_cons h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+  frag_dec o he fun u h => ⟨v, hv u h, ⟨vals_cons h.1.vals hx v, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
 
 /-- **An assignment**, its value the same from every state. -/
 theorem runF_set (o : Oracle σ) {s0 : PancakeState σ} {l : List (String × Value)} {F : (Word → Word) → Prop}
@@ -60,7 +61,7 @@ theorem runF_set (o : Oracle σ) {s0 : PancakeState σ} {l : List (String × Val
     (hl : l.lookup x = some w) {v : Value} (hv : ∀ u, RunF s0 l F u → eval u E = some v) :
     Frag o [.assign x e] (RunF s0 l F) (RunF s0 ((x, v) :: without x l) F) :=
   set_frag o he (runF_clock _ _ _) fun u h =>
-    ⟨v, hv u h, ⟨w, vals_lookup h.1.vals hl⟩, ⟨vals_set h.1.vals x v, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+    ⟨v, hv u h, ⟨w, vals_lookup h.1.vals hl⟩, ⟨vals_set h.1.vals x v, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
 
 theorem ofNat_toNat (w : Word) : BitVec.ofNat 64 w.toNat = w := by simp
 
@@ -73,7 +74,7 @@ theorem mem_without {x : String} {l : List (String × Value)} {q : String × Val
 
 /-- A function's entry as a call makes it: the locals its parameters. -/
 theorem entry_run {s1 : PancakeState σ} {l : List (String × Value)} (hl : Vals s1 l) {F : (Word → Word) → Prop}
-    (hF : F s1.memory) : ∀ s, s = s1 → RunF s1 l F s := fun s e => by subst e; exact ⟨⟨hl, rfl, rfl, rfl⟩, hF⟩
+    (hF : F s1.memory) : ∀ s, s = s1 → RunF s1 l F s := fun s e => by subst e; exact ⟨⟨hl, rfl, rfl, rfl, rfl⟩, hF⟩
 
 /-- An entry with one parameter. -/
 theorem entry_one {s1 : PancakeState σ} {x : String} {vx : Value} (hx : s1.locals x = some vx) :
@@ -133,7 +134,7 @@ theorem runF_restore {s0 u : PancakeState σ} {l : List (String × Value)} {F : 
     (h : RunF s0 l F u) {y : String} (hy : Fresh y l = true) (v : Option Value) : RunF s0 l F (restore u y v) :=
   ⟨⟨fun q hq => by
     show (if q.1 = y then v else u.locals q.1) = some q.2
-    rw [if_neg (ScanRun.fresh_ne hy q hq)]; exact h.1.vals q hq, h.1.memaddrs, h.1.base, h.1.code⟩, h.2⟩
+    rw [if_neg (ScanRun.fresh_ne hy q hq)]; exact h.1.vals q hq, h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
 
 /-- The first place from `k` on where `p` holds, at most `n` places on. -/
 def seek (p : Nat → Bool) : Nat → Nat → Nat

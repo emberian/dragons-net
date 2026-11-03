@@ -17,7 +17,8 @@ it from a table. The grammar's one cycle, a comment within a comment (RFC 5322 Â
 `ruleComment`, a scan with a count of depth: a comment's end is the first `)` its depth closes. So
 no function calls itself or one that calls it, the functions come in an order in which each calls
 only those before it, and each frame lies past the frames of every function that calls it, so no
-two functions running at once share a slot. Tested against `dn-compiler abnf-model`, not proven.
+two functions running at once share a slot. Tested against `dn-compiler abnf-model`; proven so far: the
+operations on sets and the leaves (`DN.News.AbnfSets`, `AbnfLeaves`, `AbnfComment`).
 
 So that the analysis of decision 0004 sees every access lie in the area, a set holds no address,
 and a function checks each slot it is given and each word it reads back before it makes an address
@@ -288,10 +289,8 @@ def posParts (y : PExpr) : List PStmt :=
 /-- The bit `yj` of word `yw` of the set at `q` set. -/
 def setBit : PStmt := .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj")))
 
-/-- The set at `q` given position `y` too, its window's ends so far in `dl` and `dh`, `df` set
-while it is empty: the positions may come in any order. -/
-def addBit (m : Mutant) (y : PExpr) : List PStmt :=
-  posParts y ++ [setBit] ++
+/-- The window's ends so far, in `dl` and `dh`, taking word `yw`: the first word, `df` set, gives both. -/
+def addWin (m : Mutant) : List PStmt :=
   if m == .windowOrder then
     [.ite (v "df") [.assign "dl" (v "yw"), .assign "df" (n 0)] [], .assign "dh" (v "yw")]
   else
@@ -299,27 +298,38 @@ def addBit (m : Mutant) (y : PExpr) : List PStmt :=
       [.ite (eLt (v "yw") (v "dl")) [.assign "dl" (v "yw")] [],
        .ite (eLt (v "dh") (v "yw")) [.assign "dh" (v "yw")] []]]
 
+/-- The set at `q` given position `y` too, its window's ends so far in `dl` and `dh`, `df` set while none is. -/
+def addBit (m : Mutant) (y : PExpr) : List PStmt := posParts y ++ [setBit] ++ addWin m
+
+/-- The window's ends, none yet: a set built from nothing. -/
+def startWin : List PStmt := [.dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)]
+
+/-- The mask of byte `b` of a word. -/
+def mask (b : PExpr) : PExpr := .loadw 1 (eAdd (atOff (v "a") aMask) (eMul b (n 8)))
+
+/-- Position `x`, bit `j` of word `w`, to `body` when below the input's length. -/
+def posAt (body : List PStmt) : List PStmt :=
+  [.dec "x" (eAdd (eMul (v "w") (n 64)) (v "j")), .ite (eLt (v "x") (v "nn")) body []]
+
+/-- The bits `j` of byte `m` of the word in `wd`, each set one a position. -/
+def bitsLoop (body : List PStmt) : PStmt :=
+  .while (eLt (v "j") (eAdd (eMul (v "m") (n 8)) (n 8)))
+    [.ite (ne (eAnd (v "wd") (pow (v "j"))) (n 0)) (posAt body) [], inc "j"]
+
+/-- The bytes `m` of the word in `wd`, those holding a bit read bit by bit. -/
+def bytesLoop (body : List PStmt) : PStmt :=
+  .while (eLt (v "m") (n 8))
+    [.ite (ne (eAnd (v "wd") (mask (v "m"))) (n 0)) [.dec "j" (eMul (v "m") (n 8)), bitsLoop body] [], inc "m"]
+
+/-- The words `w` of the set at `p` up to `hi`, those holding a bit read byte by byte. -/
+def wordsLoop (body : List PStmt) : PStmt :=
+  .while (eLe (v "w") (v "hi"))
+    [.dec "wd" (.loadw 1 (bitWord "p" (v "w"))), .ite (ne (v "wd") (n 0)) [.dec "m" (n 0), bytesLoop body] [], inc "w"]
+
 /-- For each position `x` of the set at `p` below `nn`, `body`, from the lowest: a leaf matches at
 least one byte (`regression_959`) and a comment starts with one. A word's bits are tried only in
 its bytes that hold one. -/
-def eachPos (body : List PStmt) : List PStmt :=
-  readWin "p" "lo" "hi" ++
-  [.dec "w" (v "lo"),
-   .while (eLe (v "w") (v "hi"))
-     [.dec "wd" (.loadw 1 (bitWord "p" (v "w"))),
-      .ite (ne (v "wd") (n 0))
-        [.dec "m" (n 0),
-         .while (eLt (v "m") (n 8))
-           [.ite (ne (eAnd (v "wd") (.loadw 1 (eAdd (atOff (v "a") aMask) (eMul (v "m") (n 8)))))
-                (n 0))
-              [.dec "j" (eMul (v "m") (n 8)),
-               .while (eLt (v "j") (eAdd (eMul (v "m") (n 8)) (n 8)))
-                 [.ite (ne (eAnd (v "wd") (pow (v "j"))) (n 0))
-                    [.dec "x" (eAdd (eMul (v "w") (n 64)) (v "j")),
-                     .ite (eLt (v "x") (v "nn")) body []] [],
-                  inc "j"]] [],
-            inc "m"]] [],
-      inc "w"]]
+def eachPos (body : List PStmt) : List PStmt := readWin "p" "lo" "hi" ++ [.dec "w" (v "lo"), wordsLoop body]
 
 /-- The start of a function given the slots `ps`: the area, each slot checked and made an address,
 and with `len` the input's length checked. -/
@@ -391,6 +401,42 @@ def minusBits : List PStmt := [.dec "w" (v "lo"), wordLoop "w" "hi" (fun q p => 
 /-- `setMinus`'s end: the window cut to the words still holding one. -/
 def trimWin : List PStmt := [.dec "go" (n 1), trimLo, .assign "go" (n 1), trimHi, cutWin]
 
+/-- Class `k`'s words, checked, their address in `t`. -/
+def classHead : List PStmt :=
+  [kept "k" (classes.length - 1), .dec "t" (eAdd (atOff (v "a") aClass) (eMul (v "k") (n 32)))]
+
+/-- Position `x + 1` added when the byte at `x` is in the class at `t`: bit `b % 64` of its word `b / 64`. -/
+def classBody (m : Mutant) : List PStmt :=
+  [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "x"))),
+   .dec "bw" (eAdd (eAdd (eLe (n 64) (v "b")) (eLe (n 128) (v "b"))) (eLe (n 192) (v "b"))),
+   .ite (ne (eAnd (.loadw 1 (eAdd (v "t") (eMul (v "bw") (n 8)))) (pow (eAnd (v "b") (n 63)))) (n 0))
+     (addBit m (eAdd (v "x") (n 1))) []]
+
+/-- String `k`'s place among the strings' bytes, length and case into `off`, `len` and `cf`, each checked. -/
+def textHead : List PStmt :=
+  [kept "k" (texts.length - 1),
+   .dec "t" (eAdd (atOff (v "a") aTexts) (eMul (v "k") (n 24))),
+   .dec "off" (word (v "t") 0), kept "off" textBytes,
+   .dec "len" (word (v "t") 8), kept "len" textMax,
+   .dec "cf" (word (v "t") 16), kept "cf" 1]
+
+/-- Whether the string lies at `x`: `ok` cleared at a byte that differs, an upper case letter made lower case when
+`cf`. -/
+def textCmp (m : Mutant) : PStmt :=
+  .while (eLt (v "i") (v "len"))
+    [.dec "b" (byte (eAdd (eAdd (atOff (v "a") aInput) (v "x")) (v "i"))),
+     .dec "lb" (eAdd (v "b") (eMul (n 32)
+       (eAnd (n (if m == .caseful then 0 else 1))
+         (eAnd (v "cf") (eAnd (eLe (n 65) (v "b")) (eLe (v "b") (n 90))))))),
+     .ite (ne (v "lb") (byte (eAdd (eAdd (atOff (v "a") aTextBytes) (v "off")) (v "i"))))
+       [.assign "ok" (n 0)] [],
+     inc "i"]
+
+/-- Position `x + len` added when the string lies at `x`, within the input. -/
+def textBody (m : Mutant) : List PStmt :=
+  [.ite (eLe (eAdd (v "x") (v "len")) (v "nn"))
+    [.dec "ok" (n 1), .dec "i" (n 0), textCmp m, .ite (v "ok") (addBit m (eAdd (v "x") (v "len"))) []] []]
+
 /-! ## The operations on sets -/
 
 section
@@ -448,40 +494,13 @@ def setHas : PFun :=
 /-- The positions one past those of `s` whose byte is in class `k`, into `d`. -/
 def leafClass : PFun :=
   { name := "leafClass", params := [(1, "s"), (1, "d"), (1, "k")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [kept "k" (classes.length - 1),
-     .dec "t" (eAdd (atOff (v "a") aClass) (eMul (v "k") (n 32))),
-     .dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "x"))),
-       .dec "bw" (eAdd (eAdd (eLe (n 64) (v "b")) (eLe (n 128) (v "b"))) (eLe (n 192) (v "b"))),
-       .ite (ne (eAnd (.loadw 1 (eAdd (v "t") (eMul (v "bw") (n 8)))) (pow (eAnd (v "b") (n 63))))
-           (n 0))
-         (addBit m (eAdd (v "x") (n 1))) []] ++
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ classHead ++ startWin ++ eachPos (classBody m) ++
     epilogue }
 
 /-- The positions past string `k` from those of `s` where it lies, into `d`. -/
 def leafText : PFun :=
   { name := "leafText", params := [(1, "s"), (1, "d"), (1, "k")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [kept "k" (texts.length - 1),
-     .dec "t" (eAdd (atOff (v "a") aTexts) (eMul (v "k") (n 24))),
-     .dec "off" (word (v "t") 0), kept "off" textBytes,
-     .dec "len" (word (v "t") 8), kept "len" textMax,
-     .dec "cf" (word (v "t") 16), kept "cf" 1,
-     .dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.ite (eLe (eAdd (v "x") (v "len")) (v "nn"))
-        [.dec "ok" (n 1), .dec "i" (n 0),
-         .while (eLt (v "i") (v "len"))
-           [.dec "b" (byte (eAdd (eAdd (atOff (v "a") aInput) (v "x")) (v "i"))),
-            .dec "lb" (eAdd (v "b") (eMul (n 32)
-              (eAnd (n (if m == .caseful then 0 else 1))
-                (eAnd (v "cf") (eAnd (eLe (n 65) (v "b")) (eLe (v "b") (n 90))))))),
-            .ite (ne (v "lb") (byte (eAdd (eAdd (atOff (v "a") aTextBytes) (v "off")) (v "i"))))
-              [.assign "ok" (n 0)] [],
-            inc "i"],
-         .ite (v "ok") (addBit m (eAdd (v "x") (v "len"))) []] []] ++
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ textHead ++ startWin ++ eachPos (textBody m) ++
     epilogue }
 
 /-- Whether the byte in the local `b` is in the class of rule `r`, which is one. -/
@@ -490,48 +509,58 @@ def inClass (r : String) (b : PExpr) : PExpr :=
   | some rs => (rs.map fun (lo, hi) => eAnd (eLe (n lo) b) (eLe b (n hi))).foldl eOr (n 0)
   | none => n 0
 
+/-- Whether the byte in `b` is white space. -/
+def wspAt : PExpr := inClass "wsp" (v "b")
+/-- The byte after `y`. -/
+def nextByte : PExpr := byte (eAdd (eAdd (atOff (v "a") aInput) (v "y")) (n 1))
+/-- Whether a byte follows `y` in the input. -/
+def nextIn : PExpr := eLt (eAdd (v "y") (n 1)) (v "nn")
+
+/-- The comment's scan at the byte in `b`, in state `sm` with `dep` comments open: `go` cleared where no comment can
+go on, 2 where the first closes. -/
+def scanByte (m : Mutant) : PStmt :=
+  .ite (eEq (v "sm") (n 2))
+    [.ite wspAt [.assign "sm" (n 3), inc "y"] [.assign "go" (n 0)]]
+    [.ite wspAt [.ite (eEq (v "sm") (n 0)) [.assign "sm" (n 1)] [], inc "y"]
+      [.ite (eEq (v "b") (n 13))
+        [.ite (eAnd (eEq (v "sm") (n 3)) (n (if m == .commentFold then 0 else 1)))
+          [.assign "go" (n 0)]
+          [.ite (eAnd nextIn (eEq nextByte (n 10)))
+            [.assign "sm" (n 2), .assign "y" (eAdd (v "y") (n 2))]
+            [.assign "go" (n 0)]]]
+        [.ite (or2 (inClass "ctext" (v "b"))
+            (eAnd (eEq (v "b") (n 92)) (n (if m == .commentEscape then 1 else 0))))
+          [.assign "sm" (n 0), inc "y"]
+          [.ite (eEq (v "b") (n 92))
+            [.ite (eAnd nextIn (or2 (inClass "vchar" nextByte) (inClass "wsp" nextByte)))
+              [.assign "sm" (n 0), .assign "y" (eAdd (v "y") (n 2))]
+              [.assign "go" (n 0)]]
+            [.ite (eEq (v "b") (n 40))
+              [inc "dep", .assign "sm" (n 0), inc "y"]
+              [.ite (eEq (v "b") (n 41))
+                [.assign "dep" (eSub (v "dep") (n 1)), .assign "sm" (n 0), inc "y",
+                 .ite (eEq (v "dep") (n 0)) [.assign "go" (n 2)] []]
+                [.assign "go" (n 0)]]]]]]]
+
+/-- One step of the comment's scan: the byte at `y`, or the input's end. -/
+def scanStep (m : Mutant) : List PStmt :=
+  [.ite (eLt (v "y") (v "nn")) [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "y"))), scanByte m]
+    [.assign "go" (n 0)]]
+
+/-- Where the comment that opens at `x` ends, added. -/
+def commentBody (m : Mutant) : List PStmt :=
+  [.ite (eEq (byte (eAdd (atOff (v "a") aInput) (v "x"))) (n 40))
+    [.dec "y" (eAdd (v "x") (n 1)), .dec "dep" (n 1), .dec "sm" (n 0), .dec "go" (n 1),
+     .while (eEq (v "go") (n 1)) (scanStep m),
+     .ite (eEq (v "go") (n 2)) (addBit m (v "y")) []] []]
+
 /-- Where each comment of the positions of `s` ends, into `d`: `(`, then text, quoted pairs,
 comments and white space that folds at most once between two of them, to the `)` that closes it.
 The state: 0 after `(` or a part, 1 in white space, 2 just after its CRLF, 3 in white space after
 it. -/
 def ruleComment : PFun :=
-  let wsp := inClass "wsp" (v "b")
-  let at1 := byte (eAdd (eAdd (atOff (v "a") aInput) (v "y")) (n 1))
-  let more := eLt (eAdd (v "y") (n 1)) (v "nn")
   { name := "ruleComment", params := [(1, "s"), (1, "d")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [.dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.ite (eEq (byte (eAdd (atOff (v "a") aInput) (v "x"))) (n 40))
-        [.dec "y" (eAdd (v "x") (n 1)), .dec "dep" (n 1), .dec "sm" (n 0), .dec "go" (n 1),
-         .while (eEq (v "go") (n 1))
-           [.ite (eLt (v "y") (v "nn"))
-             [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "y"))),
-              .ite (eEq (v "sm") (n 2))
-                [.ite wsp [.assign "sm" (n 3), inc "y"] [.assign "go" (n 0)]]
-                [.ite wsp [.ite (eEq (v "sm") (n 0)) [.assign "sm" (n 1)] [], inc "y"]
-                  [.ite (eEq (v "b") (n 13))
-                    [.ite (eAnd (eEq (v "sm") (n 3)) (n (if m == .commentFold then 0 else 1)))
-                      [.assign "go" (n 0)]
-                      [.ite (eAnd more (eEq at1 (n 10)))
-                        [.assign "sm" (n 2), .assign "y" (eAdd (v "y") (n 2))]
-                        [.assign "go" (n 0)]]]
-                    [.ite (or2 (inClass "ctext" (v "b"))
-                        (eAnd (eEq (v "b") (n 92)) (n (if m == .commentEscape then 1 else 0))))
-                      [.assign "sm" (n 0), inc "y"]
-                      [.ite (eEq (v "b") (n 92))
-                        [.ite (eAnd more (or2 (inClass "vchar" at1) (inClass "wsp" at1)))
-                          [.assign "sm" (n 0), .assign "y" (eAdd (v "y") (n 2))]
-                          [.assign "go" (n 0)]]
-                        [.ite (eEq (v "b") (n 40))
-                          [inc "dep", .assign "sm" (n 0), inc "y"]
-                          [.ite (eEq (v "b") (n 41))
-                            [.assign "dep" (eSub (v "dep") (n 1)), .assign "sm" (n 0), inc "y",
-                             .ite (eEq (v "dep") (n 0)) [.assign "go" (n 2)] []]
-                            [.assign "go" (n 0)]]]]]]]]
-             [.assign "go" (n 0)]],
-         .ite (eEq (v "go") (n 2)) (addBit m (v "y")) []] []] ++
-    epilogue }
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ startWin ++ eachPos (commentBody m) ++ epilogue }
 
 end
 
