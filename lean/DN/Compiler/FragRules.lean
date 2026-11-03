@@ -498,6 +498,11 @@ theorem frag_while (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Low
   rw [hBl] at hc'; cases hc'
   exact hsafe s hs
 
+theorem lowKK_nil : LowKK [] := fun k => ⟨k, rfl⟩
+
+theorem lowKK_ret {e : Syntax.PExpr} {E : PancakeExp} (he : Lower.lowerExp e = some E) : LowKK [.ret e] :=
+  lowKK_one rfl (a := .ret E) (by simp [Lower.lowerStmt1, he])
+
 /-- A local set twice holds the second value. -/
 theorem setL_setL (s : PancakeState σ) (x : String) (v w : Value) : setL (setL s x v) x w = setL s x w := by
   simp only [setL]; congr 1; funext y; simp [setLocal]; split <;> rfl

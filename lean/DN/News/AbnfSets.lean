@@ -62,6 +62,10 @@ structure Area (ofs : Nat) (A : Word) (s : PancakeState σ) : Prop where
   hA : A.toNat % 8 = 0
   dom : ∀ x, x < aSets + slots * setSize → x % 8 = 0 → s.memaddrs (at_ A x) = true
 
+/-- The area as it was, the locals changed. -/
+theorem area_locals {ofs : Nat} {A : Word} {s : PancakeState σ} (hA : Area ofs A s) (L : String → Option Value) :
+    Area ofs A { s with locals := L } := ⟨hA.base, hA.hA, hA.dom⟩
+
 /-- Word `i` of slot `k`. -/
 def slotW (A : Word) (k i : Nat) : Word := at_ A (off k + 8 * i)
 

@@ -82,6 +82,16 @@ theorem fragR_if (o : Oracle σ) {R : Ret} {c : Syntax.PExpr} {C : PancakeExp} (
         absurd (Option.some.inj ((hv u hu).symm.trans h0)) (by decide))
     | false => exact fragR_conseq (he rfl) (fun u h => h.1) fun _ h => h
 
+/-- A body from a premise with a witness, shown for each witness. -/
+theorem fragR_exists {α : Type} {o : Oracle σ} {R : Ret} {xs : List Syntax.PStmt} (hl : LowKK xs)
+    {P : α → Assn σ} {Q : Assn σ} (h : ∀ a, FragR o R xs (P a) Q) : FragR o R xs (fun u => ∃ a, P a u) Q := by
+  intro k Q' hQ hk
+  obtain ⟨c, hc⟩ := hl k
+  refine ⟨c, hc, fun s ⟨a, hs⟩ => ?_⟩
+  obtain ⟨c', hc', hs'⟩ := h a k Q' hQ hk
+  rw [hc] at hc'; cases hc'
+  exact hs' s hs
+
 /-! ## The premises can hold -/
 
 theorem fragR_witness : FragR (σ := Unit) Oracle.idle (fun _ _ => True) [] (fun _ => True) (fun _ => True) :=

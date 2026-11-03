@@ -34,6 +34,8 @@ def MsgW (A : Word) (a : Word) : Prop := ∃ x, sMessage ≤ x ∧ x < sWindow �
 
 theorem at_add (A : Word) (x y : Nat) : at_ A x + BitVec.ofNat 64 y = at_ A (x + y) := add_ofNat A x y
 
+theorem at_zero (A : Word) : at_ A 0 = A := by simp [at_]
+
 theorem at_ne {A : Word} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) (h : x ≠ y) : at_ A x ≠ at_ A y :=
   region_addr_inj A x y hx hy h
 

@@ -17,8 +17,10 @@ it from a table. The grammar's one cycle, a comment within a comment (RFC 5322 �
 `ruleComment`, a scan with a count of depth: a comment's end is the first `)` its depth closes. So
 no function calls itself or one that calls it, the functions come in an order in which each calls
 only those before it, and each frame lies past the frames of every function that calls it, so no
-two functions running at once share a slot. Tested against `dn-compiler abnf-model`; proven so far: the
-operations on sets and the leaves (`DN.News.AbnfSets`, `AbnfLeaves`, `AbnfComment`).
+two functions running at once share a slot. Tested against `dn-compiler abnf-model`; proven: the
+operations on sets, the leaves, `gen` and the rules' functions, and a round of `main` for a case in range
+(`DN.News.AbnfSets`, `AbnfLeaves`, `AbnfComment`, `AbnfGen`, `AbnfRun`, `AbnfMain`); not yet: that `tables` sets
+the area up and the loop around `dn_next` keeps it, and termination.
 
 So that the analysis of decision 0004 sees every access lie in the area, a set holds no address,
 and a function checks each slot it is given and each word it reads back before it makes an address
@@ -114,30 +116,32 @@ def termOf (i : Nat) : Term := grammar[i]?.getD (.alt [])
 /-- Whether rule `i` has a function: the comment's, or one that is no leaf. -/
 def hasFun (i : Nat) : Bool := i == commentRule || (leafOf (termOf i)).isNone
 
-/-- The rules with functions a term calls, in order. -/
+/-- The rules with functions a term calls, in order, its parts' by `g`, `l` its leaf if it is one. The leaf is
+an argument here and below so that no recursive definition works `leafOf` out on its own. -/
+def callsAt (g : Term → List Nat) : Option Leaf → Term → List Nat
+  | some _, _ => []
+  | none, .ref i => [i]
+  | none, .seq ts | none, .alt ts => ts.flatMap g
+  | none, .rep _ _ u => g u
+  | none, _ => []
+
 def callsOf : Nat → Term → List Nat
   | 0, _ => []
-  | f + 1, t =>
-    if (leafOf t).isSome then [] else
-    match t with
-    | .ref i => [i]
-    | .seq ts | .alt ts => ts.flatMap (callsOf f)
-    | .rep _ _ u => callsOf f u
-    | _ => []
+  | f + 1, t => callsAt (callsOf f) (leafOf t) t
 
 def callees (i : Nat) : List Nat :=
   if i == commentRule then [] else (callsOf steps (termOf i)).eraseDups
 
 /-- The leaves a term reads, in order. -/
+def leavesAt (g : Term → List Leaf) : Option Leaf → Term → List Leaf
+  | some l, _ => [l]
+  | none, .seq ts | none, .alt ts => ts.flatMap g
+  | none, .rep _ _ u => g u
+  | none, _ => []
+
 def leavesOf : Nat → Term → List Leaf
   | 0, _ => []
-  | f + 1, t =>
-    match leafOf t with
-    | some l => [l]
-    | none => match t with
-      | .seq ts | .alt ts => ts.flatMap (leavesOf f)
-      | .rep _ _ u => leavesOf f u
-      | _ => []
+  | f + 1, t => leavesAt (leavesOf f) (leafOf t) t
 
 /-- Rules `i` reaches, each after every rule it calls, after `done`. -/
 def visit : Nat → Nat → List Nat → List Nat
@@ -156,17 +160,17 @@ def ordered : Bool :=
   (order.zipIdx).all fun (i, k) => (callees i).all fun j => (order.take k).contains j
 
 /-- How many slots of its own a term's statements use. -/
+def needAt (g : Term → Nat) : Option Leaf → Term → Nat
+  | some _, _ => 0
+  | none, .seq [u] | none, .alt [u] => g u
+  | none, .seq (u :: us) => 2 + ((u :: us).map g).foldl max 0
+  | none, .alt (u :: us) => 1 + ((u :: us).map g).foldl max 0
+  | none, .rep lo hi u => if lo == 0 && hi == some 1 then g u else 2 + g u
+  | none, _ => 0
+
 def needOf : Nat → Term → Nat
   | 0, _ => 0
-  | f + 1, t =>
-    if (leafOf t).isSome then 0 else
-    match t with
-    | .seq [u] | .alt [u] => needOf f u
-    | .seq (u :: us) => 2 + ((u :: us).map (needOf f)).foldl max 0
-    | .alt (u :: us) => 1 + ((u :: us).map (needOf f)).foldl max 0
-    | .rep 0 (some 1) u => needOf f u
-    | .rep _ _ u => 2 + needOf f u
-    | _ => 0
+  | f + 1, t => needAt (needOf f) (leafOf t) t
 
 def need (i : Nat) : Nat := if i == commentRule then 0 else needOf steps (termOf i)
 
@@ -566,9 +570,11 @@ end
 
 /-! ## The rules' functions -/
 
+/-- Rule `i`'s function: its place, then its name, so that no two share a name. -/
 def funName (i : Nat) : String :=
   if i == commentRule then "ruleComment"
-  else "rule_" ++ String.ofList ((names[i]?.getD "").toList.map fun c => if c == '-' then '_' else c)
+  else "rule" ++ toString i ++ "_" ++
+    String.ofList ((names[i]?.getD "").toList.map fun c => if c == '-' then '_' else c)
 
 def classIndex (b : List Nat) : Nat := (classes.findIdx? (· == b)).getD 0
 def textIndex (t : List Nat × Bool) : Nat := (texts.findIdx? (· == t)).getD 0
@@ -582,81 +588,106 @@ def leafCall (c : String) (l : Leaf) (s d : PExpr) : PStmt :=
 section
 variable (m : Mutant)
 
+/-- What `gen` does to a term's parts: `g t s d free k` puts into slot `d` the ends of the matches of `t` from
+the positions in slot `s`, with the slots from `free` on for its own sets; `k` numbers its locals. -/
+abbrev Gen := Term → PExpr → PExpr → Nat → Nat → List PStmt × Nat
+
+/-- A sequence's terms from the `i`th: each result but the last into one of two slots in turn; an empty one ends
+the sequence with none. -/
+def seqFrom (g : Gen) (s d : PExpr) (free : Nat) : Nat → List Term → Nat → List PStmt × Nat
+  | _, [], k => ([], k)
+  | i, [t], k =>
+    let (b, k) := g t (if i == 0 then s else n (free + (i + 1) % 2)) d (free + 2) k
+    (b, k + 1)
+  | i, t :: ts, k =>
+    let (rest, k) := seqFrom g s d free (i + 1) ts k
+    let dst := n (free + i % 2)
+    let (b, k) := g t (if i == 0 then s else n (free + (i + 1) % 2)) dst (free + 2) k
+    (b ++ [.call s!"e{k}" "setVoid" [dst, d], .ite (v s!"e{k}") [] rest], k + 1)
+
+def genSeq (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([.call s!"c{k}" "setCopy" [d, s]], k + 1)
+  | [u], k => g u s d free k
+  | u :: v :: vs, k => seqFrom g s d free 0 (u :: v :: vs) k
+
+/-- The alternatives after the first, each into slot `free`, then added to slot `d`. -/
+def altRest (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([], k)
+  | u :: us, k =>
+    let (b, k) := g u s (n free) (free + 1) k
+    let (rest, k') := altRest g s d free us (k + 1)
+    (b ++ [.call s!"c{k}" "setUnion" [d, n free]] ++ rest, k')
+
+def genAlt (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([.call s!"c{k}" "setClear" [d]], k + 1)
+  | [u], k => g u s d free k
+  | u :: v :: vs, k =>
+    let us := if m == .altLast then (v :: vs).dropLast else v :: vs
+    let (first, k) := g u s d (free + 1) k
+    let (rest, k) := altRest g s d free us k
+    (first ++ rest, k)
+
+/-- A repetition's check of its bound at a turn's start: once it has run `hi` rounds it stops. -/
+def repStop (k : Nat) : Option Nat → List PStmt
+  | some h => if m == .repPastBound then [] else [.ite (eLe (n h) (v s!"n{k}")) [.assign s!"g{k}" (n 0)] []]
+  | none => []
+
+/-- A round after its body: the count, whether it reached anything, and if so what it adds and the slots swapped. -/
+def repTail (k free lo : Nat) (d : PExpr) : List PStmt :=
+  [inc s!"n{k}", .call s!"e{k}" "setEmpty" [v s!"x{k}"],
+   .ite (v s!"e{k}") [.assign s!"g{k}" (n 0)]
+     [.ite (eLt (v s!"n{k}") (n lo)) [] [.call s!"{s!"c{k}"}d" "setGrow" [v s!"x{k}", d]],
+      .assign s!"f{k}" (v s!"x{k}"),
+      .ite (eEq (v s!"x{k}") (n free)) [.assign s!"x{k}" (n (free + 1))] [.assign s!"x{k}" (n free)]]]
+
+/-- As `endsFrom`: from the frontier, the positions the last round reached that were not reached before, a round
+more, while the bound allows and a round reaches any; from round `lo` on, what a round reaches counts. The rounds
+write two slots in turn, `f{k}` naming the frontier's and `x{k}` the next round's; `body` is a round's term. -/
+def repStmts (s d : PExpr) (free lo : Nat) (hi : Option Nat) (k : Nat) (body : List PStmt) : List PStmt :=
+  [if lo == 0 then .call s!"{s!"c{k}"}b" "setCopy" [d, s] else .call s!"{s!"c{k}"}b" "setClear" [d],
+   .dec s!"f{k}" s, .dec s!"x{k}" (n free), .dec s!"n{k}" (n 0), .dec s!"g{k}" (n 1), .dec s!"i{k}" (n 0),
+   .while (eAnd (v s!"g{k}") (eLt (v s!"i{k}") (eAdd (v "nn") (n (lo + 1)))))
+     (inc s!"i{k}" :: repStop m k hi ++ [.ite (v s!"g{k}") (body ++ repTail k free lo d) []])]
+
+/-- A repetition, its round's term `u` into the next round's slot. -/
+def genRep (g : Gen) (s d : PExpr) (free lo : Nat) (hi : Option Nat) (u : Term) (k : Nat) : List PStmt × Nat :=
+  let (body, k') := g u (v s!"f{k}") (v s!"x{k}") (free + 2) (k + 1)
+  (repStmts m s d free lo hi k body, k')
+
+/-- A term that is no leaf. -/
+def genTerm (g : Gen) (t : Term) (s d : PExpr) (free k : Nat) : List PStmt × Nat :=
+  match t with
+  | .ref i => ([.call s!"c{k}" (funName i) [s, d]], k + 1)
+  | .seq ts => genSeq g s d free ts k
+  | .alt ts => genAlt m g s d free ts k
+  | .rep lo hi u =>
+    if lo == 0 && hi == some 1 then
+      let (b, k) := g u s d free k
+      (b ++ [.call s!"c{k}" "setUnion" [d, s]], k + 1)
+    else genRep m g s d free lo hi u k
+  | _ => ([.call s!"c{k}" "setClear" [d]], k + 1)
+
+/-- A leaf's call, or the statements of a term that is none. -/
+def genLeaf (g : Gen) : Option Leaf → Gen
+  | some l, _, s, d, _, k => ([leafCall s!"c{k}" l s d], k + 1)
+  | none, t, s, d, free, k => genTerm m g t s d free k
+
 /-- Statements that put into slot `d` the ends of the matches of `t` from the positions in slot
 `s`, with the slots from `free` on for their own sets; `k` numbers their locals. -/
-def gen : Nat → Term → PExpr → PExpr → Nat → Nat → List PStmt × Nat
+def gen : Nat → Gen
   | 0, _, _, _, _, k => ([], k)
-  | f + 1, t, s, d, free, k =>
-    let c := s!"c{k}"
-    match leafOf t with
-    | some l => ([leafCall c l s d], k + 1)
-    | none =>
-      match t with
-      | .ref i => ([.call c (funName i) [s, d]], k + 1)
-      | .seq [] => ([.call c "setCopy" [d, s]], k + 1)
-      | .seq [u] => gen f u s d free k
-      | .seq (u :: us) =>
-        -- Each result but the last into one of two slots in turn; an empty one ends the sequence
-        -- with none.
-        let last := us.length
-        let (out, _, k) := ((u :: us).zipIdx).foldr (fun (t, i) (rest, _, k) =>
-          let src := if i == 0 then s else n (free + (i + 1) % 2)
-          let dst := if i == last then d else n (free + i % 2)
-          let (b, k) := gen f t src dst (free + 2) k
-          let tail := if i == last then [] else
-            [.call s!"e{k}" "setVoid" [dst, d], .ite (v s!"e{k}") [] rest]
-          (b ++ tail, src, k + 1)) (([] : List PStmt), s, k)
-        (out, k)
-      | .alt [] => ([.call c "setClear" [d]], k + 1)
-      | .alt [u] => gen f u s d free k
-      | .alt (u :: us) =>
-        let us := if m == .altLast then us.dropLast else us
-        let (first, k) := gen f u s d (free + 1) k
-        us.foldl (fun (acc, k) u =>
-          let (b, k) := gen f u s (n free) (free + 1) k
-          (acc ++ b ++ [.call s!"c{k}" "setUnion" [d, n free]], k + 1)) (first, k)
-      | .rep 0 (some 1) u =>
-        let (b, k) := gen f u s d free k
-        (b ++ [.call s!"c{k}" "setUnion" [d, s]], k + 1)
-      | .rep lo hi u =>
-        -- As `endsFrom`: from the frontier, the positions the last round reached that were not
-        -- reached before, a round more, while the bound allows and a round reaches any; from
-        -- round `lo` on, what a round reaches counts. The rounds write two slots in turn, `fr`
-        -- naming the frontier's and `nx` the next round's.
-        let fr := s!"f{k}"
-        let nx := s!"x{k}"
-        let cnt := s!"n{k}"
-        let go := s!"g{k}"
-        let i := s!"i{k}"
-        let e := s!"e{k}"
-        let (body, k') := gen f u (v fr) (v nx) (free + 2) (k + 1)
-        let stop : List PStmt := match hi with
-          | some h => if m == .repPastBound then [] else
-            [.ite (eLe (n h) (v cnt)) [.assign go (n 0)] []]
-          | none => []
-        ([if lo == 0 then .call s!"{c}b" "setCopy" [d, s] else .call s!"{c}b" "setClear" [d],
-          .dec fr s, .dec nx (n free), .dec cnt (n 0), .dec go (n 1), .dec i (n 0),
-          .while (eAnd (v go) (eLt (v i) (eAdd (v "nn") (n (lo + 1)))))
-            (inc i :: stop ++
-             [.ite (v go)
-               (body ++ [inc cnt, .call e "setEmpty" [v nx],
-                 .ite (v e) [.assign go (n 0)]
-                   [.ite (eLt (v cnt) (n lo)) [] [.call s!"{c}d" "setGrow" [v nx, d]],
-                    .assign fr (v nx),
-                    .ite (eEq (v nx) (n free)) [.assign nx (n (free + 1))] [.assign nx (n free)]]])
-               []])], k')
-      | _ => ([.call c "setClear" [d]], k + 1)
+  | f + 1, t, s, d, free, k => genLeaf m (gen f) (leafOf t) t s d free k
 
 /-- Whether a term's statements read the input's length, which bounds a repetition. -/
+def repeatsAt (g : Term → Bool) : Option Leaf → Term → Bool
+  | some _, _ => false
+  | none, .seq ts | none, .alt ts => ts.any g
+  | none, .rep lo hi u => if lo == 0 && hi == some 1 then g u else true
+  | none, _ => false
+
 def repeats : Nat → Term → Bool
   | 0, _ => false
-  | f + 1, t =>
-    if (leafOf t).isSome then false else
-    match t with
-    | .seq ts | .alt ts => ts.any (repeats f)
-    | .rep 0 (some 1) u => repeats f u
-    | .rep _ _ _ => true
-    | _ => false
+  | f + 1, t => repeatsAt (repeats f) (leafOf t) t
 
 /-- Rule `i`'s function, its frame at `frameOf i`. -/
 def ruleFun (ofs : Nat) (i : Nat) : PFun :=
@@ -707,26 +738,36 @@ def functions (ofs : Nat) : List PFun :=
    setGrow, setEmpty m ofs, setHas m ofs, leafClass m ofs, leafText m ofs, tables ofs] ++
   order.map (ruleFun m ofs)
 
+/-- The loop that adds a case's starts to slot 0. -/
+def startsLoop : PStmt :=
+  .while (eAnd (eLt (v "k") (v "ks")) (eLt (v "k") (n startsMax)))
+    [.call "u" "setAdd" [n 0, .loadw 1 (eAdd (atOff (v "a") aStartList) (eMul (v "k") (n 8)))], inc "k"]
+
+/-- The branch that calls rule `i` from slot 0 into slot 1. -/
+def pick (i : Nat) : PStmt := .ite (eEq (v "r") (n i)) [rootCall i] []
+
+/-- Whether a case is out of range: the input's length or the rule's place among `N`. -/
+def caseTest (N : Nat) : PExpr :=
+  or2 (or2 (eLt (v "nn") (n 0)) (eLt (n inputMax) (v "nn"))) (or2 (eLt (v "r") (n 0)) (eLt (n (N - 1)) (v "r")))
+
+/-- A case's statements: the starts into slot 0, the rule asked into slot 1, whether the input's end is there. -/
+def caseBody (N : Nat) : List PStmt :=
+  [.call "z" "setClear" [n 0], .dec "k" (n 0), .dec "ks" (word (v "a") aStarts), startsLoop] ++
+    (List.range N).map pick ++
+    [.call "h" "setHas" [n 1, v "nn"], .assign "ans" (v "h"), .ite (word (v "a") aBroken) [.assign "ans" (n 2)] []]
+
+/-- What `main` does with a case its host handed it, of `N` rules: the answer stored. -/
+def round (N : Nat) : List PStmt :=
+  [.store (atOff (v "a") aBroken) (n 0), .dec "r" (word (v "a") aRule), .dec "nn" (word (v "a") aLen),
+   .dec "ans" (n 2), .ite (caseTest N) [] (caseBody N), .store (atOff (v "a") aAnswer) (v "ans")]
+
 /-- A program that answers, for each case its host hands it, whether a match of the rule asked from
 one of the positions given ends at the input's end: 1 if one does, 0 if not, 2 if the case is out of
 range or a check failed. -/
 def main (ofs : Nat) : PFun :=
   { name := "main", body :=
     [areaAt ofs, .call "t" "tables" [],
-     .while (n 1)
-       [.ffi "dn_next" [v "a", n 8, v "a", n aIO],
-        .store (atOff (v "a") aBroken) (n 0),
-        .dec "r" (word (v "a") aRule), .dec "nn" (word (v "a") aLen), .dec "ans" (n 2),
-        .ite (or2 (or2 (eLt (v "nn") (n 0)) (eLt (n inputMax) (v "nn")))
-            (or2 (eLt (v "r") (n 0)) (eLt (n (grammar.size - 1)) (v "r")))) []
-          ([.call "z" "setClear" [n 0], .dec "k" (n 0), .dec "ks" (word (v "a") aStarts),
-            .while (eAnd (eLt (v "k") (v "ks")) (eLt (v "k") (n startsMax)))
-              [.call "u" "setAdd" [n 0, .loadw 1 (eAdd (atOff (v "a") aStartList) (eMul (v "k") (n 8)))],
-               inc "k"]] ++
-           (List.range grammar.size).map (fun i => .ite (eEq (v "r") (n i)) [rootCall i] []) ++
-           [.call "h" "setHas" [n 1, v "nn"], .assign "ans" (v "h"),
-            .ite (word (v "a") aBroken) [.assign "ans" (n 2)] []]),
-        .store (atOff (v "a") aAnswer) (v "ans")],
+     .while (n 1) (.ffi "dn_next" [v "a", n 8, v "a", n aIO] :: round grammar.size),
      .ret (n 0)] }
 
 end
