@@ -4,12 +4,9 @@ import DN.Server.SessionWords
 /-!
 # DN.Server.SessionClassify
 
-`classify`, the first stage of the session's reply: if it goes on, `r` holds the code of the reply
-`CommandSpec.replyIn` gives the line (`classify_frag`). What the reply carries past its code, in locals and own words
-for the next stage, is not shown. The command a line names is `commandIn`'s (`pick_spec`); the branches are
-`answer`'s and `answerIn`'s, with `groupName` and the number and message-id checks (`SessionCheck`), and
-`viewClassify` and `listClassify` by their contract `FnOk` (`known_frag`, `cmd_frag`). Every fragment here holds if
-the run goes on.
+`classify`, the reply's first stage: if it goes on, `r` holds the code `CommandSpec.replyIn` gives the line
+(`classify_frag`). The command is `commandIn`'s (`pick_spec`); the branches are `answer`'s and `answerIn`'s. What the
+reply carries past its code is not shown.
 -/
 
 namespace DN.Server.SessionClassify
@@ -279,8 +276,8 @@ theorem tree_ite (o : Oracle σ) {b : Word} {s0 : PancakeState σ} {R : Nat} {c 
   frag_ite o hc (out_clock b s0 R) hdef ht (fun _ _ v h hy => out_restore h (hdt _ hy).1 (hdt _ hy).2 v) he
     (fun _ _ v h hy => out_restore h (hde _ hy).1 (hde _ hy).2 v)
 
-/-- What `classify` takes at its entry `s0`: the line of connection `ci`, of kind `k`, in its framer's block, the
-locals it reads, the session's words with the texts and whether there is a store. -/
+/-- What `classify` takes at its entry `s0`: connection `ci`'s line, of kind `k`, in its framer's block. Also the locals
+it reads, the session's words with the texts, and whether there is a store. -/
 structure ClsIn (b : Word) (ci : Nat) (offered : Bool) (k : FrameSpec.Kind) (L : List Byte) (s0 : PancakeState σ) :
     Prop where
   line : LineIn (SessionFrame.blockAt b ci) L s0
@@ -1000,13 +997,13 @@ theorem VEntry.short62 {b : Word} {ci K : Nat} {L : List Byte} {s : PancakeState
     L.length < 2 ^ 62 := by
   have := he.short; simp [News.SessionSpec.lineLimit] at this; omega
 
-/-- What such a function gives back: zero, the reply's code `R` in the return word, every word but `clsWords` as
-it was. -/
+/-- What such a function gives back: zero, the reply's code `R` in the return word. Every word but `clsWords` is as it
+was. -/
 def CallRet (b : Word) (R : Nat) (m0 : Word → Word) : Ret :=
   fun v m => v = 0 ∧ m (SessionCheck.retW b) = BitVec.ofNat 64 R ∧ ∀ a, a ∉ clsWords b → m a = m0 a
 
-/-- The function `f` as the code holds it: for the commands `cs` on a line of words, if it returns, it gives back
-zero and leaves in the return word the code of `answerIn`'s reply to the line's arguments. -/
+/-- The function `f` as the code holds it, for the commands `cs` on a line of words. If it returns, it gives back zero,
+the code of `answerIn`'s reply to the arguments in the return word. -/
 def FnOk (o : Oracle σ) (f : String) (b : Word) (cs : CommandSpec.Cmd → Prop)
     (code : String → Option (List String × PancakeProg)) : Prop :=
   ∃ body, code f = some (["c", "cmd"], body) ∧ ∀ ci c L (s1 : PancakeState σ), cs c → 1 ≤ (spans L).length →
@@ -1156,7 +1153,7 @@ theorem callS_decl (rt f : String) (as : List Syntax.PExpr) (hrt : rt ∈ clsNam
     ∀ y ∈ declared (SessionStore.callS rt f as ++ [.assign "r" SessionStore.found]), y ∈ clsNames ∧ y ≠ "r" :=
   fun y hy => by simp [declared, SessionStore.callS] at hy; subst hy; exact hrt
 
-/-- The branches once the line is known to name the command `c`: if they go on, the code of its reply `ans`. -/
+/-- The branches once the line is known to name the command `c`. If they go on, `r` holds its reply code `ans`. -/
 theorem known_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : FrameSpec.Kind} {L : List Byte}
     {s0 : PancakeState σ} (hs : ClsIn b ci offered k L s0) (hgn : GnCode s0.code)
     (hvc : FnOk o "viewClassify" b IsView s0.code) (hlc : FnOk o "listClassify" b IsList s0.code)
@@ -1349,9 +1346,8 @@ theorem kindIs_eval {k : FrameSpec.Kind} {s : PancakeState σ}
       some (bw (decide (k = k'))) := by
   cases k <;> cases k' <;> simp [eval, h, FramerProg.kindCode, bw]
 
-/-- **`classify` gives the code of `CommandSpec.replyIn`'s reply**: from its entry, if it goes on, `r` holds the code
-of the reply `replyIn` gives the line, every local but its own and every word but `clsWords` as they were;
-`viewClassify` and `listClassify` as their contracts give them. What the reply carries past its code is not shown. -/
+/-- **`classify` gives the code of `CommandSpec.replyIn`'s reply.** From its entry, if it goes on, `r` holds it; other
+locals and all words but `clsWords` stay. `viewClassify` and `listClassify` are as their contracts give them. -/
 theorem classify_frag (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : FrameSpec.Kind} {L : List Byte}
     {s0 : PancakeState σ} (hs : ClsIn b ci offered k L s0) (hgn : GnCode s0.code)
     (hvc : FnOk o "viewClassify" b IsView s0.code) (hlc : FnOk o "listClassify" b IsList s0.code) :

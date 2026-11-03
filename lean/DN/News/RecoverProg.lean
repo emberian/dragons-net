@@ -6,15 +6,9 @@ import DN.Compiler.Analyzer
 /-!
 # DN.News.RecoverProg
 
-Recovery at start (`DN.News.Recovery.recover`) as the gate prints it. A step runs until it needs
-something of its caller — the next name of the directory, the journal's length, octets of the
-journal for its scanner (`DN.News.ScanProg`), whether an article's final file is there and its size,
-whether a name set aside is — or has something for it: an action, a number set aside, the store it
-starts with, or why it does not start. Commits go into the index, a slot each. The configuration's
-key is of sixteen octets, so `badKey` is never found. Tested against `dn-compiler recovery-model`;
-a step is shown to be `DN.News.RecoverSpec.Steps`, if it ends (`DN.News.RecoverArea.step_frag`, module
-`DN.News.RecoverRun`). As the scanner does, it checks each word it reads back before it makes an address of
-it, and runs `fail` on one out of range.
+Recovery at start (`DN.News.Recovery.recover`) as the gate prints it; commits go into the index, a slot each. A step
+runs until it needs something of the host or has something for it. Shown to be `RecoverSpec.Steps` if it ends
+(`RecoverArea.step_frag`); tested against `dn-compiler recovery-model`.
 -/
 
 namespace DN.News.RecoverProg
@@ -236,8 +230,8 @@ def dispatch : List (Nat × List PStmt) → List PStmt → List PStmt
 section
 variable (fail : List PStmt)
 
-/-- A commit's number, sizes, CRC and lengths into its slot at `rsl`, its Message-ID copied after them, and the
-inputs of its tag: the key, the Message-ID in the window and its length. -/
+/-- A commit's number, sizes, CRC and lengths into its slot at `rsl`, its Message-ID after them. Then its tag's inputs:
+the key, the Message-ID in the window and its length. -/
 def slotHead : List PStmt :=
   [.store (v "rsl") (sw ScanProg.sSeq),
    .store (atOff (v "rsl") slotSizes)
@@ -255,8 +249,8 @@ def slotHead : List PStmt :=
    .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
    .assign "n" (v "ril")]
 
-/-- Group `rg` of the commit: its place in the configuration found, the first group the configuration lacks noted,
-and the place and article number into the slot. -/
+/-- Group `rg` of the commit: its place in the configuration found, the first group lacking noted. Its place and article
+number go into the slot. -/
 def groupNote : List PStmt :=
   [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
      (eMul (v "rg") (n ScanProg.groupSlot))),
@@ -350,8 +344,8 @@ def idDups : List PStmt :=
        kept fail "rl" 250, .assign "rv" (slotW slotTag), .assign "rj" (eAdd (v "ri") (n 1))] ++ idMid ++
       [.ite (v "rdup") [] [inc "ri"]])]
 
-/-- Slot `rsl`'s groups from `rg` on checked against the highest numbers: `rbad` 1 at the first not above, its
-number in `rv` and its place in `rc`. -/
+/-- Slot `rsl`'s groups from `rg` on checked against the highest numbers. `rbad` is 1 at the first not above, its number
+in `rv`, its place in `rc`. -/
 def groupsCheck : List PStmt :=
   [.while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "rg") (v "rgc")))
      [.assign "rx" (groupW "rg"),
@@ -391,8 +385,8 @@ def rising : List PStmt :=
        rset rFaultLen (.loadw 1 (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))))])
      [rset rI (n 0), rset rWait (n 0), next 5]]
 
-/-- The rules once the index holds the commits: a number twice, a Message-ID twice, a group lacking, numbers that do
-not rise. -/
+/-- The rules once the index holds the commits: a number twice, a Message-ID twice, a group lacking, numbers not rising.
+-/
 def ruleChecks : List PStmt :=
   seqDups ++
   [.ite (v "rdup") [] (idDups fail),

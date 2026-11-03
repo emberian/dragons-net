@@ -6,20 +6,9 @@ import DN.Compiler.Block
 /-!
 # DN.Server.SessionFrame
 
-The session's framers, proven as the session has them. A connection's held octets follow its
-line framer's block in its record (`held_at`), so they are apart from the octets the block keeps
-(`held_apart`). Where `serve` frames them, its check of the block passes on a block the framer
-keeps (`serve_kept`), and its declarations and the framer run as `FramerCode.lineFrag_run` proves
-(`framing_safeR`); those are `serve`'s statements (`serve_head`, `serve_loop`). `postFeed` takes an
-article's octets one at a time through the block framer's phase logic, its frame's phase and mark
-from the post's slot (`octet_run`), and decides as `PostSpec.frameOctet` does (`octet_frameOctet`);
-those are `postFeed`'s statements (`feed_head`, `feed_loop`).
-
-Premises here, for the turn's invariant to show: that the locals name connection `c`'s record and
-the post's slot, what the framer's block and the slot hold between turns, that the held octets are
-in memory, at most `data` of them, and that the held position does not pass their length
-(`atCheck_witness` and `atOctet_witness` show they can hold). What each loop body runs after the
-framer is not proven here.
+The session's framers, proven as the session has them. `serve` frames held octets as `FramerCode.lineFrag_run` proves
+(`framing_safeR`), and `postFeed` decides as `PostSpec.frameOctet` (`octet_frameOctet`). The turn's invariants are
+premises (`atCheck_witness`, `atOctet_witness`); later loop statements are not proven here.
 -/
 
 namespace DN.Server.SessionFrame
@@ -31,10 +20,9 @@ variable {σ : Type}
 
 /-! ## The line framer -/
 
-/-- **The line framer, then whatever follows**: from a state where the block at `st` holds a
-framer's state that fits and the locals name the block, the held octets, their number and the
-position, what follows runs on the state `lineFrag_run` describes. That state has the same code and
-memory's domain, the framer's ticks spent; or the run times out. -/
+/-- **The line framer, then whatever follows.** The block at `st` holds a fitting framer state; the locals name it, the
+octets, their count and position. What follows runs on `lineFrag_run`'s state, same code and domain, the framer's ticks
+spent; or the run times out. -/
 theorem lineFrag_safeR (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (hpos : 0 < lim)
     {P P' Q : PancakeState σ → Prop} {R : Ret} {k : PancakeProg}
     (hpre : ∀ s, P s → ∃ (st p : Word) (q : List Byte) (i0 : Nat) (A : LineState),
@@ -97,9 +85,8 @@ def blockAt (b : Word) (c : Nat) : Word := recordAt b c + BitVec.ofNat 64 cFrame
 /-- …and the octets it holds. -/
 def heldAt (b : Word) (c : Nat) : Word := recordAt b c + BitVec.ofNat 64 cHeld
 
-/-- What `serve` has where it checks connection `c`'s framer's block before framing its held octets
-`q` from `i0`: the locals naming them, and the block holding the framer's state `A`, as the framer
-keeps it, in addressable words. -/
+/-- What `serve` has where it checks connection `c`'s framer block before framing held octets `q` from `i0`. The locals
+name them, and the block holds the framer's state `A` in addressable words. -/
 structure AtCheck (b : Word) (c : Nat) (q : List Byte) (i0 : Nat) (A : LineState)
     (s : PancakeState σ) : Prop where
   blk : s.locals "blk" = some (blockAt b c)
@@ -126,8 +113,8 @@ theorem serve_kept (o : Oracle σ) (R : Ret) (b : Word) (c : Nat) (q : List Byte
     have h := hP s h
     exact ⟨A.len, h.fits.2.1, by simp [eval, h.blk, h.room.1, h.holds.1]⟩
 
-/-- **`serve` frames a connection's held octets as the line framer does**, once the framer's
-locals are bound: what follows runs on the state `lineFrag_run` describes. -/
+/-- **`serve` frames a connection's held octets as the line framer does**, the framer's locals bound. What follows runs
+on the state `lineFrag_run` describes. -/
 theorem serve_frame (o : Oracle σ) (b : Word) (c : Nat) (q : List Byte) (i0 : Nat) (A : LineState)
     {P P' Q : PancakeState σ → Prop} {R : Ret} {k : PancakeProg}
     (hP : ∀ s, P s → AtCheck b c q i0 A s ∧ Bound lineLocals s)
@@ -149,22 +136,8 @@ theorem serve_frame (o : Oracle σ) (b : Word) (c : Nat) (q : List Byte) (i0 : N
   rw [heldAt, held_at]
   exact hsep
 
-/-- What `serve` has where it checks the block holds when `i0` or a framer's local is set. -/
-theorem atCheck_set {b : Word} {c : Nat} {q : List Byte} {i0 : Nat} {A : LineState} {s : PancakeState σ}
-    (h : AtCheck b c q i0 A s) (y : String) (hy : y ∈ "i0" :: lineLocals) (w : Value) :
-    AtCheck b c q i0 A { s with locals := setLocal s.locals y w } := by
-  have hn : ∀ x, x ∈ ["blk", "p", "n", "i"] → x ≠ y := by
-    intro x hx
-    simp only [lineLocals, List.mem_cons, List.not_mem_nil, or_false] at hy hx
-    rcases hx with rfl | rfl | rfl | rfl <;> rcases hy with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-      decide
-  exact ⟨by simp [setLocal, hn "blk" (by simp), h.blk], by simp [setLocal, hn "p" (by simp), h.p],
-    by simp [setLocal, hn "n" (by simp), h.n], by simp [setLocal, hn "i" (by simp), h.i], h.i0, h.len,
-    h.holds, h.fits, h.chunk, h.room, h.al, h.fit⟩
-
-/-- **The place and the framer's locals declared, then the framer**: what follows runs on the
-state `lineFrag_run` describes, with `i0` the place framing started from; an ending that looks at
-none of those locals is the declarations' ending too. -/
+/-- **The place and the framer's locals declared, then the framer**: what follows runs on `lineFrag_run`'s state, `i0`
+the start. An ending ignoring those locals is the declarations' ending too. -/
 theorem framing_safeR (o : Oracle σ) (b : Word) (c : Nat) (q : List Byte) (i0 : Nat) (A : LineState)
     {P P' Q : PancakeState σ → Prop} {R : Ret} {k : PancakeProg}
     (hP : ∀ s, P s → AtCheck b c q i0 A s)
@@ -190,29 +163,11 @@ theorem framing_safeR (o : Oracle σ) (b : Word) (c : Nat) (q : List Byte) (i0 :
   exact serve_frame o b c q i0 A (fun s ⟨⟨hs, _⟩, hb⟩ => ⟨hP s hs, hb⟩)
     (fun s s' ⟨⟨hs, hi⟩, _⟩ => hnext s s' hs hi) hk
 
-/-- **The test after the framer**: the verdict's code is zero exactly when no line ended. -/
-theorem kindW_zero (out : Option Line) : kindW out = 0#64 ↔ out = none := by
-  cases out with
-  | none => simp [kindW]
-  | some l => cases h : l.kind <;> simp [kindW, h, FramerProg.kindCode] <;> decide
-
-/-- `serve`'s loop body where octets are held: the check of the block, where it started, the
-framer's locals and the framer, then the rest. -/
+/-- `serve`'s loop body where octets are held: the block's check, the start, the framer's locals and the framer. Then
+the rest. -/
 def framing (rest : List Syntax.PStmt) : List Syntax.PStmt :=
   [SessionStore.keptIn (SessionStore.ld (Syntax.v "blk")) News.SessionSpec.lineLimit,
    .dec "i0" (Syntax.v "i")] ++ lineDecs ++ lineFrag News.SessionSpec.lineLimit ++ rest
-
-/-- It lowers to the check, the declarations and the framer before what the rest lowers to. -/
-theorem framing_lower {x0 : Syntax.PStmt} {rest : List Syntax.PStmt} {r : PancakeProg}
-    (hr : Lower.lowerStmtsFold (x0 :: rest) = some r) :
-    Lower.lowerStmtsFold (framing (x0 :: rest)) =
-      some (.seq (keptG (.loadWord (.var "blk")) News.SessionSpec.lineLimit)
-        (.dec "i0" (.var "i") (zeros lineLocals (lineFragP News.SessionSpec.lineLimit r)))) := by
-  have hf := lineFrag_lower News.SessionSpec.lineLimit x0 rest r hr
-  have hz := Block.fold_zeros lineLocals (rest := lineFrag News.SessionSpec.lineLimit ++ x0 :: rest)
-    (by simp [lineFrag]) hf
-  have hd := Block.fold_dec (x := "i0") (e := Syntax.v "i") rfl (by simp [lineLocals]) hz
-  exact Block.fold_cons (keptIn_lower rfl _) rfl (by simp) hd
 
 /-- What `serve`'s loop body runs after the framer. -/
 def serveRest : List Syntax.PStmt :=
@@ -237,8 +192,8 @@ theorem serve_loop :
 
 /-! ## The block framer in `postFeed` -/
 
-/-- An octet `postFeed` takes: read from the held octets at `i`, the frame's phase and mark from
-the post's slot, the count emptied, then the phase logic. -/
+/-- An octet `postFeed` takes: read from the held octets at `i`, the phase and mark from the post's slot. The count is
+emptied, then the phase logic runs. -/
 def octet (rest : List Syntax.PStmt) : List Syntax.PStmt :=
   [.assign "b" (.loadb (Syntax.eAdd (Syntax.v "p") (Syntax.v "i"))), SessionStore.inc "i",
    .assign "ph" (SessionStore.zw zPh), .assign "bad" (SessionStore.zw zBad),
@@ -256,27 +211,8 @@ def octetP (k : PancakeProg) : PancakeProg :=
   (.seq (.assign "post" (.const 0))
   (.seq (phaseP 2) k))))))))
 
-/-- The octet's statements lower to `octetP` before what the rest lowers to. -/
-theorem octet_lower {x0 : Syntax.PStmt} {rest : List Syntax.PStmt} {r : PancakeProg}
-    (hr : Lower.lowerStmtsFold (x0 :: rest) = some r) :
-    Lower.lowerStmtsFold (octet (x0 :: rest)) = some (octetP r) := by
-  have h9 := Block.fold_cons (x := (logicS 2)[2]) (a := phaseP 2) rfl rfl (by simp) hr
-  have h8 := Block.fold_cons (x := .assign "post" (Syntax.n 0)) (a := .assign "post" (.const 0))
-    rfl rfl (by simp) h9
-  have h7 := Block.fold_cons (x := .assign "pre" (Syntax.n 0)) (a := .assign "pre" (.const 0))
-    rfl rfl (by simp) h8
-  have h6 := Block.fold_cons (x := .assign "kind" (Syntax.n 0)) (a := .assign "kind" (.const 0))
-    rfl rfl (by simp) h7
-  have h5 := Block.fold_cons (x := .assign "size" (Syntax.n 0)) (a := .assign "size" (.const 0))
-    rfl rfl (by simp) h6
-  have h4 := Block.fold_cons (x := .assign "bad" (SessionStore.zw zBad)) rfl rfl (by simp) h5
-  have h3 := Block.fold_cons (x := .assign "ph" (SessionStore.zw zPh)) rfl rfl (by simp) h4
-  have h2 := Block.fold_cons (x := SessionStore.inc "i") rfl rfl (by simp) h3
-  exact Block.fold_cons (x := .assign "b" (.loadb (Syntax.eAdd (Syntax.v "p") (Syntax.v "i")))) rfl
-    rfl (by simp) h2
-
-/-- What `postFeed` has at an octet: the octet `y` where the locals `p` and `i` point, the frame's
-phase and mark those of `S` in the slot the local `zs` names, the locals the logic writes bound. -/
+/-- What `postFeed` has at an octet: the octet `y` where `p` and `i` point. The phase and mark of `S` lie in the slot
+`zs` names; the logic's locals are bound. -/
 structure AtOctet (S : BlockState) (y : Byte) (pw iw zs : Word) (s : PancakeState σ) : Prop where
   p : s.locals "p" = some pw
   i : s.locals "i" = some iw
@@ -304,9 +240,9 @@ def octetWrites : List String := ["b", "i", "ph", "bad", "size", "kind", "held",
 theorem plan_emptied (S : BlockState) (y : Byte) : plan { S with size := 0, buf := [] } y = plan S y := by
   unfold plan; rfl
 
-/-- **`postFeed` runs an octet through the block framer's phase logic**, the frame emptied of the
-octets it held: whatever follows runs on a state of the same memory, code and other locals, the
-octet read and the place moved on, and the plan's decision in the logic's locals. -/
+/-- **`postFeed` runs an octet through the block framer's phase logic**, the frame emptied of its octets. What follows
+runs with memory, code and other locals unchanged, the octet read and the place moved. The plan's decision is in the
+logic's locals. -/
 theorem octet_run (o : Oracle σ) (S : BlockState) (y : Byte) (pw iw zs : Word) (s : PancakeState σ)
     (h : AtOctet S y pw iw zs s) :
     ∃ s', (∀ k, PancakeSem o (octetP k) s = PancakeSem o k s') ∧
@@ -384,8 +320,8 @@ theorem octet_run (o : Oracle σ) (S : BlockState) (y : Byte) (pw iw zs : Word) 
       · rw [hplan.2.2.2.2.2.1]; simp [s8, setLocal]
       · rw [hplan.2.2.2.2.2.2]; simp [s8, setLocal, hwheld]
 
-/-- **What the logic decides is `PostSpec.frameOctet`'s**: the frame's next phase and mark; at the
-block's end its verdict, before it the octets it adds, a CR held back and the octet. -/
+/-- **What the logic decides is `PostSpec.frameOctet`'s**: the frame's next phase and mark. At the block's end its
+verdict; before it the octets it adds, a CR held back and the octet. -/
 theorem octet_frameOctet (S : BlockState) (y : Byte) :
     (PostSpec.frameOctet S y).1.phase = (plan S y).phase ∧
       (PostSpec.frameOctet S y).1.bad = (plan S y).bad ∧
@@ -406,19 +342,14 @@ theorem octet_frameOctet (S : BlockState) (y : Byte) :
     cases hph : S.phase <;> simp only [hph] at hend ⊢ <;> (repeat' split at hend) <;>
       simp_all [BlockState.fresh]
 
-/-- The verdict's code is the accepted one exactly when the block is accepted. -/
-theorem accepted_code (S : BlockState) :
-    (blockCode (result 2 S).kind == blockCode .accepted) = ((result 2 S).kind == .accepted) := by
-  cases h : (result 2 S).kind <;> rfl
-
 /-- What `postFeed` runs after an octet's logic. -/
 def feedRest : List Syntax.PStmt :=
   (match (SessionStore.postFeed.body[18]? : Option Syntax.PStmt) with
    | some (Syntax.PStmt.while _ [Syntax.PStmt.ite _ thn _]) => thn
    | _ => []).drop 9
 
-/-- **`postFeed` names connection `c`'s record, the post's slot, the held octets, their number and
-the place, and declares the logic's locals**… -/
+/-- **`postFeed` names connection `c`'s record, the post's slot, held octets, count and place**, and declares the
+logic's locals… -/
 theorem feed_head :
     SessionStore.postFeed.body.take 18 =
       [SessionStore.keptIn (Syntax.v "c") (conns - 1),

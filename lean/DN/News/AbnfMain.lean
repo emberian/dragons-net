@@ -4,10 +4,9 @@ import DN.News.AbnfRun
 /-!
 # DN.News.AbnfMain
 
-A round of `main`, proven to answer what the grammar says (`round_frag`): from a case the host left in range, the
-area holding the tables and every slot a set, the answer word holds 2 if a start lies past the longest input, else
-whether a match of the rule asked from one of the starts ends at the input's end (`ansOf_answer`); from the one start
-0, what `Abnf.matches?` answers (`ansOf_matches`). The round keeps the tables, the slots' sets and the case.
+A round of `main` answers what the grammar says (`round_frag`, `ansOf_answer`). In range: 2 for a start past the longest
+input, else whether a match from a start reaches the end. From the one start 0 that is `Abnf.matches?`'s answer
+(`ansOf_matches`).
 -/
 
 namespace DN.News.AbnfMain
@@ -24,14 +23,14 @@ variable {σ : Type}
 
 /-! ## A case -/
 
-/-- A case as the host leaves it in the area: the rule asked, the starts, and the input (`Base` gives its length). -/
+/-- A case as the host leaves it: the rule asked, the starts, the input (`Base` gives its length). -/
 structure CaseAt (m : Word → Word) (A : Word) (r : Nat) (starts : List Word) : Prop where
   rule : m (at_ A aRule) = BitVec.ofNat 64 r
   count : m (at_ A aStarts) = BitVec.ofNat 64 starts.length
   starts : ∀ k (hk : k < starts.length), m (at_ A (aStartList + 8 * k)) = starts[k]
 
-/-- The answer to a case: 2 when a start lies past the longest input; else 1 when a match of rule `r` from a start
-ends at the input's end, 0 when none does. -/
+/-- The answer to a case: 2 when a start lies past the longest input. Else 1 when a match of rule `r` from a start ends
+at the input's end, 0 when none does. -/
 def Answer (r : Nat) (starts : List Word) (bytes : List (BitVec 8)) (ans : Word) : Prop :=
   ((∃ x ∈ starts, inputMax < x.toNat) → ans = 2) ∧
     ((∀ x ∈ starts, x.toNat ≤ inputMax) →
@@ -673,8 +672,8 @@ theorem round_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ}
     fun m hm => ⟨roundMem_upd hA.hA hlen hks hm (.inr rfl) _, upd_eq _ _ _⟩) (fun _ h => h)
     fun w h => runF_mono h (fun q hq => .tail _ (.tail _ (.tail _ hq))) fun _ h => h
 
-/-- **`main` answers as `matches?`**: from the one start 0, the round's answer is whether `matches?` finds rule `r`
-matching the whole input, when it answers. -/
+/-- **`main` answers as `matches?`.** From the one start 0, the round answers whether rule `r` matches the whole input.
+This holds whenever `matches?` gives an answer. -/
 theorem ansOf_matches {r depth : Nat} {bytes : List (BitVec 8)} {b : Bool}
     (h : Abnf.matches? AbnfRules.grammar depth r (bytes.map BitVec.toNat) = .ok b) :
     ansOf r [0] bytes = bw b := by

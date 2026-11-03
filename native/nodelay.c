@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * Loaded with LD_PRELOAD, sets TCP_NODELAY on every connection a server accepts. INN's reader
- * writes a reply in two calls without it, and so waits for a delayed acknowledgement once a
- * connection asks for more than some 25 replies a second; scripts/bench.py measures INN with and
- * without this. A socket that is not TCP refuses the option, which is ignored.
+ * Loaded with LD_PRELOAD, sets TCP_NODELAY on every connection a server accepts. Without it INN's reader writes a reply
+ * in two calls and waits on delayed ACKs past ~25 replies a second. A non-TCP socket refuses the option, which is
+ * ignored.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>

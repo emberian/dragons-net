@@ -4,8 +4,8 @@ import DN.News.ScanDecode
 /-!
 # DN.News.ScanStep
 
-If it goes on, the scanner's reading of the record a checked frame holds, `ScanProg.recordOf`, gives
-`Journal.recordOf`'s type and a commit's fields (`recordOf_frag`); the premises can hold (`Witness`).
+If it goes on, the scanner's reading of a record, `ScanProg.recordOf`, gives `Journal.recordOf`'s type and a commit's
+fields (`recordOf_frag`). The premises can hold (`Witness`).
 -/
 
 namespace DN.News.ScanRun
@@ -120,8 +120,8 @@ theorem recordOf_format {t : Nat} {pl : Bytes} {k : Bytes} (h : Journal.recordOf
     · split at h <;> cases h
     · cases h
 
-/-- **The scanner's reading of a record is `Journal.recordOf`**: if it goes on, `jrec` holds the type of the
-record the frame holds, `jwhy` `notARecord`'s code if it holds none, and the area a commit's fields. -/
+/-- **The scanner's reading of a record is `Journal.recordOf`.** If it goes on, `jrec` holds the record's type, `jwhy`
+`notARecord`'s code if none. The area holds a commit's fields. -/
 theorem recordOf_frag (o : Oracle σ) {A : Word} {o' t : Nat} {pl : Bytes} {s0 : PancakeState σ}
     (h : RecIn A o' t pl s0) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) :
     Frag o (ScanProg.recordOf fail) (Like s0) (RecOut A o' t pl s0) := by

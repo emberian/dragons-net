@@ -7,14 +7,9 @@ import DN.Compiler.Block
 /-!
 # DN.Server.SessionHash
 
-The session's CRC-32C table and its SipHash, proven as the session has them. `crcTable` builds in
-the session's words the table `CrcCode` proves, and leaves every other word as it was
-(`crcTable_run`); `idHash` gives back, in its return word, the cell a Message-ID hashes to under the
-index's key, and changes no other word (`idHash_run`). Each is a fragment proven on its own,
-`fillSrc` or `sipSrc`, between the function's declarations and its return: `Block.fold_append` runs
-it then the rest, and `WpRet.ofSafe` carries its proof inside the function. In the session's code
-they are these functions (`crcTable_code`, `idHash_code`), and the heap the safety analysis covers
-holds their words (`covers_tableRoom`, `covers_ret`).
+The session's CRC-32C table and SipHash, proven as the session has them. `crcTable` builds the table `CrcCode` proves
+(`crcTable_run`); `idHash` gives back a Message-ID's cell under the key (`idHash_run`). Both change no other word, and
+the analysed heap holds their words (`covers_tableRoom`, `covers_ret`).
 -/
 
 namespace DN.Server.SessionHash
@@ -137,8 +132,8 @@ theorem table_tail (o : Oracle σ) (t : Word) :
   Block.fold_append o _ _ (by simp [CrcProg.fillSrc]) (by simp) (by decide)
     (CrcCode.fill_lowering t) rfl
 
-/-- **The session's `crcTable` builds the CRC-32C's table** in the session's words, where they are
-addressable, leaves every other word as it was, and returns zero. -/
+/-- **The session's `crcTable` builds the CRC-32C's table** in the session's addressable words. It leaves every other
+word as it was and returns zero. -/
 theorem crcTable_run (o : Oracle σ) (b : Word) (m0 : Word → Word) {body : PancakeProg}
     (hb : Lower.lower SessionStore.crcTable = some body) :
     SafeR o (fun s => s.baseAddr = b ∧ TableRoom s.memaddrs (tableAt b) ∧ s.memory = m0) body
@@ -184,8 +179,8 @@ def retAt (b : Word) : Word := b + BitVec.ofNat 64 (ownOff + ownRet)
 def cellOf (key msg : SipHash.Bytes) : Word :=
   (SipHash.tag key msg).toBitVec &&& BitVec.ofNat 64 (indexCells - 1)
 
-/-- What `idHash` asks: the Message-ID's length, at most 250, in `n`; the index's key and the
-Message-ID in the session's words; the return word addressable. -/
+/-- What `idHash` asks: the Message-ID's length, at most 250, in `n`. The index's key and the Message-ID in the
+session's words, the return word addressable. -/
 def IdPre (b : Word) (key msg : SipHash.Bytes) (s : PancakeState σ) : Prop :=
   s.baseAddr = b ∧ s.locals "n" = some (BitVec.ofNat 64 msg.length) ∧ msg.length ≤ 250 ∧
     readByteArray s.memory s.memaddrs s.be (keyAt b) 16 = some key ∧
@@ -210,8 +205,8 @@ theorem hash_tail (o : Oracle σ) (b : Word) (key msg : SipHash.Bytes) :
   Block.fold_append o _ _ (by simp [SipProg.sipSrc]) (by simp [SessionStore.give]) (by decide)
     (SipHashCode.sip_lowering _ _ _ _) rfl
 
-/-- `idHash` lowers to the check of `n`, the places of the key and the Message-ID, the hash's
-locals from zero and its statements. -/
+/-- `idHash` lowers to the check of `n`, the key's and Message-ID's places, the hash's locals from zero, and its
+statements. -/
 theorem idHash_lower {c : PancakeProg} (hc : Lower.lowerStmtsFold (SipProg.sipSrc ++
       SessionStore.give (Syntax.eAnd (Syntax.v "r") (Syntax.n (indexCells - 1)))) = some c) :
     Lower.lower SessionStore.idHash = some (.seq (keptG (.var "n") 250)
@@ -236,8 +231,8 @@ theorem idHash_lower {c : PancakeProg} (hc : Lower.lowerStmtsFold (SipProg.sipSr
   rw [e]
   exact hl
 
-/-- **The session's `idHash` gives back the cell a Message-ID hashes to** under the index's key,
-in its return word, changes no other word, and returns zero. -/
+/-- **The session's `idHash` gives back the cell a Message-ID hashes to** under the index's key. It puts it in the
+return word, changes no other word, and returns zero. -/
 theorem idHash_run (o : Oracle σ) (b : Word) (key msg : SipHash.Bytes) (m0 : Word → Word)
     {body : PancakeProg} (hb : Lower.lower SessionStore.idHash = some body) :
     SafeR o (fun s => IdPre b key msg s ∧ s.memory = m0) body
@@ -331,8 +326,8 @@ theorem covers_ret {dm : Word → Bool} {b : Word} (h : Covers SessionLayout.siz
   obtain ⟨-, -, -, h1, h2, h3, -⟩ := layout
   exact h.2 _ h1 h2 h3
 
-/-- …and the octets of the index's key and of a Message-ID of at most 250, so `idHash`'s premise
-holds of whatever they are. -/
+/-- …and the octets of the index's key and of a Message-ID of at most 250. So `idHash`'s premise holds of whatever they
+are. -/
 theorem covers_reads {s : PancakeState σ} (h : Covers SessionLayout.size s.memaddrs s.baseAddr)
     (len : Nat) (hlen : len ≤ 250) :
     (∃ key, readByteArray s.memory s.memaddrs s.be (keyAt s.baseAddr) 16 = some key ∧

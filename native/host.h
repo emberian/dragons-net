@@ -56,9 +56,8 @@ __attribute__((noreturn)) static inline void dn_end_now(int status, const char *
     _exit(status);
 }
 
-/* The same from a thread other than the main one, which may hold a lock of stdio, or while other
-   threads still run: the message is written as it is and the process ends without flushing or
-   freeing anything. */
+/* The same from a thread other than the main one, which may hold a stdio lock, or while others run. The message is
+ * written as is, and the process ends without flushing or freeing anything. */
 __attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness_now(const char *format, ...) {
     char text[512];
     va_list args;

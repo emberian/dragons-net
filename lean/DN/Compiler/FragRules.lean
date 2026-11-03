@@ -4,11 +4,9 @@ import DN.Compiler.Frag
 /-!
 # DN.Compiler.FragRules
 
-More fragments: a branch (`frag_ite`) and one not taken (`frag_skip`), an assignment (`assign_frag`), declarations
-of constants (`decs_frag`, `decsC_frag`), a loop counting up (`frag_count`, `count_exit`), and a block proven of its
-lowering (`frag_fold`, `frag_pinned`), declarations ahead of it scoping over what follows (`decs_seq`,
-`frag_decs`). A block lowering before anything (`LowKK`), a fragment shown state by state or under a pure fact
-(`frag_each`, `frag_pure`). States alike but for the clock (`Like`). Like `Frag`, they hold if the run goes on.
+More fragments: branches (`frag_ite`, `frag_skip`), assignments, constant declarations (`decs_frag`) and a counting loop
+(`frag_count`). A block proven of its lowering (`frag_fold`) and declarations scoping over what follows (`decs_seq`,
+`frag_decs`). Fragments shown state by state or under a pure fact (`frag_each`, `frag_pure`).
 -/
 
 namespace DN.Compiler.Frag
@@ -225,7 +223,7 @@ theorem lowKK_decsC (ds : List (String × Nat)) : LowKK (ds.map fun p => .dec p.
   | nil => exact fun k => ⟨k, rfl⟩
   | cons d ds ih => exact lowKK_append (xs := [_]) (lowKK_dec rfl) ih
 
-/-- A block with no declaration or call at its top, lowered with `k` after it, runs as its lowering, then `k`. -/
+/-- A block whose top declares and calls nothing, lowered with `k` after it, runs as its lowering, then `k`. -/
 theorem lowerK_fold (o : Oracle σ) : ∀ (xs : List Syntax.PStmt), xs ≠ [] → (∀ x ∈ xs, x.isDec = false) →
     ∀ {a : PancakeProg}, Lower.lowerStmtsFold xs = some a → ∀ k, ∃ c, Block.lowerK xs k = some c ∧
       ∀ s, PancakeSem o c s = PancakeSem o (.seq a k) s
@@ -268,9 +266,8 @@ theorem frag_pinned (o : Oracle σ) {xs : List Syntax.PStmt} (hne : xs ≠ []) (
     WpRet.conseq (WpRet.ofSafe R hnr (hP s hs)) (fun _u (hu : _u = s) => hu) (fun _ _ h => h)
       (fun _ h => ⟨s, hs, h⟩) s rfl
 
-/-- **The declarations' scope may take in what follows**: a block under declarations `ds`, its run from `s`
-coming to `P'`, followed by `k` that from `P'` comes to `Q`, runs as the declarations over both, when `P'` and `Q`
-do not look at the declared locals. -/
+/-- **The declarations' scope may take in what follows**: a block under `ds` reaching `P'`, then `k` from `P'` to `Q`.
+They run as the declarations over both, when `P'` and `Q` ignore the declared locals. -/
 theorem decs_seq (o : Oracle σ) {R : Ret} {F k : PancakeProg} :
     ∀ (ds : List (String × PancakeExp)) (s : PancakeState σ) (P' Q : PancakeState σ → Prop),
       (∀ u y w, y ∈ ds.map (·.1) → P' u → P' (restore u y w)) →
@@ -385,8 +382,8 @@ theorem frag_decs (o : Oracle σ) (ds : List (String × Syntax.PExpr)) {Es : Lis
       rw [declared_append]; exact List.mem_append_left _ (declared_decs ds y (hEs ▸ hy))))
     (fun t ht => hk t ht) (h R s hp)
 
-/-- **A loop counting up**: the body takes the invariant at `i` to `i + 1` while the test `g i` holds; if the loop
-ends normally, it ends where the test fails. -/
+/-- **A loop counting up**: the body takes the invariant at `i` to `i + 1` while `g i` holds. If the loop ends normally,
+it ends where the test fails. -/
 theorem frag_count (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
     {body : List Syntax.PStmt} (hlow : LowKK body) {I : Nat → Assn σ} (hI : ∀ i, Safe.ClockFree (I i))
     (hr : ∀ i u y v, I i u → y ∈ declared body → I i (restore u y v)) {g : Nat → Bool}
@@ -410,7 +407,7 @@ theorem frag_count (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Low
   rw [hBl] at hc'; cases hc'
   exact conseq hs (fun _ h => h) (fun _ _ h => h) (fun u hu => ⟨i + 1, hu⟩) s h
 
-/-- Where a count up to `n` stops, a test true of a prefix only if of each shorter one stands as at `n`. -/
+/-- Let the test, true of `j`, be true of every `i ≤ j`. Where a count up to `n` stops, it stands as at `n`. -/
 theorem count_exit {p : Nat → Bool} (hmono : ∀ i j, i ≤ j → p j = true → p i = true) {i n : Nat} (hi : i ≤ n)
     (hz : (p i && decide (i < n)) = false) : p i = p n := by
   cases hp : p i

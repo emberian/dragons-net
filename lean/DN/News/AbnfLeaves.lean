@@ -5,9 +5,9 @@ import DN.News.AbnfMatch
 /-!
 # DN.News.AbnfLeaves
 
-The leaves of the grammar's program, proven to do what they are named for: if it returns, `leafClass` and
-`leafText` leave in their slot the positions past a byte of a class or past a string from the positions of
-another (`leafClass_ok`, `leafText_ok`), the ends of the matches of their term (`classAdd_iff`, `textAdd_iff`).
+The grammar program's leaves, proven to do what they are named for (`leafClass_ok`, `leafText_ok`). If they return,
+their slot holds the positions past a class byte or a string from another slot's. These are the ends of their term's
+matches (`classAdd_iff`, `textAdd_iff`).
 -/
 
 namespace DN.News.AbnfLeaves
@@ -64,7 +64,7 @@ theorem ne0_eval {u : PancakeState σ} {E : PancakeExp} {W : Word} (hE : eval u 
 /-- The names `eachPos` declares. -/
 def loopNames : List String := ["lo", "hi", "w", "wd", "m", "j", "x"]
 
-/-- What `eachPos` reads, and how a position not taken leaves `L` and `F`, the locals and the memory after the
+/-- What `eachPos` reads, and how a position not taken leaves `L` and `F`. These are the locals and memory after
 positions below `X`. -/
 structure Each (A : Word) (ks nn : Nat) (S : Nat → Bool) (L : Nat → List (String × Value))
     (F : Nat → (Word → Word) → Prop) : Prop where
@@ -139,7 +139,7 @@ theorem lowKK_eachPos {body : List Syntax.PStmt} (h : LowKK body) : LowKK (eachP
   lowKK_append (lowK_any _ (k := .skip) rfl) (lowKK_append (xs := [_]) (lowKK_dec rfl)
     (lowKK_while rfl (lowKK_wordsBody h)))
 
-/-- **The bits of a byte** (`bitsLoop body`): bits `8 * M` to `8 * M + 8` of word `W` of the set, each set one a
+/-- **The bits of a byte** (`bitsLoop body`): bits `8 * M` to `8 * M + 8` of word `W` of the set. Each set bit is a
 position, taken by `body` below `nn`. -/
 theorem bitsLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {ks nn : Nat} {S : Nat → Bool} {L : Nat → List (String × Value)} {F : Nat → (Word → Word) → Prop}
@@ -293,7 +293,7 @@ theorem mask_eval {E : PancakeExp} {x : String} (he : Lower.lowerExp (mask (Synt
 
 /-! ### The bytes of a word -/
 
-/-- **The bytes of a word** (`bytesLoop body`): the eight bytes of word `W` of the set, those holding a bit read bit
+/-- **The bytes of a word** (`bytesLoop body`): the eight bytes of word `W` of the set. Those holding a bit are read bit
 by bit, the rest skipped. -/
 theorem bytesLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {ks nn : Nat} {S : Nat → Bool} {L : Nat → List (String × Value)} {F : Nat → (Word → Word) → Prop}
@@ -385,8 +385,8 @@ theorem bytesLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState
 
 /-! ### The words of a set -/
 
-/-- **The words of a set** (`wordsLoop body`): words `W` to `hi` of the set, those holding a bit read byte by byte, the
-rest skipped. -/
+/-- **The words of a set** (`wordsLoop body`): words `W` to `hi` of the set. Those holding a bit are read byte by byte,
+the rest skipped. -/
 theorem wordsLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {ks nn : Nat} (hks : ks < slots) {S : Nat → Bool} {L : Nat → List (String × Value)}
     {F : Nat → (Word → Word) → Prop} (he : Each A ks nn S L F) (hnn : nn ≤ inputMax) {body : List Syntax.PStmt}
@@ -498,8 +498,8 @@ theorem wordsLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState
 
 /-! ### Each position -/
 
-/-- **Each position of a set** (`eachPos body`): the positions of the set in slot `ks` below `nn`, from the lowest,
-each taken by `body`; at the end the set holds none past the `X` reached. -/
+/-- **Each position of a set** (`eachPos body`): those in slot `ks` below `nn`, lowest first, each taken by `body`. At
+the end the set holds none past the `X` reached. -/
 theorem eachPos_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {ks nn : Nat} (hks : ks < slots) {S : Nat → Bool} {L : Nat → List (String × Value)}
     {F : Nat → (Word → Word) → Prop} (he : Each A ks nn S L F) (hnn : nn ≤ inputMax) {body : List Syntax.PStmt}
@@ -696,8 +696,8 @@ def winS (add : Nat → Option Nat) : Nat → Nat × Nat × Bool
     | some e => ((grow (winS add X).1 (winS add X).2.1 (winS add X).2.2 (e / 64)).1,
         (grow (winS add X).1 (winS add X).2.1 (winS add X).2.2 (e / 64)).2, false)
 
-/-- What the window says of the positions added: none while it is empty, else its ends bound their words and one is
-added. -/
+/-- What the window says of the positions added: none while it is empty. Otherwise its ends bound their words, and one
+is added. -/
 def WinOk (add : Nat → Option Nat) (X : Nat) : Prop :=
   ((winS add X).2.2 = true → ∀ e, below add X e = false) ∧
   ((winS add X).2.2 = false → (winS add X).1 ≤ (winS add X).2.1 ∧ (∃ e, below add X e = true) ∧
@@ -914,8 +914,8 @@ theorem take_sum_le (T : List (List Nat × Bool)) {k : Nat} (hk : k < T.length) 
 theorem textOff_le {k : Nat} (hk : k < texts.length) : textOff k + (textAt k).1.length ≤ textBytes := by
   unfold textAt; exact take_sum_le texts hk
 
-/-- The strings' table from `aTexts`, three words each: where the bytes start, how many, and the case; and the
-bytes from `aTextBytes`. -/
+/-- The strings' table from `aTexts`, three words each: where the bytes start, how many, and the case. The bytes lie
+from `aTextBytes`. -/
 def TextsAt (m : Word → Word) (dm : Word → Bool) (be : Bool) (A : Word) : Prop :=
   ∀ k, k < texts.length → m (at_ A (aTexts + 24 * k)) = BitVec.ofNat 64 (textOff k) ∧
     m (at_ A (aTexts + 24 * k + 8)) = BitVec.ofNat 64 (textAt k).1.length ∧
@@ -1011,8 +1011,8 @@ theorem classAdd_small {S : Nat → Bool} {bytes : List (BitVec 8)} {k : Nat} (h
   · rename_i hc; cases h; simp only [Bool.and_eq_true, decide_eq_true_eq] at hc; omega
   · cases h
 
-/-- **A position added** at the end of a leaf's body: its bit set in slot `kd`, the window grown, the window's
-locals those after `X`. -/
+/-- **A position added** at the end of a leaf's body: its bit set in slot `kd`, the window grown. The window's locals
+are those after `X`. -/
 theorem addAt_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {kd : Nat}
     (hkd : kd < slots) {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax) {m1 : Word → Word}
     (hr : Reads s0 A bytes m1) {add : Nat → Option Nat} (hsm : ∀ x e, add x = some e → e ≤ inputMax)
@@ -1286,8 +1286,8 @@ theorem below_eq {add : Nat → Option Nat} {X B : Nat} (h : ∀ Y, min X B ≤ 
 def LeafRet (A : Word) (kd : Nat) (T : Nat → Bool) (m0 : Word → Word) : Ret := fun v m =>
   v = 0 ∧ SetAt m A kd T ∧ Frame A kd m0 m
 
-/-- **A leaf's run**: the area and the slots, the input's length, slot `kd` emptied, `head`, the window, each position
-of the set in slot `ks` through `body`, and the window stored: slot `kd` holds what `add` adds. -/
+/-- **A leaf's run**: the area, slots and input length, slot `kd` emptied, `head` and the window. Then each position of
+slot `ks` goes through `body`. The window is stored, and slot `kd` holds what `add` adds. -/
 theorem leaf_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ} (hA : Area ofs A s1)
     {ks kd : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd) {S Sd : Nat → Bool}
     (hS : SetAt s1.memory A ks S) (hSd : SetAt s1.memory A kd Sd) {bytes : List (BitVec 8)}
@@ -1461,8 +1461,8 @@ theorem classAdd_none {S : Nat → Bool} {bytes : List (BitVec 8)} {k x : Nat} (
   · simp [h]
   · simp [show ¬x < bytes.length by omega]
 
-/-- **`leafClass` adds the positions past those of `S` whose byte is in class `k`** to slot `kd`, emptied first,
-every word outside it kept. -/
+/-- **`leafClass` adds the positions past those of `S` whose byte is in class `k`** to slot `kd`, emptied first. Every
+word outside it is kept. -/
 theorem leafClass_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ} (hA : Area ofs A s1)
     {ks kd k : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd) (hk : k < classes.length)
     (hs : s1.locals "s" = some (BitVec.ofNat 64 ks)) (hd : s1.locals "d" = some (BitVec.ofNat 64 kd))
@@ -1567,7 +1567,7 @@ theorem okTo_succ (bytes : List (BitVec 8)) (k x n : Nat) :
     okTo bytes k x (n + 1) = (okTo bytes k x n && foldB (textAt k).2 (bytes[x + n]!).toNat == (textAt k).1[n]!) := by
   simp [okTo, List.range_succ, List.all_append]
 
-/-- **A string compared** (`textCmp`): `ok` left set exactly when string `k` lies at `x`, its bytes folded when its
+/-- **A string compared** (`textCmp`): `ok` stays set exactly when string `k` lies at `x`. For a caseless string,
 letters match in either case. -/
 theorem textCmp_frag (o : Oracle σ) {s0 : PancakeState σ} {A : Word} {k : Nat} (hk : k < texts.length)
     {bytes : List (BitVec 8)} {X : Nat} (hX : X + (textAt k).1.length ≤ bytes.length) (hlen : bytes.length ≤ inputMax)
@@ -1902,8 +1902,8 @@ theorem textBody_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
     exact ⟨(runF_mono h (fun q hq => List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hq)) fun _ e => e).1,
       built_skip h.2 hadd⟩
 
-/-- **`leafText` adds the positions past string `k` from those of `S` where it lies** to slot `kd`, emptied first,
-every word outside it kept. -/
+/-- **`leafText` adds the positions past string `k` where it lies from those of `S`** to slot `kd`, emptied first. Every
+word outside it is kept. -/
 theorem leafText_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ} (hA : Area ofs A s1)
     {ks kd k : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd) (hk : k < texts.length)
     (hs : s1.locals "s" = some (BitVec.ofNat 64 ks)) (hd : s1.locals "d" = some (BitVec.ofNat 64 kd))
@@ -2065,8 +2065,8 @@ theorem textAdd_iff {f : Nat} {t : Abnf.Term} {bs : List Nat} {c : Bool} (ht : t
     cases hb
     rw [hf, getElem!_pos bs i hi]
 
-/-- **A leaf's set** is the ends of the matches from the positions of `S`, when what it adds at `x` is the ends of
-those from `x` and comes from below `B`. -/
+/-- **A leaf's set** is the ends of the matches from the positions of `S`. This holds when what it adds at `x` is the
+ends from `x`, and comes from below `B`. -/
 theorem below_matches {add : Nat → Option Nat} {B : Nat} {S : Nat → Bool} {M : Nat → Nat → Prop}
     (h : ∀ x e, add x = some e ↔ S x = true ∧ M x e) (hb : ∀ x e, add x = some e → x < B) {e : Nat} :
     below add B e = true ↔ ∃ x, S x = true ∧ M x e := by
@@ -2105,54 +2105,6 @@ theorem textSet_iff {f : Nat} {t : Abnf.Term} {bs : List Nat} {c : Bool} (ht : t
 theorem reads_of {s0 s1 : PancakeState σ} (hm : s1.memaddrs = s0.memaddrs) (hb : s1.be = s0.be) {A : Word}
     {bytes : List (BitVec 8)} {m : Word → Word} (h : Reads s0 A bytes m) : Reads s1 A bytes m :=
   ⟨by rw [hm, hb]; exact h.input, h.pows, h.masks, h.classes, by rw [hm, hb]; exact h.texts⟩
-
-/-- **A call of `leafClass`.** -/
-theorem leafClass_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
-    {rt : String} {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true)
-    {body : PancakeProg} (hb : Lower.lower (leafClass .none ofs) = some body)
-    (hcode : s0.code "leafClass" = some (["s", "d", "k"], body)) {e1 e2 e3 : Syntax.PExpr} {E1 E2 E3 : PancakeExp}
-    (he1 : Lower.lowerExp e1 = some E1) (he2 : Lower.lowerExp e2 = some E2) (he3 : Lower.lowerExp e3 = some E3)
-    {ks kd k : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd) (hk : k < classes.length)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 ks))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 kd))
-    (hv3 : ∀ u, RunF s0 l F u → eval u E3 = some (BitVec.ofNat 64 k)) {S Sd : Nat → Bool}
-    {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax)
-    (hS : ∀ m, F m → SetAt m A ks S ∧ SetAt m A kd Sd ∧ m (at_ A aLen) = BitVec.ofNat 64 bytes.length ∧
-      Reads s0 A bytes m) :
-    Frag o [.call rt "leafClass" [e1, e2, e3]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l)
-        (fun m' => ∃ m, F m ∧ LeafRet A kd (below (classAdd S bytes k) (64 * setWords)) m v m') u) :=
-  setCall_frag o hA (ps := ["s", "d", "k"]) (args := [E1, E2, E3])
-    (vs := [BitVec.ofNat 64 ks, BitVec.ofNat 64 kd, BitVec.ofNat 64 k]) (by decide)
-    (by simp [Lower.lowerArgs, he1, he2, he3]) hcode rfl (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h, hv3 u h])
-    (R := LeafRet A kd (below (classAdd S bytes k) (64 * setWords)))
-    (fun s1 hA1 _ hm hbe hloc hF => body_eq hb (leafClass_ok o hA1 hks hkd hne hk ((hloc "s").trans rfl)
-      ((hloc "d").trans rfl) ((hloc "k").trans rfl) (hS _ hF).1 (hS _ hF).2.1 hlen (hS _ hF).2.2.1
-      (reads_of hm hbe (hS _ hF).2.2.2))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
-
-/-- **A call of `leafText`.** -/
-theorem leafText_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
-    {rt : String} {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true)
-    {body : PancakeProg} (hb : Lower.lower (leafText .none ofs) = some body)
-    (hcode : s0.code "leafText" = some (["s", "d", "k"], body)) {e1 e2 e3 : Syntax.PExpr} {E1 E2 E3 : PancakeExp}
-    (he1 : Lower.lowerExp e1 = some E1) (he2 : Lower.lowerExp e2 = some E2) (he3 : Lower.lowerExp e3 = some E3)
-    {ks kd k : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd) (hk : k < texts.length)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 ks))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 kd))
-    (hv3 : ∀ u, RunF s0 l F u → eval u E3 = some (BitVec.ofNat 64 k)) {S Sd : Nat → Bool}
-    {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax)
-    (hS : ∀ m, F m → SetAt m A ks S ∧ SetAt m A kd Sd ∧ m (at_ A aLen) = BitVec.ofNat 64 bytes.length ∧
-      Reads s0 A bytes m) :
-    Frag o [.call rt "leafText" [e1, e2, e3]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l)
-        (fun m' => ∃ m, F m ∧ LeafRet A kd (below (textAdd S bytes k) (64 * setWords)) m v m') u) :=
-  setCall_frag o hA (ps := ["s", "d", "k"]) (args := [E1, E2, E3])
-    (vs := [BitVec.ofNat 64 ks, BitVec.ofNat 64 kd, BitVec.ofNat 64 k]) (by decide)
-    (by simp [Lower.lowerArgs, he1, he2, he3]) hcode rfl (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h, hv3 u h])
-    (R := LeafRet A kd (below (textAdd S bytes k) (64 * setWords)))
-    (fun s1 hA1 _ hm hbe hloc hF => body_eq hb (leafText_ok o hA1 hks hkd hne hk ((hloc "s").trans rfl)
-      ((hloc "d").trans rfl) ((hloc "k").trans rfl) (hS _ hF).1 (hS _ hF).2.1 hlen (hS _ hF).2.2.1
-      (reads_of hm hbe (hS _ hF).2.2.2))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-! ## The premises can hold -/
 
@@ -2216,8 +2168,8 @@ theorem at0 {x : Nat} (hx : x < 2 ^ 64) : (at_ 0 x).toNat = x := by
 section
 variable (P M C T B : Nat) (cw : Nat → Nat → Nat) (toff tlen : Nat → Nat) (tcf : Nat → Bool) (tb : List Nat)
 
-/-- An area at 0 holding powers of two from `P`, masks from `M`, class words `cw` from `C`, strings' offsets, lengths
-and folds from `T`, and their bytes `tb` from `B`. -/
+/-- An area at 0: powers of two from `P`, masks from `M`, class words `cw` from `C`. Strings' offsets, lengths and folds
+lie from `T`, their bytes `tb` from `B`. -/
 def tablesOf (a : Word) : Word :=
   if a.toNat < P then 0
   else if a.toNat < M then BitVec.twoPow 64 ((a.toNat - P) / 8)

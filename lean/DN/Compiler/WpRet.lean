@@ -4,15 +4,9 @@ import DN.Compiler.Wp
 /-!
 # DN.Compiler.WpRet
 
-What a function gives back. `Safe` lets a run end in any return; a function's result is its return
-and the memory it leaves, the session's functions putting theirs in the heap (`give`). So
-`SafeR o pre prog R post` asks besides that a return's value and the memory it leaves satisfy `R`,
-and `wpR c R Q` is `wp c Q` with a return asking `R` of its value and the memory. `wpR_sound` turns
-it, with `vcR`, into `SafeR`, as `wp_sound` does `wp` into `Safe`.
-
-`R` sees neither locals nor the clock: a return empties the locals and the call gives the caller's
-back, and the clock is the caller's to clamp. Nor does it see the external world's state: the
-session's functions make no external call, its `main` alone does.
+What a function gives back: a return's value and the memory it leaves. `SafeR o pre prog R post` is `Safe` with each
+return satisfying `R`; `wpR_sound` proves it from `wpR`. `R` sees no locals, clock or external world: returns empty the
+locals, and only `main` calls out.
 -/
 
 namespace DN.Compiler.WpRet
@@ -24,8 +18,7 @@ variable {σ : Type}
 /-- What a function may give back: the value returned and the memory left. -/
 abbrev Ret := Value → (Word → Word) → Prop
 
-/-- What a run may come to: a normal finish in `post`, a return satisfying `R`, or an ending that
-is not a failure. -/
+/-- What a run may come to: a normal finish in `post`, a return satisfying `R`, or a non-failing ending. -/
 def OkR (R : Ret) (post : PancakeState σ → Prop) : Option Result × PancakeState σ → Prop
   | (none, t) => post t
   | (some (.return_ v), t) => R v t.memory
@@ -182,8 +175,8 @@ theorem noRet_run (o : Oracle σ) :
               exact ihn _ hcl c _ (Nat.le_refl _) hp v
             | _ => simp [callEnded, emptyLocals]
 
-/-- **A fragment shown not to fail serves inside a function**: with no `return` of its own, it gives
-back as any `R` asks. -/
+/-- **A fragment shown not to fail serves inside a function.** Having no `return` of its own, it gives back as any `R`
+asks. -/
 theorem ofSafe {o : Oracle σ} {P Q : PancakeState σ → Prop} {c : PancakeProg} (R : Ret)
     (hc : noRet c = true) (h : Safe o P c Q) : SafeR o P c R Q := by
   intro s hs
@@ -414,8 +407,8 @@ theorem wpR_clockFree :
     intro s k h
     simpa only [wpR, eval_clock] using h
 
-/-- **`wpR` is sound**: from `wpR c R Q`, a run of the program ends as a run may end, returns as
-`R` asks, or finishes normally in `Q`, once `Q` ignores the clock and the loops' conditions hold. -/
+/-- **`wpR` is sound**: from `wpR c R Q`, a run ends as runs may, returns as `R` asks, or finishes normally in `Q`. This
+needs `Q` to ignore the clock and the loops' conditions to hold. -/
 theorem wpR_sound (o : Oracle σ) :
     ∀ (c : AProg σ) (R : Ret) (Q : Assn σ), ClockFree Q → vcR c R Q → SafeR o (wpR c R Q) c.erase R Q
   | .skip, R, Q, _, _ => skip o Q R
@@ -682,8 +675,7 @@ theorem setsOnly_sound (names : List String) :
   | .skip, _, _, hy | .store .., _, _, hy | .storeByte .., _, _, hy | .extCall .., _, _, hy
   | .ret _, _, _, hy => by simp [assigned] at hy
 
-/-- **A run that goes on, of a program that writes no memory, leaves the world and every local it does not
-set as they were.** -/
+/-- **A run that goes on, of a program writing no memory, keeps the world and the locals it leaves unset.** -/
 theorem noWrite_locals (o : Oracle σ) :
     ∀ (n : Nat) (p : PancakeProg) (s : PancakeState σ), s.clock ≤ n → noWrite p = true →
       Safe.GoesOn (PancakeSem o p s).1 →
@@ -812,9 +804,8 @@ def zeros : List String → PancakeProg → PancakeProg
 /-- Each of `xs` holds some word. -/
 def Bound (xs : List String) (s : PancakeState σ) : Prop := ∀ y ∈ xs, ∃ w, s.locals y = some w
 
-/-- **Locals declared from zero** are bound for the program after them, the rest of the state as
-`P` has it, when setting them keeps `P`; the program's ending is theirs when it does not look at
-those locals, which their declarations' ends give back. -/
+/-- **Locals declared from zero** are bound for the program after them, the rest as `P` has it. This needs setting them
+to keep `P`. The program's ending is theirs when it ignores those locals, given back at their scope's end. -/
 theorem zeros_runQ {o : Oracle σ} {R : Ret} (xs : List String) {c : PancakeProg} :
     ∀ {P Q : PancakeState σ → Prop},
       (∀ s y w, P s → y ∈ xs → P { s with locals := setLocal s.locals y w }) →

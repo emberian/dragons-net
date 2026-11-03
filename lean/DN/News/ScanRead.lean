@@ -5,9 +5,9 @@ import DN.News.ScanStep
 /-!
 # DN.News.ScanRead
 
-If it goes on, the step finds the frame at the next place in the window and checks it (`frame_frag`), reads
-the record it holds (`rec_frag`), and takes it, or refuses a second format (`accept_frag`), as `stepSpec`
-says through `Journal.next`; what a step leaves (`OutAt`, `StepOut`).
+If it goes on, the step finds and checks the frame at the window's next place (`frame_frag`). It reads the record
+(`rec_frag`) and takes it or refuses a second format (`accept_frag`), as `stepSpec` says. What a step leaves: `OutAt`,
+`StepOut`.
 -/
 
 namespace DN.News.ScanRun
@@ -20,16 +20,15 @@ variable {σ : Type}
 
 /-! ## The frame read -/
 
-/-- The step's locals that keep their value once the frame is found: the journal's length, the window's
-start, where the frame starts, whether the key is read, the window's place, what is left, and the frame's
-offset and place in the window. -/
+/-- The step's locals fixed once the frame is found: journal length, window start, frame start, whether the key is read.
+Also the window's place, what is left, and the frame's offset and place in the window. -/
 def fixedV (A : Word) (J : Bytes) (st : St) : List (String × Value) :=
   [("jsz", BitVec.ofNat 64 J.length), ("jb", BitVec.ofNat 64 st.base), ("jp", BitVec.ofNat 64 st.pos),
    ("jky", bw st.key.isSome), ("jw", at_ A sWindow), ("jrem", BitVec.ofNat 64 (J.length - st.pos)),
    ("jo", BitVec.ofNat 64 (st.pos - st.base)), ("jf", at_ A (sWindow + (st.pos - st.base)))]
 
-/-- After the frame's check: the area as it was, the fixed locals, and `jwhy` the code of what `fault` finds,
-with the payload's length and the type of a frame that checks. -/
+/-- After the frame's check: the area as it was, the fixed locals, `jwhy` the code of what `fault` finds. A frame that
+checks also gives its payload's length and type. -/
 structure FwDone (A : Word) (J : Bytes) (st : St) (s0 u : PancakeState σ) : Prop where
   kept : Kept ScanProg.locals (AreaW A) s0 u
   area : AreaAt A J st u
@@ -47,9 +46,9 @@ theorem lowKK_frameWhy (keyed : Bool) : LowKK (ScanProg.frameWhy keyed) :=
 
 theorem recNames_locals : ∀ y ∈ recNames, y ∈ ScanProg.locals := by decide
 
-/-- **A frame checked where it starts**: at `q`, in the window, under the journal's key once read, or with
-`keyed` false the key a frame of the format's shape carries. If it goes on, `jwhy` holds the code of what
-`fault` finds, and of a frame that checks `jpl` the payload's length and `jt` the type; `l` still holds. -/
+/-- **A frame checked where it starts**: at `q`, in the window, under the journal's key once read. With `keyed` false,
+under the key a format-shaped frame carries. If it goes on, `jwhy`, `jpl` and `jt` hold `fault`'s code, length and type;
+`l` still holds. -/
 theorem frameCheck_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     (keyed : Bool) {q : Nat} {l : List (String × Value)} (hq : st.base ≤ q) (hqJ : q < J.length)
     (hwin : q + min (J.length - q) maxFrame ≤ st.base + st.len) (hjq : l.lookup "jq" = some (BitVec.ofNat 64 q))
@@ -90,8 +89,8 @@ theorem frameCheck_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : P
     ⟨⟨kept_trans hs.kept (kept_widen hu.kept fwNames_locals fun _ => msgW_areaW),
       areaAt_msg h.hA hs.area hlen hu.kept, vals_kept hs.vals hu.kept hout⟩, hu.why, fun hf => ⟨hu.len hf, hu.type hf⟩⟩
 
-/-- **The frame at `jp` found and checked**: if it goes on, after the head, the frame's place and length in locals,
-`jwhy` the code of what `fault` finds. -/
+/-- **The frame at `jp` found and checked**: if it goes on, after the head, its place and length in locals. `jwhy` holds
+the code of what `fault` finds. -/
 theorem frame_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) (hpos : st.pos < J.length)
     (hw : ¬ st.base + st.len < st.pos + min (J.length - st.pos) maxFrame) :
@@ -127,8 +126,8 @@ def whyOf : Next → Nat
   | .bad w => whyCode w
   | _ => 0
 
-/-- After the record's reading: as after the frame's check, `jwhy` the code of why reading stops, zero for a
-record; of a record, its type, its payload's length, its payload's place and a commit's fields. -/
+/-- After reading the record: as after the frame's check, `jwhy` why reading stops, zero for a record. A record gives
+its type, payload length and place, and a commit's fields. -/
 structure RcDone (A : Word) (J : Bytes) (st : St) (s0 u : PancakeState σ) : Prop where
   kept : Kept ScanProg.locals (AreaW A) s0 u
   area : AreaAt A J st u
@@ -147,8 +146,8 @@ theorem lowKK_recordOf {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK (Sc
     (lowKK_append (xs := [_]) (lowKK_ite rfl (lowK_any _ (k := .skip) (c := _) rfl)
       (lowKK_ite rfl (lowKK_decode hfl) (lowK_any _ (k := .skip) (c := _) rfl))) (lowK_any _ (k := .skip) (c := _) rfl))
 
-/-- **The record read**: if it goes on, of a frame that checks, the record's type, its payload's length and
-place, and a commit's fields. -/
+/-- **The record read**: if it goes on, a checking frame's record type, payload length and place. Also a commit's
+fields. -/
 theorem rec_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) (hpos : st.pos < J.length)
     (hw : ¬ st.base + st.len < st.pos + min (J.length - st.pos) maxFrame) :
@@ -237,8 +236,8 @@ theorem rec_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeS
 
 /-! ## What a step leaves -/
 
-/-- **What a step leaves**, as `stepSpec` says: the status, and with it the area's next state and the octets
-wanted, the record read and its fields, or where and why reading stops. -/
+/-- **What a step leaves**, as `stepSpec` says: the status, with the area's next state and octets wanted. Or the record
+read and its fields, or where and why reading stops. -/
 def OutAt (A : Word) (J : Bytes) (st : St) : Out → PancakeState σ → Prop
   | .clean, u => u.memory (at_ A sStatus) = BitVec.ofNat 64 clean ∧ AreaAt A J st u
   | .want st' n, u => u.memory (at_ A sStatus) = BitVec.ofNat 64 wanted ∧ AreaAt A J st' u ∧
@@ -252,7 +251,7 @@ def OutAt (A : Word) (J : Bytes) (st : St) : Out → PancakeState σ → Prop
       u.memory (at_ A sPos) = BitVec.ofNat 64 p ∧ u.memory (at_ A sWhy) = BitVec.ofNat 64 (whyCode w) ∧ AreaAt A J st u
   | .stop .clean, _ => False
 
-/-- A step's end: the locals but its own and the memory but the area as they were, and what `stepSpec` says. -/
+/-- A step's end: the locals but its own and the memory but the area as they were. The rest is as `stepSpec` says. -/
 def StepOut (A : Word) (J : Bytes) (st : St) (s0 u : PancakeState σ) : Prop :=
   Kept ScanProg.locals (AreaW A) s0 u ∧ OutAt A J st (stepSpec J st) u
 
@@ -316,8 +315,8 @@ theorem keyCopy_frag (o : Oracle σ) {A : Word} (hA : A.toNat % 8 = 0) {o' : Nat
     rw [at_add, hb i (by omega), List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]; rfl
   rwa [hkb] at this
 
-/-- During `accept`, from `ur`: the locals as they were, the words `ws` stored below the key, the rest of the area
-as it was but the key with `kf`, which then holds `kb`. -/
+/-- During `accept`, from `ur`: the locals as they were, the words `ws` stored below the key. The rest of the area is as
+it was but the key with `kf`, which then holds `kb`. -/
 structure AccAt (A : Word) (ur : PancakeState σ) (kf : Bool) (kb : List (BitVec 8)) (ws : List (Nat × Word))
     (u : PancakeState σ) : Prop where
   kept : Kept [] (AreaW A) ur u
@@ -365,7 +364,7 @@ def AccOut (A : Word) (J : Bytes) (st : St) (s0 : PancakeState σ) (rec : Record
 
 theorem lowKK_accept : LowKK ScanProg.accept := lowK_any _ (k := .skip) (c := _) rfl
 
-/-- **The record taken**: if it goes on, a second format refused as corruption, else the record and the area's
+/-- **The record taken**: if it goes on, a second format is refused as corruption. Otherwise the record and the area's
 next state, as `stepSpec` says. -/
 theorem accept_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     (hpos : st.pos < J.length) (hw : ¬ st.base + st.len < st.pos + min (J.length - st.pos) maxFrame) {rec : Record}

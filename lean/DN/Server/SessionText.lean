@@ -5,14 +5,9 @@ import DN.Compiler.FragRules
 /-!
 # DN.Server.SessionText
 
-`connText`, if it returns, writes the text of a reply, `CommandSpec.text`, into a connection's output; a run that
-does not end is not excluded. Its body is a set-up (`textHead_frag`), 48 branches each testing the code `t`
-(`textBranches`), and an end storing the output's length and returning zero (`textTail_run`). Exactly the branch
-of `t` runs (`dispatch`), its parts appending their octets. So, of the identity and the session's texts in its
-words: the greetings and the replies of texts, the revision and the source (`connText_greeting`,
-`connText_fixed`); STAT's (`connText_stat`); GROUP's and LISTGROUP's (`connText_listed`); and DATE's, `dateText`
-keeping its contract (`connText_time`). The premises hold of words laid out with the texts, an identity, an
-article, a group and the powers of two (`w_pre`, `w_stat`, `w_listed`, `w_pow`).
+`connText`, if it returns, writes a reply's text, `CommandSpec.text`, into a connection's output. Exactly the branch of
+code `t` runs (`dispatch`), appending its octets; non-ending runs are not excluded. So it writes the greetings, fixed
+texts, STAT, GROUP, LISTGROUP and DATE replies; witnesses `w_pre` to `w_pow`.
 -/
 
 namespace DN.Server.SessionText
@@ -306,8 +301,8 @@ theorem lenAt_out {b : Word} (hb : b.toNat % 8 = 0) {c : Nat} (hc : c < conns) :
   rw [← byteAlign_of_aligned hb (X := tOff + c * 2712 + 64) (by omega)] at e
   exact words_apart hb (by omega) (by omega) (by omega) e
 
-/-- What `connText` gives back if it returns: zero, connection `c`'s output `bs` and its length, every word but the
-output's, its length's and the return word as `m0` has it. The output's octets past `bs` are not described. -/
+/-- What `connText` gives back if it returns: zero, connection `c`'s output `bs` and its length. Every word but those
+and the return word as `m0` has it; octets past `bs` are not described. -/
 def TextRet (b : Word) (c : Nat) (bs : List (BitVec 8)) (dm : Word → Bool) (be : Bool) (m0 : Word → Word) : Ret :=
   fun v m => v = 0 ∧ memBytesAt m dm be (outAt b c) bs ∧ m (lenAt b c) = BitVec.ofNat 64 bs.length ∧
     ∀ w, ¬ OutWord b c w → w ≠ lenAt b c → w ≠ SessionCheck.retW b → m w = m0 w
@@ -619,8 +614,8 @@ theorem text_low : ∀ x ∈ textBranches, LowK (stmtBody x) := fun x hx => by
 
 theorem text_codes_small : ∀ l ∈ textCodes, ∀ k ∈ l, k < 2 ^ 32 := by decide +kernel
 
-/-- The premises of `connText` on the session's words: aligned, covered, the texts and the identity in
-them, the connection one of the table's. -/
+/-- The premises of `connText` on the session's words: aligned, covered, holding the texts and the identity. The
+connection is one of the table's. -/
 structure TextPre (b : Word) (c : Nat) (i : CommandSpec.Identity) (s0 : PancakeState σ) : Prop where
   hok : i.ok = true
   hb : b.toNat % 8 = 0
@@ -634,8 +629,8 @@ theorem tw_t {b : Word} {c t rl sl : Nat} {s0 : PancakeState σ} {acc : List (Bi
     ∀ s, (TCtx b c t rl sl s0 s ∧ Wrote b c acc s) → s.locals "t" = some (BitVec.ofNat 64 t) :=
   fun _ h => h.1.ht
 
-/-- **`connText`, its branch `j` writing `bs`**: if it returns, zero returned, `bs` and its length in connection
-`c`'s record, every word but those and the return word as it was. -/
+/-- **`connText`, its branch `j` writing `bs`**: if it returns, zero returned, `bs` and its length in connection `c`'s
+record. Every word but those and the return word is as it was. -/
 theorem connText_branch (o : Oracle σ) {b : Word} {c t : Nat} {i : CommandSpec.Identity} {s0 : PancakeState σ}
     (hpre : TextPre b c i s0) (ht : t < 2 ^ 32) {bs : List (BitVec 8)} (hroom : bs.length ≤ data) (j : Nat)
     (hj : j < textBranches.length) (hin : t ∈ textCodes.getD j []) (hpre' : ∀ l ∈ textCodes.take j, t ∉ l)
@@ -793,8 +788,8 @@ theorem group_in {sg : Nat} (h1 : 1 ≤ sg) (h2 : sg ≤ groupsMax) :
   have : (sg - 1) * 72 ≤ 63 * 72 := Nat.mul_le_mul_right 72 (by omega)
   refine ⟨by omega, by omega, by omega, by omega⟩
 
-/-- What GROUP's and LISTGROUP's reply asks of the session's words: the group's count, lowest and highest
-numbers, and connection `c`'s group, whose name recovery keeps. -/
+/-- What GROUP's and LISTGROUP's reply asks of the session's words: the group's count, lowest and highest numbers. Also
+connection `c`'s group, whose name recovery keeps. -/
 structure ListedIn (b : Word) (c count low high sg : Nat) (g : List (BitVec 8)) (s0 : PancakeState σ) : Prop where
   hcount : s0.memory (b + BitVec.ofNat 64 (ownOff + ownCount)) = BitVec.ofNat 64 count
   hlow : s0.memory (b + BitVec.ofNat 64 (ownOff + ownLow)) = BitVec.ofNat 64 low
@@ -1001,9 +996,8 @@ theorem pow_keep {b : Word} (hb : b.toNat % 8 = 0) {c : Nat} (hc : c < conns) {m
   rw [hm _ (e ▸ below_table hb hc (by rw [hT]; omega)) (region_addr_inj b _ _ (by omega) (by omega) (by omega))]
   exact h j hj
 
-/-- What `dateText` gives back if it returns, called at place `ofs` of connection `c`'s output: zero; the octets
-`d` from `ofs`; the place past them in the return word; every other octet, and every word but the output's and the
-return word, as `m0` has them. -/
+/-- What `dateText` gives back if it returns, called at place `ofs` of connection `c`'s output. Zero, and the octets `d`
+from `ofs`; the place past them in the return word. Every other octet and word as `m0` has them. -/
 def DateRet (b : Word) (c ofs : Nat) (d : List (BitVec 8)) (dm : Word → Bool) (be : Bool) (m0 : Word → Word) : Ret :=
   fun v m => v = 0 ∧ memBytesAt m dm be (outAt b c + BitVec.ofNat 64 ofs) d ∧
     m (SessionCheck.retW b) = BitVec.ofNat 64 (ofs + d.length) ∧
@@ -1030,8 +1024,7 @@ def dateBytes (secs : Nat) : List (BitVec 8) := News.SessionSpec.dateDigits (sec
 theorem dateBytes_wall (w : Nat) : dateBytes (w / 1000) = News.SessionSpec.dateDigits w := by
   simp only [dateBytes, News.SessionSpec.dateDigits, Nat.mul_div_cancel _ (by decide : 0 < 1000)]
 
-/-- `dateText` as the code holds it: from its entry at a place up to 8, if it returns, it gives back the digits
-of `secs`. -/
+/-- `dateText` as the code holds it: from a place up to 8, if it returns, giving back `secs`'s digits. -/
 def DateOk (o : Oracle σ) (b : Word) (secs : Nat) (code : String → Option (List String × PancakeProg)) : Prop :=
   ∃ body, code "dateText" = some (["c", "o"], body) ∧ ∀ c ofs (s1 : PancakeState σ), DEntry b c ofs secs s1 →
     s1.code = code → ofs ≤ 8 →
@@ -1185,7 +1178,7 @@ theorem fixed_bytes (i : CommandSpec.Identity) : ∀ p ∈ fixedBranches,
       Session.tAuthDone, Session.tAuthRequired, SessionStore.tUnreadable] <;> simp only [texts,
       List.getD_cons_succ, List.getD_cons_zero, CommandSpec.text, List.append_assoc]
 
-/-- **`connText` writes the text of a reply of the identity and the session's texts**, if it returns:
+/-- **`connText` writes the text of a reply of the identity and the session's texts**, if it returns. That is
 `CommandSpec.text`, into connection `c`'s output. -/
 theorem connText_fixed (o : Oracle σ) {b : Word} {c : Nat} {i : CommandSpec.Identity} {s0 : PancakeState σ}
     (hpre : TextPre b c i s0) {r : CommandSpec.Reply} {j : Nat} (hrj : (r, j) ∈ fixedBranches) :
@@ -1307,8 +1300,7 @@ theorem connText_listed (o : Oracle σ) {b : Word} {c : Nat} {i : CommandSpec.Id
   rw [e]
   exact connText_other o hpre (j := 15) (by decide) hc hroom fun R => listed_body o hpre hl R
 
-/-- **DATE's reply**, if it returns, `dateText` as the code holds it writing the date and time of the seconds
-`secs` in the wall word. -/
+/-- **DATE's reply**, if it returns: `dateText` as the code holds it writes the date and time of wall seconds `secs`. -/
 theorem connText_time (o : Oracle σ) {b : Word} {c : Nat} {i : CommandSpec.Identity} {s0 : PancakeState σ}
     (hpre : TextPre b c i s0) {secs : Nat}
     (hwall : s0.memory (b + BitVec.ofNat 64 (ownOff + ownWall)) = BitVec.ofNat 64 secs) (hpow : PowIn b s0.memory)
@@ -1335,9 +1327,9 @@ abbrev powOff : Nat := News.AbnfProg.areaOffset + News.AbnfProg.aPow
 /-- The witnesses' wall clock: 2001-09-09 01:46:40 UTC. -/
 def wSecs : Nat := 1000000000
 
-/-- The words the witnesses set, by their place past the base: one at the identity's lengths, the Message-ID's,
-group one's name's, its lowest number and connection zero's group; three at the group's count and highest number;
-seven at the article's number; the wall clock's seconds; the powers of two. -/
+/-- The words the witnesses set, by place past the base. One at the identity's, Message-ID's and group name's lengths,
+the lowest number, connection zero's group. Three at the count and highest number, seven at the article's number; the
+wall seconds; the powers of two. -/
 def wMem0 (w : Word) : Word :=
   let d := (w - wb).toNat
   if d = ownOff + ownRevLen ∨ d = ownOff + ownSrcLen ∨ d = ownOff + ownIdLen ∨ d = ownOff + ownLow ∨

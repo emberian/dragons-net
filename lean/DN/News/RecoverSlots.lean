@@ -5,8 +5,8 @@ import DN.News.RecoverSearch
 /-!
 # DN.News.RecoverSlots
 
-What phases 4 to 13 share: a slot's words read, how many commits the index holds, a local raised or listed again,
-`Rest` of a later phase, a branch on a word, the refusals' stop, the fields of a slot's words, and search loops.
+What phases 4 to 13 share: slot words read, the index's commit count, a local raised or listed again. Also `Rest` of a
+later phase, a branch on a word, the refusals' stop, slot fields and search loops.
 -/
 
 namespace DN.News.RecoverArea
@@ -310,8 +310,8 @@ theorem firstIdx_frag (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : 
     | some i =>
       rw [firstIdx_mono e n hkn]; rw [e] at hu; exact hfound k i u hu
 
-/-- **The test of a search loop**, `d = 0 && i < c`: the flag `d` is `e` once the search `f` found its index, which
-`i` then holds, below the count `k` so far. -/
+/-- **The test of a search loop**, `d = 0 && i < c`. Flag `d` is `e` once search `f` found its index, which `i` then
+holds, below the count `k` so far. -/
 theorem search_guard {u : PancakeState σ} {d i c : String} {f : Option Nat} {k n e : Nat} (he : 0 < e)
     (he64 : e < 2 ^ 64) (hfk : ∀ j, f = some j → j < k) (hkn : k ≤ n) (hn : n < 2 ^ 63)
     (hi : u.locals i = some (.ofNat 64 (f.getD k)))

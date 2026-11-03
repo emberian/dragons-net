@@ -669,7 +669,7 @@ theorem byteAlign_base {b : Word} (hb : b.toNat % 8 = 0) (x : Nat) :
   have := b.isLt
   omega
 
-/-- The word at `X` past an aligned base is not the one holding a place `x` at least eight past it. -/
+/-- The word at `X` past an aligned base does not hold a place `x` at least eight past it. -/
 theorem own_far {b : Word} (hb : b.toNat % 8 = 0) {X x : Nat} (hX8 : X % 8 = 0) (hlt : X + 8 ≤ x)
     (hx : x < 2 ^ 64) : byteAlign (b + BitVec.ofNat 64 x) ≠ b + BitVec.ofNat 64 X := by
   rw [byteAlign_base hb]

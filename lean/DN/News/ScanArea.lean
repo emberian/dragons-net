@@ -5,11 +5,9 @@ import DN.News.ScanFrame
 /-!
 # DN.News.ScanArea
 
-The scanner's area as a state of reading the journal (`AreaAt`). If it goes on, the step's head reads the
-area's words into locals (`head_frag`), and with too few octets in the window for the next frame, the step
-moves the window to the frame and asks for octets after it, as `stepSpec` does (`want_frag`). The step's state
-between (`Ctx`): what it keeps, the area, and its locals' values listed (`Vals`, read by `vals_lookup`), set by
-`ctx_assign`; the frame's place in the window from it (`frameAt_frag`).
+The scanner's area as a state of reading the journal (`AreaAt`). The step's head reads its words into locals
+(`head_frag`); lacking octets, it moves the window and asks for more (`want_frag`). The step's state between (`Ctx`):
+what it keeps, the area, and its locals listed (`Vals`).
 -/
 
 namespace DN.News.ScanRun
@@ -24,8 +22,8 @@ variable {σ : Type}
 /-- The area's words. -/
 def AreaW (A : Word) (a : Word) : Prop := ∃ x, x < ScanProg.size ∧ a = at_ A x
 
-/-- **The area at `A` holds the state `st` of reading `J`**: the journal's length, the window's place, length
-and octets, where the next frame starts, the key once read and how many records were read. -/
+/-- **The area at `A` holds the state `st` of reading `J`**: the journal's length, the window's place, length and
+octets. Also where the next frame starts, the key once read and how many records were read. -/
 structure AreaAt (A : Word) (J : Bytes) (st : St) (s : PancakeState σ) : Prop where
   size : s.memory (at_ A sSize) = BitVec.ofNat 64 J.length
   base : s.memory (at_ A sBase) = BitVec.ofNat 64 st.base
@@ -42,8 +40,8 @@ theorem e_word {u : PancakeState σ} {A : Word} (hA : A.toNat % 8 = 0) (hd : Dom
     ∃ E, Lower.lowerExp (ScanProg.word x) = some E ∧ eval u E = some (u.memory (at_ A x)) :=
   e_loadw hA hd hsp hx hxs
 
-/-- What a step needs: the area at `A` holding a state of reading `J` that keeps its window, a journal
-shorter than `2 ^ 62` octets, and the step's locals. -/
+/-- What a step needs: the area at `A` holding a state of reading `J` that keeps its window. Also a journal shorter than
+`2 ^ 62` octets, and the step's locals. -/
 structure StepIn (A : Word) (J : Bytes) (st : St) (s : PancakeState σ) : Prop where
   hA : A.toNat % 8 = 0
   dom : Dom A s.memaddrs
@@ -336,8 +334,8 @@ theorem kept_false_eq {xs : List String} {u u' : PancakeState σ} (h : Kept xs (
   subst hm hd hb hf hba hc
   rfl
 
-/-- **The step's state**: the locals but the step's and the memory but the area as in `s0`, the area as `st`
-says, and the locals `l` lists with their values. -/
+/-- **The step's state**: the locals but the step's and the memory but the area as in `s0`. The area is as `st` says,
+and the locals `l` lists hold their values. -/
 structure Ctx (A : Word) (J : Bytes) (st : St) (s0 : PancakeState σ) (l : List (String × Value))
     (u : PancakeState σ) : Prop where
   kept : Kept ScanProg.locals (AreaW A) s0 u
@@ -418,8 +416,8 @@ theorem areaAt_msg {u u' : PancakeState σ} (hA : A.toNat % 8 = 0) (ha : AreaAt 
     have e := not_msg hA (x := x) (by simp only [sStatus] at hr; omega) (by simp only [ScanProg.size] at hx; omega)
     rwa [align_at hA, show x / 8 * 8 = x by omega] at e)
 
-/-- **The frame's place**: from where it starts in the journal, `q`, its offset in the window into `jo`, its
-place into `jf`, its payload's into `jpp`. -/
+/-- **The frame's place**: from where it starts in the journal, `q`, its offset in the window into `jo`. Its place goes
+into `jf`, its payload's into `jpp`. -/
 theorem frameAt_frag (o : Oracle σ) (h : StepIn A J st s0) {fail : List Syntax.PStmt} (hfl : LowKK fail)
     (hfd : declared fail = []) {q : Nat} {l : List (String × Value)} (hq : st.base ≤ q)
     (hqw : q - st.base ≤ windowMax) (hq64 : q < 2 ^ 62) (hjq : l.lookup "jq" = some (BitVec.ofNat 64 q))
@@ -501,8 +499,8 @@ theorem tail_store {A : Word} (hA : A.toNat % 8 = 0) {J : Bytes} {p L : Nat} {s0
     simp only [if_neg (fun e => hyw.1 (at_inj (by omega) (by omega) e).symm)]
     exact h.rest y hy hy8 hyw.2
 
-/-- **Octets wanted**: if it goes on, where the window does not hold the frame at `jp`, the window moved to start
-there and the octets wanted after it, as `stepSpec` says. -/
+/-- **Octets wanted**: if it goes on, where the window does not hold the frame at `jp`, the window moves there. Then the
+octets after it are wanted, as `stepSpec` says. -/
 theorem want_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) (hpos : st.pos < J.length)
     (hw : st.base + st.len < st.pos + min (J.length - st.pos) maxFrame) :

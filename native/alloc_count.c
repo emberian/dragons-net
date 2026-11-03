@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * Loaded with LD_PRELOAD, counts a process's heap allocations into the file DN_ALLOC_FILE names,
- * which it maps shared, so that they can be read at any moment and whatever way the process ends:
- * three little-endian 64-bit counts, allocations (a realloc is one), octets asked, and frees. What
- * comes before the file is mapped is not counted, nor memory taken by mmap directly; how much is
- * live at most is the process's VmHWM.
+ * Loaded with LD_PRELOAD, counts heap allocations into the shared file DN_ALLOC_FILE names, readable however the
+ * process ends. Three little-endian 64-bit counts: allocations (a realloc is one), octets asked, frees. Allocations
+ * before the mapping and direct mmap are not counted; peak memory is VmHWM.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>

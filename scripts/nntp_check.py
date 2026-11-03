@@ -860,9 +860,8 @@ def reader_cuts(b: Build) -> str:
 
 
 def half_close(b: Build) -> str:
-    """A client that sends and ends its input gets the replies to its whole lines, and the end is
-    reported as such; so is the end of one that closes as it connects, before its greeting, which the
-    host takes with the close its greeting meets."""
+    """A client that sends and ends its input gets replies to its whole lines, and the end is reported. So is the end of
+    one closing as it connects, before its greeting."""
     stream = b"HELP\r\nSTAT 1\r\nCAPAB"
     with serving(b) as server:
         s = server.client()
@@ -1155,8 +1154,8 @@ def lingering(b: Build) -> str:
 
 
 def in_kernel_for(pid: int, c: Client) -> bool:
-    """Whether a socket of the server's for the client `c` is still owned by something, a descriptor or
-    an operation of the server's ring: /proc's tables give it an inode until no one holds it."""
+    """Whether a server socket for client `c` is still held, by a descriptor or a ring operation. /proc's tables give it
+    an inode until no one holds it."""
     for table in ("tcp", "tcp6"):
         for row in Path(f"/proc/{pid}/net/{table}").read_text().splitlines()[1:]:
             fields = row.split()
@@ -1166,10 +1165,9 @@ def in_kernel_for(pid: int, c: Client) -> bool:
 
 
 def descriptors_kept(b: Build) -> str:
-    """A hundred clients reset one after another leave the server the descriptors it had. Seventy
-    that quit and keep their side open leave it sixty-four more, those of the last sixty-four: a
-    full list of lingering sockets gives up the one that has lingered longest, and nothing of the
-    server's holds a socket given up."""
+    """A hundred clients reset in turn leave the server its descriptors. Seventy that quit but stay open leave
+    sixty-four more, the last sixty-four's. A full linger list drops the longest-lingering socket, and nothing of the
+    server holds it."""
     with serving(b, True) as server:
         pid = server.proc.pid
         base = descriptors(pid)
@@ -1216,9 +1214,9 @@ def refuse_accepts(server: Server) -> tuple[int, Client]:
 
 
 def out_of_descriptors(b: Build) -> str:
-    """Out of descriptors, the server takes one turn on the refused accept and none more while it
-    pauses; it serves the client once the pause is over. A client reset while it waited is taken too,
-    its greeting fails, and its descriptor goes: the server holds one more, the client served."""
+    """Out of descriptors, the server takes one turn on the refused accept and pauses, then serves the client. A client
+    reset while waiting is taken, its greeting fails, its descriptor goes. The server ends holding one more, the client
+    served."""
     with serving(b, True) as server:
         base = descriptors(server.proc.pid)
         soft, late = refuse_accepts(server)
@@ -2480,17 +2478,9 @@ class Defect:
     poll: bool = False
 
 
-# Not planted, since nothing outside could tell: a batch that does not rotate where it starts, and a
-# failed send not marked lost. The host gives out all one poll reported before it polls again, so a
-# connection one batch does not reach the next one does; and a socket whose send failed hangs up at
-# the next poll. Nor TCP_NODELAY left off: it only delays a reply until the one before is
-# acknowledged, which on loopback no check can time reliably, and no portable call reads another
-# process's socket option. Nor a connection in the clear reported over TLS: logins need TLS, and
-# only with logins does the program read whether a connection speaks it. Nor, with io_uring, readiness
-# taken past what is waited for: epoll's set is brought to the program's wants before each wait, so it
-# reports more only between one wait and the next, which no check can time. Nor an index given out
-# again with an operation of its last connection in flight, which `usable` refuses: the cancellation a
-# close submits is reaped at the next wait, and no check makes the host accept before it.
+# Not planted, as nothing outside could tell: an unrotated batch start, a failed send unmarked, TCP_NODELAY off. Nor a
+# clear connection reported as TLS, readiness past the wants, or an index reused with operations in flight. Each is
+# masked by the next poll or wait, untimeable on loopback, or unread by the program.
 DEFECTS = [
     Defect("octets libssl holds left unreported",
            [("                c->ready |= POLLIN;\n                held = 1;\n", "", 1)], "over TLS",
@@ -2845,8 +2835,8 @@ def check(cake: str) -> Report:
                      for name, text in (("nntp", source), ("stale", stale)))
         build = Build(base.result(), old.result())
     results = {}
-    # Every check on the server as it is built, which waits with io_uring; with poll, each check a defect
-    # planted where it waits so is held to, so that the check fails for the defect and not for poll.
+    # Every check runs on the server as built, waiting with io_uring. With poll, each check is held to its poll-wait
+    # defects, so it fails for the defect, not for poll.
     polled = with_poll(build)
     runs = [(name, run, build) for name, run in CHECKS.items()]
     runs += [(f"{name} (poll)", CHECKS[name], polled) for name in sorted({d.check for d in DEFECTS if d.poll})]

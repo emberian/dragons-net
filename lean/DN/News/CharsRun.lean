@@ -4,12 +4,9 @@ import DN.News.CommandSpec
 /-!
 # DN.News.CharsRun
 
-Checks of octets by characters, as the session makes them, against `CommandSpec`. UTF-8 an octet at
-a time (RFC 3629 §4) is `CommandSpec.chars`: a check that takes each character at its lead octet,
-the continuation octets checked after it, is the check of the characters (`utf8_run`). So a
-newsgroup's name is `wildmat-exact` characters exactly when its check passes (`exactChars_run`),
-and a wildmat is `CommandSpec.wildmat?`'s exactly when its run ends on a pattern of an item or more
-(`wildmat_run`).
+Octet checks by characters, as the session makes them, against `CommandSpec`. A check taking each character at its lead
+octet, continuations after, is `CommandSpec.chars` (`utf8_run`). So group names and wildmats pass exactly when
+`CommandSpec` says (`exactChars_run`, `wildmat_run`).
 -/
 
 namespace DN.News.CharsRun
@@ -19,8 +16,7 @@ open DN.News.CommandSpec (charLength charsFrom chars inRange isTail)
 
 /-! ## UTF-8, octet by octet -/
 
-/-- A lead octet of UTF-8 past US-ASCII: how many continuation octets it needs and the first one's
-range (RFC 3629 §4). -/
+/-- A lead octet of UTF-8 past US-ASCII: how many continuation octets it needs, the first one's range (RFC 3629 §4). -/
 def lead (b : Byte) : Option (Nat × Nat × Nat) :=
   if 194 ≤ b.toNat ∧ b.toNat ≤ 223 then some (1, 128, 191)
   else if b.toNat = 224 then some (2, 160, 191)
@@ -166,9 +162,8 @@ theorem chars_none {a : Byte} {rest : List Byte} (hk : charLength (a :: rest) = 
   rw [charsFrom_succ, hk]
   rfl
 
-/-- **A check of octets by characters**: `asc` takes a character of US-ASCII and `multi` one past it,
-both at its lead octet; UTF-8's continuation octets are checked after it, `nd` of them, the first
-from `clo` to `chi`. -/
+/-- **A check of octets by characters**: `asc` takes a US-ASCII character and `multi` one past it, at its lead octet.
+UTF-8's `nd` continuation octets are checked after it, the first from `clo` to `chi`. -/
 def bRun {S : Type} (asc : S → Byte → Option S) (multi : S → Option S) :
     S → Nat → Nat → Nat → List Byte → Option S
   | st, nd, _, _, [] => if nd = 0 then some st else none
@@ -359,8 +354,7 @@ theorem itemOK_long (c : List Byte) (h : c.length ≠ 1) : itemOK c = true := by
   have n2 : c ≠ [63#8] := fun e => h (by rw [e]; rfl)
   simp [itemOK, CommandSpec.itemOf, h42, h63, n1, n2, h]
 
-/-- **A character that is neither a comma nor a `!` where one may stand**: one item more, if it can
-be one. -/
+/-- **A character, neither a comma nor a `!` where one may stand**: one item more, if it can be one. -/
 theorem wStep_item (st : Nat × Bool) (c : List Byte) (h44 : c ≠ [44#8]) (h33 : c ≠ [33#8] ∨ st.2 = false) :
     cStep wAsc wMulti st c = if itemOK c then some (st.1 + 1, false) else none := by
   match c, h44, h33 with
@@ -463,8 +457,8 @@ theorem first_sep {α : Type} [DecidableEq α] (sep : α) : ∀ cs : List α,
       · exact Or.inl (by simp [h, Ne.symm hx])
       · exact Or.inr ⟨x :: g, r, by simp [h], by simp [hn, Ne.symm hx]⟩
 
-/-- **A wildmat's characters**: patterns parted by commas, as `CommandSpec.wildmat?` reads them, exactly
-when their run ends on a pattern of at least one item. -/
+/-- **A wildmat's characters**: comma-parted patterns, as `CommandSpec.wildmat?` reads them. That is exactly when their
+run ends on a pattern of an item or more. -/
 theorem wildmat_chars (neg : Bool) (cs : List (List Byte)) :
     okItems (cs.foldlM (cStep wAsc wMulti) (0, neg)) =
       (match cs.splitOn [44#8] with

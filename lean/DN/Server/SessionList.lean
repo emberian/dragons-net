@@ -4,10 +4,8 @@ import DN.Server.SessionFn
 /-!
 # DN.Server.SessionList
 
-`listClassify` keeps its contract `FnOk`: on a line of words, if it returns, it gives back zero and leaves in the
-return word the code of the reply `CommandSpec.answerIn` gives LISTGROUP, LIST, DATE, NEWGROUPS and MODE
-(`listClassify_ok`); `DN.Server.SessionCalls` puts it together with `classify`. What its own words hold is not shown.
-The fragments hold if they go on.
+`listClassify` keeps its contract `FnOk` for LISTGROUP, LIST, DATE, NEWGROUPS and MODE (`listClassify_ok`). On a line of
+words, if it returns, it gives back zero and `answerIn`'s code. What its own words hold is not shown.
 -/
 
 namespace DN.Server.SessionClassify
@@ -1093,9 +1091,8 @@ theorem listBody_frag (o : Oracle σ) {b : Word} {ci : Nat} {L : List Byte} {e :
     (fscan_frag o he)) (fkept_frag o he)) (fargs_frag o hw1 hsh)) (ldecs_frag o)) (lbranches_frag o hc he hgn hsh))
     (fun _ h => h) fun _ h => lend_of h
 
-/-- **`listClassify` keeps its contract** as the code holds it, with `groupName` as it lowers: on a line of words,
-if it returns, it gives back zero and leaves in the return word the code of `CommandSpec.answerIn`'s reply to
-LISTGROUP, LIST, DATE, NEWGROUPS and MODE, every word but `clsWords` as it was. -/
+/-- **`listClassify` keeps its contract** as the code holds it, with `groupName` as it lowers. On a line of words, if it
+returns, it gives back zero and `answerIn`'s code for its five commands. Every word but `clsWords` is as it was. -/
 theorem listClassify_ok (o : Oracle σ) (b : Word) {code : String → Option (List String × PancakeProg)}
     {body : PancakeProg} (hcode : code "listClassify" = some (["c", "cmd"], body))
     (hbody : Lower.lower Session.listClassify = some body) (hgn : GnCode code) :

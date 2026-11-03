@@ -6,10 +6,8 @@ import DN.Compiler.WpBytes
 /-!
 # DN.Server.SessionRun
 
-What the proofs of the session's functions share: the check `keptIn` makes of a word, as it lowers
-(`keptIn_lower`), which a word in range passes, changing nothing (`keptG_pass`, and `keptA_wp`
-where a loop's body makes it); and where a function of the session sits in the code holding its
-functions (`in_code`).
+What the session's function proofs share: `keptIn`'s check of a word, as it lowers (`keptIn_lower`). A word in range
+passes it, changing nothing (`keptG_pass`, `keptA_wp`). Also where a function sits in the code (`in_code`).
 -/
 
 namespace DN.Server.SessionRun
@@ -69,8 +67,6 @@ def keptA (E : PancakeExp) (hi : Nat) : AProg σ :=
         (.const (BitVec.ofNat 64 brokenState)))
       (.ret (.const (BitVec.ofNat 64 brokenState))))
     .skip
-
-theorem keptA_erase (E : PancakeExp) (hi : Nat) : (keptA (σ := σ) E hi).erase = keptG E hi := rfl
 
 theorem keptA_vc (E : PancakeExp) (hi : Nat) (R : Ret) (Q : Assn σ) : vcR (keptA E hi) R Q :=
   ⟨⟨trivial, trivial⟩, trivial⟩

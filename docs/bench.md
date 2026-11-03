@@ -62,7 +62,7 @@ INN, Ubuntu's 2.7.2~20240212, serves the same 200 articles, read off our server:
 
 ## Results
 
-[bench-results.json](bench-results.json) records the machine, the C compiler and its flags, and every run: the rounds whole, with the load's counts and the latencies' cells; the sweeps and the commands as summaries.
+`scripts/bench.py measure` writes every run to `build/bench/measured.json`: the machine, the compiler and its flags, the rounds whole.
 
 On an AMD Ryzen 7 8745HS with 16 CPUs, two a core, Linux 7.0, the `powersave` governor and boost on. A host of one thread runs on CPU 2, `echo-uring-4` on CPUs 2 to 5; the load runs on CPUs 1, 6, 7 and 9, of other cores.
 

@@ -4,10 +4,9 @@ import DN.Compiler.FragRules
 /-!
 # DN.Compiler.FragRet
 
-Fragments of a function's body that may return: `FragR o R xs P P'` is `Frag` with what a return gives back fixed
-to `R`, so a `ret` is a fragment (`fragR_ret`), and so is a branch whose arms return (`fragR_ite`). A fragment
-shown for every return is one (`fragR_of`); a body closed on its own runs as the function does
-(`fragR_close`). Like `Frag`, they hold if the run goes on.
+Body fragments that may return: `FragR o R xs P P'` is `Frag` with returns giving back as `R`. A `ret` and a branch
+whose arms return are fragments (`fragR_ret`, `fragR_ite`). A body closed on its own runs as the function does
+(`fragR_close`).
 -/
 
 namespace DN.Compiler.Frag
@@ -67,7 +66,7 @@ theorem fragR_ite (o : Oracle σ) {R : Ret} {c : Syntax.PExpr} {C : PancakeExp} 
   exact ⟨.seq (.cond C T E) k, lowerK_one (by simp [Lower.lowerStmt1, hc, hT, hE]) rfl k,
     seq (WpRet.cond hdef hTs hEs) hk hP'⟩
 
-/-- **A branch on a flag known** whose arms may return: its arm when the flag is set, the other when not. -/
+/-- **A branch on a known flag**, arms that may return: the first if the flag is set, else the second. -/
 theorem fragR_if (o : Oracle σ) {R : Ret} {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.lowerExp c = some C)
     {t e : List Syntax.PStmt} (hlt : LowKK t) (hle : LowKK e) {P Q : Assn σ} (hQ : Safe.ClockFree Q)
     (htc : ∀ u y v, Q u → y ∈ declared t → Q (restore u y v)) (hec : ∀ u y v, Q u → y ∈ declared e → Q (restore u y v))

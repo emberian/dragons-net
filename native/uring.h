@@ -1,14 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
- * io_uring through its three system calls, without liburing: one ring, used by the one thread that
- * opened it. The ring is opened disabled, restricted to the operations its owner names, and only then
- * enabled, so that nothing else can be submitted on it nor registered. It needs Linux 6.6, for the
- * newest setup flag it passes, and refuses an older or locked-down kernel by name rather than falling
- * back to anything.
- *
- * Every operation carries a token in its user data: its kind, the slot it belongs to and the slot's
- * generation, so that a completion is applied to the incarnation that submitted it. The ring counts
- * what is submitted and not yet reaped; it is closed only once that is zero, since the kernel keeps
- * writing into the buffers of operations in flight even after their descriptors are closed. */
+ * io_uring through its three system calls, without liburing: one ring for the thread that opened it. It opens disabled,
+ * restricted to its owner's operations, then enabled; it needs Linux 6.6 and refuses older kernels by name. Operations
+ * carry a kind, slot and generation token; the ring closes only with nothing in flight. */
 #ifndef DN_URING_H
 #define DN_URING_H
 
@@ -35,27 +28,23 @@ struct dn_ring {
 #define DN_TOKEN_SLOT(t) ((unsigned)(((t) >> 8) & 0xffffffu))
 #define DN_TOKEN_GEN(t) ((uint32_t)((t) >> 32))
 
-/* Opens a ring of `entries` submissions (a power of two up to 4096, completions twice that) on which
- * only the `n` operations of `ops` may be submitted, none with flags. Nonzero with the reason in
- * `why` when the kernel cannot give one: io_uring missing or refused (ENOSYS, EPERM), a kernel
- * before 6.6, an operation or a feature it lacks. */
+/* Opens a ring of `entries` submissions (a power of two to 4096, completions twice that), only `ops` allowed, no flags.
+ * Nonzero, reason in `why`, when io_uring is missing or refused, the kernel predates 6.6, or lacks an operation. */
 int dn_ring_open(struct dn_ring *r, unsigned entries, const uint8_t *ops, size_t n, char *why, size_t why_len);
 
-/* A cleared submission entry with `token` as its user data, counted live; NULL when every entry is
- * prepared and not yet submitted, after which `dn_ring_enter` makes room. */
+/* A cleared submission entry with `token` as user data, counted live. NULL when every entry is prepared and
+ * unsubmitted; `dn_ring_enter` then makes room. */
 struct io_uring_sqe *dn_ring_get(struct dn_ring *r, uint64_t token);
 
-/* Submits what is prepared and waits until `wait` completions are ready or `timeout_ms` has passed
- * (negative: no limit; 0: does not wait). Returns 0, or a negative error number the ring cannot go
- * on after; an interruption, a full completion queue and a short submission are dealt with here. */
+/* Submits what is prepared and waits for `wait` completions or `timeout_ms` (negative: no limit; 0: no wait). Returns 0
+ * or a fatal negative error; interruptions, a full completion queue and short submissions are handled here. */
 int dn_ring_enter(struct dn_ring *r, unsigned wait, int64_t timeout_ms);
 
-/* The next completion, if one is ready: 1 and the entry in `cqe`, its operation no longer live,
- * unless `foreign` says it was posted by another ring's message; 0 when none is. */
+/* The next ready completion: 1 and the entry in `cqe`; 0 when none is ready. Its operation is no longer live, unless
+ * `foreign` says another ring's message posted it. */
 int dn_ring_take(struct dn_ring *r, struct io_uring_cqe *cqe, int (*foreign)(uint64_t token));
 
-/* Unmaps and closes the ring: aborts the process if an operation is still live, since the kernel
- * would go on writing into memory the caller is about to free. */
+/* Unmaps and closes the ring; aborts if an operation is still live, since the kernel would write into freed memory. */
 void dn_ring_close(struct dn_ring *r);
 
 /* The submissions every host makes. */

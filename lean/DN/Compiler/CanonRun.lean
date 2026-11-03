@@ -5,12 +5,9 @@ import DN.Compiler.Entry
 /-!
 # DN.Compiler.CanonRun
 
-**A program runs as its canonical form does.** `canonProg` rewrites expressions only, each into
-the form `Canon.canon_eval` shows evaluates alike. A run of the canonical program, from a state
-whose code holds the canonical bodies, ends as the program's run ends, in its state but for the
-code (`canon_run`). Programs of one canonical form, entered from states equal but for code of one
-canonical form, therefore fail alike (`fails_same`): the program `Parse`, the Lean copy of CakeML's parser,
-reads from a printed program fails exactly where the program it was printed from does.
+**A program runs as its canonical form does.** A run of `canonProg`'s output, from code holding the canonical bodies,
+ends as the program's run ends (`canon_run`). So programs of one canonical form fail alike (`fails_same`): `Parse`'s
+reading of a printed program fails where its source does.
 -/
 
 namespace DN.Compiler.CanonRun

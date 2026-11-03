@@ -4,10 +4,9 @@ import DN.News.ScanRun
 /-!
 # DN.News.ScanSpec
 
-The scanner's step as a function of what it keeps between steps (`St`): the journal's end, octets wanted
-after the window moved to the next frame, a record read, or reading stopped (`stepSpec`). Steps, a host
-giving after each want at least one and at most the octets wanted, read the journal as `Journal.scan`
-does, within one step more than twice its length (`drive_scan`).
+The scanner's step as a function of what it keeps between steps (`St`, `stepSpec`). It ends the journal, wants octets
+after moving the window, reads a record, or stops. Hosts giving one to the wanted octets, steps read as `Journal.scan`
+does, within twice the length plus one (`drive_scan`).
 -/
 
 namespace DN.News.ScanRun
@@ -15,8 +14,8 @@ namespace DN.News.ScanRun
 open DN.News.Journal
 open DN.News.ScanProg (chunk windowMax whyCode)
 
-/-- What the scanner keeps between steps: its window `J[base, base + len)` of the journal `J`, where the
-next frame starts, the journal's key once read, and the records read, the last first. -/
+/-- What the scanner keeps between steps: its window `J[base, base + len)`, where the next frame starts. Also the
+journal's key once read, and the records read, the last first. -/
 structure St where
   base : Nat
   len : Nat
@@ -24,16 +23,15 @@ structure St where
   key : Option Bytes
   acc : List Record
 
-/-- What a step does: the journal ends cleanly, octets are wanted after the window moved to the next
-frame, a record is read, or reading stops. -/
+/-- What a step does: a clean end, octets wanted after moving the window, a record read, or reading stopped. -/
 inductive Out
   | clean
   | want (st : St) (n : Nat)
   | record (rec : Record) (st : St)
   | stop (e : End)
 
-/-- **A step**, as the scanner takes it: the frame at `pos` is read once the window holds it, or as much of
-the journal as is left, up to a frame's largest size. -/
+/-- **A step**, as the scanner takes it: the frame at `pos` is read once the window holds it. Or as much of the journal
+as is left, up to a frame's largest size. -/
 def stepSpec (J : Bytes) (st : St) : Out :=
   if J.length ≤ st.pos then .clean
   else if st.base + st.len < st.pos + min (J.length - st.pos) maxFrame then
@@ -59,8 +57,8 @@ def drive (J : Bytes) (pick : St → Nat → Nat) : Nat → St → Option Scan
     | .record _ st' => drive J pick f st'
     | .want st' n => drive J pick f (st'.fill (pick st' n))
 
-/-- What a scanner's state keeps: the window within the journal and starting at or before the next
-frame, the key known only once a record is read. -/
+/-- What a scanner's state keeps: the window within the journal, starting at or before the next frame. The key is known
+only once a record is read. -/
 structure Valid (J : Bytes) (st : St) : Prop where
   base : st.base ≤ st.pos
   pos : st.pos ≤ st.base + st.len
@@ -128,8 +126,7 @@ def St.left (J : Bytes) (st : St) : Nat := (J.length - st.pos) + (J.length - (st
 
 theorem window_room : maxFrame + chunk ≤ windowMax := by decide
 
-/-- **After octets wanted**, as many as the host gives, at least one and at most those wanted, the state keeps its
-window and less is left. -/
+/-- **After octets wanted**, the host giving one to all of them, the state keeps its window and less is left. -/
 theorem valid_want {J : Bytes} {st st' : St} {n : Nat} (hv : Valid J st) (h : stepSpec J st = .want st' n) :
     0 < n ∧ ∀ m, 0 < m → m ≤ n → Valid J (st'.fill m) ∧ (st'.fill m).left J < st.left J := by
   simp only [stepSpec] at h
@@ -177,9 +174,8 @@ theorem valid_record {J : Bytes} {st st' : St} {rec : Record} (hv : Valid J st) 
   · cases h
   · cases h
 
-/-- **Steps read the journal as `scanFrom` does**: from a state that keeps its window, with a host that
-gives after each want at least one and at most the octets wanted, reading ends within one step more than
-is left, as `scanFrom` with fuel enough ends. -/
+/-- **Steps read the journal as `scanFrom` does.** From a state keeping its window, the host giving one to the wanted
+octets after each want. Reading ends within one step more than is left, as `scanFrom` with enough fuel. -/
 theorem drive_scanFrom (J : Bytes) {pick : St → Nat → Nat}
     (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
     ∀ (f : Nat) (st : St) (F : Nat), Valid J st → st.left J < f → J.length - st.pos < F →
@@ -225,8 +221,8 @@ def St.start : St := ⟨0, 0, 0, none, []⟩
 theorem valid_start (J : Bytes) : Valid J St.start :=
   ⟨Nat.le_refl _, Nat.le_refl _, Nat.zero_le _, Nat.zero_le _, (fun h => by cases h), Nat.le_refl _⟩
 
-/-- **Steps read the journal as `scan` does**, within one step more than twice its length, whatever
-octets the host gives after each want, at least one and at most the octets wanted. -/
+/-- **Steps read the journal as `scan` does**, within one step more than twice its length. That holds whatever the host
+gives after each want, one to the octets wanted. -/
 theorem drive_scan (J : Bytes) {pick : St → Nat → Nat}
     (hp : ∀ st n, 0 < n → 0 < pick st n ∧ pick st n ≤ n) :
     drive J pick (2 * J.length + 1) St.start = some (scan J) := by

@@ -5,8 +5,8 @@ import DN.News.RecoverSpec
 # DN.News.RecoverSearch
 
 The specification's searches by index: the first commit a later one repeats the number or Message-ID of
-(`seqTwice_first`, `idTwice_first`), the first with a number not above (`notAbove_first`); and phases run in turn
-until one asks or gives (`runPhases`), the step's end where `Steps` ends (`steps_end`).
+(`seqTwice_first`, `idTwice_first`). Also the first with a number not above (`notAbove_first`), and phases run until one
+asks or gives (`runPhases`, `steps_end`).
 -/
 
 namespace DN.News.RecoverSpec
@@ -29,12 +29,6 @@ theorem firstIdx_succ (p : Nat → Bool) (k : Nat) :
 
 theorem firstIdx_lt {p : Nat → Bool} {k i : Nat} (h : firstIdx p k = some i) : i < k ∧ p i = true :=
   ⟨List.mem_range.1 (List.mem_of_find?_eq_some h), List.find?_some h⟩
-
-theorem dupAt_cons_zero {α : Type} [BEq α] (key : Commit → α) (c : Commit) (cs : List Commit) :
-    dupAt key (c :: cs) 0 = cs.any (fun d => key d == key c) := rfl
-
-theorem dupAt_cons_succ {α : Type} [BEq α] (key : Commit → α) (c : Commit) (cs : List Commit) (i : Nat) :
-    dupAt key (c :: cs) (i + 1) = dupAt key cs i := rfl
 
 /-- The first index of a test shifted by one: at 0, or one past the first of the rest. -/
 theorem firstIdx_shift {p q : Nat → Bool} (hs : ∀ i, q (i + 1) = p i) :

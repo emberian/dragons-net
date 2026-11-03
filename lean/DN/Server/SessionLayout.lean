@@ -661,9 +661,8 @@ def header : String :=
   String.join (defs.map fun (name, value) => s!"#define DN_SESSION_{name} {value}\n") ++
   "#endif\n"
 
-/-- The areas stay clear of the heap header, do not overlap, and each word of them is aligned; the
-article's area ends where the configuration starts by `regression_966`; the connections' records and
-recovery's area end within the session's words. -/
+/-- The areas avoid the heap header, do not overlap, and their words are aligned. The article's area ends where the
+configuration starts (`regression_966`). The connections' records and recovery's area end within the session's words. -/
 theorem areas_disjoint :
     64 ≤ artOff ∧ confOff + confLen ≤ nextOff ∧ nextOff + nextLen ≤ emitOff ∧
       emitOff + emitLen ≤ ownOff ∧ ownOff + ownTexts + textAt texts.length ≤ tableOff ∧

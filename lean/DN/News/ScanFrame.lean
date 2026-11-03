@@ -4,8 +4,8 @@ import DN.News.ScanRun
 /-!
 # DN.News.ScanFrame
 
-If it goes on, the scanner's check of a frame, `ScanProg.frameWhy`, gives the code of what
-`DN.News.ScanRun.fault` finds, from the area and the window as `FwIn` says (`frameWhy_frag`).
+If it goes on, the scanner's frame check, `ScanProg.frameWhy`, gives the code of what `DN.News.ScanRun.fault` finds.
+That holds from the area and window as `FwIn` says (`frameWhy_frag`).
 -/
 
 namespace DN.News.ScanRun
@@ -185,8 +185,8 @@ theorem mbase_put (hF : Stable ["p", "ji", "n"] (MsgW A) F) {u : PancakeState σ
     MBase A s0 F t len { u with memory := putByte u.memory u.be a b } :=
   ⟨kept_put h.1 ha _ _, hF _ _ h.2.1 (kept_put (kept_refl _ _ u) ha _ _), h.2.2.1, h.2.2.2⟩
 
-/-- **The message a tag is computed over**, written where the area keeps it: the frame's offset in eight
-octets, its type and its payload. -/
+/-- **The message a tag is computed over**, written where the area keeps it. It is the frame's offset in eight octets,
+its type and its payload. -/
 theorem message_frag (o : Oracle σ) (hA : A.toNat % 8 = 0) (hdom : Dom A s0.memaddrs)
     (hsp : s0.locals "jsc" = some A) (hjz : s0.locals "jz" = some 0) {q : Nat} (hq : q < 2 ^ 62)
     (hjq : s0.locals "jq" = some (BitVec.ofNat 64 q)) {o' : Nat}
@@ -487,8 +487,8 @@ theorem keyIn_eq (t : Nat) (pl : Bytes) : keyIn spec t pl =
   simp only [keyIn, spec_shaped, Bool.not_true, Bool.false_eq_true, if_false, hm, hk, ht, beq_iff_eq, Bool.and_eq_true,
     and_assoc]
 
-/-- What the key a frame is checked under leaves: `jhk` one when there is one, and `k` naming it, in the area's
-key or the frame's payload at `F`. -/
+/-- What the key a frame is checked under leaves: `jhk` one when there is one. `k` names it, in the area's key or the
+frame's payload at `F`. -/
 def KeyOut (A F : Word) (eff : Option Bytes) (u : PancakeState σ) : Prop :=
   u.locals "jhk" = some (bw eff.isSome) ∧
     ∀ kk, eff = some kk → ∃ kv, u.locals "k" = some kv ∧ (kv = at_ A sKey ∨ kv = F + BitVec.ofNat 64 33) ∧
@@ -507,8 +507,7 @@ structure KeyIn (A F : Word) (key : Option Bytes) (t : Nat) (pl : Bytes) (u : Pa
   jhk : ∃ v, u.locals "jhk" = some v
   short : pl.length < 2 ^ 62
 
-/-- **The key a frame is checked under**: the journal's, or before it is read, the key a frame of the
-format's shape carries. -/
+/-- **The key a frame is checked under**: the journal's, or before it is read, the key a format-shaped frame carries. -/
 theorem keySel_frag (o : Oracle σ) {A F : Word} {key : Option Bytes} {t : Nat} {pl : Bytes} {P : Assn σ}
     (hPc : Safe.ClockFree P) (hPs : ∀ u x v, P u → x ∈ ["k", "jhk"] → P (setL u x v))
     (hin : ∀ u, P u → KeyIn A F key t pl u) (hjky : ∀ u, P u → u.locals "jky" = some (bw key.isSome))
@@ -673,8 +672,8 @@ theorem codeOf_lt {f : Option Why} : codeOf f < 2 ^ 64 := by
   | none => simp [codeOf]
   | some w => cases w <;> simp [codeOf, whyCode]
 
-/-- What `frameWhy` reads: the area at `A`, the frame at journal offset `q` and `o'` octets into the window, the
-journal's octets from it `bs`, the first `maxFrame` of them in the window, and the journal's key once read. -/
+/-- What `frameWhy` reads: the area at `A`, the frame at journal offset `q`, `o'` octets into the window. The journal's
+octets `bs` from it, the first `maxFrame` in the window, and the key once read. -/
 structure FwIn (keyed : Bool) (A : Word) (key : Option Bytes) (q o' : Nat) (bs : Bytes) (s : PancakeState σ) :
     Prop where
   hA : A.toNat % 8 = 0
@@ -694,8 +693,8 @@ structure FwIn (keyed : Bool) (A : Word) (key : Option Bytes) (q o' : Nat) (bs :
   len : bs.length < 2 ^ 62
   bound : ∀ y ∈ fwNames, ∃ v, s.locals y = some v
 
-/-- What `frameWhy` leaves: `jwhy` the code of what `fault` finds, and of a frame that checks, the payload's
-length in `jpl` and the type in `jt`; the other locals as they were, and the memory but the message. -/
+/-- What `frameWhy` leaves: `jwhy` the code of what `fault` finds. A frame that checks has its payload length in `jpl`
+and type in `jt`. Other locals stay, and the memory but the message. -/
 structure FwOut (A : Word) (key : Option Bytes) (q : Nat) (bs : Bytes) (s0 u : PancakeState σ) : Prop where
   kept : Kept fwNames (MsgW A) s0 u
   why : u.locals "jwhy" = some (BitVec.ofNat 64 (codeOf (fault key q bs)))
@@ -754,8 +753,8 @@ def TagPre (A : Word) (key : Option Bytes) (o' : Nat) (bs : Bytes) (s0 u : Panca
     u.locals "jpl" = some (BitVec.ofNat 64 (readLE (bs.take 4))) ∧
     KeyOut A (at_ A (sWindow + o')) (key <|> keyIn spec (typeOf bs) (payloadOf bs)) u
 
-/-- **The tag**: none without a key; with one, the message written, its SipHash under the key, and the stored
-tag compared with it. -/
+/-- **The tag**: none without a key. With one, the message written, its SipHash under the key, and the stored tag
+compared with it. -/
 theorem tag_frag (o : Oracle σ) (h : FwIn keyed A key q o' bs s0) (h13 : 13 ≤ bs.length)
     (hmax : readLE (bs.take 4) ≤ maxPayload) (hend : 13 + readLE (bs.take 4) + 1 ≤ bs.length)
     (hmark : bs.getD (13 + readLE (bs.take 4)) 0 = endMark) :
@@ -942,9 +941,8 @@ theorem lowKK_longPart (keyed : Bool) : LowKK (longPart keyed) :=
 theorem lowKK_lenPart (keyed : Bool) : LowKK (ScanProg.leS "jpl" (Syntax.v "jf") 4 ++ longPart keyed) :=
   lowKK_append (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_longPart keyed)
 
-/-- **The scanner's check of a frame is `fault`**: if it goes on, `jwhy` holds the code of what `fault` finds,
-and of a frame that checks, `jpl` the payload's length and `jt` the type; locals but `fwNames` and memory but
-the message as they were. -/
+/-- **The scanner's check of a frame is `fault`.** If it goes on, `jwhy` holds `fault`'s code; a checking frame gives
+`jpl` and `jt` its length and type. Locals but `fwNames` and memory but the message stay. -/
 theorem frameWhy_frag (o : Oracle σ) (h : FwIn keyed A key q o' bs s0) :
     Frag o (ScanProg.frameWhy keyed) (Like s0) (FwOut A key q bs s0) := by
   have hn := nums

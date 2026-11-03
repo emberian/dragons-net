@@ -4,9 +4,8 @@ import DN.News.ScanRun
 /-!
 # DN.News.ScanRecord
 
-The record a checked frame holds, as the scanner reads it. `scanCommit` reads a commit's payload field after
-field, refusing each as soon as it cannot be one a correct store writes, in the order `ScanProg.decode`
-reads them; it is `Journal.decodeCommit` (`scanCommit_eq`).
+The record a checked frame holds, as the scanner reads it. `scanCommit` reads a commit's payload field by field,
+refusing each as soon as no correct store writes it. It is `Journal.decodeCommit` (`scanCommit_eq`).
 -/
 
 namespace DN.News.ScanRun
@@ -27,8 +26,8 @@ def oneGroup (pl : Bytes) (i : Nat) : Option (Group × Nat) :=
   else some (⟨(pl.drop (i + 1)).take (pl.getD i 0).toNat, readLE ((pl.drop (i + 1 + (pl.getD i 0).toNat)).take 4)⟩,
     i + 1 + (pl.getD i 0).toNat + 4)
 
-/-- `n` groups from `i` in the payload, as the scanner reads them, each name's length and number checked
-before the next; the groups and where they end. -/
+/-- `n` groups from `i` in the payload, as the scanner reads them, each name's length and number checked first. The
+groups and where they end. -/
 def scanGroups (pl : Bytes) : Nat → Nat → Option (List Group × Nat)
   | 0, i => some ([], i)
   | n + 1, i => (oneGroup pl i).bind fun r => (scanGroups pl n r.2).map fun q => (r.1 :: q.1, q.2)
@@ -180,8 +179,7 @@ theorem takeGroups_length : ∀ (n : Nat) (bs : Bytes) {gs : List Group} {r : By
         simp [ht] at h
         rw [← h.1, List.length_cons, takeGroups_length n p.2 ht]
 
-/-- The commit a payload holds, as the scanner reads it: each field refused as soon as it cannot be one a
-correct store writes. -/
+/-- The commit a payload holds, as the scanner reads it. Each field is refused as soon as no correct store writes it. -/
 def scanCommit (pl : Bytes) : Option Commit :=
   if pl.length < 9 + (pl.getD 8 0).toNat + 1 then none
   else if 16 < (pl.getD (9 + (pl.getD 8 0).toNat) 0).toNat then none

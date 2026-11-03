@@ -8,11 +8,9 @@ import DN.News.FunRun
 /-!
 # DN.News.AbnfSets
 
-The operations on sets of `DN.News.AbnfProg`, proven to do what they are named for. A slot of the area holds a
-set of positions (`SetAt`): the bits of its words are the set, and its window's ends bound the words holding one,
-an empty set's window empty. Each operation, from the area at `@base + ofs` and slots holding sets, returns and
-leaves its slot holding the set it names, every word outside it as it was (`setClear_ok` …), and a call of it
-takes that (`setUnion_call` …). The area's sizes come from `AbnfLayout`, a run's bookkeeping from `FunRun`.
+The set operations of `DN.News.AbnfProg`, proven to do what they are named for. A slot holds positions as bits
+(`SetAt`), its window's ends bounding the words holding one. Each operation leaves its slot holding the set it names,
+other words kept (`setClear_ok` …).
 -/
 
 namespace DN.News.AbnfSets
@@ -47,8 +45,8 @@ theorem off_small {k : Nat} (hk : k < slots) (i : Nat) (hi : i < setSize) : off 
   simp only [off, setSize_eq] at this hi ⊢
   omega
 
-/-- Slot `k` lies past the tables; for a closed `k` this keeps `off k` folded (unfolding it, the kernel works out
-`aSets`). -/
+/-- Slot `k` lies past the tables. For a closed `k` this keeps `off k` folded; unfolding it, the kernel works out
+`aSets`. -/
 theorem aSets_le_off (k : Nat) : aSets ≤ off k := Nat.le_add_right _ _
 
 theorem off_mod (k : Nat) : off k % 8 = 0 := by
@@ -94,10 +92,9 @@ theorem slotW_inj {A : Word} {k k' i i' : Nat} (hk : k < slots) (hk' : k' < slot
 
 /-! ## A set in a slot -/
 
-/-- Slot `k` of memory `m` holds the positions `S`: the window's ends below the words' count, the bits of word `w`
-those of `S` from `64 * w`, every position of `S` in a word of the window, and a window holding a word only if the
-set is not empty. It is weaker than what the program keeps (`AbnfProg.sLo`): a window need not be tight, nor an
-empty one `[1, 0]`. -/
+/-- Slot `k` holds `S`: window ends below the word count, word `w`'s bits those of `S` from `64 * w`. Every position
+lies in a window word, and the window holds a word only for a nonempty set. Weaker than `AbnfProg.sLo`: a window need
+not be tight, nor an empty one `[1, 0]`. -/
 structure SetAt (m : Word → Word) (A : Word) (k : Nat) (S : Nat → Bool) : Prop where
   lo : (m (slotW A k 0)).toNat < setWords
   hi : (m (slotW A k 1)).toNat < setWords
@@ -281,14 +278,14 @@ theorem readWin_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState �
   exact kept_frag o (by decide) (runF_clock _ _ _) fun u h =>
     ⟨_, vals_lookup h.1.vals (lookup_head _ _ _), by rw [setWords_eq] at h1 ⊢; omega⟩
 
-/-- The words of slot `kd` from `lo` to below `e` what `g` makes of each and of slot `ks`'s in `m0`, every other word
-as in `m0`. -/
+/-- Slot `kd`'s words from `lo` to below `e` are `g` of each and slot `ks`'s word in `m0`. Every other word is as in
+`m0`. -/
 def Worded (g : Word → Word → Word) (A : Word) (kd ks lo e : Nat) (m0 m : Word → Word) : Prop :=
   (∀ w, lo ≤ w → w < e → m (slotW A kd (2 + w)) = g (m0 (slotW A kd (2 + w))) (m0 (slotW A ks (2 + w)))) ∧
     ∀ a, (∀ w, lo ≤ w → w < e → a ≠ slotW A kd (2 + w)) → m a = m0 a
 
-/-- **A word loop** (`.dec w (v lo)`, `wordLoop w hi f`): slot `kd`'s words from `lo` to `hi` what `f` makes of each and
-of slot `ks`'s, as `g` says. -/
+/-- **A word loop** (`.dec w (v lo)`, `wordLoop w hi f`). Slot `kd`'s words from `lo` to `hi` become `f` of each and
+slot `ks`'s, as `g` says. -/
 theorem wordLoop_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {kd ks : Nat}
     (hkd : kd < slots) (hks : ks < slots) {f : Syntax.PExpr → Syntax.PExpr → Syntax.PExpr} {g : Word → Word → Word}
     {w lo hi : String} {Ef : PancakeExp}
@@ -532,27 +529,6 @@ theorem notInSlot {A : Word} {k x : Nat} (hk : k < slots) (hx : x < aSets) : ¬I
   have := at_inj (by have := aSets_le; omega) (by omega) e
   simp only [off] at this; omega
 
-/-- A slot's frame keeps the powers of two. -/
-theorem frame_pows {m0 m : Word → Word} {A : Word} {k : Nat} (hk : k < slots) (hP : Pows m0 A) (hf : Frame A k m0 m) :
-    Pows m A := fun j hj => by
-  rw [hf _ (notInSlot hk (by have := pow_lt; omega))]; exact hP j hj
-
-/-- Two slots' frame, as `setGrow` leaves it, keeps the powers of two. -/
-theorem frame2_pows {m0 m : Word → Word} {A : Word} {k k' : Nat} (hk : k < slots) (hk' : k' < slots)
-    (hP : Pows m0 A) (hf : ∀ a, ¬InSlot A k a → ¬InSlot A k' a → m a = m0 a) : Pows m A := fun j hj => by
-  have := pow_lt
-  rw [hf _ (notInSlot hk (by omega)) (notInSlot hk' (by omega))]; exact hP j hj
-
-/-- The flag of a failed check set keeps every slot's set and the powers of two. -/
-theorem refused_keeps {m : Word → Word} {A : Word} {k : Nat} {S : Nat → Bool} (hk : k < slots) (hS : SetAt m A k S)
-    (hP : Pows m A) : SetAt (upd m (at_ A aBroken) 1) A k S ∧ Pows (upd m (at_ A aBroken) 1) A := by
-  have hb : aBroken < aSets := by have := pow_lt; rw [aPow_eq] at this; simp only [aBroken]; omega
-  refine ⟨setAt_frame hS fun i hi => upd_ne _ fun e => notInSlot hk hb ⟨i, hi, e.symm⟩, fun j hj => ?_⟩
-  have := pow_lt
-  rw [upd_ne _ fun e => ?_]; exact hP j hj
-  have := at_inj (by rw [aPow_eq]; omega) (by simp only [aBroken]; omega) e
-  rw [aPow_eq] at this; simp only [aBroken] at this; omega
-
 /-- A position's word, `y` shifted right by six. -/
 theorem shr6_lower {y : Syntax.PExpr} {Ey : PancakeExp} (hy0 : Lower.lowerExp y = some Ey) :
     Lower.lowerExp (.shr y (Syntax.n 6)) = some (.shiftR Ey (.const (BitVec.ofNat 64 6))) := by
@@ -683,8 +659,8 @@ theorem start2_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ
 
 /-! ## Emptying a slot when another is empty -/
 
-/-- What `setVoid` gives back: 1, slot `kd` empty and every other word as in `m0`, when the set `S` is empty; 0 and
-memory as in `m0` when not. -/
+/-- What `setVoid` gives back: 1, slot `kd` empty and other words as in `m0`, when `S` is empty. Otherwise 0, memory as
+in `m0`. -/
 def VoidRet (A : Word) (kd : Nat) (S : Nat → Bool) (m0 : Word → Word) : Ret := fun v m =>
   ((∀ x, S x = false) ∧ v = 1 ∧ SetAt m A kd (fun _ => false) ∧ Frame A kd m0 m) ∨ ((∃ x, S x = true) ∧ v = 0 ∧ m = m0)
 
@@ -724,8 +700,8 @@ theorem setVoid_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ}
 def WinIs (A : Word) (k : Nat) (m1 : Word → Word) (lo hi : Nat) (m : Word → Word) : Prop :=
   (∀ a, a ≠ slotW A k 0 → a ≠ slotW A k 1 → m a = m1 a) ∧ (m (slotW A k 0)).toNat = lo ∧ (m (slotW A k 1)).toNat = hi
 
-/-- **A window widened to take `[lv, hv]`** (`setAdd`, `setUnion`): an empty one, `dh < dl`, becomes it; another
-takes the lower of the starts, as the test `cL` says, and the higher of the ends. -/
+/-- **A window widened to take `[lv, hv]`** (`setAdd`, `setUnion`): an empty one, `dh < dl`, becomes it. Another takes
+the lower start, per the test `cL`, and the higher end. -/
 theorem widen_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {k : Nat}
     (hk : k < slots) {l : List (String × Value)} (hq : l.lookup "q" = some (at_ A (off k))) {L H : String}
     {dl dh lv hv : Nat} (hdl : l.lookup "dl" = some (BitVec.ofNat 64 dl)) (hdh : l.lookup "dh" = some
@@ -814,8 +790,8 @@ theorem kept_fail (o : Oracle σ) {R : Ret} {ofs : Nat} {A : Word} {s0 : Pancake
 
 /-! ## A position added -/
 
-/-- **Position `y` added**: the bit set in its word and the window widened to the word, every other word as in
-`m0`, give slot `k` the set with `y`. -/
+/-- **Position `y` added**: its bit set and the window widened to its word give slot `k` the set with `y`. Every other
+word is as in `m0`. -/
 theorem add_setAt {A : Word} {k : Nat} (hk : k < slots) {m0 m : Word → Word} {S : Nat → Bool}
     (hS : SetAt m0 A k S) {Y : Nat} (hY : Y ≤ inputMax)
     (hw : WinIs A k (upd m0 (slotW A k (2 + Y / 64)) (m0 (slotW A k (2 + Y / 64)) ||| BitVec.twoPow 64 (Y % 64)))
@@ -881,8 +857,8 @@ theorem setBit_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ
       (pow_eval rfl hA h.1.memaddrs (h.2 ▸ hP) (vals_lookup h.1.vals ha) (by omega) (vals_lookup h.1.vals hj)))
     fun m e => by subst e; rfl
 
-/-- What `setAdd` gives back: 0, and position `y` added to slot `k`'s set, every other word as in `m0`, when `y` is
-at most `inputMax`; 1, and the area's flag of a failed check set, when not. -/
+/-- What `setAdd` gives back: 0 and `y` added to slot `k`'s set, other words as in `m0`, when `y ≤ inputMax`. Otherwise
+1, the area's failed-check flag set. -/
 def AddRet (A : Word) (k : Nat) (S : Nat → Bool) (Y : Word) (m0 : Word → Word) : Ret := fun v m =>
   (Y.toNat ≤ inputMax ∧ v = 0 ∧ SetAt m A k (fun x => S x || x == Y.toNat) ∧ Frame A k m0 m) ∨
     (inputMax < Y.toNat ∧ v = 1 ∧ m = upd m0 (at_ A aBroken) 1)
@@ -947,8 +923,8 @@ theorem setAdd_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ} 
 
 /-! ## Union -/
 
-/-- **A union**: slot `ks`'s words or-ed into slot `kd`'s and the window widened to take `ks`'s give slot `kd` the
-union, every other word as in `m0`. -/
+/-- **A union**: slot `ks`'s words or-ed into slot `kd`'s, the window widened to take `ks`'s, give slot `kd` the union.
+Every other word is as in `m0`. -/
 theorem union_setAt {A : Word} {kd ks : Nat} (hkd : kd < slots) {m0 m2 m : Word → Word}
     {Sd Ss : Nat → Bool} (hSd : SetAt m0 A kd Sd) (hSs : SetAt m0 A ks Ss)
     (hne : (m0 (slotW A ks 0)).toNat ≤ (m0 (slotW A ks 1)).toNat)
@@ -1195,8 +1171,8 @@ theorem getLsbD_andNot (a b : Word) {j : Nat} (hj : j < 64) :
     rw [Nat.testBit_two_pow_sub_one]; simp [hj]
   rw [this]; cases b.getLsbD j <;> rfl
 
-/-- **A difference with no word left**: slot `kd`'s words all cleared by slot `ks`'s, an emptied window gives slot
-`kd` the difference, empty. -/
+/-- **A difference with no word left**: slot `kd`'s words all cleared by slot `ks`'s and the window emptied. That gives
+slot `kd` the difference, empty. -/
 theorem minus_empty {A : Word} {kd ks : Nat} (hkd : kd < slots) {m0 M : Word → Word}
     {Sd Ss : Nat → Bool} (hSd : SetAt m0 A kd Sd) (hSs : SetAt m0 A ks Ss)
     (ha : Worded andNot A kd ks (m0 (slotW A kd 0)).toNat ((m0 (slotW A kd 1)).toNat + 1) m0 M)
@@ -1226,8 +1202,8 @@ theorem minus_empty {A : Word} {kd ks : Nat} (hkd : kd < slots) {m0 M : Word →
   exact cleared_empty hkd hSd rfl rfl ⟨fun w h1' h2' => hz w h1' (by omega),
     fun a h => ha.2 a fun w h1' h2' => h w h1' h2'⟩
 
-/-- **A difference with words left**: slot `ks`'s bits taken out of slot `kd`'s words, the window cut to `z1` and
-`z2`, the first and last words still holding one, give slot `kd` the difference. -/
+/-- **A difference with words left**: slot `ks`'s bits taken out of slot `kd`'s words. The window cut to `z1` and `z2`,
+the first and last words still holding one, gives slot `kd` the difference. -/
 theorem minus_some {A : Word} {kd ks : Nat} (hkd : kd < slots) {m0 M : Word → Word}
     {Sd Ss : Nat → Bool} (hSd : SetAt m0 A kd Sd) (hSs : SetAt m0 A ks Ss)
     (ha : Worded andNot A kd ks (m0 (slotW A kd 0)).toNat ((m0 (slotW A kd 1)).toNat + 1) m0 M) {z1 z2 : Nat}
@@ -1601,8 +1577,8 @@ theorem setMinus_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ
 
 /-! ## Calls -/
 
-/-- **A call of a set function**: its code held, its arguments the values `vs`, its body shown from any entry with
-the area and those parameters; the call's result `v` in `rt`, memory as `G v` says of what `R` gives back. -/
+/-- **A call of a set function**: its code held, its arguments the values `vs`. Its body is shown from any entry with
+the area and them. The result `v` goes to `rt`, memory as `G v` says of what `R` gives back. -/
 theorem setCall_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {rt f : String} {ps : List String} (hnd : ps.Nodup) {as : List Syntax.PExpr} {args : List PancakeExp}
     (has : Lower.lowerArgs as = some args) {body : PancakeProg} (hcode : s0.code f = some (ps, body))
@@ -1624,72 +1600,6 @@ theorem setCall_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState �
       hsame.2.2.2.trans h.1.code, hsame.2.2.1.trans h.1.be⟩, hG _ _ v h.2 hr⟩⟩
 
 /-! ### Each operation called -/
-
-/-- **A call of `setClear`.** -/
-theorem setClear_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setClear .none ofs) = some body) (hcode : s0.code "setClear" = some (["d"], body))
-    {e1 : Syntax.PExpr} {E1 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1) {k : Nat} (hk : k < slots)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 k)) {S : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A k S) :
-    Frag o [.call rt "setClear" [e1]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ ClearRet A k m v m') u) :=
-  setCall_frag o hA (ps := ["d"]) (args := [E1]) (vs := [BitVec.ofNat 64 k])
-      (by decide) (by simp [Lower.lowerArgs, he1]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h]) (R := ClearRet A k)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-        (setClear_ok o hA1 hk ((hloc "d").trans rfl) (hS _ hF))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
-
-/-- **A call of `setEmpty`.** -/
-theorem setEmpty_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setEmpty .none ofs) = some body) (hcode : s0.code "setEmpty" = some (["s"], body))
-    {e1 : Syntax.PExpr} {E1 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1) {k : Nat} (hk : k < slots)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 k)) {S : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A k S) :
-    Frag o [.call rt "setEmpty" [e1]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ EmptyRet S m v m') u) :=
-  setCall_frag o hA (ps := ["s"]) (args := [E1]) (vs := [BitVec.ofNat 64 k])
-      (by decide) (by simp [Lower.lowerArgs, he1]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h]) (R := EmptyRet S)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-        (setEmpty_ok o hA1 hk ((hloc "s").trans rfl) (hS _ hF))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
-
-/-- **A call of `setHas`.** -/
-theorem setHas_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setHas .none ofs) = some body) (hcode : s0.code "setHas" = some (["s", "y"], body))
-    {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1)
-    (he2 : Lower.lowerExp e2 = some E2) {k Y : Nat} (hk : k < slots) (hY : Y ≤ inputMax)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 k))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 Y)) {S : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A k S ∧ Pows m A) :
-    Frag o [.call rt "setHas" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ HasRet S Y m v m') u) :=
-  setCall_frag o hA (ps := ["s", "y"]) (args := [E1, E2])
-    (vs := [BitVec.ofNat 64 k, BitVec.ofNat 64 Y]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := HasRet S Y)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-      (setHas_ok o hA1 hk hY ((hloc "s").trans rfl) ((hloc "y").trans rfl) (hS _ hF).1 (hS _ hF).2)) hrt
-    fun m m' v hF hr => ⟨m, hF, hr⟩
-
-/-- **A call of `setAdd`.** -/
-theorem setAdd_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setAdd .none ofs) = some body) (hcode : s0.code "setAdd" = some (["d", "y"], body))
-    {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1)
-    (he2 : Lower.lowerExp e2 = some E2) {k : Nat} {Y : Word} (hk : k < slots)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 k))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some Y) {S : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A k S ∧ Pows m A) :
-    Frag o [.call rt "setAdd" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ AddRet A k S Y m v m') u) :=
-  setCall_frag o hA (ps := ["d", "y"]) (args := [E1, E2])
-    (vs := [BitVec.ofNat 64 k, Y]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := AddRet A k S Y)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-      (setAdd_ok o hA1 hk ((hloc "d").trans rfl) ((hloc "y").trans rfl) (hS _ hF).1 (hS _ hF).2)) hrt
-    fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-- **A call of `setUnion`.** -/
 theorem setUnion_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
@@ -1727,46 +1637,10 @@ theorem setMinus_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
         (setMinus_ok o hA1 h1 h2 ((hloc "d").trans rfl) ((hloc "s").trans rfl) (hS _ hF).1
         (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
-/-- **A call of `setCopy`.** -/
-theorem setCopy_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setCopy .none ofs) = some body) (hcode : s0.code "setCopy" = some (["d", "s"], body))
-    {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1)
-    (he2 : Lower.lowerExp e2 = some E2) {kd ks : Nat} (h1 : kd < slots) (h2 : ks < slots) (hne : kd ≠ ks)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 kd))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 ks)) {Sd Ss : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A kd Sd ∧ SetAt m A ks Ss) :
-    Frag o [.call rt "setCopy" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ CopyRet A kd Ss m v m') u) :=
-  setCall_frag o hA (ps := ["d", "s"]) (args := [E1, E2])
-    (vs := [BitVec.ofNat 64 kd, BitVec.ofNat 64 ks]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := CopyRet A kd Ss)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-        (setCopy_ok o hA1 h1 h2 hne ((hloc "d").trans rfl) ((hloc "s").trans rfl) (hS _ hF).1
-        (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
-
-/-- **A call of `setVoid`.** -/
-theorem setVoid_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body : PancakeProg}
-    (hb : Lower.lower (setVoid .none ofs) = some body) (hcode : s0.code "setVoid" = some (["s", "d"], body))
-    {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1)
-    (he2 : Lower.lowerExp e2 = some E2) {ks kd : Nat} (h1 : ks < slots) (h2 : kd < slots)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 ks))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 kd)) {Ss Sd : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A ks Ss ∧ SetAt m A kd Sd) :
-    Frag o [.call rt "setVoid" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ VoidRet A kd Ss m v m') u) :=
-  setCall_frag o hA (ps := ["s", "d"]) (args := [E1, E2])
-    (vs := [BitVec.ofNat 64 ks, BitVec.ofNat 64 kd]) (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := VoidRet A kd Ss)
-    (fun s1 hA1 _ _ _ hloc hF => body_eq hb
-        (setVoid_ok o hA1 h1 h2 ((hloc "s").trans rfl) ((hloc "d").trans rfl) (hS _ hF).1
-        (hS _ hF).2)) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
-
 /-! ## A round's new positions -/
 
-/-- What `setGrow` gives back: zero, slot `kx` without the positions of slot `kd`, slot `kd` given them, every
-other word as in `m0`. -/
+/-- What `setGrow` gives back: zero, slot `kx` without slot `kd`'s positions, slot `kd` given them. Every other word is
+as in `m0`. -/
 def GrowRet (A : Word) (kx kd : Nat) (Sx Sd : Nat → Bool) (m0 : Word → Word) : Ret := fun v m =>
   v = 0 ∧ SetAt m A kx (fun z => Sx z && !Sd z) ∧ SetAt m A kd (fun z => Sd z || (Sx z && !Sd z)) ∧
     ∀ a, ¬InSlot A kx a → ¬InSlot A kd a → m a = m0 a
@@ -1806,26 +1680,6 @@ theorem setGrow_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ}
   subst e
   refine ⟨_, rfl, rfl, setAt_other hr1.2.1 hkd hkx (Ne.symm hne) hr2.2.2, hr2.2.1, fun a h1 h2 => ?_⟩
   rw [hr2.2.2 a h2, hr1.2.2 a h1]
-
-/-- **A call of `setGrow`.** -/
-theorem setGrow_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0) {rt : String}
-    {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true) {body bm bu : PancakeProg}
-    (hb : Lower.lower setGrow = some body) (hcode : s0.code "setGrow" = some (["x", "d"], body))
-    (hbm : Lower.lower (setMinus .none ofs) = some bm) (hcm : s0.code "setMinus" = some (["d", "s"], bm))
-    (hbu : Lower.lower (setUnion .none ofs) = some bu) (hcu : s0.code "setUnion" = some (["d", "s"], bu))
-    {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp} (he1 : Lower.lowerExp e1 = some E1)
-    (he2 : Lower.lowerExp e2 = some E2) {kx kd : Nat} (hkx : kx < slots) (hkd : kd < slots) (hne : kx ≠ kd)
-    (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 kx))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 kd)) {Sx Sd : Nat → Bool}
-    (hS : ∀ m, F m → SetAt m A kx Sx ∧ SetAt m A kd Sd) :
-    Frag o [.call rt "setGrow" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l) (fun m' => ∃ m, F m ∧ GrowRet A kx kd Sx Sd m v m') u) :=
-  setCall_frag o hA (ps := ["x", "d"]) (args := [E1, E2]) (vs := [BitVec.ofNat 64 kx, BitVec.ofNat 64 kd])
-    (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl
-    (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h]) (R := GrowRet A kx kd Sx Sd)
-    (fun s1 hA1 hc _ _ hloc hF => body_eq hb
-        (setGrow_ok o hA1 hkx hkd hne ((hloc "x").trans rfl) ((hloc "d").trans rfl) (hS _ hF).1 (hS _ hF).2 hbm
-        (by rw [hc]; exact hcm) hbu (by rw [hc]; exact hcu))) hrt fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-! ## The premises can hold -/
 

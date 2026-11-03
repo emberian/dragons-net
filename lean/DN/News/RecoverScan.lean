@@ -4,9 +4,9 @@ import DN.News.RecoverCommit
 /-!
 # DN.News.RecoverScan
 
-Recovery's phase 3 as the program runs it (`RecoverProg.scanning`) is `RecoverSpec.scanning`: a step of the
-journal's scanner (`DN.News.ScanStop.step_frag`) in recovery's area, then octets asked for, a record counted and a
-commit noted in its slot, the journal refused, or the journal read to its end.
+Recovery's phase 3 as the program runs it (`RecoverProg.scanning`) is `RecoverSpec.scanning`. A scanner step
+(`ScanStop.step_frag`) in recovery's area, then octets asked for or a record counted and noted. Otherwise the journal is
+refused or read to its end.
 -/
 
 namespace DN.News.RecoverArea
@@ -20,8 +20,8 @@ open DN.News.FramerCode (bw)
 
 variable {σ : Type}
 
-/-- **`Rest` outside the scanner's area**: what holds there of `r` holds of `r` with the scanner at `st'` where only
-the scanner's area changed and `st'` is in it. -/
+/-- **`Rest` outside the scanner's area**: what holds of `r` holds with the scanner at `st'`. That needs only the
+scanner's area changed and `st'` in it. -/
 theorem rest_outside {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes} {r : RSt} {u u' : PancakeState σ}
     (h : Rest A cfg J r u)
     (hm : ∀ y, (y < rScan ∨ rSlots ≤ y) → y < RecoverProg.size → u'.memory (at_ A y) = u.memory (at_ A y))
@@ -30,8 +30,8 @@ theorem rest_outside {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes
     Rest A cfg J { r with scan := st' } u' :=
   rest_frame hA h (fun y hy => hm y (reads_lt hy).2 (reads_lt hy).1) hd hb hscan
 
-/-- **The scanner's step in recovery's area**: from a phase's start, the scanner's state `r.scan` in its area, the
-step's state with the scanner where `stepSpec` takes it. -/
+/-- **The scanner's step in recovery's area**: from a phase's start, the scanner's state `r.scan` in its area. The
+step's state then has the scanner where `stepSpec` takes it. -/
 theorem scanStep_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ} (h : PIn A cfg J r s0) (hp : r.phase = 3)
     (hfr : r.fresh = false) :
@@ -119,8 +119,8 @@ theorem rst_eval {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeSt
     eval u (.cmp .equal (.var "rst") (.const (.ofNat 64 k))) = some (bw (decide (code = k))) :=
   FramerCode.eval_eq (t := u) (a := .var "rst") (b := .const _) hc hk (vals_lookup hu.vals (by simp)) rfl
 
-/-- **The journal read to its end**, torn at `t` if it is: none records, the store new or no journal; else the rules
-next. -/
+/-- **The journal read to its end**, torn at `t` if it is. If none records, the store is new or has no journal;
+otherwise the rules come next. -/
 theorem ended_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
     (h : PBase A s0) (hp : r.phase = 3) (hnm : r.names < 2 ^ 64) (hj : r.jsize = J.length)
     (hrc : r.records < 2 ^ 64) {t : Option Nat} {os : List (Nat × Word)} {l : List (String × Value)}
@@ -571,7 +571,7 @@ theorem oCommit_dec : decodeCommit oCommit.payload = some oCommit := decode_payl
 /-- Where the payload starts: the window's start, past the frame's header. -/
 def oBase : Nat := rScan + ScanProg.sWindow + 0 + 13
 
-/-- That commit read by the scanner and noted in slot 0: the scanner's words and payload, the slot's words, its
+/-- That commit read by the scanner and noted in slot 0. The scanner's words and payload, the slot's words, its
 Message-ID. -/
 def oMem (a : Word) : Word :=
   if a = at_ 0 (rScan + ScanProg.sSeq) then 1 else

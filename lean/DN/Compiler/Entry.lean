@@ -4,19 +4,9 @@ import DN.Compiler.Semantics
 /-!
 # DN.Compiler.Entry
 
-How a run starts and when it fails, as CakeML's semantics of Pancake says (`ed31510`,
-`pancake/semantics/panSemScript.sml`). A run is the call `Call NONE start []` (`semantics_def`);
-for a `start` with no parameters, the `Call` clause says: with no clock left the call times out;
-otherwise the body runs with one tick less and no locals, a body that ends without a result or
-with `Break` or `Continue` is an `Error`, and any other result is passed on with the locals
-emptied. The run fails if, for some clock, the call ends in anything but a timeout, an external
-call that ends the run, or a return. Running off the end of `main` is therefore a failure.
-
-The compiler's theorem asks this of `semantics_decls`, which first declares the program's
-functions (`evaluate_decls`) and then runs `semantics`. Declaring fails on a shape of more than one
-word, and otherwise puts each function's body with its parameters in the code, where the `Call` of
-`main` without parameters, as the server's are, and the calls of the other functions find them;
-that step is read off the HOL definitions, not modelled here.
+How a run starts and fails, as CakeML's `panSemScript.sml` says (`ed31510`). A run calls `main` without parameters;
+ending without a result, or with `Break` or `Continue`, is an `Error`. The run fails if some clock ends it other than by
+timeout, a final external call or a return.
 -/
 
 namespace DN.Compiler.Entry

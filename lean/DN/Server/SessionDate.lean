@@ -4,13 +4,9 @@ import DN.Server.SessionText
 /-!
 # DN.Server.SessionDate
 
-`dateText`, if it returns, writes DATE's digits of the seconds in the wall word into a connection's output, and the
-place past them in the session's return word (`dateText_run`), when `artDiv` divides as its contract says; the
-digits are `SessionSpec.dateDigits` of the wall clock whose seconds they are (`dateBytes_wall`). `artCivilOf` gives
-the day of the calendar (`artCivilOf_run`). So the session's code keeps `dateText`'s contract when it keeps
-`artDiv`'s (`civilOk_of`, `dateOk_of`), and `connText` writes the text of every reply it has a branch for, whatever
-its argument (`connText_reply`). A division by subtraction keeps `artDiv`'s contract (`divW_run`); one state meets
-all of DATE's premises (`time_witness`).
+`dateText`, if it returns, writes DATE's digits of the wall seconds into an output (`dateText_run`). That needs `artDiv`
+dividing per its contract; the digits are `SessionSpec.dateDigits` (`dateBytes_wall`). So `connText` writes every reply
+it branches for (`connText_reply`); `time_witness` meets DATE's premises.
 -/
 
 namespace DN.Server.SessionDate
@@ -25,8 +21,8 @@ open DN.Server.Session (ownW)
 
 /-! ### `dateText` -/
 
-/-- `artDiv` as the code holds it: at the base `b`, the heap covering the layout with the powers of two in place,
-from `x` and `d` in range, if it returns, it gives back `x / d`, changing no word. -/
+/-- `artDiv` as the code holds it: at base `b`, the heap covering the layout with the powers of two. From `x` and `d` in
+range, if it returns, it gives back `x / d`, changing no word. -/
 def DivOk (o : Oracle σ) (b : Word) (code : String → Option (List String × PancakeProg)) : Prop :=
   ∃ body, code "artDiv" = some (["x", "d"], body) ∧ ∀ x d (s1 : PancakeState σ),
     s1.locals "x" = some (BitVec.ofNat 64 x) → s1.locals "d" = some (BitVec.ofNat 64 d) → s1.baseAddr = b →
@@ -39,7 +35,7 @@ def civilWord (z : Nat) : Nat :=
   (News.ArticleSpec.civilFromDays z).1 * 512 + (News.ArticleSpec.civilFromDays z).2.1 * 32 +
     (News.ArticleSpec.civilFromDays z).2.2
 
-/-- `artCivilOf` as the code holds it: of a day since 1970, if it returns, it gives back `civilWord`, changing no
+/-- `artCivilOf` as the code holds it: of a day since 1970, if it returns, it gives back `civilWord`. It changes no
 word. -/
 def CivilOk (o : Oracle σ) (b : Word) (code : String → Option (List String × PancakeProg)) : Prop :=
   ∃ body, code "artCivilOf" = some (["days"], body) ∧ ∀ z (s1 : PancakeState σ),
@@ -47,8 +43,8 @@ def CivilOk (o : Oracle σ) (b : Word) (code : String → Option (List String ×
     Analyzer.Covers SessionLayout.size s1.memaddrs b → s1.code = code → z < 2 ^ 30 →
     SafeR o (fun s => s = s1) body (fun v m => v = BitVec.ofNat 64 (civilWord z) ∧ m = s1.memory) (fun _ => False)
 
-/-- `dateText`'s locals and words from its entry `s1`: connection `c`'s output at `ob`, every word but the
-output's as at entry. -/
+/-- `dateText`'s locals and words from its entry `s1`: connection `c`'s output at `ob`. Every word but the output's is
+as at entry. -/
 structure DCtx (b : Word) (c : Nat) (s1 s : PancakeState σ) : Prop where
   hob : s.locals "ob" = some (outAt b c)
   base : s.baseAddr = b
@@ -111,8 +107,8 @@ def twoS (x : Syntax.PExpr) : List Syntax.PStmt :=
 /-- A number below a hundred in two digits. -/
 def twoDigits (v : Nat) : List (BitVec 8) := [BitVec.ofNat 8 (48 + v / 10), BitVec.ofNat 8 (48 + v % 10)]
 
-/-- `dateText`'s state from its entry `s1`: the context, the octets `W` written from `ofs` with `o` past them,
-the locals `xs` holding their values. -/
+/-- `dateText`'s state from its entry `s1`: the context, the octets `W` written from `ofs`, `o` past them. The locals
+`xs` hold their values. -/
 def DState (b : Word) (c ofs : Nat) (W : List (BitVec 8)) (xs : List (String × Value)) (s1 s : PancakeState σ) : Prop :=
   DCtx b c s1 s ∧ s.locals "o" = some (BitVec.ofNat 64 (ofs + W.length)) ∧ DBytes b c ofs W s1 s ∧ LocalsAre xs s
 
@@ -206,8 +202,8 @@ theorem pure_call (o : Oracle σ) {b : Word} {c ofs : Nat} {s1 : PancakeState σ
 
 /-! ### The date's arithmetic -/
 
-/-- A day of the calendar from a day since 1970 below 2^30: a year past 1600 and below 2^22, a month and a day
-of the month in range. -/
+/-- A calendar day from a day since 1970 below 2^30. The year is past 1600 and below 2^22, the month and day in range.
+-/
 theorem civil_range (z : Nat) (hz : z < 2 ^ 30) :
     1600 ≤ (News.ArticleSpec.civilFromDays z).1 ∧ (News.ArticleSpec.civilFromDays z).1 < 2 ^ 22 ∧
       1 ≤ (News.ArticleSpec.civilFromDays z).2.1 ∧ (News.ArticleSpec.civilFromDays z).2.1 ≤ 12 ∧
@@ -289,8 +285,8 @@ theorem mod_word (x k : Nat) (hx : x < 2 ^ 40) :
   rw [← BitVec.ofNat_mul, SessionCheck.sub_small x (x / k * k) (Nat.div_mul_le_self x k) (by omega),
     show x - x / k * k = x % k by rw [Nat.mod_def, Nat.mul_comm]]
 
-/-- **`dateText`'s first statements**: the output's place, the wall clock's seconds, and from them the day, the
-time of the day and the calendar, each in its local. -/
+/-- **`dateText`'s first statements**: the output's place and the wall clock's seconds. From them the day, the time of
+day and the calendar, each in its local. -/
 theorem dateHead_frag (o : Oracle σ) {b : Word} {c ofs secs : Nat} {s1 : PancakeState σ}
     (he : DEntry b c ofs secs s1) (hofs : ofs ≤ 8) (hsecs : secs < 2 ^ 40)
     (hdiv : DivOk o b s1.code) (hciv : CivilOk o b s1.code) :
@@ -475,9 +471,8 @@ theorem ddigits_frag (o : Oracle σ) {b : Word} {c ofs : Nat} {s1 : PancakeState
       rw [hloc p.1 hp1]
       exact hla p hp
 
-/-- **`dateText`**: from its entry at place `ofs` up to 8, if it returns, DATE's digits of the seconds in the wall
-word written there, the place past them in the return word, zero returned; `artDiv` and `artCivilOf` as their
-contracts say. -/
+/-- **`dateText`**: from place `ofs` up to 8, if it returns, it writes DATE's digits of the wall seconds there. The
+place past them goes in the return word, zero returned; `artDiv` and `artCivilOf` per their contracts. -/
 theorem dateText_run (o : Oracle σ) {b : Word} {c ofs secs : Nat} {s1 : PancakeState σ}
     (he : DEntry b c ofs secs s1) (hofs : ofs ≤ 8) (hsecs : secs < 2 ^ 40)
     (hdiv : DivOk o b s1.code) (hciv : CivilOk o b s1.code) :
@@ -627,8 +622,8 @@ theorem cal_doe (doe : Nat) (h : doe < 146097) :
       subst h2 <;> omega
   omega
 
-/-- **`artCivilOf`**: of a day since 1970 below 2^30, if it returns, the day of the calendar in one word, changing
-no word; `artDiv` as its contract says. -/
+/-- **`artCivilOf`**: of a day since 1970 below 2^30, if it returns, the calendar day in one word. It changes no word;
+`artDiv` is as its contract says. -/
 theorem artCivilOf_run (o : Oracle σ) {b : Word} {s1 : PancakeState σ} (z : Nat) (hz : z < 2 ^ 30)
     (hdays : s1.locals "days" = some (BitVec.ofNat 64 z)) (hb : s1.baseAddr = b) (hpow : PowIn b s1.memory)
     (hcov : Analyzer.Covers SessionLayout.size s1.memaddrs b) (hdiv : DivOk o b s1.code) :
@@ -901,9 +896,8 @@ theorem fixedRep_text (i : CommandSpec.Identity) (r : CommandSpec.Reply) :
     CommandSpec.text i (fixedRep r) = CommandSpec.text i r := by
   cases r <;> rfl
 
-/-- What the reply `r` asks of the session's words besides `TextPre`: a reply of texts, a branch of its own;
-STAT's article; GROUP's and LISTGROUP's group; DATE's seconds with `dateText` as the code holds it, at those seconds
-(`dateOk_of` gives it the session's `dateText` at every second). -/
+/-- What reply `r` asks of the session's words besides `TextPre`: a text reply, its own branch. STAT's article, GROUP's
+and LISTGROUP's group. DATE's seconds, `dateText` as the code holds it; `dateOk_of` gives it at every second. -/
 def ReplyIn (o : Oracle σ) (b : Word) (c : Nat) (s0 : PancakeState σ) (r : CommandSpec.Reply) : Prop :=
   (∃ j, (fixedRep r, j) ∈ fixedBranches) ∨ (∃ n id, r = .stat n id ∧ StatIn b n id s0) ∨
     (∃ count low high g sg, (r = .selected count low high g ∨ ∃ lo hi, r = .listed count low high g lo hi) ∧

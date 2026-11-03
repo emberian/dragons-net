@@ -4,10 +4,9 @@ import DN.News.AbnfGen
 /-!
 # DN.News.AbnfRun
 
-The rules' functions, proven to do what their contract says (`BodyOk`): a rule's, from its slot `s` into its slot
-`d`, leaves there the ends of the rule's matches from the positions of slot `s` (`rule_body`, by `AbnfGen.gen_ok`);
-the comment's likewise (`comment_body`); every function in `order`, each calling only those before it
-(`bodies_ok`).
+The rules' functions, proven to do what their contract says (`BodyOk`). A rule's leaves in slot `d` its matches' ends
+from slot `s`'s positions (`rule_body`), the comment's likewise (`comment_body`). This holds for every function in
+`order`, each calling only earlier ones (`bodies_ok`).
 -/
 
 namespace DN.News.AbnfRun

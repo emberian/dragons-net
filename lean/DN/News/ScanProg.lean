@@ -5,17 +5,9 @@ import DN.News.SipProg
 /-!
 # DN.News.ScanProg
 
-A journal read back as `DN.News.Journal.scan` reads it, as the gate prints it: a step reads one
-frame from a window of the journal that the caller fills, and leaves in the scanner's area at `jsc`
-what it found — octets wanted (how many, from where the window ends), a record (its fields), or how
-the journal ends; the area is all it keeps between steps. A frame's tag is computed by
-`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`; proven, if it goes on: the kernel's step
-is `DN.News.ScanSpec.stepSpec` (`DN.News.ScanStop`), and steps of `stepSpec` read the journal as `scan` does
-(`DN.News.ScanSpec`).
-
-So that the analysis of decision 0004 sees every access lie in the area, the step keeps no address
-in it, only offsets into the window, and checks each word it reads back before it makes an address
-of it: one out of the range it keeps it in runs `fail`, which ends the step for good.
+The journal read back as `DN.News.Journal.scan` reads it, as the gate prints it. A step reads one frame from a
+caller-filled window, leaving octets wanted, a record, or the journal's end. Proven if it goes on: the step is
+`ScanSpec.stepSpec`, and its steps read the journal as `scan` does.
 -/
 
 namespace DN.News.ScanProg
@@ -151,15 +143,14 @@ def cutPart (keyed : Bool) : List PStmt :=
   [.ite (eLt (v "jr") (eAdd (v "jpl") (n (headerLength + 1)))) [.assign "jwhy" (lit (whyCode .short))]
     (endPart keyed)]
 
-/-- A length any payload may have, then the rest. A length below zero cannot be read from four octets; it
-is refused with one too long, so that the analysis sees the bound. -/
+/-- A length any payload may have, then the rest. A length below zero cannot come from four octets; refusing it as too
+long lets the analysis see the bound. -/
 def longPart (keyed : Bool) : List PStmt :=
   [.ite (or2 (eLt (n maxPayload) (v "jpl")) (eLt (v "jpl") (n 0))) [.assign "jwhy" (lit (whyCode .tooLong))]
     (cutPart keyed)]
 
-/-- Why the frame at journal offset `jq`, at `jf` in the window, `jr` octets of the journal from
-it, does not check, into `jwhy`, zero if it does; its payload's length into `jpl` and its type into
-`jt`. -/
+/-- Why the frame at journal offset `jq`, at `jf` in the window, `jr` octets left, does not check. The code goes into
+`jwhy`, zero if it does; its payload's length into `jpl`, its type into `jt`. -/
 def frameWhy (keyed : Bool) : List PStmt :=
   [.assign "jwhy" (lit 0),
    .ite (eLt (v "jr") (n headerLength)) [.assign "jwhy" (lit (whyCode .short))]
@@ -241,8 +232,8 @@ def tailPart : List PStmt :=
 /-- No octet after the commit. -/
 def exactPart : List PStmt := [.ite (eAnd (v "jok") (ne (v "ji") (v "jpl"))) [.assign "jok" (lit 0)] []]
 
-/-- What a correct store writes: a sequence number, a Message-ID of 1 to 250 octets, a group, a header no
-larger than its file. -/
+/-- What a correct store writes: a sequence number, a Message-ID of 1 to 250 octets, a group. A header no larger than
+its file. -/
 def checkPart : List PStmt :=
   [.ite (eAnd (v "jok") (or2 (or2 (eEq (v "jseq") (n 0)) (eLt (v "jml") (n 1)))
        (or2 (or2 (eLt (n 250) (v "jml")) (eLt (v "jgc") (n 1))) (eLt (v "jfs") (v "jhs")))))
@@ -265,8 +256,8 @@ def storePart : List PStmt :=
      [.assign "jrec" (lit commitType), setw sSeq (v "jseq"), setw sGroupCount (v "jgc"),
       setw sHeader (v "jhs"), setw sFileSize (v "jfs"), setw sCrc (v "jcrc")] []]
 
-/-- The commit the payload at `jpp`, `jpl` octets, holds, if it holds exactly one that a correct
-store writes: its fields into the area, and `jrec` set to the commit's type. -/
+/-- The commit the payload at `jpp`, `jpl` octets, holds, if exactly one a correct store writes. Its fields go into the
+area, and `jrec` is set to its type. -/
 def decode : List PStmt :=
   seqPart ++ idPart ++ countPart ++ groupsPart fail ++ tailPart fail ++ exactPart ++ checkPart ++
     pairsPart fail ++ storePart
@@ -324,13 +315,13 @@ def tornLoop : List PStmt :=
 def tornSearch : List PStmt :=
   [.assign "jq" (eAdd (v "jp") (n 1)), .while tornGo (tornLoop fail)]
 
-/-- Whether what is left, `jrem`, fits the append that can have been cut, `jx`, and with the key, whether no frame
-that checks starts in it after its first octet. -/
+/-- Whether what is left, `jrem`, fits the append that can have been cut, `jx`. With the key, also whether no checking
+frame starts in it after its first octet. -/
 def tornCheck : PStmt :=
   .ite (eLe (v "jrem") (v "jx")) [.assign "jtorn" (lit 1), .ite (v "jky") (tornSearch fail) []] []
 
-/-- A frame a torn append can leave: whether what is left fits the append, and with the key, whether no frame
-that checks starts in it after its first octet. -/
+/-- A frame a torn append can leave: whether what is left fits the append. With the key, also whether no checking frame
+starts in it after its first octet. -/
 def tornPart : List PStmt :=
   [.assign "jx" (lit firstFrame), .ite (v "jky") [.assign "jx" (lit maxFrame)] [], tornCheck fail]
 

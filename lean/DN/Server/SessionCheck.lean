@@ -6,16 +6,9 @@ import DN.News.CharsRun
 /-!
 # DN.Server.SessionCheck
 
-The session's checks of a command's words, proven against `DN.News.CommandSpec`, each of the
-statements the session lowers it to: an article number (`numberCheck_safe`), a message-id
-(`messageIdCheck_safe`), a range (`rangeCheck_safe`), NEWGROUPS's date and time (`dateTimeCheck_safe`), a
-wildmat (`wildmatCheck_safe`) and a newsgroup's name (`groupName_run`). Each check leaves its verdict
-in `ok`, changing no local but its own nor the memory; `groupName`, a function of the session's, puts
-it in the return word and returns zero, changing no other word.
-
-Premises here: the words in the line's octets, shorter than 2^62, their places and lengths read from
-no local the checks write, the locals the checks write bound, `ok` one before a wildmat, and
-`groupName`'s record and return word.
+The session's checks of a command's words, proven against `DN.News.CommandSpec`: numbers, message-ids, ranges, dates,
+wildmats and group names. Each leaves its verdict in `ok`, changing no other local nor memory; `groupName` returns it in
+the return word. Premises: the words in the line's octets, their places read from no written local.
 -/
 
 namespace DN.Server.SessionCheck
@@ -88,8 +81,8 @@ theorem eval_but {xs : List String} {s0 t : PancakeState σ} (h : ButFor xs s0 t
 
 /-! ## Rules -/
 
-/-- **A check, then what follows**: a check shown from each state it starts in, then what follows
-from the states it leaves. -/
+/-- **A check, then what follows**: a check shown from each state it starts in. What follows is shown from the states it
+leaves. -/
 theorem then_ {o : Oracle σ} {P P' Q : PancakeState σ → Prop} {c k : PancakeProg}
     {M : PancakeState σ → PancakeState σ → Prop}
     (hc : ∀ s0, Safe.Safe o (fun s => s = s0 ∧ P s) c (M s0)) (hM : ∀ s0, Safe.ClockFree (M s0))
@@ -269,8 +262,8 @@ theorem gnBlock_eq (b : Word) (ci : Nat) : gnBlock b ci = SessionFrame.blockAt b
 /-- The session's return word. -/
 def retW (b : Word) : Word := b + BitVec.ofNat 64 (ownOff + ownRet)
 
-/-- What the check asks: the word from `se` of length `le`, the line's octets from `blk + 40`,
-those of `w`; the locals it writes bound. -/
+/-- What the check asks: the word from `se` of length `le`, the line's octets from `blk + 40`, those of `w`. The locals
+it writes are bound. -/
 structure NumPre (se le : PancakeExp) (B S : Word) (w : List Byte) (s : PancakeState σ) : Prop where
   se : eval s se = some S
   le : eval s le = some (BitVec.ofNat 64 w.length)
@@ -294,8 +287,7 @@ structure MidPre (se le : PancakeExp) (B S : Word) (w : List Byte) (s : PancakeS
   ok : ∃ v, s.locals "ok" = some v
   jq : ∃ v, s.locals "jq" = some v
 
-/-- What the check asks: the word from `se` of length `le`, `w` in the line's octets; the locals it
-writes bound. -/
+/-- What the check asks: the word from `se` of length `le`, `w` in the line's octets. The locals it writes are bound. -/
 structure RngPre (se le : PancakeExp) (B S : Word) (w : List Byte) (s : PancakeState σ) : Prop where
   se : eval s se = some S
   le : eval s le = some (BitVec.ofNat 64 w.length)
@@ -309,8 +301,8 @@ structure RngPre (se le : PancakeExp) (B S : Word) (w : List Byte) (s : PancakeS
   lo : ∃ v, s.locals "lo" = some v
   hi : ∃ v, s.locals "hi" = some v
 
-/-- What the check asks: the date `w1` from `s1` of length `l1` and the time `w2` from `s2` of length
-`l2` in the line's octets; `ok` and `jq` bound. -/
+/-- What the check asks: date `w1` from `s1` of length `l1`, time `w2` from `s2` of length `l2`. Both lie in the line's
+octets; `ok` and `jq` are bound. -/
 structure DTPre (B S1 S2 : Word) (w1 w2 : List Byte) (s : PancakeState σ) : Prop where
   s1 : s.locals "s1" = some S1
   l1 : s.locals "l1" = some (BitVec.ofNat 64 w1.length)
@@ -326,8 +318,8 @@ structure DTPre (B S1 S2 : Word) (w1 w2 : List Byte) (s : PancakeState σ) : Pro
   ok : ∃ v, s.locals "ok" = some v
   jq : ∃ v, s.locals "jq" = some v
 
-/-- What `groupName` asks: the record of connection `ci`, the name `w` from `S` of its line's octets
-held there, the return word addressable. -/
+/-- What `groupName` asks: connection `ci`'s record holding the name `w` from `S` of its line's octets. The return word
+is addressable. -/
 structure GnPre (b : Word) (ci S : Nat) (w : List Byte) (s : PancakeState σ) : Prop where
   base : s.baseAddr = b
   c : s.locals "c" = some (BitVec.ofNat 64 ci)
@@ -340,8 +332,8 @@ structure GnPre (b : Word) (ci S : Nat) (w : List Byte) (s : PancakeState σ) : 
     (gnBlock b ci + BitVec.ofNat 64 40 + (BitVec.ofNat 64 S + BitVec.ofNat 64 j)) = some w[j]
   ret : s.memaddrs (retW b) = true
 
-/-- What the wildmat check asks: the wildmat `w` from `S` of length `l2` in the line's octets, `ok`
-the flag `p`, `jq` bound. -/
+/-- What the wildmat check asks: the wildmat `w` from `S` of length `l2` in the line's octets. `ok` is the flag `p`,
+`jq` bound. -/
 structure WmPre (B S : Word) (w : List Byte) (p : Bool) (s : PancakeState σ) : Prop where
   s2 : s.locals "s2" = some S
   l2 : s.locals "l2" = some (BitVec.ofNat 64 w.length)
@@ -357,8 +349,8 @@ structure WmPre (B S : Word) (w : List Byte) (p : Bool) (s : PancakeState σ) : 
 /-- The names the number check writes. -/
 def numNames : List String := ["ok", "val", "jq", "cz"]
 
-/-- The loop's state after `k` octets of `w`: `jq` is `k`; `ok` is one and `val` the digits'
-value while all are digits and the length one to sixteen, else zero and `w` no article number. -/
+/-- The loop's state after `k` octets of `w`: `jq` is `k`. `ok` is one and `val` the digits' value while all are digits
+and one to sixteen long. Else `ok` is zero and `w` no article number. -/
 def NumInv (w : List Byte) (s0 : PancakeState σ) (t : PancakeState σ) : Prop :=
   ButFor numNames s0 t ∧ ∃ k, k ≤ w.length ∧ t.locals "jq" = some (BitVec.ofNat 64 k) ∧
     ∃ okv valv, t.locals "ok" = some okv ∧ t.locals "val" = some valv ∧
@@ -542,9 +534,9 @@ theorem num_wp (se le : PancakeExp) {B S : Word} {w : List Byte} {s0 : PancakeSt
     · have hb : 16 < w.length := by omega
       exact ⟨0, 0, by simp [setLocal, hb], by simp [setLocal], Or.inr ⟨rfl, hno⟩⟩
 
-/-- **The number check, as written here, is `CommandSpec.isArticleNumber`**: from a state where the word
-from `se` of length `le` is `w` in the line's octets, a run that finishes normally leaves `ok` the
-verdict and, for an article number, `val` its value, and changes no local but its own nor the memory. -/
+/-- **The number check is `CommandSpec.isArticleNumber`**: the word from `se` of length `le` is `w` in the line's
+octets. A normally finishing run leaves `ok` the verdict and, for an article number, `val` its value. It changes no
+local but its own nor the memory. -/
 theorem number_safe (o : Oracle σ) (se le : PancakeExp) (hse : ExpAvoids (· ∈ numNames) se)
     (hle : ExpAvoids (· ∈ numNames) le) (B S : Word) (w : List Byte) (s0 : PancakeState σ) :
     Safe.Safe o (fun s => s = s0 ∧ NumPre se le B S w s) (numA se le w s0).erase (NumPost w s0) := by
@@ -620,8 +612,8 @@ theorem lt_angle : (CommandSpec.ascii "<").head! = 60#8 := by decide
 
 theorem gt_angle : (CommandSpec.ascii ">").head! = 62#8 := by decide
 
-/-- The loop's state at octet `k` of `w`, from the second: `ok` is one while the word so far can be
-a message-id, else zero and `w` none. -/
+/-- The loop's state at octet `k` of `w`, from the second octet on. `ok` is one while the prefix can be a message-id;
+else zero, and `w` is none. -/
 def MidInv (w : List Byte) (s0 : PancakeState σ) (t : PancakeState σ) : Prop :=
   ButFor midNames s0 t ∧ ∃ k, 1 ≤ k ∧ t.locals "jq" = some (BitVec.ofNat 64 k) ∧
     ∃ okv, t.locals "ok" = some okv ∧
@@ -814,9 +806,8 @@ theorem mid_wp (se le : PancakeExp) (hse : ExpAvoids (· ∈ midNames) se)
     obtain ⟨h3, h250, _⟩ := (isMessageId_iff w).mp h
     exact hr ⟨h3, h250⟩
 
-/-- **The message-id check, as written here, is `CommandSpec.isMessageId`**: from a state where the word
-from `se` of length `le` is `w` in the line's octets, a run that finishes normally leaves `ok` the
-verdict and changes no local but its own nor the memory. -/
+/-- **The message-id check is `CommandSpec.isMessageId`**: the word from `se` of length `le` is `w` in the line's
+octets. A normally finishing run leaves `ok` the verdict. It changes no local but its own nor the memory. -/
 theorem messageId_safe (o : Oracle σ) (se le : PancakeExp) (hse : ExpAvoids (· ∈ midNames) se)
     (hle : ExpAvoids (· ∈ midNames) le) (B S : Word) (w : List Byte) (s0 : PancakeState σ) :
     Safe.Safe o (fun s => s = s0 ∧ MidPre se le B S w s) (midA se le w s0).erase (MidPost w s0) := by
@@ -1301,10 +1292,9 @@ theorem range_oneDash (o : Oracle σ) {se le : PancakeExp} (hse : ExpAvoids (· 
     · rw [hnone]; simp [hok, ha, bw]
     · rw [hnone] at h; cases h
 
-/-- **The session's range check is `CommandSpec.range?`**: from a state where the word from `se` of
-length `le` is `w` in the line's octets, a run that finishes normally leaves `ok` whether `w` is a
-range and, for one, its lowest and highest numbers in `lo` and `hi`, and changes no local but its own nor
-the memory. -/
+/-- **The session's range check is `CommandSpec.range?`**: the word from `se` of length `le` is `w` in the line's
+octets. A normally finishing run leaves `ok` whether `w` is a range, its bounds in `lo` and `hi`. It changes no local
+but its own nor the memory. -/
 theorem rangeCheck_safe (o : Oracle σ) {s l : Syntax.PExpr} {se le : PancakeExp}
     (hs : Lower.lowerExp s = some se) (hl : Lower.lowerExp l = some le)
     (hse : ExpAvoids (· ∈ rngNames) se) (hle : ExpAvoids (· ∈ rngNames) le)
@@ -1403,8 +1393,8 @@ def digBody (se : PancakeExp) : AProg σ :=
       (.cmp .less (kb se (.var "jq")) (.const 58))))
     (.assign "jq" (.op .add (.var "jq") (.const 1)))
 
-/-- The loop's state after `k` octets of `w`, `F` known: `ok` is one while the length is right (`A`)
-and the octets so far are digits, else zero and the word not all digits of a right length. -/
+/-- The loop's state after `k` octets of `w`, `F` known. `ok` is one while the length is right (`A`) and the octets are
+digits. Else zero, and the word is not all digits of a right length. -/
 def DigInv (A F : Prop) (w : List Byte) (s0 : PancakeState σ) (t : PancakeState σ) : Prop :=
   ButFor dtNames s0 t ∧ F ∧ ∃ k, k ≤ w.length ∧ t.locals "jq" = some (BitVec.ofNat 64 k) ∧
     ∃ okv, t.locals "ok" = some okv ∧
@@ -1841,9 +1831,9 @@ theorem dt_wp {B S1 S2 : Word} {w1 w2 : List Byte} {s0 : PancakeState σ} (hpre 
   · exact Or.inl ⟨by simp [bw, hl], hl, by simp⟩
   · exact Or.inr ⟨by simp [bw, hl], fun ⟨h, _⟩ => hl h⟩
 
-/-- **The date and time check, as written here, is `CommandSpec.isDate` and `CommandSpec.isTime`**:
-from a state where the second word is `w1` and the third `w2` in the line's octets, a run that finishes
-normally leaves `ok` whether they are a date and a time, and changes no local but its own nor the memory. -/
+/-- **The date and time check is `CommandSpec.isDate` and `CommandSpec.isTime`**: words two and three are `w1` and `w2`.
+A normally finishing run leaves `ok` whether they are a date and a time. It changes no local but its own nor the memory.
+-/
 theorem dateTime_safe (o : Oracle σ) (B S1 S2 : Word) (w1 w2 : List Byte) (s0 : PancakeState σ) :
     Safe.Safe o (fun s => s = s0 ∧ DTPre B S1 S2 w1 w2 s) (dtA w1 w2 s0).erase (DTPost w1 w2 s0) := by
   rintro s ⟨rfl, hpre⟩
@@ -1886,9 +1876,8 @@ def gnBody : AProg σ :=
         (.cond (.cmp .less czE (.const 128)) (.assign "ok" exactE) leadA))
       (.assign "jq" (.op .add (.var "jq") (.const 1))))
 
-/-- The loop's state after `k` octets of the name `w`: `nd` continuation octets to come, the next
-from `lo` to `hi`; `ok` one while the octets left decide as the whole name does, else zero and `w`
-no name. -/
+/-- The loop's state after `k` octets of name `w`: `nd` continuation octets to come, the next from `lo` to `hi`. `ok` is
+one while the octets left decide as the whole name does, else zero and `w` no name. -/
 def GnInv (B : Word) (w : List Byte) (s0 : PancakeState σ) (t : PancakeState σ) : Prop :=
   ButFor gnNames s0 t ∧ t.locals "blk" = some B ∧ ∃ k nd lo hi okv, k ≤ w.length ∧
     t.locals "jq" = some (BitVec.ofNat 64 k) ∧ t.locals "nd" = some (BitVec.ofNat 64 nd) ∧
@@ -2350,9 +2339,8 @@ theorem gn_wp {b : Word} {ci S : Nat} {w : List Byte} {s0 : PancakeState σ} (hp
       have : w = [] := List.eq_nil_of_length_eq_zero (by omega)
       simp [CommandSpec.isGroupName, this]
 
-/-- **The session's `groupName` is `CommandSpec.isGroupName`**: from connection `ci`'s record holding
-the name `w` in its line's octets, it puts in the return word whether `w` is a newsgroup's name,
-changes no other word, and returns zero. -/
+/-- **The session's `groupName` is `CommandSpec.isGroupName`**: from connection `ci`'s record holding the name `w` in
+its line's octets. It puts in the return word whether `w` is a group name, changes no other word, and returns zero. -/
 theorem groupName_run (o : Oracle σ) (b : Word) (ci S : Nat) (w : List Byte) (s0 : PancakeState σ)
     {body : PancakeProg} (hb : Lower.lower Session.groupName = some body) :
     SafeR o (fun s => s = s0 ∧ GnPre b ci S w s) body (gnRet b w s0.memory) (fun _ => False) := by
@@ -2382,8 +2370,8 @@ def wmBody : AProg σ :=
             (.cond (.cmp .less czE (.const 128)) (.assign "ok" wmExactE) leadA))))))
       (.assign "jq" (.op .add (.var "jq") (.const 1))))
 
-/-- The loop's state after `k` octets of the wildmat `w`, the check asked of `p`: `ok` one while the
-octets left decide as the whole wildmat does, else zero and `p` or `w` no. -/
+/-- The loop's state after `k` octets of the wildmat `w`, the check asked of `p`. `ok` is one while the octets left
+decide as the whole wildmat does, else zero and `p` or `w` no. -/
 def WmInv (w : List Byte) (s0 : PancakeState σ) (p : Bool) (t : PancakeState σ) : Prop :=
   ButFor wmNames s0 t ∧ ∃ k nd lo hi items bang okv, k ≤ w.length ∧
     t.locals "jq" = some (BitVec.ofNat 64 k) ∧ t.locals "nd" = some (BitVec.ofNat 64 nd) ∧
@@ -2730,9 +2718,9 @@ theorem wm_wp {B S : Word} {w : List Byte} {p : Bool} {s0 : PancakeState σ} {R 
     · exact Or.inr ⟨rfl, rfl⟩
     · exact Or.inl ⟨rfl, rfl, by rw [List.drop_zero]; exact wildmat_run w⟩
 
-/-- **The wildmat check, as written here, is `CommandSpec.wildmat?`**: from a state where the third word is `w`
-in the line's octets and `ok` the flag `p`, a run that finishes normally leaves `ok` one when `p` was
-and `w` is a wildmat, and changes no local but its own nor the memory. -/
+/-- **The wildmat check is `CommandSpec.wildmat?`**: the third word is `w` in the line's octets, `ok` the flag `p`. A
+normally finishing run leaves `ok` one when `p` was and `w` is a wildmat. It changes no local but its own nor the
+memory. -/
 theorem wildmat_safe (o : Oracle σ) (B S : Word) (w : List Byte) (p : Bool) (s0 : PancakeState σ) (R : Ret) :
     SafeR o (fun s => s = s0 ∧ WmPre B S w p s) (wmA w s0 p).erase R (WmPost w s0 p) := by
   rintro s ⟨rfl, hpre⟩
@@ -2772,8 +2760,8 @@ theorem wildmatCheck_safe (o : Oracle σ) (B S : Word) (w : List Byte) (p : Bool
 
 /-! ## The premises can hold -/
 
-/-- A line of one octet, `1`, in a heap of zeros, every word addressable: the words' places and
-lengths in the locals, the locals the checks write bound, `ok` one. -/
+/-- A line of one octet, `1`, in a heap of zeros, every word addressable. The words' places and lengths are in the
+locals, the checks' locals bound, `ok` one. -/
 def chkState : PancakeState Unit :=
   { bareState () with
     memory := fun a => if a = 40 then 49 else 0

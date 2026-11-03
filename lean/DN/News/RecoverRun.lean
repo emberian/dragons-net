@@ -33,10 +33,9 @@ theorem from_phase (o : Oracle σ) {prog : List Syntax.PStmt} (hl : LowKK prog) 
     Frag o prog (fun u => PIn A cfg J q u ∧ Kept stepLocals (RAreaW A) s0 u ∧ X u) (POut A cfg J s0 p) :=
   frag_each o hl fun s ⟨hs, hk, _⟩ => frag_conseq (h s hs) (fun _ h => h) fun _ hu => ⟨ScanRun.kept_trans hk hu.1, hu.2⟩
 
-/-- What the phases need of a state they start from, beside the area holding it: numbers below a word, the
-journal's length once given, no new journal while it is read, commits of the journal's format, the index's
-capacity once the rules hold, each group known when none is noted as lacking and the index holds every commit, the
-files' counter within the commits, and a torn tail within the scanner's window. -/
+/-- What phases need of a start state: numbers below a word, the journal's length once given. No new journal while it is
+read, commits of its format, the index's capacity once the rules hold. Groups known when none lacks and all are indexed;
+files' counter within commits; a torn tail in the scanner's window. -/
 structure PhaseOk (cfg : Config) (J : Bytes) (q : RSt) : Prop where
   phase : q.phase < 2 ^ 64
   names : q.names < 2 ^ 64
@@ -73,7 +72,7 @@ def LowAll : List (Nat × List Syntax.PStmt) → Prop
   | [] => True
   | (_, t) :: l => LowKK t ∧ LowAll l
 
-/-- What each program of `l` needs for `dispatch`: its number below a word, no declaration, and `P` to `Q` where the
+/-- What each program of `l` needs for `dispatch`: its number below a word, no declaration. And `P` to `Q` where the
 phase is its number. -/
 def DispOk (o : Oracle σ) (ph : Nat) (P Q : Assn σ) : List (Nat × List Syntax.PStmt) → Prop
   | [] => True
@@ -205,9 +204,9 @@ theorem loop_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) 
     have hu' : POut A cfg J s0 (runPhases cfg J k r) u := hu
     rwa [steps_end hs hsome] at hu'
 
-/-- **A step of recovery** as the program runs it: from the area holding `r`, the area holds what `Steps` leaves and
-gives what it asks or gives, where each state the phases pass is `PhaseOk`; the locals but the step's and the memory
-but the area as they were. -/
+/-- **A step of recovery**, run by the program: from the area holding `r`, the area ends as `Steps` leaves it. The step
+gives what `Steps` asks or gives, each state the phases pass being `PhaseOk`. The locals but the step's and the memory
+but the area stay as they were. -/
 theorem step_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s : PancakeState σ} (hA : A.toNat % 8 = 0)
     (hd : RDom A s.memaddrs) (hrsc : s.locals "rsc" = some A) (hjz : s.locals "jz" = some 0)

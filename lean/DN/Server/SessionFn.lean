@@ -4,11 +4,9 @@ import DN.Server.SessionClassify
 /-!
 # DN.Server.SessionFn
 
-What `viewClassify` and `listClassify` share. From their entry `VEntry`: the head finding the connection's block and
-the line's length, the scan of the line's words and their bound checks, the arguments' count, their own
-declarations (`fdecs_frag`). The state within (`FAt`), given the locals `nms` a function declares and the own words
-`offs` it writes; its words checked, an own word written, the reply's code set (`FEnd`) and given back
-(`give_run`). The fragments hold if the run goes on.
+What `viewClassify` and `listClassify` share, from their entry `VEntry`. The head finds the connection's block and line
+length; the scan finds the words, checks bounds and counts the arguments. The state within is `FAt`; `FEnd` and
+`give_run` set and give back the reply's code.
 -/
 
 namespace DN.Server.SessionClassify
@@ -84,9 +82,9 @@ theorem frag_bw (o : Oracle σ) {c : Syntax.PExpr} {C : PancakeExp} (hc : Lower.
 /-- The locals the state within fixes. -/
 def fFixed : List String := ["blk", "kept", "w", "s1", "l1", "s2", "l2", "s3", "l3", "args", "r"]
 
-/-- Within a function `classify` calls, once its locals are declared, from its entry `e`: every local but `nms` and
-every word but `ownWords offs` as at `e`, the line's block and length, the words' count and places, the arguments'
-count, `r` the code `R`, the locals `bnd` bound. -/
+/-- Within a function `classify` calls, once its locals are declared, from its entry `e`. Every local but `nms` and word
+but `ownWords offs` as at `e`; the line's block, length, words and arguments. `r` holds the code `R`, the locals `bnd`
+bound. -/
 structure FAt (nms bnd : List String) (offs : List Nat) (R : Nat) (b : Word) (ci : Nat) (L : List Byte)
     (e u : PancakeState σ) : Prop where
   loc : ∀ y, y ∉ nms → u.locals y = e.locals y
@@ -607,8 +605,8 @@ theorem ffound_eval {nms bnd : List String} {offs : List Nat} {R : Nat} {b : Wor
 
 /-! ### The reply's code, set and given back -/
 
-/-- Before the function's last words: every local but `nms` and every word but `ownWords offs` as at `e`, `r`
-holding `R`, the locals `bnd` bound. -/
+/-- Before the function's last words: every local but `nms` and every word but `ownWords offs` as at `e`. `r` holds `R`,
+the locals `bnd` bound. -/
 structure FEnd (nms bnd : List String) (offs : List Nat) (b : Word) (e : PancakeState σ) (R : Nat)
     (u : PancakeState σ) : Prop where
   loc : ∀ y, y ∉ nms → u.locals y = e.locals y

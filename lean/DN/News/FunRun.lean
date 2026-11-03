@@ -6,9 +6,9 @@ import DN.Compiler.FragRet
 /-!
 # DN.News.FunRun
 
-What proofs of a program's functions keep of a run: the locals so far and what the memory is (`Run`, `RunF`), a
-function's entry with its parameters (`entry_one`, `entry_two`) and its body closed (`body_of`), a word stored
-(`upd`), where a scan stops (`seek`, `seekDown`), and a word's bits.
+What proofs of a program's functions keep of a run: the locals and the memory (`Run`, `RunF`). Also a function's entry
+with parameters (`entry_one`, `entry_two`), its body closed (`body_of`), a word stored (`upd`). And where a scan stops
+(`seek`, `seekDown`), and a word's bits.
 -/
 
 namespace DN.News.FunRun

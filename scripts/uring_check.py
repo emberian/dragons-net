@@ -1,36 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The io_uring lane: the ring layer (native/uring.c) on the running kernel, and the echo host on it
-(native/echo_uring.c), built from the same generated kernel as the poll host:
-
-- the layer's own check (native/uring_check.c): what a ring refuses, registration included, a kernel
-  that refuses io_uring through a seccomp filter, more submissions and completions than the queues
-  hold, cancellation by token and by descriptor, a message between two threads' rings, waits that
-  end, a ring closed with an operation live;
-- the generated code and its runtime assembled once a copy, every global symbol prefixed with the
-  copy's number and no other left;
-- the poll host's echo corpus (tests/echo_integration.py) against the host as built, with one
-  thread and with a thread a core, and against its build with AddressSanitizer and
-  UndefinedBehaviorSanitizer;
-- a stop by SIGTERM or SIGINT with receives and sends in flight ends with status 0, each of them
-  cancelled and reaped;
-- each idle connection expires once, those holding a reply counted apart;
-- run on two cores, a thread a core, each pinned to its own;
-- the send buffer asked for is the one the connection's socket has;
-- with exactly the descriptors the host counts every slot serves at once, and one fewer is refused;
-- four slow readers at once, each taking more than an idle time, are all kept;
-- in the test build, with libfiu's points: a receive's completion made stale ends the host with
-  status 1; an interrupted or refused wait, a full completion queue and submissions taken one at a
-  time leave a run as without them; a hand-over that fails, and a socket that cannot be shaped, cost
-  only their connection; a connection handed over after the stop is closed at once; a stop a thread
-  cannot be told of ends the host with status 2; and io_uring refused, missing or too old, a feature
-  missing and a thread that cannot start or be created are refused at the start by name, the started
-  threads stopped; so are too few descriptors, and a start record that cannot be written;
-- each defect planted in echo_uring.c and uring.c is caught by the check it is planted for, saying
-  what that check says of it.
-
-The report records the kernel, its io_uring features and kernel.io_uring_disabled.
-"""
+"""The io_uring lane: the ring layer (native/uring.c) and the echo host on it (native/echo_uring.c). It runs the layer's
+own check, the poll host's corpus with sanitizers, stops, expiry, pinning, limits and libfiu fault points. Each defect
+planted in echo_uring.c and uring.c is caught; the report records the kernel's io_uring."""
 from __future__ import annotations
 
 import argparse
@@ -75,8 +47,8 @@ def globals_of(obj: Path, *, defined: bool) -> set[str]:
 
 
 def copies(cake: str, out: Path = OUT) -> list[Path]:
-    """The generated echo and its runtime, once a copy, every global symbol either defines prefixed
-    with `copyK_`; a copy that still defines or needs a name of another is refused. Built in `out`."""
+    """The generated echo and runtime, once a copy, each global symbol prefixed `copyK_`. A copy still defining or
+    needing another's name is refused; built in `out`."""
     (out / "echo.pnk").write_text(lanes.emit("emit-echo", timeout=60))
     assembly = lanes.assemble(cake, out / "echo.pnk")
     runtime = lanes.compile_object(NATIVE / "cake_runtime.c", out / "cake_runtime.o")
@@ -143,15 +115,14 @@ def corpus(binary: Path, *options: str, env: dict[str, str] | None = None) -> di
 
 
 def limited(command: list[str], limit: int | None) -> list[str]:
-    """`command` run with at most `limit` descriptors: set by a shell before it starts, since the lane's
-    threads make a hook between fork and exec unsafe."""
+    """`command` run with at most `limit` descriptors, set by a shell before start. The lane's threads make a
+    fork-to-exec hook unsafe."""
     return command if limit is None else ["sh", "-c", 'ulimit -n "$0" && exec "$@"', str(limit), *command]
 
 
 class Host:
-    """The host started with `options`, read its record once it listens, and stopped by `end`, which
-    a host that does not stop in time does not outlive; as a context, killed on leaving it if not
-    ended by then, so that no check leaves a host behind, which the trace of a check would wait for."""
+    """The host started with `options`, its record read once it listens, stopped by `end` within its time. As a context
+    it is killed on exit if not ended, so no check leaves a host behind."""
 
     def __init__(self, binary: Path, *options: str, env: dict[str, str] | None = None,
                  limit: int | None = None) -> None:
@@ -236,9 +207,8 @@ def stuck(port: int) -> socket.socket:
 
 
 def stop_in_flight(binary: Path, env: dict[str, str] | None = None, signum: int = signal.SIGTERM) -> dict[str, Any]:
-    """Eight connections waiting to be read from, each seen to have been served, and eight whose replies
-    the kernel cannot take, each seen to hold some, then `signum`: the host ends with status 0 within its
-    time, every operation cancelled."""
+    """Eight connections awaiting reads, each seen served, and eight whose replies the kernel cannot take, each holding
+    some. Then `signum`: the host ends with status 0 in time, every operation cancelled."""
     held: list[socket.socket] = []
     with Host(binary, "--write-chunk", "4096", "--send-buffer", "4096", env=env) as host:
         try:
@@ -277,8 +247,8 @@ def closed_by_host(sock: socket.socket, within: float) -> bool:
 
 
 def idle(binary: Path) -> dict[str, Any]:
-    """Four idle connections and four holding replies they never take: each expires once, within its
-    time and a margin, and the four holding replies are counted apart."""
+    """Four idle connections and four holding replies they never take: each expires once within its time and a margin.
+    The four holding replies are counted apart."""
     held: list[socket.socket] = []
     with Host(binary, "--idle-ms", "300", "--send-buffer", "2048") as host:
         try:
@@ -308,8 +278,8 @@ def send_queue(port: int, client: int) -> int:
 
 
 def send_buffer(binary: Path) -> dict[str, int]:
-    """The send buffer asked for is the socket's: a reply a client never takes fills the host's send
-    queue to a few kilobytes with `--send-buffer 2048`, and to far more without."""
+    """The send buffer asked for is the socket's. An untaken reply fills the host's send queue to a few kilobytes with
+    `--send-buffer 2048`, far more without."""
     queued = {}
     for name, options in (("asked", ["--send-buffer", "2048"]), ("default", [])):
         with Host(binary, *options) as host, stuck(host.port) as sock:
@@ -321,9 +291,8 @@ def send_buffer(binary: Path) -> dict[str, int]:
 
 
 def full_table(binary: Path) -> int:
-    """With two threads and exactly the descriptors the host counts, the standard three, the listener,
-    the signals, three rings and the 32 slots, every slot serves at once; one descriptor fewer is
-    refused at the start."""
+    """With two threads and exactly the descriptors the host counts, every slot serves at once. That is the standard
+    three, the listener, the signals, three rings and 32 slots; one fewer is refused at start."""
     limit = 6 + 2 + 32
     held: list[socket.socket] = []
     with Host(binary, "--threads", "2", limit=limit) as host:
@@ -348,8 +317,7 @@ def full_table(binary: Path) -> int:
 
 
 def slow_reader(port: int) -> None:
-    """A reader that takes a reply about twice what the small buffers on the way hold in bursts a fifth
-    of an idle time apart, and has to get all of it."""
+    """A reader takes a reply twice the buffers' size in bursts a fifth of an idle time apart. It must get all of it."""
     payload = b"y" * 16384
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
@@ -372,11 +340,9 @@ def slow_reader(port: int) -> None:
 
 
 def slow_readers(binary: Path) -> int:
-    """Four slow readers at once, each kept: a host that drops a reader making progress fails. That a
-    send's progress alone renews a deadline is not separated, here or by the corpus on this host: its
-    next send is submitted as the last completes, so a reply reaches the kernel within the time its
-    receive renewed, and a host whose sends renew nothing keeps the readers too. Nor is a receive's
-    renewal, which a send follows at once."""
+    """Four slow readers at once, each kept: a host dropping a reader making progress fails. Renewal by a send's
+    progress alone is not separated here: the next send follows each completion at once. So a host whose sends renew
+    nothing keeps the readers too; a receive's renewal is not separated either."""
     with Host(binary, "--idle-ms", "1000", "--write-chunk", "64", "--send-buffer", "2048") as host:
         try:
             with lanes.pool(4) as readers:
@@ -389,8 +355,7 @@ def slow_readers(binary: Path) -> int:
 
 
 def pinned(binary: Path) -> dict[str, list[str]]:
-    """Run on two cores, the host starts a thread a core, each pinned to its own; asked for three, it
-    pins them to the two in turn."""
+    """Run on two cores, the host starts a pinned thread a core. Asked for three, it pins them to the two in turn."""
     seen = {}
     for threads, want in (("", ["0", "1"]), ("3", ["0", "0", "1"])):
         options = ["--threads", threads] if threads else []
@@ -414,8 +379,8 @@ def fiu_env(enable: str) -> dict[str, str]:
 
 
 def stale(builds: Builds) -> int:
-    """A receive's completion made to look as if the connection before had submitted it (`dn/stale`)
-    ends the host with status 1, naming the generations, before it is taken for this one's."""
+    """A receive completion faked as the previous connection's (`dn/stale`) ends the host with status 1, naming the
+    generations. It is caught before being taken for this one's."""
     with Host(builds.fiu, env=fiu_env("enable name=dn/stale,failinfo=1,onetime")) as host:
         with socket.create_connection(("127.0.0.1", host.port), timeout=5) as sock:
             sock.sendall(b"x")
@@ -427,8 +392,8 @@ def stale(builds: Builds) -> int:
 
 
 def transients(builds: Builds) -> int:
-    """An interrupted wait, a full completion queue and a shortage of memory, once each, and every
-    submission taken one at a time: sixteen connections are served and stopped as without them."""
+    """An interrupted wait, a full completion queue and a memory shortage, once each, and every submission taken singly.
+    Sixteen connections are served and stopped as without them."""
     cases = ["dn/uring-enter,failinfo=4,onetime", "dn/uring-enter,failinfo=16,onetime",
              "dn/uring-enter,failinfo=11,onetime", "dn/uring-short,failinfo=1"]
     for case in cases:
@@ -451,8 +416,8 @@ def transients(builds: Builds) -> int:
 
 
 def costs_one(builds: Builds, point: str) -> None:
-    """With `point` failing the first connection's hand-over, that connection alone is closed, and every
-    slot serves afterwards: its place was given back."""
+    """With `point` failing the first connection's hand-over, that connection alone is closed. Every slot serves
+    afterwards, its place given back."""
     held: list[socket.socket] = []
     with Host(builds.fiu, "--threads", "2", "--send-buffer", "4096",
               env=fiu_env(f"enable name={point},failinfo=1,onetime")) as host:
@@ -477,9 +442,8 @@ def costs_one(builds: Builds, point: str) -> None:
 
 
 def late(builds: Builds) -> int:
-    """A connection handed over after the stop (`dn/echo-late`: once the thread has given a place back, and
-    held for it), its peer open, is closed at once: the host ends with status 0 well before the
-    connection's idle time."""
+    """A connection handed over after the stop (`dn/echo-late`), its peer open, is closed at once. The host ends with
+    status 0 well before the connection's idle time."""
     with Host(builds.fiu, "--threads", "1", env=fiu_env("enable name=dn/echo-late,failinfo=1")) as host, \
             socket.create_connection(("127.0.0.1", host.port), timeout=5):
         time.sleep(0.2)
@@ -495,8 +459,8 @@ def late(builds: Builds) -> int:
 
 
 def stop_lost(builds: Builds) -> int:
-    """A stop a thread could not be told of (`dn/echo-stop-lost`) ends the host with status 2 and the
-    reason, rather than leave it waiting for the thread for good."""
+    """A stop a thread could not be told of (`dn/echo-stop-lost`) ends the host with status 2 and the reason. It does
+    not wait for the thread forever."""
     with Host(builds.fiu, "--threads", "1", env=fiu_env("enable name=dn/echo-stop-lost,failinfo=1")) as host:
         try:
             status, err = host.end()
@@ -528,8 +492,8 @@ def refused(binary: Path, args: list[str], status: int, message: str, *, env: di
 
 
 def refusals(builds: Builds) -> int:
-    """The refusals at the start: those of the kernel injected at the setup's call (`dn/uring-setup`),
-    as the layer's check also sees a seccomp filter give them."""
+    """The start's refusals injected at the setup call (`dn/uring-setup`), as the layer's check sees a seccomp filter
+    give them."""
     setup = "enable name=dn/uring-setup,failinfo="
     cases: list[tuple[list[str], int, str, dict[str, str] | None, int | None]] = [
         ([], 1, "io_uring: refused here (a seccomp filter or kernel.io_uring_disabled)", fiu_env(setup + "1"), None),
@@ -566,8 +530,7 @@ def refusals(builds: Builds) -> int:
 
 @dataclass(frozen=True)
 class Defect:
-    """A defect planted in `file`, the check that has to catch it, and a part of what that check has
-    to say of it."""
+    """A defect planted in `file`, the check that must catch it, and part of what that check says of it."""
 
     what: str
     pattern: str
@@ -578,9 +541,8 @@ class Defect:
     times: int = 1
 
 
-# Not planted, since nothing outside could tell: an expiry counted again while its cancellation is in
-# flight, which completes within the same wait; and a submission cut short not followed at once by the
-# rest, which the caller's next wait submits.
+# Not planted, as nothing outside could tell: an expiry counted again while its cancellation is in flight. Nor a cut
+# submission not followed at once by the rest; the next wait submits it.
 DEFECTS = [
     Defect("a connection closed with its receive in flight", "    if (!s->ops) {\n        finish(w, i);",
            "    if (1) {\n        finish(w, i);", "idle", "an idle connection was not closed"),

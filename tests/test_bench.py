@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The measurement's own reasoning (scripts/bench.py), on records made here: what a kept rate is, the
-sweep's path to it, the CPUs the load takes, a reply's share of a run, the table, NNTP's replies, and
-a server's time counting its children's."""
+"""The measurement's own reasoning (scripts/bench.py) on records made here. Kept rates, the sweep, the load's CPUs, a
+reply's share, the table, NNTP replies, a server's time with its children's."""
 from __future__ import annotations
 
 import io

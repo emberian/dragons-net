@@ -4,8 +4,8 @@ import DN.News.RecoverSlots
 /-!
 # DN.News.RecoverRules
 
-Recovery's phase 4 as the program runs it (`RecoverProg.rules`) is `RecoverSpec.rules`: the commits checked for a
-number or Message-ID twice, a group the configuration lacks, numbers that do not rise.
+Recovery's phase 4 as the program runs it (`RecoverProg.rules`) is `RecoverSpec.rules`. It checks for a number or
+Message-ID twice, a group lacking and numbers not rising.
 -/
 
 namespace DN.News.RecoverArea
@@ -211,8 +211,8 @@ theorem idCmp_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RS
 /-- The value `rdup` has once two commits with one Message-ID are found, or not. -/
 def dupWord (b : Bool) : Word := .ofNat 64 (if b then 2 else 0)
 
-/-- The search for a Message-ID two commits have, middle loop: whether one after `k` has `k`'s, compared by tag,
-length and octets. -/
+/-- The search for a Message-ID two commits share, middle loop. Whether one after `k` has `k`'s, compared by tag, length
+and octets. -/
 theorem idMid_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
     (h : PBase A s0) (hcap : r.commits.length ≤ capacity) {k : Nat} (hk : k < r.commits.length) :
     Frag o idMid (Mid A cfg J r s0 (scalars cfg r) [] [("rj", .ofNat 64 (k + 1)), ("rdup", dupWord false),
@@ -477,8 +477,8 @@ theorem lowKK_groupsStore {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK 
       (lowKK_append (xs := [_]) (lowKK_kept hfl _ _) (lowK_any _ (k := .skip) (c := _) rfl))))
     (lowK_any _ (k := .skip) (c := _) rfl))
 
-/-- **The groups of commit `i` checked** against the highest numbers `H`: the first not above, its number in `rv`
-and its place in `rc`. -/
+/-- **The groups of commit `i` checked** against the highest numbers `H`. The first not above has its number in `rv` and
+its place in `rc`. -/
 theorem checkGroups_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ} (h : PBase A s0) {ws : Nat → Word}
     {os : List (Nat × Word)} {i : Nat} (hi : i < r.commits.length) (hic : i < capacity)
@@ -629,8 +629,8 @@ def FitsCfg (cfg : Config) (c : Commit) : Prop :=
 def Rising (cs : List Commit) : Prop :=
   ∀ i (hi : i < cs.length), ∀ g ∈ cs[i].groups, highIn (cs.take i) g.name < g.number
 
-/-- **The last number is the highest** where numbers rise: a group's place holds what `highIn` says, of each first
-`n` commits. -/
+/-- **The last number is the highest** where numbers rise. A group's place holds what `highIn` says, of each first `n`
+commits. -/
 theorem high_take {cfg : Config} (hc : cfg.groups.length ≤ groupsMax) {cs : List Commit}
     (hf : ∀ c ∈ cs, FitsCfg cfg c) (hr : Rising cs) : ∀ n, n ≤ cs.length → ∀ nm, cfg.groups.contains nm = true →
       highIn (cs.take n) nm = highOf cfg (cs.take n) (groupIx cfg nm) := by
@@ -806,7 +806,7 @@ def badC (cfg : Config) (cs : List Commit) (i : Nat) : Bool :=
   | some c => (firstIdx (groupBad cfg (highOf cfg (cs.take i)) c.groups) c.groups.length).isSome
   | none => false
 
-/-- What the check of commit `i` leaves where it finds a number not above: that number in `rv`, its group's place in
+/-- What the check of commit `i` leaves where it finds a number not above. That number is in `rv`, its group's place in
 `rc`. -/
 def BadAt (cfg : Config) (cs : List Commit) (i : Nat) (u : PancakeState σ) : Prop :=
   ∀ (hi : i < cs.length) t (ht : t < cs[i].groups.length),
@@ -976,8 +976,7 @@ theorem rising_succ {cs : List Commit} {k : Nat} (hk : k < cs.length) (hr : Risi
     simp only [RecoverSpec.badGroup, decide_eq_true_eq, Nat.not_le] at this
     exact this
 
-/-- **Rising, as the program checks it**: while no commit before `k` has a number not above, the first `k` commits
-rise. -/
+/-- **Rising, as the program checks it.** While no commit before `k` has a number not above, the first `k` rise. -/
 theorem badC_rising {cfg : Config} (hc : cfg.groups.length ≤ groupsMax) {cs : List Commit}
     (hf : ∀ c ∈ cs, FitsCfg cfg c) : ∀ k, k ≤ cs.length → firstIdx (badC cfg cs) k = none → Rising (cs.take k)
   | 0, _, _ => fun i hi => by simp at hi
@@ -1007,7 +1006,7 @@ theorem firstBad_eq {cfg : Config} (hc : cfg.groups.length ≤ groupsMax) {cs : 
       have hr := badC_rising hc hf k (by omega) (by rw [firstBad_eq hc hf k (by omega)]; exact e)
       rw [badC_eq hc hf (by omega) hr]
 
-/-- **The group the program refuses** where commit `i` is the first with a number not above: its first such group,
+/-- **The group the program refuses**, commit `i` being the first with a number not above. It is its first such group,
 the specification's. -/
 theorem notAbove_eq {cfg : Config} (hc : cfg.groups.length ≤ groupsMax) {cs : List Commit}
     (hf : ∀ c ∈ cs, FitsCfg cfg c) {i : Nat} (hi : firstIdx (badC cfg cs) cs.length = some i) :
@@ -1062,7 +1061,7 @@ theorem highIs_scalar {A : Word} {u : PancakeState σ} {H : Nat → Nat} (h : Hi
   simp only [Free] at this
   rw [stW_word (by omega) (by omega) (by omega)]; exact h x hx
 
-/-- **Phase 4**, the rules: no more commits than the index holds, no number or Message-ID twice, no group the
+/-- **Phase 4**, the rules: no more commits than the index holds, no number or Message-ID twice. No group the
 configuration lacks, numbers that rise; then phase 5. -/
 theorem rules_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ} (h : PIn A cfg J r s0)

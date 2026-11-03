@@ -5,11 +5,9 @@ import DN.News.ScanSpec
 /-!
 # DN.News.RecoverSpec
 
-Recovery's step (`DN.News.RecoverProg.stepWith`) as a function of what its area keeps between steps (`RSt`),
-phase by phase under the program's names (`phase`); a step runs phases until one asks the host for something or
-gives it something (`Steps`). A host that reads the directory `img` — its names in order, the journal's octets,
-each final file and each name set aside — and notes what it is given (`answer`) drives the steps to what
-`Recovery.recover` finds (`DN.News.RecoverDrive`). That the program's step is `phase` is not shown here.
+Recovery's step (`RecoverProg.stepWith`) as a function of its area's state between steps (`RSt`), phase by phase
+(`phase`). A step runs phases until one asks the host for something or gives it something (`Steps`). A host reading
+`img` drives the steps to what `Recovery.recover` finds; the program being `phase` is not shown here.
 -/
 
 namespace DN.News.RecoverSpec
@@ -17,8 +15,8 @@ namespace DN.News.RecoverSpec
 open DN.News.Journal DN.News.Recovery
 open DN.News.ScanRun (St stepSpec)
 
-/-- An action as the step gives it: a torn tail kept under a number, from where it is cut; a final file set aside
-or removed, or a temporary one removed; the directory synced; the journal cut; a new journal created. -/
+/-- An action as the step gives it: a torn tail kept under a number, from where it is cut. A final file set aside or
+removed, or a temporary one removed. The directory synced, the journal cut, a new journal created. -/
 inductive Act
   | keep (seq cut : Nat)
   | rename (seq : Nat)
@@ -28,9 +26,9 @@ inductive Act
   | create
   deriving DecidableEq
 
-/-- What a step asks of the host or gives it: a name of the directory, the journal's length, octets of the
-journal, whether a final file is there and its size, whether a name set aside is; an action, a number set aside;
-the store it starts with, or why it does not start. -/
+/-- What a step asks the host: a directory name, the journal's length or octets. Also whether a final file is there and
+its size, whether a name set aside is. Or what it gives: an action, a number set aside, the starting store, or why it
+does not start. -/
 inductive ROut
   | askName
   | askJournal
@@ -116,8 +114,8 @@ def recordRead (cfg : Config) (r : RSt) : Record → RSt
              unknown := if r.commits.length + 1 ≤ capacity then r.unknown <|> unknownIn cfg c else r.unknown }
   | _ => r
 
-/-- The journal read to its end, torn at `t` if it is: none records, the store new or no journal; else the
-rules next. -/
+/-- The journal read to its end, torn at `t` if it is. If none records, the store is new or has no journal; otherwise
+the rules come next. -/
 def scanned (r : RSt) (t : Option Nat) : RSt × Option ROut :=
   if r.records = 0 then
     if r.names = 1 then (startNew r false, none) else (r, some (.refused .noJournal))
@@ -132,8 +130,8 @@ def firstName (r : RSt) : Name → RSt
   | .final s | .temp s | .quarantine s => { r with maxSeq := max r.maxSeq s }
   | .tail s => { r with maxSeq := max r.maxSeq s, tails := true, maxTail := max r.maxTail s }
 
-/-- What a name does to the second pass: a temporary file removed; a final file no commit names set aside, or
-removed when set aside already or not to be; a name set aside given. -/
+/-- What a name does to the second pass: a temporary file removed. A final file no commit names is set aside, or removed
+if already set aside or not to be. A name set aside is given. -/
 def secondName (r : RSt) : Option Name → RSt × Option ROut
   | some (.temp s) => ({ r with seq := s, tidied := r.tidied + 1, phase := 13 }, some (.gives (.remove s true)))
   | some (.final s) =>
@@ -275,8 +273,8 @@ structure Host where
 /-- The host before any step: the directory's first name next, nothing given. -/
 def Host.start : Host := ⟨0, [], []⟩
 
-/-- An action the step gives, as the host does it: a torn tail's octets kept with where it was cut, octets the
-journal `J` holds from there. -/
+/-- An action the step gives, as the host does it. A torn tail's octets are kept with where it was cut, the octets `J`
+holds from there. -/
 def actOf (cfg : Config) (J : Bytes) : Act → Action
   | .keep s x => .keep (tailName s) (le 8 x ++ J.drop x)
   | .rename s => .rename (finalName s) (quarantineName s)

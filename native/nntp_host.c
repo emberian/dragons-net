@@ -1,62 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
- * The NNTP server's host: sockets and the clock for the session's program (DN.Server.Session),
- * which runs as the program's `main` and reaches the host through two external calls on arrays in
- * its heap (docs/decisions/0003-nntp-slice.md). The host knows sockets and the clock and nothing of
- * the protocol.
- *
- *   dn_next  gives out what one wait reported, at most a batch of events, before waiting again:
- *            connections taken in turn, input only from a connection that asked for it and has
- *            nothing untaken, at most one input a connection a batch, new connections only while
- *            an index is free. The wait lasts until something is ready or the time the program
- *            asked to be woken at; the first batch does not wait, so that the program can recover
- *            its store before the host listens. The host waits with io_uring (uring.h): input and
- *            sends as ring operations, readiness from epoll; or with poll, given `--io poll`. Both
- *            give the program the same events.
- *   dn_emit  carries out each action for the connection's current generation and writes back how
- *            much of each send the kernel took. A graceful close shuts down sending and reads and
- *            drops what still comes, for 30 s at most and 5 s of silence, outside the table. File
- *            jobs go to the workers of jobs.c; their completions come back with a later batch. The
- *            host listens from the first emit that says to, and keeps listening.
- *
- * Every action is checked against the layout; one that breaks it ends the process with status 1.
- * A run the program stops because the host broke the contract ends it with status 3; one it stops
- * because recovery refused the store, or a file job of recovery failed, with status 4. SIGTERM or
- * SIGINT closes every socket, drops the file jobs not begun, waits for those running, 30 s at most,
- * and ends the run inside a call, with status 0. `--spool` and the other
- * options of store.c give the store; a store refused at start ends the host with status 4.
- *
- * `--address A` and `--port N` choose where it listens: by default 127.0.0.1 and a port the kernel
- * picks, printed as JSON on standard output once it listens. `--revision` and `--source` name the revision and the
- * address of the source the replies give; `--send-buffer N` sets SO_SNDBUF on each connection, and
- * each sends its replies at once (TCP_NODELAY). Only for tests, and costing nothing unless given:
- * `--clock-fd N` takes the time from N, a pipe or a socket, instead of CLOCK_MONOTONIC — a line with
- * a number of milliseconds sets it, and it moves only then, so nothing waits for it before that — and
- * `--report-fd N` receives a line for each turn: `turn`, the time handed to the program, its events
- * (`open` with the client's port, `recv` with the bytes in hex, `end`, `writable`, `closed`,
- * `verdict` with 1 for a login taken, each with the index and generation), `|`, its actions (`send`
- * with whether to read, how much the kernel took and the bytes, `graceful`, `close`, `verify`),
- * `| wake` and the time the program asked to be woken at
- * — or, when the program stops the run in that turn, `| stopped` and its code.
- *
- * Settings come as options or, with `--config FILE`, from a file: a setting a line, an option's name
- * without its dashes, white space, and its value; blank lines and those starting with `#` are
- * skipped, and a file may not give `config`, `check-config` or the test's descriptors. A setting
- * unknown, without a value, or given twice where it is taken once ends the host with status 2, the
- * file's line named. `--check-config FILE` takes them as `--config` does, checks them together and
- * that the store's directories open, writes them as JSON on standard output and ends with status 0,
- * starting nothing. Started by systemd with one socket (LISTEN_PID naming the process, LISTEN_FDS 1),
- * the host listens on descriptor 3 instead, so that it needs no privilege for port 119; `--address`
- * and `--port` are then refused. With `--tls-cert FILE` and `--tls-key FILE`, PEM files, every
- * connection speaks TLS from its first octet (RFC 8143, port 563) through libssl (tls.c), and the
- * program learns of one only once its handshake is done; a handshake not done in 10 s, or that
- * fails, closes the connection unreported. With `--users FILE` and a store, AUTHINFO USER and PASS
- * log in to the accounts of the file (accounts.h) over TLS, and a login lets a connection post;
- * the program hands the host a name and a password to check, and the host stops reading from the
- * connection until it reports the verdict. SIGUSR1 writes the counters to stderr, and so does a stop on a signal: the
- * connections taken, how they ended, the octets read and sent, the pauses in accepting, the logins
- * taken and refused, the file jobs and those that failed for want of space, on an I/O error or
- * otherwise; no address, name, password or octet a client sent. The report, for tests, holds every
- * octet received, a password among them; of a check it names only the connection. */
+ * The NNTP server's host: sockets and the clock for the session's program, reached by `dn_next` and `dn_emit` (decision
+ * 0003). It waits with io_uring, or poll with `--io poll`; both give the program the same events. Status 1 marks a
+ * broken layout and 3 a broken contract; the rest is in docs/runbook.md. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "accounts.h"
@@ -623,8 +568,8 @@ static int accept_next(uint64_t now) {
     return admit(fd, &peer, now);
 }
 
-/* The connection `fd` accepted from `peer`, given the lowest index free: its index, or -1 when its
- * socket cannot be shaped or its TLS begun. */
+/* The connection `fd` accepted from `peer`, given the lowest free index. Returns that index, or -1 when its socket
+ * cannot be shaped or TLS begun. */
 static int admit(int fd, const struct sockaddr_storage *peer, uint64_t now) {
     pausing = 0;
     static const int one = 1;
@@ -677,24 +622,19 @@ static int take_handshakes(uint64_t now) {
     return done;
 }
 
-/* With io_uring (uring.h), the default way to wait. A plain connection's input comes from a receive
- * kept in flight while the program asks to read, into the connection's own buffer, and is given out as
- * poll's would be read; its sends go as a batch that does not wait, one call a turn; a lingering socket
- * is drained by a receive in flight. Readiness, for the very events poll is asked for, comes from epoll,
- * on whose descriptor the ring keeps a poll: io_uring's own poll reports a peer that stopped sending
- * whatever it is asked for, which poll does not. The listener is accepted from as with poll. A
- * connection's descriptor is closed, and its index given out again, only once every operation on it is
- * reaped. `--io poll` waits with poll instead. */
+/* With io_uring, the default wait: receives stay in flight while the program reads, sends go as one batch a turn.
+ * Readiness comes from epoll, polled on the ring, since io_uring's poll reports peer half-closes regardless. A
+ * descriptor is closed and its index reused only once all its operations are reaped. */
 enum { RING_ENTRIES = 512 };
 enum { R_RECV = 1, R_SEND, R_CANCEL, R_READY, R_LINGER, R_LINGER_CANCEL, R_STOP };
 static const uint8_t ring_ops[] = {IORING_OP_RECV, IORING_OP_SEND, IORING_OP_POLL_ADD, IORING_OP_ASYNC_CANCEL};
 /* What epoll watches, by its data: a connection's index, or one of these. */
 enum { E_SIGNALS = CONNS, E_CLOCK, E_JOBS, E_ACCOUNTS, E_LISTENER };
-/* The epoll descriptor, its poll on the ring in flight, readiness it reported not yet read, and the
- * listener's events in its set (-1 for none). */
+/* The epoll descriptor, whether its ring poll is in flight, unread readiness, the listener's events in its set (-1:
+ * none). */
 static int ready_fd = -1, ready_armed, ready_pending, listener_mask = -1;
-/* A connection's send of this turn ends with `send_res`; the descriptors to linger on wait in
- * `to_linger`, as lingering may itself wait, and are taken while none is being taken. */
+/* A connection's send this turn ends with `send_res`. Descriptors to linger on wait in `to_linger`, since lingering may
+ * itself wait, taken while none is. */
 static int send_res[CONNS], to_linger[CONNS], to_linger_n, lingering_now;
 static unsigned sends_live;
 
@@ -733,8 +673,8 @@ static void let_go(struct conn *c, int fd) {
     else close(fd);
 }
 
-/* The connection's descriptor leaves it, out of epoll's set: closed, or lingered on, at once if nothing
- * is in flight on it, else once its cancelled operations are reaped. */
+/* The connection's descriptor leaves it and epoll's set: closed or lingered on, at once if nothing is in flight.
+ * Otherwise once its cancelled operations are reaped. */
 static void retire(struct conn *c, int lingers) {
     int fd = c->fd;
     watch(fd, 0, &c->polled, -1);
@@ -750,8 +690,8 @@ static void retire(struct conn *c, int lingers) {
     ++c->ops;
 }
 
-/* The events connection `c` waits for beside its receive: the rest of a send, and what TLS waits for;
- * an error or a hang-up epoll reports anyway. */
+/* What connection `c` waits for beside its receive: the rest of a send and what TLS waits for. epoll reports an error
+ * or hang-up anyway. */
 static short wanted_of(const struct conn *c) {
     if (c->handshaking) return c->tls_wants;
     /* A send that waits for the peer to send waits for that alone. */
@@ -759,8 +699,8 @@ static short wanted_of(const struct conn *c) {
     return (short)((c->tls && c->reading ? POLLIN : 0) | (c->unsent ? (short)POLLOUT : 0) | c->tls_wants);
 }
 
-/* What connection `i` waits for: a receive in flight while the program reads a plain connection and
- * the last input is given out, and its events in epoll's set. */
+/* What connection `i` waits for: a receive in flight while the program reads it, plain, its last input given out. Also
+ * its events in epoll's set. */
 static void interest(int i) {
     struct conn *c = &conns[i];
     if (!c->tls && c->reading && !c->receiving && !c->input) {
@@ -797,8 +737,8 @@ static void conn_completed(unsigned kind, int i, uint32_t gen, int res) {
     if (kind == R_RECV) c->input = 1, c->got = res;
 }
 
-/* A lingering socket's receive, or its cancellation, ended with `res`; the cancellation's own end
- * may come before or after the receive's. */
+/* A lingering socket's receive or its cancellation ended with `res`. The cancellation may end before or after the
+ * receive. */
 static void lingering_completed(unsigned at, uint32_t since, int res) {
     if (at >= LINGERING || lingering[at].fd < 0 || (uint32_t)lingering[at].since != since)
         dn_violation("io_uring: a completion for a lingering socket %u not lingering", at);
@@ -1025,8 +965,8 @@ static void trace_actions(const unsigned char *a) {
     }
 }
 
-/* What became of a send of `len` octets, `read` saying whether to read once it is taken whole: the
- * kernel or TLS took `taken`, or the send `failed`. */
+/* What became of a send of `len` octets, `read` saying whether to read once it is whole. The kernel or TLS took
+ * `taken`, or the send `failed`. */
 static void sent(struct conn *cn, unsigned char *slot, uint64_t taken, int failed, uint64_t len, uint64_t read) {
     counted.out += taken;
     if (failed) {

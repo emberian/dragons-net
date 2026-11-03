@@ -5,12 +5,8 @@ import DN.Compiler.Preservation
 /-!
 # DN.Compiler.Frag
 
-A function's body proven a fragment at a time. `Frag o xs P P'` says the statements `xs`, with any
-statements after them, lower and run from `P` to `P'` before those, the locals they declare given back at
-the end of their scope; fragments compose (`frag_append`), and a fragment closed on its own lowers and runs as
-its statements alone (`frag_close`, by `fold_of_K`). Declarations, calls and single statements are fragments
-(`frag_dec`, `frag_call`, `frag_one`, `frag_oneR`). An expression reading no memory evaluates alike in states
-agreeing on what it reads (`eval_noLoad`).
+A function's body proven a fragment at a time. `Frag o xs P P'` says `xs`, before any statements, lower and run from `P`
+to `P'`. Fragments compose (`frag_append`); one closed on its own runs as its statements alone (`frag_close`).
 -/
 
 namespace DN.Compiler.Frag
@@ -25,8 +21,8 @@ def NoLoad : PancakeExp → Prop
   | .op _ l r | .mul l r | .cmp _ l r | .shiftR l r | .shiftL l r => NoLoad l ∧ NoLoad r
   | .const _ | .var _ | .base => True
 
-/-- **An expression reading no memory nor the locals `hide`** evaluates alike in states that agree on
-the other locals and the base. -/
+/-- **An expression reading no memory nor the locals `hide`** evaluates alike in states agreeing on other locals and the
+base. -/
 theorem eval_noLoad {hide : String → Prop} {s t : PancakeState σ}
     (hl : ∀ x, ¬ hide x → t.locals x = s.locals x) (hb : t.baseAddr = s.baseAddr) :
     ∀ e, NoLoad e → ExpAvoids hide e → eval t e = eval s e
@@ -65,8 +61,7 @@ theorem lowerK_append : ∀ (xs ys : List Syntax.PStmt) (k : PancakeProg),
     | none => rw [h] at ih; cases x <;> simp [Block.lowerK, ih]
     | some c => rw [h] at ih; cases x <;> simp [Block.lowerK, ih]
 
-/-- Statements from `P` to `P'` ahead of whatever follows: the locals they declare given back at
-the end of their scope. -/
+/-- Statements from `P` to `P'` ahead of whatever follows, their declared locals given back at their scope's end. -/
 def Frag (o : Oracle σ) (xs : List Syntax.PStmt) (P P' : Assn σ) : Prop :=
   ∀ (k : PancakeProg) (R : Ret) (Q : Assn σ), (∀ u y v, Q u → y ∈ declared xs → Q (restore u y v)) →
     SafeR o P' k R Q → ∃ c, Block.lowerK xs k = some c ∧ SafeR o P c R Q

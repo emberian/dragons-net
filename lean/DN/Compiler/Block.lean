@@ -5,14 +5,9 @@ import DN.Compiler.WpRet
 /-!
 # DN.Compiler.Block
 
-A function's body, put together from parts proved on their own. A block of statements lowers to a
-sequence nested to the right, so a fragment followed by more statements does not lower to the
-fragment's lowering then the rest's; it runs as that, though, when no declaration or call stands at
-the fragment's top, whose scope would take in what follows (`fold_append`). Declarations ahead of it
-lower into declarations over the rest (`fold_dec`, `fold_decs`), and any block lowers as its
-statements with what follows as their continuation (`fold_split`). A call takes what the callee is
-shown to give back (`decCallR`, `decCallM`, `decCallR_dep`). `AProg` has no call: a loop whose body
-calls goes through `WpRet.while_` and these rules, `wpR` serving between calls.
+A function's body, assembled from parts proved on their own. A fragment followed by more runs as itself then the rest
+when its top declares and calls nothing (`fold_append`). Declarations scope over the rest (`fold_dec`, `fold_decs`); a
+call takes what the callee gives back (`decCallR`, `decCallM`).
 -/
 
 namespace DN.Compiler.Block
@@ -43,8 +38,7 @@ theorem seq_congr (o : Oracle σ) (p : PancakeProg) {q q' : PancakeProg}
   | none => exact h _
   | some r => rfl
 
-/-- **A block followed by more runs as the block, then the rest**, when no declaration or call
-stands at the block's top. -/
+/-- **A block then more runs as the block, then the rest**, if its top declares and calls nothing. -/
 theorem fold_append (o : Oracle σ) :
     ∀ (xs ys : List PStmt), xs ≠ [] → ys ≠ [] → (∀ x ∈ xs, x.isDec = false) →
       ∀ {a b : PancakeProg}, Lower.lowerStmtsFold xs = some a → Lower.lowerStmtsFold ys = some b →
@@ -128,10 +122,9 @@ theorem lookupCode_of {code : String → Option (List String × PancakeProg)} {f
     lookupCode code f vs = some (body, fun k => (ps.zip vs).lookup k) := by
   simp [lookupCode, hf, hnd, hl]
 
-/-- **A call takes what the callee is shown to give back**: a callee that never finishes normally
-and gives back as `Rc`, from its entry state, hands its value and memory to the rest of the caller.
-That rest runs with the caller's locals and `rt` bound to the value; its memory, clock and external
-world are those the callee left, its memory's domain, `@base`, byte order and code the caller's. -/
+/-- **A call takes what the callee is shown to give back.** A callee that never finishes normally, giving back as `Rc`,
+hands value and memory to the caller's rest. That rest runs with the caller's locals and `rt` bound, memory, clock and
+world as the callee left. -/
 theorem decCallR {o : Oracle σ} {P Q P' Q' Pc : PancakeState σ → Prop} {R Rc : Ret}
     {rt f : String} {args : List PancakeExp} {cont body : PancakeProg}
     (hbody : SafeR o Pc body Rc (fun _ => False))
@@ -210,8 +203,8 @@ theorem decCallR_dep {o : Oracle σ} {P Q P' Q' : PancakeState σ → Prop} {R :
     (fun s t v hs hr hst => by subst hs; exact hret s t v hs0 hr hst) hcont
     (fun s t hs hq => by subst hs; exact hpost s t hs0 hq) s0 rfl
 
-/-- **Declarations ahead of a program that never finishes normally**: bound for it, the rest of
-the state as `P` has it, when each value evaluates under `P` and setting their locals keeps `P`. -/
+/-- **Declarations ahead of a program that never finishes normally** are bound for it, the rest as `P` has it. This
+holds when each value evaluates under `P` and setting their locals keeps `P`. -/
 theorem decs_run {o : Oracle σ} {R : Ret} :
     ∀ (ds : List (String × PancakeExp)) {c : PancakeProg} {P : PancakeState σ → Prop},
       (∀ d ∈ ds, ∀ s, P s → ∃ w, eval s d.2 = some w) →

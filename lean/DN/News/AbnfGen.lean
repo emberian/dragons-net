@@ -6,11 +6,9 @@ import DN.News.AbnfOrder
 /-!
 # DN.News.AbnfGen
 
-`gen`, proven to write what it is named for: its statements for a term, from one slot into another, leave there the
-ends of the term's matches from the first slot's positions, every slot a set, every word as it was but those of the
-second slot and of the slots kept for the statements' own sets (`gen_ok`, `Does`). A repetition's loop runs as
-`endsFrom` does, a frontier and the ends counted; after `lo` rounds and one more than the input has positions, its
-frontier adds nothing (`cnt_full`). A rule's function called is taken as its contract says (`BodyOk`).
+`gen`, proven to write what it is named for (`gen_ok`, `Does`). Its statements leave in one slot the ends of a term's
+matches from another slot's positions. A repetition's loop runs as `endsFrom` does; after `lo + input.size + 1` rounds
+its frontier adds nothing (`cnt_full`).
 -/
 
 namespace DN.News.AbnfGen
@@ -224,13 +222,13 @@ end
 def ProgCode (code : String → Option (List String × PancakeProg)) (ofs : Nat) : Prop :=
   ∀ f ∈ functions .none ofs, ∀ body, Lower.lower f = some body → code f.name = some (f.params.map (·.2), body)
 
-/-- What rule `i`'s function gives back: zero, slot `kd` the ends of the rule's matches from the positions of `S`,
-every slot a set, every word as in `m0` but slot `kd`'s and those of the slots from the rule's frame on. -/
+/-- What rule `i`'s function gives back: zero, slot `kd` the ends of the rule's matches from `S`. Every slot holds a
+set; words keep `m0`'s but slot `kd`'s and those from the rule's frame on. -/
 def RuleRet (A : Word) (bytes : List (BitVec 8)) (i kd : Nat) (S : Nat → Bool) (m0 : Word → Word) : Ret :=
   fun v m => v = 0 ∧ Holds A m kd (Ends bytes (.ref i) S) ∧ AllSets A m ∧ Kept A kd (frameOf i) m0 m
 
-/-- Rule `i`'s function as `code` holds it, shown from any entry with the area, two slots below its frame and what
-calls take. -/
+/-- Rule `i`'s function as `code` holds it, shown from any entry with the area and two slots below its frame. The entry
+also gives calls what they take. -/
 def BodyOk (o : Oracle σ) (ofs : Nat) (code : String → Option (List String × PancakeProg)) (i : Nat) : Prop :=
   ∀ (s1 : PancakeState σ) (A : Word) (ks kd : Nat) (S : Nat → Bool) (bytes : List (BitVec 8)),
     Area ofs A s1 → s1.code = code → ks < frameOf i → kd < frameOf i → ks ≠ kd →
@@ -299,8 +297,8 @@ theorem order_callees {k : Nat} (hk : k < order.length) : ∀ j ∈ callees orde
   simp only [List.all_eq_true, List.contains_iff_mem] at this
   exact this
 
-/-- **A call of one of the program's functions**, its body shown as its `_ok` theorem shows it, from any entry with
-the area and its parameters; the code holds it as it lowers. -/
+/-- **A call of one of the program's functions**, its body shown as its `_ok` theorem shows it. That holds from any
+entry with the area and its parameters; the code holds the body as it lowers. -/
 theorem progCall_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     {rt : String} {f : Syntax.PFun} (hnd : (f.params.map (·.2)).Nodup) {as : List Syntax.PExpr}
     {args : List PancakeExp} (has : Lower.lowerArgs as = some args)
@@ -635,15 +633,15 @@ end calls
 def Shape (k : Nat) (r : List Syntax.PStmt × Nat) : Prop :=
   LowKK r.1 ∧ k ≤ r.2 ∧ ∀ y ∈ declared r.1, ∃ j, k ≤ j ∧ j < r.2 ∧ GenName y j
 
-/-- What a term's statements leave: slot `kd` the ends of `t`'s matches from `S`, every slot a set, every word as in
-`m` but those of slot `kd` and of the slots from `free` on. -/
+/-- What a term's statements leave: slot `kd` the ends of `t`'s matches from `S`, every slot a set. Every word is as in
+`m` but slot `kd`'s and those of the slots from `free` on. -/
 def Left (A : Word) (s0 : PancakeState σ) (bytes : List (BitVec 8)) (t : Abnf.Term) (S : Nat → Bool)
     (kd free : Nat) (F : (Word → Word) → Prop) (m' : Word → Word) : Prop :=
   ∃ m, F m ∧ Holds A m' kd (Ends bytes t S) ∧ Base s0 A bytes m' ∧ Kept A kd free m m'
 
-/-- What statements `r.1` for term `t` do, from slot `s` into slot `d` with the slots from `free` on their own,
-their locals numbered from `k` to below `r.2`: from any state where slot `s` holds `S` and every call has what it
-takes, what `Left` says. `nn`, the input's length, is a local where `rp` says the statements read it. -/
+/-- What `r.1` for `t` does from slot `s` into `d`, owning slots from `free` and locals `k` to below `r.2`. From slot
+`s` holding `S`, with calls given what they take, `Left` holds. `nn`, the input's length, is a local where `rp` says the
+statements read it. -/
 def Does (o : Oracle σ) (A : Word) (s0 : PancakeState σ) (bytes : List (BitVec 8)) (rp : Bool) (t : Abnf.Term)
     (s d : Syntax.PExpr) (free k : Nat) (r : List Syntax.PStmt × Nat) : Prop :=
   ∀ (l : List (String × Value)) (F : (Word → Word) → Prop) (ks kd : Nat) (S : Nat → Bool),
@@ -820,8 +818,7 @@ theorem slotE_src {s : Syntax.PExpr} (hs : SlotE s) (free i : Nat) :
   · exact hs
   · exact .inl ⟨_, rfl⟩
 
-/-- What a sequence's terms from the `i`th leave: slot `d` the ends of their matches from the positions of the slot
-term `i` reads. -/
+/-- What a sequence's terms from the `i`th leave in slot `d`: their match ends from the slot term `i` reads. -/
 def SeqPre (f : Nat) (free : Nat) (ts : List Abnf.Term) (code : String → Option (List String × PancakeProg)) :
     Prop :=
   ∀ t ∈ ts, AbnfOrder.enough f t = true ∧
@@ -1317,8 +1314,8 @@ theorem fixed {y e : Nat} (hy : input.size ≤ y) (h : Matches AbnfRules.grammar
   have h2 := AbnfEnds.Matches.bound h
   omega
 
-/-- From round `lo` on, a frontier with a position up to the input's end comes after as many rounds as the counted
-positions up to there. -/
+/-- From round `lo` on, take a frontier holding a position up to the input's end. It comes after as many rounds as
+positions counted up to there. -/
 def Cnt (input : Array Nat) (u : Abnf.Term) (lo : Nat) (S : Nat → Bool) (c : Nat) : Prop :=
   (∃ x, x ≤ input.size ∧ Front input u lo S c x) →
     c - lo + 1 ≤ cnt (setOf (Done input u lo S c)) (input.size + 1)
@@ -1403,9 +1400,9 @@ theorem runF_swap (o : Oracle σ) {G : (Word → Word) → Prop} {pre post : Lis
 
 /-! ## A repetition's loop -/
 
-/-- The loop's memory after `c` rounds: while it goes on, slot `kd` the ends counted and slot `fr` the frontier; once
-it stops, slot `kd` the repetition's ends. Every slot a set, every word as in one of `F`'s memories but slot `kd`'s
-and those from `free` on. -/
+/-- The loop's memory after `c` rounds: going on, slot `kd` the ends counted and slot `fr` the frontier. Once stopped,
+slot `kd` holds the repetition's ends. Every slot holds a set; words keep one of `F`'s memories but slot `kd`'s and
+those from `free` on. -/
 def RepMem (A : Word) (s0 : PancakeState σ) (bytes : List (BitVec 8)) (u : Abnf.Term) (lo : Nat) (hi : Option Nat)
     (S : Nat → Bool) (kd free : Nat) (F : (Word → Word) → Prop) (go c fr : Nat) (m : Word → Word) : Prop :=
   ∃ m0, F m0 ∧ Base s0 A bytes m ∧ Kept A kd free m0 m ∧
@@ -1413,8 +1410,8 @@ def RepMem (A : Word) (s0 : PancakeState σ) (bytes : List (BitVec 8)) (u : Abnf
       (lo ≤ c → Cnt (inputOf bytes) u lo S c)) ∧
     (go = 0 → Holds A m kd (Target (inputOf bytes) u lo hi S))
 
-/-- The loop's counters: `go` a flag, `i` its turns within the bound, and while it goes on, `c` its rounds within
-`hi`, `nx` one of its two slots and `fr` another below them. -/
+/-- The loop's counters: `go` a flag and `i` its turns within the bound. While it goes on, `c` counts rounds within
+`hi`, `nx` is one of its two slots, `fr` another below them. -/
 def RepCnt (nn lo : Nat) (hi : Option Nat) (free i go c nx fr : Nat) : Prop :=
   (go = 0 ∨ go = 1) ∧ i ≤ nn + lo + 1 ∧
     (go = 1 → c = i ∧ (∀ h ∈ hi, c ≤ h) ∧ (nx = free ∨ nx = free + 1) ∧ fr < free + 2 ∧ fr ≠ nx)
@@ -1679,8 +1676,8 @@ theorem rep_swap (o : Oracle σ) {s0 : PancakeState σ} {A : Word} {bytes : List
     fun e => frag_conseq (runF_swap o (pre := [_, _, _, _]) hx1 hx2 rfl (v := BitVec.ofNat 64 free)
       fun _ _ => rfl) (fun _ h => h) (hfin free (.inl rfl) (by have := of_decide_eq_false e; omega))
 
-/-- A round after its body: the count, then the loop stopped if the round reached nothing, else what it reached
-added from round `lo` on and the slots swapped. -/
+/-- A round after its body: the count, then the loop stops if the round reached nothing. Otherwise what it reached is
+added from round `lo` on, and the slots swapped. -/
 theorem rep_tail (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     (hcode : ProgCode s0.code ofs) {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax)
     {u : Abnf.Term} {lo : Nat} {hi : Option Nat} (hlo : lo < 2 ^ 32) {S : Nat → Bool} {F : (Word → Word) → Prop}
@@ -1789,8 +1786,8 @@ theorem rep_tail (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (
         fun w h => vals_mem h (by simp)) ?_
       exact rep_swap o hfree hav hk v0 hc hib hhi hnx
 
-/-- **A round of the repetition's loop**: the body from the frontier into slot `nx`, then the count; a round that
-reaches nothing stops the loop, another counts what it adds and swaps the slots. -/
+/-- **A round of the repetition's loop**: the body from the frontier into slot `nx`, then the count. A round reaching
+nothing stops the loop; another counts what it adds and swaps the slots. -/
 theorem rep_round (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
     (hcode : ProgCode s0.code ofs) {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax)
     {u : Abnf.Term} {lo : Nat} {hi : Option Nat} (hlo : lo < 2 ^ 32) {S : Nat → Bool} {F : (Word → Word) → Prop}

@@ -6,26 +6,9 @@ import DN.Compiler.Analyzer
 /-!
 # DN.News.AbnfProg
 
-The grammar of `DN.News.AbnfRules` as Pancake functions, which say of a rule what
-`DN.News.Abnf.matches?` says: whether it matches all of an input. A function takes a set of
-positions to the set of positions a match of its rule from one of them can end at, as `endsFrom`
-does, a set at a time. A set is bits over the positions of the input with the window of words that
-holds them, in a slot of the area; a function's own sets lie in a frame of slots of its own.
-
-A term that matches one byte of a class, or one string, is a leaf: `leafClass` and `leafText` read
-it from a table. The grammar's one cycle, a comment within a comment (RFC 5322 §3.2.2), is read by
-`ruleComment`, a scan with a count of depth: a comment's end is the first `)` its depth closes. So
-no function calls itself or one that calls it, the functions come in an order in which each calls
-only those before it, and each frame lies past the frames of every function that calls it, so no
-two functions running at once share a slot. Tested against `dn-compiler abnf-model`; proven: the
-operations on sets, the leaves, `gen` and the rules' functions, and a round of `main` for a case in range
-(`DN.News.AbnfSets`, `AbnfLeaves`, `AbnfComment`, `AbnfGen`, `AbnfRun`, `AbnfMain`); not yet: that `tables` sets
-the area up and the loop around `dn_next` keeps it, and termination.
-
-So that the analysis of decision 0004 sees every access lie in the area, a set holds no address,
-and a function checks each slot it is given and each word it reads back before it makes an address
-of it: one out of range sets the area's flag of a failed check and returns 1, and the program
-answers 2.
+The grammar of `DN.News.AbnfRules` as Pancake functions answering what `Abnf.matches?` does. A function maps positions
+to the ends of its rule's matches from them, as bit sets in area slots. Proven: the set operations, leaves, rules'
+functions and a round of `main`; not yet `tables`, the `dn_next` loop and termination.
 -/
 
 namespace DN.News.AbnfProg
@@ -221,11 +204,9 @@ def sHi : Nat := 8
 def sBits : Nat := 16
 def setSize : Nat := sBits + 8 * setWords
 
-/-! The area: the rule asked, the input's length and the answer; the flag of a failed check; the
-positions the matches start from, as many as the word before them says; the input. The host writes
-these for each case (`aIO`), and nothing past them: the powers of two below 2^64 and the masks of a
-word's bytes; each class, four words; each string's place among the strings' bytes, its length and
-whether it is caseless; the strings' bytes; the slots. -/
+/-! The area: the rule asked, input length, answer, failed-check flag, the starts and the input. The host writes these
+per case (`aIO`), nothing past them. Above lie powers of two, byte masks, classes, the strings' table and bytes, then
+the slots. -/
 
 def aRule : Nat := 0
 def aLen : Nat := 8
@@ -235,8 +216,8 @@ def startsMax : Nat := 16
 def aStarts : Nat := 32
 def aStartList : Nat := aStarts + 8
 def aInput : Nat := aStartList + 8 * startsMax
-/-- Every position a set can hold and a string past it: no read passes the input's length, but the
-analysis, which does not relate a position to it, sees each read in the area. -/
+/-- Every position a set can hold and a string past it. No read passes the input's length, but the analysis, blind to
+it, sees each read in the area. -/
 def inputRoom : Nat := 64 * (setWords + 1)
 /-- The end of what the host writes for a case. -/
 def aIO : Nat := aInput + inputRoom
@@ -281,7 +262,7 @@ def pow (j : PExpr) : PExpr := .loadw 1 (eAdd (atOff (v "a") aPow) (eMul j (n 8)
 def readWin (p lo hi : String) : List PStmt :=
   [.dec lo (word (v p) sLo), kept lo (setWords - 1), .dec hi (word (v p) sHi), kept hi (setWords - 1)]
 
-/-- Word by word from `w` to `hi`, the word of the set at `q` what `f` makes of it and the word of the set at `p`. -/
+/-- From word `w` to `hi`, the word at `q` becomes `f` of it and the word at `p`. -/
 def wordLoop (w hi : String) (f : PExpr → PExpr → PExpr) : PStmt :=
   .while (eLe (v w) (v hi))
     [.store (bitWord "q" (v w)) (f (.loadw 1 (bitWord "q" (v w))) (.loadw 1 (bitWord "p" (v w)))), inc w]
@@ -302,7 +283,7 @@ def addWin (m : Mutant) : List PStmt :=
       [.ite (eLt (v "yw") (v "dl")) [.assign "dl" (v "yw")] [],
        .ite (eLt (v "dh") (v "yw")) [.assign "dh" (v "yw")] []]]
 
-/-- The set at `q` given position `y` too, its window's ends so far in `dl` and `dh`, `df` set while none is. -/
+/-- The set at `q` given position `y` too. Its window's ends so far are in `dl` and `dh`, `df` set while none is. -/
 def addBit (m : Mutant) (y : PExpr) : List PStmt := posParts y ++ [setBit] ++ addWin m
 
 /-- The window's ends, none yet: a set built from nothing. -/
@@ -353,8 +334,8 @@ def clearQ : List PStmt :=
   [.dec "cw" (v "cl"), wordLoop "cw" "ch" (fun _ _ => n 0),
    .store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
 
-/-- The window of the set at `q`, read into `dl` and `dh`, widened to take `[lo, hi]`: an empty one, `dh < dl`,
-becomes it; another takes the lower start, as the test `cLo` says, and the higher end. -/
+/-- The window of the set at `q`, read into `dl` and `dh`, widened to take `[lo, hi]`. An empty one, `dh < dl`, becomes
+it; another takes the lower start, per `cLo`, and the higher end. -/
 def widen (lo hi : String) (cLo : PExpr) : PStmt :=
   .ite (eLt (v "dh") (v "dl"))
     [.store (atOff (v "q") sLo) (v lo), .store (atOff (v "q") sHi) (v hi)]
@@ -424,8 +405,8 @@ def textHead : List PStmt :=
    .dec "len" (word (v "t") 8), kept "len" textMax,
    .dec "cf" (word (v "t") 16), kept "cf" 1]
 
-/-- Whether the string lies at `x`: `ok` cleared at a byte that differs, an upper case letter made lower case when
-`cf`. -/
+/-- Whether the string lies at `x`: `ok` cleared at a differing byte. With `cf`, an upper case letter is made lower case
+first. -/
 def textCmp (m : Mutant) : PStmt :=
   .while (eLt (v "i") (v "len"))
     [.dec "b" (byte (eAdd (eAdd (atOff (v "a") aInput) (v "x")) (v "i"))),
@@ -520,7 +501,7 @@ def nextByte : PExpr := byte (eAdd (eAdd (atOff (v "a") aInput) (v "y")) (n 1))
 /-- Whether a byte follows `y` in the input. -/
 def nextIn : PExpr := eLt (eAdd (v "y") (n 1)) (v "nn")
 
-/-- The comment's scan at the byte in `b`, in state `sm` with `dep` comments open: `go` cleared where no comment can
+/-- The comment's scan at the byte in `b`, in state `sm` with `dep` comments open. `go` is cleared where no comment can
 go on, 2 where the first closes. -/
 def scanByte (m : Mutant) : PStmt :=
   .ite (eEq (v "sm") (n 2))
@@ -588,11 +569,11 @@ def leafCall (c : String) (l : Leaf) (s d : PExpr) : PStmt :=
 section
 variable (m : Mutant)
 
-/-- What `gen` does to a term's parts: `g t s d free k` puts into slot `d` the ends of the matches of `t` from
-the positions in slot `s`, with the slots from `free` on for its own sets; `k` numbers its locals. -/
+/-- What `gen` does to a term's parts. `g t s d free k` puts into slot `d` the ends of `t`'s matches from slot `s`'s
+positions. The slots from `free` on hold its own sets; `k` numbers its locals. -/
 abbrev Gen := Term → PExpr → PExpr → Nat → Nat → List PStmt × Nat
 
-/-- A sequence's terms from the `i`th: each result but the last into one of two slots in turn; an empty one ends
+/-- A sequence's terms from the `i`th: each result but the last goes into one of two slots in turn. An empty one ends
 the sequence with none. -/
 def seqFrom (g : Gen) (s d : PExpr) (free : Nat) : Nat → List Term → Nat → List PStmt × Nat
   | _, [], k => ([], k)
@@ -632,7 +613,7 @@ def repStop (k : Nat) : Option Nat → List PStmt
   | some h => if m == .repPastBound then [] else [.ite (eLe (n h) (v s!"n{k}")) [.assign s!"g{k}" (n 0)] []]
   | none => []
 
-/-- A round after its body: the count, whether it reached anything, and if so what it adds and the slots swapped. -/
+/-- A round after its body: the count and whether it reached anything. If so, what it adds, then the slots swapped. -/
 def repTail (k free lo : Nat) (d : PExpr) : List PStmt :=
   [inc s!"n{k}", .call s!"e{k}" "setEmpty" [v s!"x{k}"],
    .ite (v s!"e{k}") [.assign s!"g{k}" (n 0)]
@@ -640,9 +621,9 @@ def repTail (k free lo : Nat) (d : PExpr) : List PStmt :=
       .assign s!"f{k}" (v s!"x{k}"),
       .ite (eEq (v s!"x{k}") (n free)) [.assign s!"x{k}" (n (free + 1))] [.assign s!"x{k}" (n free)]]]
 
-/-- As `endsFrom`: from the frontier, the positions the last round reached that were not reached before, a round
-more, while the bound allows and a round reaches any; from round `lo` on, what a round reaches counts. The rounds
-write two slots in turn, `f{k}` naming the frontier's and `x{k}` the next round's; `body` is a round's term. -/
+/-- As `endsFrom`: from the frontier, a round more while the bound allows and a round reaches anything new. From round
+`lo` on, what a round reaches counts. Rounds write `f{k}`, the frontier's slot, and `x{k}`, the next round's, in turn;
+`body` is a round's term. -/
 def repStmts (s d : PExpr) (free lo : Nat) (hi : Option Nat) (k : Nat) (body : List PStmt) : List PStmt :=
   [if lo == 0 then .call s!"{s!"c{k}"}b" "setCopy" [d, s] else .call s!"{s!"c{k}"}b" "setClear" [d],
    .dec s!"f{k}" s, .dec s!"x{k}" (n free), .dec s!"n{k}" (n 0), .dec s!"g{k}" (n 1), .dec s!"i{k}" (n 0),

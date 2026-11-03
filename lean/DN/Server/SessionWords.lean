@@ -5,10 +5,9 @@ import DN.Server.SessionText
 /-!
 # DN.Server.SessionWords
 
-The session's scan of a line's words, `scanWords`: `w` their count and the first places as `WordsRun.spans` gives
-them (`scanWords_frag`); a word compared with a text in any case, `wordIsAt` (`wordIsAt_frag`); CAPABILITIES's
-keyword check, `CommandSpec.isKeyword` (`keyword_frag`). Each a fragment of the function holding it: if it goes on,
-its locals hold these; a run that does not end is not excluded.
+The session's scan of a line's words: `w` their count, the first places as `WordsRun.spans` gives (`scanWords_frag`). A
+word compared with a text in any case (`wordIsAt_frag`), CAPABILITIES's keyword check (`keyword_frag`). Each holds if it
+goes on; non-ending runs are not excluded.
 -/
 
 namespace DN.Server.SessionWords
@@ -22,8 +21,8 @@ open DN.Server.SessionCheck (zeroState)
 
 variable {σ : Type}
 
-/-- The statements setting the `j`-th word's place and on, the name `sel` picks of each in `nm`, to `e` when the
-word is the `w`-th. -/
+/-- The statements setting the `j`-th word's place and on, the name `sel` picks of each in `nm`. Each is set to `e` when
+the word is the `w`-th. -/
 def ifsFrom (sel : String × String → String) (e : Syntax.PExpr) : List (String × String) → Nat → List Syntax.PStmt
   | [], _ => []
   | p :: rest, j =>
@@ -778,9 +777,8 @@ theorem lowKK_scanBody (nm : List (String × String)) : LowKK (scanBody nm) :=
       (lowKK_append (xs := [_]) (lowKK_one rfl rfl) (lowKK_one rfl rfl))) (lowKK_ifs Prod.fst rfl nm 0))
       (fun k => ⟨k, rfl⟩))) (lowKK_one rfl rfl))
 
-/-- **The session's scan of the line's words**: from the line in the framer's block, if it goes on, `w` holds how
-many words it has and the first ones' places hold where they start and how long they are, every other local and
-word as they were. -/
+/-- **The session's scan of the line's words.** From the line in the framer's block, if it goes on, `w` holds the word
+count. The first ones' places hold their starts and lengths; every other local and word stays. -/
 theorem scanWords_frag (o : Oracle σ) (k : Nat) (hnm : NmOk (scanNmFrom 0 k))
     (hbk : "blk" ∉ scanNames (scanNmFrom 0 k)) (hkk : "kept" ∉ scanNames (scanNmFrom 0 k)) {L : List Byte}
     {B : Word} {s0 : PancakeState σ} (hl : LineIn B L s0) :
@@ -892,7 +890,7 @@ structure WordAt (sn ln : String) (B S : Word) (w : List Byte) (s : PancakeState
     memLoadByte s.memory s.memaddrs s.be (B + BitVec.ofNat 64 40 + (S + BitVec.ofNat 64 i)) = some w[i]
   short : w.length < 2 ^ 62
 
-/-- The comparison so far: the word as long as the text, and its first `i` octets in upper case the text's. -/
+/-- The comparison so far: the word as long as the text, its first `i` octets in upper case the text's. -/
 def prefixIs (w T : List Byte) (i : Nat) : Bool := decide
     (w.length = T.length ∧ (w.take i).map CommandSpec.upper = T.take i)
 
@@ -964,7 +962,7 @@ theorem wordIsAt_low (sn ln : String) {t : Nat} (ht : t < texts.length) : LowKK 
     (lowKK_one rfl (by
       simp only [Lower.lowerStmt1, hBl]; simp [Syntax.eAnd, Syntax.eLt, Syntax.v, Lower.lowerExp]; rfl)))
 
-/-- **The word's comparison with text `t`**: if it goes on, `eqk` is one when the word in upper case is the text. -/
+/-- **The word's comparison with text `t`**: if it goes on, `eqk` is one when the upper-case word is the text. -/
 theorem wordIsAt_frag (o : Oracle σ) {sn ln : String} (hsn : sn ≠ "eqk" ∧ sn ≠ "jq") (hln : ln ≠ "eqk" ∧ ln ≠ "jq")
     {t : Nat} (ht : t < texts.length) {b B S : Word} {w : List Byte} {s1 : PancakeState σ}
     (hw : WordAt sn ln B S w s1) (hb : s1.baseAddr = b)

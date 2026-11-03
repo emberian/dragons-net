@@ -1,33 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * dn-load: an open-loop load for a TCP server whose replies are known in advance.
- *
- * `--requests FILE` gives the exchanges, each the octets sent and the octets the reply must be,
- * every length a 32-bit little-endian count before its octets: first the opening, sent as a
- * connection opens and answered with what the server says unasked too, then the requests.
- * `--conns` connections over `--threads` threads each go through the opening, then send requests
- * a seeded generator draws, one in flight. Requests fall due at `--rate` a second in all, on a
- * schedule that does not wait for the server: a request late to go keeps the time it fell due,
- * and its latency runs from then to its reply's last octet (wrk2's correction of coordinated
- * omission). Replies are compared as they arrive, and octets with no request in flight are wrong.
- * The threads sleep with a timer slack of 1 ns, and how late each request went is kept apart.
- *
- * After `--warmup` seconds the load counts for `--seconds`, and says `window` and `end` on stderr
- * as it starts and stops counting; no request falls due after. For two seconds more it waits for
- * replies. A reply is timed when its request fell due in the window; a request of the window still
- * unanswered at the end is timed to the end, a lower bound, and `owed`. `served` counts the
- * replies that arrived in the window, `achieved` is a second's share of them, and `answered`
- * counts every reply of the run.
- *
- * `--slow K` adds K connections with a small receive buffer that send request 0 again and again,
- * megabytes of replies, and take 16 octets every `--slow-ms`: the server holds output it cannot
- * send while it serves the rest. Once the window closes they read as fast as they can. Their
- * octets are judged alike and counted, those taken at their pace apart (`slow_paced`); a reply
- * sent twice reads as the next, which is the same.
- *
- * It prints a JSON record: counts, quantiles, the histograms' nonempty cells, its own CPU time.
- * Status 0 when every reply was right and every connection lasted, 1 otherwise, 2 for a usage
- * error. `dn-load --cells` prints the histogram's cells instead.
+ * dn-load: an open-loop load for a TCP server with known replies; `--requests FILE` gives the exchanges. Requests fall
+ * due at `--rate` regardless of the server, latency from due time to reply (wrk2's coordinated-omission correction).
+ * Prints a JSON record; status 0 if all replies were right and connections lasted, 1 otherwise, 2 on usage error.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -47,8 +22,8 @@
 #include <time.h>
 #include <unistd.h>
 
-/* A log-linear histogram of nanoseconds: exact below 128, then 64 cells a power of two, so a
- * cell's width is under 1/64 of its values. */
+/* A log-linear histogram of nanoseconds: exact below 128, then 64 cells a power of two. A cell's width is under 1/64 of
+ * its values. */
 enum { EXACT = 128, CELLS = EXACT + 57 * 64 };
 
 struct histogram {

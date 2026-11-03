@@ -4,8 +4,8 @@ import DN.News.RecoverSlots
 /-!
 # DN.News.RecoverLate
 
-Recovery's phases 5 to 13 as the program runs them are `RecoverSpec`'s: the files, the next number, the torn tail,
-the second pass, a final file set aside, a new journal, the end.
+Recovery's phases 5 to 13 as the program runs them are `RecoverSpec`'s. Files, next number, torn tail, second pass, a
+final set aside, a new journal and the end.
 -/
 
 namespace DN.News.RecoverArea
@@ -208,8 +208,8 @@ theorem numbered_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r :
     exact frag_nil o fun u hu => mid_end hu (offs_all (by and_intros <;> rfl)) (fun hr => rest_phase hr (by omega)
       (fun h => by simp at h) rfl rfl rfl rfl rfl) (vals_lookup hu.vals rfl)
 
-/-- **The torn tail's octets**, in the scanner's window: where the window holds the journal to its end, from at or
-before the cut. -/
+/-- **The torn tail's octets**, in the scanner's window. That holds where the window holds the journal to its end from
+at or before the cut. -/
 theorem tail_octets {A : Word} {J : Bytes} {st : St} {cut : Nat} {u : PancakeState σ}
     (ha : AreaAt (at_ A rScan) J st u) (hv : Valid J st) (hb : st.base ≤ cut) (hc : cut ≤ J.length)
     (he : J.length ≤ st.base + st.len) :
@@ -410,8 +410,8 @@ theorem recorded_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r :
     · rw [seqSeen_mono hsn]
   exact mid_lookups hu ⟨by rw [← seqSeen_all, ← hall]; rfl, rfl, rfl, trivial⟩
 
-/-- **Phase 8**, a name of the second pass: a temporary file removed; a final file no commit names set aside, or
-removed when set aside already or not to be; a name set aside counted; or the end of the names. -/
+/-- **Phase 8**, a name of the second pass: a temporary file removed. A final file no commit names is set aside, or
+removed if already set aside or not to be. A name set aside is counted; or the names end. -/
 theorem secondPass_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeState σ}
     (h : PIn A cfg J r s0) (hp : r.phase = 8) (hok : ∀ c ∈ r.commits, c.ok = true)
     (hcap : r.commits.length ≤ capacity) (hmt : r.maxTail < 2 ^ 64) :

@@ -4,9 +4,9 @@ import DN.News.AbnfProg
 /-!
 # DN.News.AbnfMatch
 
-What a grammar matches, as a relation: `Matches g input t p e` when a match of `t` from `p` can end at `e`, the
-plain meaning that `Abnf.endsFrom` is to work out with its memo and fuel. A term that matches one byte of a class
-(`AbnfProg.classOf`) or one string (`AbnfProg.textOf`) matches as its class or string says.
+What a grammar matches, as a relation: `Matches g input t p e` when a match of `t` from `p` can end at `e`. This is the
+plain meaning `Abnf.endsFrom` works out with memo and fuel. A class or string term matches as its class
+(`AbnfProg.classOf`) or string (`AbnfProg.textOf`) says.
 -/
 
 namespace DN.News.AbnfMatch
@@ -329,8 +329,8 @@ theorem termsEq_sound : ∀ ts us : List Term, termsEq ts us = true → ts = us
   | [], _ :: _, h | _ :: _, [], h => by simp [termsEq] at h
 end
 
-/-- Rule `i` of the grammar is `t`, as the kernel compares them: the elaborator cannot unfold the grammar's
-array that deep. -/
+/-- Rule `i` of the grammar is `t`, as the kernel compares them. The elaborator cannot unfold the grammar's array that
+deep. -/
 theorem rule_eq {i : Nat} {t : Term} (h : (match grammar[i]? with | some u => termEq u t | none => false) = true) :
     grammar[i]? = some t := by
   revert h; cases grammar[i]? with
@@ -469,8 +469,8 @@ theorem comment_iff {y e : Nat} : Matches grammar input (.ref 31) y e ↔
 def After (input : Array Nat) (m z : Nat) : Prop :=
   m = z ∨ ∃ c, Matches grammar input (.ref 28) m c ∧ Rest0 input c z
 
-/-- A comment's parts from `y` up to the `)` at `z`, white space before `y` in the scan's state `s`: 0 after `(` or a
-part, 1 in white space, 2 just after its line break, 3 in white space after it. -/
+/-- A comment's parts from `y` to the `)` at `z`, white space before `y` in scan state `s`. States: 0 after `(` or a
+part, 1 in space, 2 after its line break, 3 in space after it. -/
 def Rest (input : Array Nat) : Nat → Nat → Nat → Prop
   | 0, y, z => Rest0 input y z
   | 1, y, z => ∃ m, (WStar input y m ∨ ∃ c, WStar input y c ∧ CrlfAt input c ∧ WPlus input (c + 2) m) ∧ After input m z
@@ -668,8 +668,8 @@ theorem rest_wsp {s y z b : Nat} (hs : s = 0 ∨ s = 1 ∨ s = 3) (hb : input[y]
   · obtain ⟨m, ht, ha⟩ := hr
     exact ⟨m, wstar_cons h1 ht, ha⟩
 
-/-- **The scan reads comments**: from `y` in state `s` with `d` open, a run that closes the last at `e - 1`
-reads the parts up to a `)` at `z`, then `d - 1` comments that close. -/
+/-- **The scan reads comments**: from `y` in state `s` with `d` open, a run closing the last at `e - 1`. It reads the
+parts up to a `)` at `z`, then `d - 1` comments that close. -/
 theorem runs_sound {y d s e : Nat} (h : Runs input y d s e) (hd : 1 ≤ d) (hs : s ≤ 3) :
     ∃ z, Rest input s y z ∧ input[z]? = some 41 ∧ Tail input (d - 1) (z + 1) e := by
   induction h with
@@ -834,7 +834,7 @@ theorem part_reach (n : Nat) : ∀ y c, c ≤ y + n → ∀ d s, 1 ≤ d → (s 
     rw [if_neg (by omega), Nat.add_sub_cancel] at hcl
     exact .step (step_open hb (by omega)) ((items k (y + 1) hk (Nat.le_refl _)).trans (h1.trans (.step hcl .refl)))
 
-/-- **A comment is what the scan reads**: from its `(`, one comment open, the scan closes it where the match ends. -/
+/-- **A comment is what the scan reads.** From its `(`, one comment open, the scan closes it where the match ends. -/
 theorem runs_of_comment {x e : Nat} (h : Matches grammar input (.ref 31) x e) :
     input[x]? = some 40 ∧ Runs input (x + 1) 1 0 e := by
   obtain ⟨hb, z, ⟨m, hi, hg⟩, hz, rfl⟩ := comment_iff.1 h
@@ -857,8 +857,8 @@ theorem runs_of_comment {x e : Nat} (h : Matches grammar input (.ref 31) x e) :
   rw [if_pos rfl] at hcl
   exact runs_of_reach ((items k (x + 1) hk).trans h1) (.done hcl)
 
-/-- **The comment's matches are the scan's**: a match of `comment` from `x` ends at `e` exactly when `x` holds `(`
-and the scan from past it closes there. -/
+/-- **The comment's matches are the scan's.** A `comment` match from `x` ends at `e` exactly when `x` holds `(` and the
+scan past it closes there. -/
 theorem comment_runs {x e : Nat} :
     Matches grammar input (.ref 31) x e ↔ input[x]? = some 40 ∧ Runs input (x + 1) 1 0 e := by
   refine ⟨runs_of_comment, fun ⟨hb, hr⟩ => ?_⟩
@@ -966,8 +966,8 @@ theorem textOf_lowered (f : Nat) : ∀ (t : Term) (bs : List Nat), textOf f t = 
     | alt => simp [textOf] at h
     | rep => simp [textOf] at h
 
-/-- **A term that is a string** matches where `leafText` finds it: each byte, folded when the string is caseless and
-holds a letter, its byte. -/
+/-- **A term that is a string** matches where `leafText` finds it. Each input byte, folded if the string is caseless and
+it is a letter, is the string's byte. -/
 theorem text_match {f : Nat} {t : Term} {bs : List Nat} {c : Bool} (ht : textOf f t = some (bs, c)) {x e : Nat} :
     Matches grammar input t x e ↔ (∀ i (h : i < bs.length), ∃ b, input[x + i]? = some b ∧
       foldB (c && bs.any fun b => 97 ≤ b && b ≤ 122) b = bs[i]) ∧ e = x + bs.length := by

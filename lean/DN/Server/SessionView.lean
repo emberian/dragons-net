@@ -4,9 +4,8 @@ import DN.Server.SessionFn
 /-!
 # DN.Server.SessionView
 
-`viewClassify` keeps its contract `FnOk`: on a line of words, if it returns, it gives back zero and leaves in the
-return word the code of the reply `CommandSpec.answerIn` gives OVER, HDR, XOVER and XHDR (`viewClassify_ok`). What
-its own words hold is not shown. The fragments hold if they go on.
+`viewClassify` keeps its contract `FnOk` for OVER, HDR, XOVER and XHDR (`viewClassify_ok`). On a line of words, if it
+returns, it gives back zero and `answerIn`'s code. What its own words hold is not shown.
 -/
 
 namespace DN.Server.SessionClassify
@@ -44,7 +43,7 @@ section ViewTree
 open DN.Compiler.Syntax DN.Server.Session
 open DN.Server.SessionStore (ne or2 ifs inc give)
 
-/-- A message-id, where `ids` is one, or a range: `sel` one or two and their places or bounds kept, else zero. -/
+/-- A message-id where `ids` is one, or a range: `sel` one or two, their places or bounds kept. Else zero. -/
 def vpick (s l ids : PExpr) : List PStmt :=
   [.assign "ok" (n 0), ifs ids (messageIdCheckAt s l),
    .ite (v "ok") [.assign "sel" (n 1), fset ownVs s, fset ownVl l]
@@ -546,8 +545,8 @@ theorem lowKK_field : LowKK fieldTree := by
   rw [hsplit]
   exact lowKK_append (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_ite rfl lowKK_serve fun k => ⟨k, rfl⟩)
 
-/-- **HDR's field**: a header's name, or a metadata item's, and whether it is served: if it goes on, the code
-`hdrCode`. -/
+/-- **HDR's field**: a header's or a metadata item's name, and whether it is served. If it goes on, the code `hdrCode`.
+-/
 theorem field_frag (o : Oracle σ) {b : Word} {ci K : Nat} {L : List Byte} {e : PancakeState σ}
     (he : VEntry b ci K L e) (h2 : 2 ≤ (spans L).length) :
     Frag o fieldTree (VAt b ci L e) (VEnd b e (hdrCode (cut L ((spans L).getD 1 (0, 0))))) := by
@@ -799,9 +798,8 @@ theorem view_lowers : ∃ body, Lower.lower Session.viewClassify = some body := 
   rw [Lower.lower, view_eq, Block.fold_split viewBody _ (by simp [SessionStore.give]) give_lower]
   exact hc
 
-/-- **`viewClassify` gives the code of `CommandSpec.answerIn`'s reply to OVER, HDR, XOVER and XHDR**: from its entry
-on a line of words, if it returns, it gives back zero, that code in the return word, every word but `clsWords` as it
-was. -/
+/-- **`viewClassify` gives the code of `answerIn`'s reply to OVER, HDR, XOVER and XHDR.** From its entry on a line of
+words, if it returns, it gives back zero and that code. Every word but `clsWords` is as it was. -/
 theorem viewClassify_ok (o : Oracle σ) (b : Word) {code : String → Option (List String × PancakeProg)}
     {body : PancakeProg} (hcode : code "viewClassify" = some (["c", "cmd"], body))
     (hbody : Lower.lower Session.viewClassify = some body) : FnOk o "viewClassify" b IsView code := by

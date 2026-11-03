@@ -5,17 +5,9 @@ import DN.Compiler.CanonRun
 /-!
 # DN.EndToEnd
 
-**What `Parse` reads from the session's printed text never fails.** The gate prints the session's
-program; `ParseCorrect` proves that `Parse`, the Lean copy of CakeML's parser, reads the text as the
-program's functions, each body in the model with its lowering's canonical form; `CanonRun` proves a
-program fails exactly where its canonical form does; `SessionSafe` proves the lowering never fails.
-So the `main` `Parse` reads, entered from a heap covering the layout and from code holding the
-functions read, never fails, whatever the host does (`text_never_fails`). Those two premises can
-hold together (`text_premises_witness`); the third, that the gate accepts the session, holds by
-evaluating `Session.regression_824`.
-
-Only that the program never fails is proven: that it answers as `SessionSpec` says is tested. The
-links from here to the machine code are listed in `docs/assurance.md`, "What is trusted".
+**What `Parse` reads from the session's printed text never fails** (`text_never_fails`), whatever the host does. It
+joins `ParseCorrect`, `CanonRun` and `SessionSafe`; the premises hold together (`text_premises_witness`). Only never
+failing is proven; answering as `SessionSpec` says is tested.
 -/
 
 namespace DN.EndToEnd
@@ -119,12 +111,9 @@ theorem sessionTree_params : ∀ G ∈ sessionTree, G.params.Nodup := by
     rw [show Session.main.params = [] from rfl]
     exact List.nodup_nil
 
-/-- **What `Parse` reads from the session's printed text never fails**: the text reads as the
-session's functions, their names and parameters distinct and every name of their bodies local,
-and a `main`
-without parameters. That `main`, entered from a heap covering the layout and from code holding the
-functions read, never fails, for every external world, clock and heap content. The code's entry
-for `main` is how its `Call` finds it; the proof does not need it. -/
+/-- **What `Parse` reads from the session's printed text never fails.** It reads the session's functions, names and
+parameters distinct, body names local, and a parameterless `main`. That `main`, from a heap covering the layout and code
+holding the functions, never fails, whatever world, clock or heap. -/
 theorem text_never_fails (o : Oracle σ) {src : String} (hsrc : Session.source = .ok src) :
     Parse.program src = some sessionTree ∧ (sessionTree.map (·.name)).Nodup ∧
       (∀ G ∈ sessionTree, G.params.Nodup) ∧ (∀ G ∈ sessionTree, LocalP G.body) ∧ ∃ F ∈ sessionTree, F.name = "main" ∧ F.params = [] ∧
@@ -178,8 +167,7 @@ theorem text_never_fails (o : Oracle σ) {src : String} (hsrc : Session.source =
   rw [hbm] at hcan
   exact fun hf => hnf ((fails_same o hcan (canonState_code t hcc).symm).mp hf)
 
-/-- The premises hold together: of a state with a heap of just the layout above the first page and
-the code the functions read make. -/
+/-- The premises hold together: a heap of just the layout above the first page, code from the functions read. -/
 theorem text_premises_witness :
     ∃ t : PancakeState Unit, Covers SessionLayout.size t.memaddrs t.baseAddr ∧
       ∀ G ∈ sessionTree, t.code G.name = some (G.params, plainProg G.body) :=

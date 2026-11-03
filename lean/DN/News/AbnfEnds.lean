@@ -6,9 +6,9 @@ import DN.News.AbnfMutant
 /-!
 # DN.News.AbnfEnds
 
-`Abnf.endsFrom`, with its memo, fuel and the repetition's loop, answers what `AbnfMatch.Matches` says: when a run
-answers, its positions are the ends of the term's matches (`ends_ok`), and `Abnf.matches?` whether the rule matches
-all of the bytes (`matches?_ok`).
+`Abnf.endsFrom`, with its memo, fuel and repetition loop, answers what `AbnfMatch.Matches` says. When a run answers, its
+positions are the term's match ends (`ends_ok`). `Abnf.matches?` answers whether the rule matches all the bytes
+(`matches?_ok`).
 -/
 
 namespace DN.News.AbnfEnds
@@ -297,9 +297,9 @@ theorem asc_sub_lt : ∀ {U A : Pos}, Asc U → Asc A → (∀ x ∈ A, x ∈ U)
 section rep
 variable (g input) (u : Term) (lo p : Nat)
 
-/-- The repetition's loop after `c` rounds, its frontier `F` and the ends counted `SD`, descending: before round `lo`
-the frontier is all `c` matches reach; from it on, `SD` holds what rounds `lo` to `c` reach and `F` what round `c`
-reached first, and the ends counted grow by one at least each round the frontier is not empty. -/
+/-- The repetition's loop after `c` rounds: frontier `F`, ends counted `SD`, descending. Before round `lo` the frontier
+is all `c` rounds reach; after, `SD` holds what rounds `lo` to `c` reach. `F` is what round `c` reached first; `SD`
+grows strictly each round the frontier is nonempty. -/
 def RepInv (c : Nat) (F SD : Pos) : Prop :=
   Asc F ∧ Asc SD.reverse ∧
     (c < lo → (∀ x, x ∈ F ↔ Rep g input u c p x) ∧ SD = []) ∧
@@ -611,7 +611,7 @@ theorem ok_modify {f : Memo → Memo} {M : Memo} {P : PUnit → Memo → Prop} (
 section
 variable (g : Array Term) (input : Array Nat)
 
-/-- Every end the memo holds for a rule at a position is an end of its matches there, and every such end is held. -/
+/-- Where the memo has a rule at a position, it holds exactly the ends of its matches there. -/
 def MemoOk (M : Memo) : Prop :=
   ∀ p i e, (M[p]?.getD []).lookup i = some e → Asc e ∧ ∀ x, x ∈ e ↔ Matches g input (.ref i) p x
 

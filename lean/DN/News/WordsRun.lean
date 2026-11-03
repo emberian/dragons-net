@@ -4,17 +4,16 @@ import DN.News.CommandSpec
 /-!
 # DN.News.WordsRun
 
-A line's words as places: where each starts and how long it is (`spans`), the words `CommandSpec.words` gives being
-the octets there (`words_spans`); the places as an octet-by-octet scan finds them (`scanTo`, `spans_end`), each within
-the line and none empty (`spans_bound`, `spans_pos`).
+A line's words as places, each `(start, length)` (`spans`), `CommandSpec.words` being the octets there (`words_spans`).
+An octet scan finds the places (`scanTo`, `spans_end`), each within the line and none empty (`spans_bound`,
+`spans_pos`).
 -/
 
 namespace DN.News.WordsRun
 
 open DN.News DN.News.FrameSpec
 
-/-- Where the words of `l` from position `q` on lie, as `(start, length)`, `cur` the start of a word not yet
-ended. -/
+/-- Where the words of `l` from position `q` lie, as `(start, length)`. `cur` is the start of a word not yet ended. -/
 def spansFrom : List Byte → Nat → Option Nat → List (Nat × Nat)
   | [], _, none => []
   | [], q, some st => [(st, q - st)]

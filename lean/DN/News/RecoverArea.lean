@@ -6,9 +6,9 @@ import DN.News.ScanStop
 /-!
 # DN.News.RecoverArea
 
-What recovery's area holds as a state of `DN.News.RecoverSpec` (`RAt`), what a step leaves in it for its caller
-(`OutR`), and what a phase of `RecoverProg.stepWith` is shown to do (`PIn`, `POut`): from a state whose area holds
-`r`, it leaves the area holding what `RecoverSpec.phase` gives and, when that asks or gives, the status for it.
+What recovery's area holds as a `DN.News.RecoverSpec` state (`RAt`) and what a step leaves its caller (`OutR`). A phase
+of `RecoverProg.stepWith` is shown by `PIn` and `POut`. From an area holding `r`, it leaves `RecoverSpec.phase`'s state
+and, when asked or given, the status.
 -/
 
 namespace DN.News.RecoverArea
@@ -92,8 +92,8 @@ theorem offs_all {p : Nat → Prop} (h : p rPhase ∧ p rI ∧ p rWait ∧ p rFi
 def BytesAt (A : Word) (x : Nat) (bs : Bytes) (u : PancakeState σ) : Prop :=
   ∀ i (h : i < bs.length), memLoadByte u.memory u.memaddrs u.be (at_ A (x + i)) = some bs[i]
 
-/-- The configuration: its key, and each group's length and name in its slot, at most `groupsMax` groups of at
-most `groupNameMax` octets. -/
+/-- The configuration: its key, and each group's length and name in its slot. At most `groupsMax` groups of at most
+`groupNameMax` octets. -/
 structure CfgAt (A : Word) (cfg : Config) (u : PancakeState σ) : Prop where
   key : BytesAt A rKey cfg.key u
   keyLen : cfg.key.length = keyLength
@@ -115,9 +115,8 @@ theorem slotAt_le {i : Nat} (h : i < capacity) : rSlots ≤ slotAt i ∧ slotAt 
   simp only [slotAt, show slotSize = 416 from rfl]
   omega
 
-/-- Commit `c` in slot `i`: its number, its sizes, its CRC, its Message-ID's length and its count of groups, the
-Message-ID's tag under the configuration's key, the Message-ID, and each group's place in the configuration and its
-article number. -/
+/-- Commit `c` in slot `i`: number, sizes, CRC, Message-ID length, group count, and the Message-ID's tag under the key.
+Then the Message-ID, and each group's place in the configuration and its article number. -/
 structure SlotR (A : Word) (cfg : Config) (i : Nat) (c : Commit) (u : PancakeState σ) : Prop where
   seq : u.memory (at_ A (slotAt i + slotSeq)) = .ofNat 64 c.seq
   sizes : u.memory (at_ A (slotAt i + slotSizes)) = (BitVec.ofNat 64 c.headerSize <<< 32) ||| .ofNat 64 c.fileSize
@@ -140,9 +139,9 @@ def highOf (cfg : Config) (cs : List Commit) (x : Nat) : Nat :=
 def HighAt (A : Word) (cfg : Config) (cs : List Commit) (u : PancakeState σ) : Prop :=
   ∀ x, x < groupsMax → u.memory (at_ A (rHigh + x * 8)) = .ofNat 64 (highOf cfg cs x)
 
-/-- What the area holds besides `scalars`: the number asked about while it is read, the name, the first group the
-configuration lacks, the configuration, the scanner's state, kept in its window, once it reads the journal, the
-commits in their slots, and once the rules hold, each group's highest article number. -/
+/-- What the area holds besides `scalars`: the number asked about while read, the name, the first group lacking, the
+configuration. The scanner's state in its window once it reads the journal, the commits in their slots. Once the rules
+hold, each group's highest article number. -/
 structure Rest (A : Word) (cfg : Config) (J : Bytes) (r : RSt) (u : PancakeState σ) : Prop where
   seq : r.phase = 9 ∨ r.phase = 12 → u.memory (at_ A rSeq) = .ofNat 64 r.seq
   nameLen : r.name.length ≤ nameMax
@@ -268,8 +267,8 @@ theorem free_scalar : ∀ x ∈ scalarOffs, Free x ∧ x % 8 = 0 := by
   rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
 
-/-- Offsets of words a phase's state between stores lists: of what a step gives, of the scanner's, and the number
-asked about. -/
+/-- Offsets of words a phase's state between stores lists: what a step gives, the scanner's, and the number asked about.
+-/
 def Known (x : Nat) : Prop := x ∈ outOffs ∨ (rScan ≤ x ∧ x < rSlots) ∨ x = rSeq
 
 theorem out_range : ∀ x ∈ outOffs, x = rStatus ∨ (rAct ≤ x ∧ x ≤ rFaultLen) := by decide
@@ -292,9 +291,8 @@ theorem areaAt_stW {A : Word} (hA : A.toNat % 8 = 0) {J : Bytes} {st : St} {u : 
   rw [at_, at_add]
   exact stW_word hx64 (by omega) (by omega) v
 
-/-- Offsets of words `Rest` of `r` reads outside the scanner's area: the number asked about, the name, the first
-group the configuration lacks, the configuration's key and groups, the highest article numbers once the rules hold,
-and the commits' slots. -/
+/-- Offsets of words `Rest` of `r` reads outside the scanner's area. The number asked about, the name, the first group
+lacking, the key and groups. The highest article numbers once the rules hold, and the commits' slots. -/
 def Reads (r : RSt) (y : Nat) : Prop :=
   ((r.phase = 9 ∨ r.phase = 12) ∧ y = rSeq) ∨ (rName ≤ y ∧ y < rSeq) ∨
     (r.unknown.isSome ∧ rUnknownLen ≤ y ∧ y < rTorn) ∨ (rKey ≤ y ∧ y < rKey + 16) ∨ (rGroups ≤ y ∧ y < rHigh) ∨
@@ -310,8 +308,8 @@ theorem bytesAt_frame {A : Word} (hA : A.toNat % 8 = 0) {x : Nat} {bs : Bytes} {
     simp only [memLoadByte, align_at hA, hd, hb]; rw [hm i hi]
   rw [e]; exact h i hi
 
-/-- **`Rest` framed**: what holds of `r` holds with the scanner at `st'` where the memory is alike at each word
-`Rest` reads outside the scanner's area, and the scanner's area holds `st'` once it must. -/
+/-- **`Rest` framed**: what holds of `r` holds with the scanner at `st'`. That needs memory alike at each word `Rest`
+reads outside the scanner's area. That area holds `st'` once it must. -/
 theorem rest_frame {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes} {r : RSt} {u u' : PancakeState σ}
     (h : Rest A cfg J r u) (hm : ∀ y, Reads r y → u'.memory (at_ A y) = u.memory (at_ A y))
     (hd : u'.memaddrs = u.memaddrs) (hb : u'.be = u.be) {st' : St}
@@ -377,9 +375,9 @@ theorem rest_frame {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes} 
     rw [hR _ (.inr (.inr (.inr (.inr (.inr (.inl ⟨h5, by omega, by simp only [groupsMax] at hy; omega⟩))))))]
     exact h.high h5 y hy
 
-/-- Offsets of words `Rest` of `r` does not read: of `Free`, of the highest article numbers before the rules hold, of
-the scanner's before it reads, the number asked about outside phases 9 and 12, of the first group the configuration
-lacks while there is none, and of the slot after the commits'. -/
+/-- Offsets of words `Rest` of `r` does not read: `Free`'s, and the highest numbers' before the rules hold. The
+scanner's before it reads, the number asked about outside phases 9 and 12. The first group lacking while none is, and
+the slot after the commits'. -/
 def Away (r : RSt) (x : Nat) : Prop :=
   Free x ∨ (rHigh ≤ x ∧ x < rScan ∧ r.phase < 5) ∨ (rScan ≤ x ∧ x < rSlots ∧ r.phase < 3) ∨
     (x = rSeq ∧ r.phase ≠ 9 ∧ r.phase ≠ 12) ∨ (rUnknownLen ≤ x ∧ x < rTorn ∧ r.unknown = none) ∨
@@ -463,8 +461,8 @@ theorem rest_stW {A : Word} (hA : A.toNat % 8 = 0) {cfg : Config} {J : Bytes} {r
 /-- The step's locals but the scanner's address. -/
 def stepLocals : List String := RecoverProg.locals.filter (· != "jsc")
 
-/-- What every phase has: the area at `A`, addressable, its address in `rsc` and the scanner's in `jsc`, and each
-local bound. -/
+/-- What every phase has: the area at `A`, addressable, its address in `rsc` and the scanner's in `jsc`. Each local is
+bound. -/
 structure PBase (A : Word) (s : PancakeState σ) : Prop where
   hA : A.toNat % 8 = 0
   dom : RDom A s.memaddrs
@@ -473,15 +471,15 @@ structure PBase (A : Word) (s : PancakeState σ) : Prop where
   jz : s.locals "jz" = some 0
   bound : ∀ y ∈ RecoverProg.locals, ∃ v, s.locals y = some v
 
-/-- **What a phase starts from**: the base, the step going on, the area holding `r`, and a journal shorter than
-`2 ^ 62` octets. -/
+/-- **What a phase starts from**: the base, the step going on, the area holding `r`. The journal is shorter than `2 ^
+62` octets. -/
 structure PIn (A : Word) (cfg : Config) (J : Bytes) (r : RSt) (s : PancakeState σ) : Prop extends PBase A s where
   rgo : s.locals "rgo" = some 1
   area : RAt A cfg J r s
   short : J.length < 2 ^ 62
 
-/-- **What a phase leaves**: the locals but the step's and the memory but the area as they were,
-the area holding the state `p.1`, and the step going on, or stopped with what `p.2` asks or gives. -/
+/-- **What a phase leaves**: the locals but the step's and the memory but the area as they were. The area holds `p.1`;
+the step goes on, or stops with what `p.2` asks or gives. -/
 def POut (A : Word) (cfg : Config) (J : Bytes) (s0 : PancakeState σ) (p : RSt × Option ROut)
     (u : PancakeState σ) : Prop :=
   Kept stepLocals (RAreaW A) s0 u ∧ RAt A cfg J p.1 u ∧
@@ -571,8 +569,8 @@ theorem pout_clock {A : Word} {cfg : Config} {J : Bytes} {s0 : PancakeState σ} 
 
 /-! ## A phase's stores -/
 
-/-- **A phase's state between stores**: the locals but the step's and the memory but the area as in `s0`, the
-words `ws` in place of `scalars` and `os` of what a step gives, `Rest` of `r`, and the locals `l`. -/
+/-- **A phase's state between stores**: the locals but the step's and the memory but the area as in `s0`. Words `ws`
+stand for `scalars` and `os` for what a step gives. `Rest` of `r` holds, and the locals `l`. -/
 structure Mid (A : Word) (cfg : Config) (J : Bytes) (r : RSt) (s0 : PancakeState σ) (ws : Nat → Word)
     (os : List (Nat × Word)) (l : List (String × Value)) (u : PancakeState σ) : Prop where
   kept : Kept stepLocals (RAreaW A) s0 u
@@ -860,8 +858,8 @@ theorem mid_sset (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : RSt}
 
 /-! ## Stores away from what a phase keeps -/
 
-/-- Offsets of words a phase writes away from what it keeps: of the first group the configuration lacks while there
-is none, and of the slot after the commits'. -/
+/-- Offsets of words a phase writes away from what it keeps. The first group lacking while there is none, and the slot
+after the commits'. -/
 def Far (r : RSt) (x : Nat) : Prop :=
   (rUnknownLen ≤ x ∧ x < rTorn ∧ r.unknown = none) ∨
     (slotAt r.commits.length ≤ x ∧ x < slotAt r.commits.length + slotSize ∧ r.commits.length < capacity)
@@ -980,8 +978,8 @@ theorem mid_start {A : Word} {cfg : Config} {J : Bytes} {r : RSt} {s0 : PancakeS
     (fun _ h => nomatch h), rest_congr h.area.rest hu.memory hu.memaddrs hu.be,
     fun q hq => by simp only [List.mem_singleton] at hq; subst hq; rw [hu.locals]; exact h.rgo⟩
 
-/-- **A phase's end**, from a state between stores: the words those of `r'`, what is left of `r'`, and with an
-output, the step stopped. -/
+/-- **A phase's end**, from a state between stores: the words those of `r'`, what is left of `r'`. With an output, the
+step stopped. -/
 theorem mid_end {A : Word} {cfg : Config} {J : Bytes} {r r' : RSt} {s0 : PancakeState σ} {ws : Nat → Word}
     {os : List (Nat × Word)} {l : List (String × Value)} {oo : Option ROut} {u : PancakeState σ}
     (h : Mid A cfg J r s0 ws os l u)

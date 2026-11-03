@@ -4,11 +4,9 @@ import DN.News.ScanRead
 /-!
 # DN.News.ScanStop
 
-If it goes on, where reading stops the step says torn tail when a torn append can leave the frame, what is
-left fits that append and no frame that checks under the key starts after its first octet, and corruption
-otherwise, as `Journal.stop` does (`stopped_frag`); and the scanner's whole step is `stepSpec`
-(`step_frag`), from the kernel's entry too (`kernel_frag`). After a want, the window the host fills holds the
-state with the octets added (`areaAt_fill`).
+If it goes on, a stopped read is a torn tail when a torn append explains it, else corruption (`stopped_frag`). That is
+`Journal.stop`; the whole step is `stepSpec` (`step_frag`), from the kernel's entry too (`kernel_frag`). After a want,
+the filled window holds the state with the octets added (`areaAt_fill`).
 -/
 
 namespace DN.News.ScanRun
@@ -47,8 +45,8 @@ theorem lowKK_tornPart {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK (Sc
 /-- The names the search sets. -/
 def tornNames : List String := ["jq", "jtorn", "jo", "jf", "jpp", "jr"] ++ fwNames
 
-/-- The search's state after `i` places from the one after `jp`: where it is, and whether no frame that checks
-under `k` started at one, the rest as `l` lists it. -/
+/-- The search's state after `i` places past `jp`: where it is, and whether no frame checking under `k` started yet. The
+rest is as `l` lists it. -/
 def TornAt (A : Word) (J : Bytes) (st : St) (s0 : PancakeState σ) (k : Bytes) (l : List (String × Value)) (i : Nat)
     (u : PancakeState σ) : Prop :=
   Ctx A J st s0 (("jq", BitVec.ofNat 64 (st.pos + 1 + i)) :: ("jtorn", bw (!seen J k (st.pos + 1) i)) :: l) u ∧
@@ -57,8 +55,8 @@ def TornAt (A : Word) (J : Bytes) (st : St) (s0 : PancakeState σ) (k : Bytes) (
 theorem tornAt_clock {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} {k : Bytes} {l : List (String × Value)}
     (i : Nat) : Safe.ClockFree (TornAt A J st s0 k l i) := fun _ _ ⟨h1, h2⟩ => ⟨ctx_clock _ _ h1, h2⟩
 
-/-- **One place searched**: if it goes on, the frame there is checked under the journal's key `k`, and one that
-checks ends the search. -/
+/-- **One place searched**: if it goes on, the frame there is checked under the journal's key `k`. One that checks ends
+the search. -/
 theorem tornStep_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) {k : Bytes} (hk : st.key = some k)
     {l : List (String × Value)} (hwin : J.length ≤ st.base + st.len)
@@ -143,8 +141,8 @@ theorem tornStep_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Pan
   rw [show q + 1 = st.pos + 1 + (i + 1) by omega] at hv
   exact hv
 
-/-- **The search after a torn frame's first octet**: if it goes on, `jtorn` says whether no frame that checks under
-the journal's key `k` starts there or after, as `anyChecks` does. -/
+/-- **The search after a torn frame's first octet.** If it goes on, `jtorn` says whether no frame checking under `k`
+starts from there. That is as `anyChecks` does. -/
 theorem tornSearch_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) {k : Bytes} (hk : st.key = some k)
     {l : List (String × Value)} (hwin : J.length ≤ st.base + st.len)
@@ -350,9 +348,9 @@ theorem lowKK_read {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK (ScanPr
     (lowKK_ite rfl (lowKK_recordOf hfl) (lowK_any _ (k := .skip) (c := _) rfl))
     (lowKK_ite rfl (lowKK_stopped hfl) lowKK_accept))
 
-/-- **The scanner's step is `stepSpec`**: if it goes on, from the area holding a state of reading `J` that keeps
-its window, the step leaves the status `stepSpec` gives, and with it the area's next state and the octets
-wanted, the record read and its fields, or where and why reading stops. -/
+/-- **The scanner's step is `stepSpec`.** If it goes on, from the area holding a window-keeping state of reading `J`, it
+leaves `stepSpec`'s status. With it the area's next state and octets wanted, the record read, or where and why reading
+stops. -/
 theorem step_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : PancakeState σ} (h : StepIn A J st s0)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) :
     Frag o (ScanProg.stepWith fail) (Like s0) (StepOut A J st s0) := by
@@ -466,8 +464,8 @@ theorem step_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {s0 : Pancake
 
 /-! ## Steps chained, and the kernel -/
 
-/-- **The window filled** after a want: with `m` more octets of the journal after the window's, its length set
-and the rest of the area as it was, the area holds the state with them. -/
+/-- **The window filled** after a want, with `m` more octets after the window's. With its length set and the rest of the
+area kept, the area holds the state with them. -/
 theorem areaAt_fill {A : Word} {J : Bytes} {st : St} {u u' : PancakeState σ} (h : AreaAt A J st u) {m : Nat}
     (hd : u'.memaddrs = u.memaddrs) (hb : u'.be = u.be)
     (hw : ∀ x ∈ [sSize, sBase, sPos, sKeyed, sCount], u'.memory (at_ A x) = u.memory (at_ A x))
@@ -497,8 +495,8 @@ theorem areaAt_fill {A : Word} {J : Bytes} {st : St} {u u' : PancakeState σ} (h
     rw [hd, hb, ← at_add] at e
     exact e
 
-/-- The kernel's entry: the area at `A`, aligned and addressable, holding a state of reading `J` that keeps its
-window, its address in `jsc`. -/
+/-- The kernel's entry: the area at `A`, aligned and addressable, holding a window-keeping state of reading `J`. Its
+address is in `jsc`. -/
 structure KernelIn (A : Word) (J : Bytes) (st : St) (e : PancakeState σ) : Prop where
   hA : A.toNat % 8 = 0
   dom : Dom A e.memaddrs
@@ -563,8 +561,8 @@ theorem lowKK_step {fail : List Syntax.PStmt} (hfl : LowKK fail) : LowKK (ScanPr
     (lowKK_append (xs := [_]) (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_append (xs := [_])
       (lowK_any _ (k := .skip) (c := _) rfl) (lowKK_ite rfl (lowKK_want hfl) (lowKK_read hfl)))))
 
-/-- **The kernel's step is `stepSpec`**: if it goes on, from its entry, its declarations and the step leave the
-status `stepSpec` gives and what goes with it, the memory but the area as it was. -/
+/-- **The kernel's step is `stepSpec`.** If it goes on, from its entry, its declarations and the step leave `stepSpec`'s
+status and what goes with it. The memory but the area stays as it was. -/
 theorem kernel_frag (o : Oracle σ) {A : Word} {J : Bytes} {st : St} {e : PancakeState σ} (h : KernelIn A J st e)
     {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = []) :
     Frag o (ScanProg.decls ++ ScanProg.stepWith fail) (Like e) (fun u => OutAt A J st (stepSpec J st) u ∧
@@ -634,7 +632,7 @@ theorem stepIn_keyed : StepIn 0 [0] kSt kState where
   short := by decide
   bound := fun y _ => zBound y
 
-/-- A keyed state on the read path: one record read, the frame at 1 torn, the journal's two octets in the window. -/
+/-- A keyed state on the read path: one record read, the frame at 1 torn. The journal's two octets are in the window. -/
 def tSt : St := ⟨0, 2, 1, some (List.replicate 16 0), [.start]⟩
 
 def tMem (a : Word) : Word :=

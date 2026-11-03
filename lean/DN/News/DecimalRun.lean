@@ -5,8 +5,8 @@ import DN.Compiler.Decimal
 /-!
 # DN.News.DecimalRun
 
-A number's decimal digits as `CommandSpec.decimal` gives them, digit by digit: how many there are
-(`numDigits`, `numDigits_eq`), the last and the rest (`decimal_eq`), each in its place (`decimal_get`).
+A number's decimal digits as `CommandSpec.decimal` gives them, digit by digit. Their count (`numDigits`,
+`numDigits_eq`), the last and the rest (`decimal_eq`), each in place (`decimal_get`).
 -/
 
 namespace DN.News.DecimalRun

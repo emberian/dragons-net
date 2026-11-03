@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Measure the hosts against one another (docs/bench.md): the echo on poll and on io_uring, the
-NNTP server waiting with poll and with io_uring, and INN's reader where it is installed, as it is
-and with TCP_NODELAY, under one open-loop load (native/load.c).
-
-`check`, the bench lane, judges no number. It builds every host, the load and the allocation
-counter; holds the load to faulty servers of its own, which it must catch; and puts a second of
-load with slow readers on each host, every reply right and none owed. The NNTP replies the load
-expects are read from each host, and the server's two hosts must give the same.
-
-`measure` writes build/bench/measured.json, whose rows `table` prints for docs/bench.md: the
-machine, and for each host a sweep of rates to the highest it keeps; then, in rounds, steady load
-at half the lowest rate any host of its kind keeps and overload at one and a half times its own;
-each NNTP command alone; allocations a reply from a run of their own, system calls a reply from one
-under strace. The server's time, switches and allocations are counted over the load's window
-alone. `profile` runs the NNTP server under callgrind with the mix or one command of it.
-"""
+"""Measure the hosts against one another (docs/bench.md): echo and NNTP on poll and io_uring, and INN's reader if
+installed. `check`, the bench lane, judges no number: it builds everything and holds the load to faulty servers it must
+catch. `measure` writes build/bench/measured.json for `table`; `profile` runs the NNTP server under callgrind."""
 from __future__ import annotations
 
 import argparse
@@ -74,9 +61,8 @@ INN_PATHS = ("etc", "db", "run", "log", "tmp", "spool", "articles", "overview", 
 
 @dataclass
 class Host:
-    """A server as started: its command, the connections the load opens (a host serves no more
-    at once), whether it speaks NNTP, and what it is built from. One of ours prints a record with its
-    port and takes a store; INN's reader listens on `port` and reads the store `env` names."""
+    """A server as started: its command, the connections the load opens, whether it speaks NNTP, its build inputs. Ours
+    print a port record and take a store; INN's reader listens on `port`, its store from `env`."""
 
     name: str
     command: list[str]
@@ -137,8 +123,8 @@ def five() -> list[int]:
 
 
 def nntp_commands() -> list[bytes]:
-    """A reader's mix over the five articles: each read whole by number, two of them by
-    Message-ID too, and two by their headers; STAT, OVER of twenty articles and GROUP."""
+    """A reader's mix over the five articles: each read whole by number, two by Message-ID too, two by headers. Then
+    STAT, OVER of twenty articles, and GROUP."""
     numbers = five()
     first = 1 + sum(numbers) % (ARTICLES - 20)
     # Article n holds Message-ID <b(n-1)@x.example>: the server numbers from 1 what was posted from 0.
@@ -164,8 +150,7 @@ def reply_of(f: BinaryIO) -> bytes:
 
 
 def nntp_requests(port: int, commands: list[bytes] | None = None) -> bytes:
-    """The opening and the requests, the mix's or `commands`, with the replies this server gives
-    them, read one at a time."""
+    """The opening and the requests, the mix's or `commands`, with this server's replies, read one at a time."""
     with socket.create_connection(("127.0.0.1", port), timeout=30) as c, c.makefile("rb") as f:
         greeting = reply_of(f)
         setup = f"GROUP {GROUP}\r\n".encode()
@@ -267,8 +252,8 @@ def children(pid: int) -> list[str]:
 
 
 def run_ns(pid: int | str) -> int:
-    """The time the process's threads have run, in nanoseconds: /proc's ticks would round each of a
-    forking server's processes, that runs a millisecond a second, down to nothing."""
+    """The process's threads' run time in nanoseconds. /proc's ticks would round a forking server's millisecond-a-second
+    processes down to nothing."""
     total = 0
     for task in Path(f"/proc/{pid}/task").iterdir():
         with suppress(OSError):
@@ -277,9 +262,8 @@ def run_ns(pid: int | str) -> int:
 
 
 def usage(pid: int) -> dict[str, int]:
-    """The process's CPU time with its children's, those running to the nanosecond and those reaped
-    to the tick; its share in the kernel, to the tick; its threads' context switches; its memory high
-    water."""
+    """The process's CPU time with its children's, running ones to the nanosecond, reaped ones to the tick. Also its
+    kernel share, its threads' context switches, and its memory high water."""
     tick = os.sysconf("SC_CLK_TCK")
     fields = stat_of(pid)
     user, system = int(fields[11]) + int(fields[13]), int(fields[12]) + int(fields[14])
@@ -347,16 +331,14 @@ def counts_of(path: Path | None) -> int:
 
 def run_load(server: Server, binary: Path, requests: Path, cpus: str | None, counts: Path | None = None,
              faulty: bool = False, **given: Any) -> dict[str, Any]:
-    """A run of the load on `server`, its time, switches and allocations (from the file `counts`, if
-    the counter is loaded) taken over the load's window alone. A wrong reply or a lost connection
-    stops the measurement, but from a server `faulty` on purpose."""
+    """A load run on `server`, with time, switches and allocations (from `counts`, if loaded) over the window alone. A
+    wrong reply or lost connection stops the measurement, unless `server` is `faulty` on purpose."""
     taken: list[tuple[dict[str, int], int]] = []
 
     def snap() -> None:
         taken.append((usage(server.pid), counts_of(counts)))
 
-    # A process a connection: those of the run before gone and reaped, or their ends would fall in
-    # this run's window.
+    # A process a connection: the previous run's must be gone and reaped, or their ends fall in this window.
     for _ in range(200):
         if not children(server.pid):
             break
@@ -395,8 +377,8 @@ def cores() -> dict[int, tuple[str, str]]:
 
 
 def load_cpus(server: set[int], topology: dict[int, tuple[str, str]], wanted: int) -> list[int]:
-    """`wanted` CPUs on cores the server's CPUs do not share, the first core left to the system when
-    there are cores enough."""
+    """`wanted` CPUs on cores the server's CPUs do not share. The first core is left to the system when there are
+    enough."""
     taken = {topology[c] for c in server if c in topology}
 
     def rank(c: int) -> tuple[int, int]:
@@ -457,8 +439,8 @@ def store_options(temp: str) -> list[str]:
 
 @contextmanager
 def filled(host: Host) -> Iterator[Path]:
-    """A spool `host` filled with the articles, then stopped: every NNTP host serves a copy, so that
-    they serve the same articles, dates and all."""
+    """A spool `host` filled with the articles, then stopped. Every NNTP host serves a copy, so all serve the same
+    articles and dates."""
     with tempfile.TemporaryDirectory() as temp:
         for d in ("spool", "run"):
             Path(temp, d).mkdir()
@@ -471,8 +453,8 @@ def filled(host: Host) -> Iterator[Path]:
 @contextmanager
 def started(host: Host, cpus: str | None, spool: Path | None, env: dict[str, str] | None = None,
             wrap: list[str] | None = None) -> Iterator[tuple[Server, Path]]:
-    """The host, and the requests the load sends it with the replies they must have: for NNTP, read
-    from it, serving a copy of `spool`."""
+    """The host, and the requests the load sends with their required replies. For NNTP they are read from the host,
+    serving a copy of `spool`."""
     with tempfile.TemporaryDirectory() as temp:
         extra: list[str] = []
         if host.nntp and host.ours:
@@ -495,10 +477,9 @@ def inn_version() -> str:
 
 @contextmanager
 def inn(ours: Host, spool: Path, nodelay: Path) -> Iterator[list[Host]]:
-    """INN's reader on a spool of its own holding the articles `ours` serves from `spool`, as files
-    with the history and overview makehistory builds; nnrpd serves them without innd, which runs only
-    as the user news. It forks a process a connection, all on the cores it is given. As it is, and
-    with the shim that sets TCP_NODELAY, each on a port of its own."""
+    """INN's reader on its own spool of `ours`'s articles, with makehistory's history and overview. nnrpd serves them
+    without innd, forking a process a connection on the given cores. It runs as is and with the TCP_NODELAY shim, each
+    on its own port."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         paths = {name: root / ("spool/" + name if name in ("articles", "overview", "incoming", "outgoing",
@@ -601,12 +582,9 @@ while True:
 
 
 def faulty(fault: str) -> Host:
-    """An echo of its own that misbehaves on its first connection, or on the second, the slow
-    reader's, as asked: `flip` an octet of the fiftieth reply, `flipslow` one of the slow reader's
-    first, `close` after ten replies, fall `silent` after ten, add an `extra` octet to the thirtieth,
-    answer each request `late` by 0.45 s; on every connection, `stall` a second before the
-    three-hundredth reply, or `fork` a process that spends a millisecond on each reply. Each
-    connection has a thread of its own, but `fork`'s a process."""
+    """An echo that misbehaves on its first connection, or the slow reader's second, as asked. `flip`,
+    `flipslow`, `close`, `silent`, `extra` and `late` break one reply or connection; `stall` and `fork` hit every
+    connection. Each connection has its own thread, `fork`'s a process."""
     return Host(f"faulty-{fault}", [sys.executable, "-c", FAULTY, fault], 1, False, Path(sys.executable))
 
 
@@ -624,14 +602,9 @@ def quantile_of(cells: list[list[int]], q: float) -> int:
 
 
 def held_to_faults(binary: Path) -> dict[str, Any]:
-    """The load against servers of its own, a connection at 200 requests a second for a second's
-    warm-up and a window of two, and a slow reader. A right one passes with every request due sent
-    and served once, the slow reader paced, then given its megabytes. A wrong octet, the slow
-    reader's too, and an octet too many are wrong replies, a closed connection a lost one. A
-    connection silent from the warm-up owes every request of the window; one answering late is
-    served by arrival, few in the window and none of its requests. A second's stall shows in the
-    latencies as the schedule saw it, at the quantiles the cells give, and in how late requests
-    went. A server's time is its window's, the processes it forks counted."""
+    """The load against servers of its own: a connection at 200 a second and a slow reader. A right server passes; wrong
+    or extra octets and closed connections are caught. Silent, late and stalled connections show as owed, late or
+    delayed requests; time counts forked processes."""
     with tempfile.TemporaryDirectory() as temp:
         requests = Path(temp, "requests")
         requests.write_bytes(exchange(b"", b"") + exchange(b"x" * 100, b"x" * 100))
@@ -662,13 +635,12 @@ def held_to_faults(binary: Path) -> dict[str, Any]:
                                 f"and {got['slow_octets']} in all")
             if fault == "silent" and got["owed"] != due:
                 raise LaneError(f"a connection silent from the warm-up left {got['owed']} requests owed, not {due}")
-            # Answers 0.45 s apart arrive at 1.35, 1.8, 2.25 and 2.7 s in the window; each request
-            # went out after the one before was answered, so none fell due in the window.
+            # Answers 0.45 s apart arrive at 1.35 to 2.7 s in the window. Each request went after the last answer, so
+            # none fell due in it.
             if fault == "late" and (got["served"], got["completed"], got["owed"]) != (4, 0, due):
                 raise LaneError(f"against a server that answers 0.45 s late, not 4 served by arrival: {said}")
             if fault == "stall":
-                # A second's stall delays some two hundred requests by a falling amount, from a second
-                # down: some hundred by half a second or more.
+                # A second's stall delays some two hundred requests by up to a second, some hundred by half or more.
                 cells = got["latency_ns"]["cells"]
                 late = sum(count for top, count in cells if top >= 500_000_000)
                 if late < 60:
@@ -722,8 +694,8 @@ def check(cake: str) -> Report:
                                rate=400, seconds=1, warmup=1, slow=SLOW_READERS, threads=2, slow_ms=1)
                 server.stop()
             said = {k: got[k] for k in ("served", "completed", "owed", "slow_octets")}
-            # Ours keep the rate beside the slow readers, and give them their megabytes once the window
-            # closes; of INN as it runs, a reference, right replies are asked; the counter counts.
+            # Ours keep the rate beside slow readers and give them their megabytes after the window. INN as it runs, a
+            # reference, only needs right replies; the counter counts.
             if host.name != "inn" and (got["owed"] or got["completed"] != 400 or got["served"] < 390
                                        or got["slow_octets"] < 4 << 20):
                 raise LaneError(f"{host.name} under load: {said}")
@@ -762,8 +734,8 @@ def per_reply(run: dict[str, Any], value: float) -> float:
 
 
 def summary(run: dict[str, Any], *, raw: bool = False) -> dict[str, Any]:
-    """A run in short, the server's time, switches and allocations a reply of the window; with
-    `raw`, the load's whole record beside it."""
+    """A run in short: the server's time, switches and allocations a reply in the window. With `raw`, the load's whole
+    record beside it."""
     lat, server = run["latency_ns"], run["server"]
     ticks = server["cpu_user_ms"] + server["cpu_system_ms"]
     found = {"rate": run["rate"], "kept": not saturated(run), "achieved": run["achieved"], "owed": run["owed"],
@@ -794,9 +766,8 @@ def given_for(host: Host, cpus: dict[str, str]) -> dict[str, Any]:
 
 
 def sweep(lost: Callable[[int], bool]) -> tuple[int, list[int]]:
-    """From 2,000 a second, the rate doubled while `lost` says the host keeps it, or halved until it
-    does; then from the highest kept toward twice it, a quarter of the way at a time. The highest
-    rate kept, and the rates tried."""
+    """From 2,000 a second, double the rate while the host keeps it, or halve until it does. Then climb toward twice the
+    highest kept, a quarter at a time; return the highest kept and rates tried."""
     kept_at = lost_at = 0
     tried = []
     rate = 2000
@@ -857,9 +828,8 @@ def counted(host: Host, binary: Path, counter: Path, cpus: dict[str, str], spool
 
 
 def system_calls(host: Host, binary: Path, cpus: dict[str, str], spool: Path) -> dict[str, Any]:
-    """The host's system calls a reply, at 2,000 a second under strace, which slows it too much to
-    time; its start's calls are among them, some hundreds. Strace counts to the end, so no slow reader
-    takes its 16 MiB after the window."""
+    """The host's system calls a reply at 2,000 a second under strace, too slow to time. Its start's few hundred calls
+    are included; no slow reader runs, as strace counts to the end."""
     with tempfile.TemporaryDirectory() as temp:
         trace = Path(temp, "calls")
         with started(host, cpus["server"], spool, wrap=["strace", "-f", "-c", "-o", str(trace)]) \
@@ -878,10 +848,9 @@ def system_calls(host: Host, binary: Path, cpus: dict[str, str], spool: Path) ->
 
 
 def measure(cake: str, seconds: int, warmup: int, repeat: int, server: str, threads: int) -> None:
-    """Every host started at once, each on its cores, swept in turn, its highest rate kept run again
-    as long as a round's run, and each NNTP command alone. Then rounds of steady and overloaded runs,
-    every host started anew, each round taking the hosts in another order, so that a drift of the
-    machine falls on all of them; then a run of each with the counter, and one under strace."""
+    """Every host started at once on its cores, swept in turn, its highest kept rate rerun, each NNTP command alone.
+    Then steady and overload rounds, hosts restarted in a new order each round. Last, a run of each with the counter and
+    one under strace."""
     binary, counter, nodelay, hosts = built(cake)
     spread = len(server_cpus(server))
     hosts.insert(2, Host(f"echo-uring-{spread}", [str(hosts[1].binary), "--threads", str(spread)], 32, False,
@@ -967,9 +936,8 @@ def instructions(out: Path) -> dict[str, int]:
 
 
 def profile(cake: str, command: str | None) -> None:
-    """The NNTP server under callgrind, waiting with poll (Valgrind cannot follow io_uring), serving
-    the mix, or `command` alone, at 200 a second for five seconds: where its instructions go, by
-    function, less those of a run that starts, answers the mix once as its replies are read, and
+    """The NNTP server under callgrind, with poll since Valgrind cannot follow io_uring, serving the mix or `command`,
+    200 a second. It reports instructions by function over five seconds, less a run that starts, answers once and
     stops."""
     binary, _, _, hosts = built(cake)
     nntp = next(h for h in hosts if h.name == "nntp-poll")

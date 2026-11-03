@@ -1,24 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
- * The echo host on io_uring (uring.h), beside the poll host (echo_server.c), whose options, admission
- * and counters it keeps, so that the same tests run against both. Every payload byte goes through
- * generated dn_echo. A send is submitted as soon as the last completes, so a reply reaches the kernel
- * sooner than the poll host's, which waits to be told the socket is writable.
- *
- * A thread a core it may run on, pinned there, each with its own ring and its own copy of the Cake
- * image: the build assembles the generated code and its runtime COPIES times, every global symbol
- * prefixed with the copy's number, since one image cannot be entered by two threads. The main thread
- * owns the listener and the admission count: it accepts only while fewer than SLOTS connections are
- * held in all, hands each to the next thread as a message on that thread's ring, and learns from a
- * message on its own when one is let go.
- *
- * A thread keeps at most one receive or send in flight a connection, and reads only once the reply
- * has gone whole. A connection ends by its end of input, an error, its idle deadline or the stop; its
- * operations are cancelled and every one reaped before its descriptor is closed and its slot given
- * back, so a completion always finds the incarnation that submitted it, which the generation in its
- * token says. SIGTERM or SIGINT stops accepting, stops every thread the same way, waits for each,
- * and only then closes the rings. A start that fails once a thread has started stops those that did,
- * in that order, and ends the host with status 1. A kernel without io_uring, or older than 6.6, is
- * refused at the start, by name, with status 1. */
+ * The echo host on io_uring (uring.h), with the poll host's options, admission and counters (echo_server.c). A pinned
+ * thread a core, each with its own ring and image copy; the main thread accepts and hands over. Stops cancel and reap
+ * every operation before closing; a kernel lacking io_uring or older than 6.6 is refused, status 1. */
 #define _GNU_SOURCE
 #include "accept_policy.h"
 #include "faults.h"
@@ -140,8 +123,7 @@ static void finish(struct worker *w, unsigned i) {
     dn_prep_message(sqe(&w->ring, DN_TOKEN(K_TOLD, i, 0)), main_ring_fd, DN_TOKEN(K_FREED, w->index, 0), 0);
 }
 
-/* Ends the connection of slot `i`: at once if nothing of it is in flight, else once its cancelled
- * operations are reaped. */
+/* Ends slot `i`'s connection: at once if nothing is in flight, else once its cancelled operations are reaped. */
 static void end(struct worker *w, unsigned i) {
     struct slot *s = &w->slots[i];
     if (s->closing) return;
@@ -159,8 +141,7 @@ static void renew(struct slot *s, uint64_t *count) {
     ++*count;
 }
 
-/* A connection the main thread accepted, given a free slot: there is one, since it admits no more
- * than SLOTS in all. */
+/* A connection the main thread accepted, given a free slot; one exists, since it admits at most SLOTS. */
 static void take(struct worker *w, int fd) {
     unsigned i = 0;
     while (i < SLOTS && (w->slots[i].fd >= 0 || w->slots[i].ops)) ++i;
@@ -244,8 +225,8 @@ static void completed(struct worker *w, const struct io_uring_cqe *c) {
     }
 }
 
-/* Each connection idle for its time ends, one still holding a reply counted apart; says how long
- * until the next deadline, -1 for none. */
+/* Ends each connection idle past its time, those holding a reply counted apart. Returns the time to the next deadline,
+ * -1 for none. */
 static int64_t expire(struct worker *w) {
     uint64_t now = millis();
     int64_t next = -1;
@@ -271,8 +252,7 @@ static void *serve(void *arg) {
     CPU_ZERO(&one);
     CPU_SET(w->cpu, &one);
     int pinned = pthread_setaffinity_np(pthread_self(), sizeof one, &one);
-    /* The test build's `dn/echo-thread` fails the start of the thread whose number is one less than
-     * the number it was enabled with. */
+    /* The test build's `dn/echo-thread` fails the start of the thread numbered one below its enabled value. */
     if (DN_FAULT_INFO("dn/echo-thread", lost) && lost == w->index + 1) {
         snprintf(w->why, sizeof w->why, "a fault was planted");
     } else if (pinned) {
@@ -348,9 +328,8 @@ static void main_completed(const struct io_uring_cqe *c) {
     case K_FREED: {
         if (!admitted) dn_violation_now("a slot given back with none admitted");
         --admitted;
-        /* The test build's `dn/echo-late` hands a connection over, its peer kept open, once a thread has
-         * shown it took its stop by giving a place back, as a hand-over the thread takes only after its
-         * stop would be. */
+        /* The test build's `dn/echo-late` hands over a connection, peer open, after a thread took its stop. It does so
+         * once the thread gave a place back, which shows the stop arrived. */
         int pair[2];
         if (late && !socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) {
             late = 0;
@@ -392,8 +371,8 @@ static void main_completed(const struct io_uring_cqe *c) {
         return;
     }
     case K_TOLD:
-        /* A message a thread could not take: a connection handed over is closed and its place given
-         * back; a stop lost would leave the thread serving, and the host waiting for it for good. */
+        /* A message a thread could not take: a handed-over connection is closed and its place given back. A lost stop
+         * would leave the thread serving and the host waiting forever. */
         if (c->res < 0 && DN_TOKEN_GEN(t) == 1) {
             close((int)DN_TOKEN_SLOT(t));
             --admitted;
@@ -408,8 +387,7 @@ static void main_completed(const struct io_uring_cqe *c) {
     }
 }
 
-/* The threads, a core the process may run on each, as many as the image has copies and the
- * descriptors allow beside the slots. */
+/* One thread a usable core, at most the image's copies and what the descriptors allow beside the slots. */
 static unsigned thread_count(unsigned asked, rlim_t descriptors) {
     int cores = CPU_COUNT(&cpus);
     /* standard streams, listener, signals and the main ring */
@@ -430,8 +408,7 @@ static void start_threads(void) {
         ++cpu;
         workers[k].ring.fd = -1;
         for (unsigned i = 0; i < SLOTS; ++i) workers[k].slots[i].fd = -1;
-        /* The test build's `dn/echo-create` fails the creation of the thread whose number is one less than
-         * the number it was enabled with. */
+        /* The test build's `dn/echo-create` fails creating the thread numbered one below its enabled value. */
         uint64_t refused = 0;
         int e = DN_FAULT_INFO("dn/echo-create", refused) && refused == k + 1
                     ? EAGAIN : pthread_create(&workers[k].thread, NULL, serve, &workers[k]);
@@ -539,8 +516,8 @@ int main(int argc, char **argv) {
         struct io_uring_cqe c;
         while (dn_ring_take(&ring, &c, main_foreign)) main_completed(&c);
     }
-    /* Each thread ends once its connections are closed and its ring is drained; the messages they
-     * send meanwhile land on this ring, which is closed only after them. */
+    /* Each thread ends once its connections are closed and its ring drained. Their messages meanwhile land on this
+     * ring, closed only after them. */
     struct counts total = {0};
     for (unsigned k = 0; k < threads; ++k) {
         if (workers[k].created) pthread_join(workers[k].thread, NULL);

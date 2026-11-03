@@ -5,11 +5,9 @@ import DN.Server.SessionList
 /-!
 # DN.Server.SessionCalls
 
-`classify` with the functions it calls proven: if it goes on, `r` holds the code of the reply `CommandSpec.replyIn`
-gives the line (`classify_ok`), `viewClassify` and `listClassify` as the code holds them. Its premises hold together
-on a line of one word naming no command (`classify_premises`); on such a state with LIST's code, a call of
-`listClassify`, which `classify` makes only for a line naming LIST, keeps its contract (`list_call`). What the
-reply carries past its code is not shown.
+`classify` with the functions it calls proven: if it goes on, `r` holds `CommandSpec.replyIn`'s reply code
+(`classify_ok`). Its premises hold together on a one-word line naming no command (`classify_premises`). There a LIST
+call keeps its contract (`list_call`); what the reply carries past its code is not shown.
 -/
 
 namespace DN.Server.SessionClassify
@@ -19,9 +17,9 @@ open DN.Server.SessionLayout (texts ownTexts ownStore connSlot cFramer)
 
 variable {σ : Type}
 
-/-- **`classify` gives the code of `CommandSpec.replyIn`'s reply**, the functions it calls as the code holds them:
-from its entry, if it goes on, `r` holds that code, every local but its own and every word but `clsWords` as they
-were. What the reply carries past its code is not shown. -/
+/-- **`classify` gives the code of `CommandSpec.replyIn`'s reply**, its callees as the code holds them. From its entry,
+if it goes on, `r` holds that code; other locals and all words but `clsWords` stay. What the reply carries past its code
+is not shown. -/
 theorem classify_ok (o : Oracle σ) {b : Word} {ci : Nat} {offered : Bool} {k : FrameSpec.Kind} {L : List Byte}
     {s0 : PancakeState σ} (hs : ClsIn b ci offered k L s0) (hgn : GnCode s0.code) {vb lb : PancakeProg}
     (hvc : s0.code "viewClassify" = some (["c", "cmd"], vb)) (hvl : Lower.lower Session.viewClassify = some vb)
@@ -195,7 +193,7 @@ theorem lEntry (vb lb : PancakeProg) : VEntry SessionAppend.wb 0 (cmdCode (some 
 theorem vEntry_witness : VEntry SessionAppend.wb 0 (cmdCode (some .list)) [0] (leState .skip .skip) :=
   lEntry .skip .skip
 
-/-- **A LIST call keeps the contract** on such a state: `listClassify`, as it lowers, if it returns, gives back the
+/-- **A LIST call keeps the contract** on such a state: `listClassify`, as it lowers, if it returns. It gives back the
 code of `answerIn`'s reply in the return word. -/
 theorem list_call : ∃ lb, SafeR (σ := Unit) Oracle.idle (fun s => s = leState .skip lb) lb
     (CallRet SessionAppend.wb (Session.replyCode (CommandSpec.answerIn .list (argsOf [0])))

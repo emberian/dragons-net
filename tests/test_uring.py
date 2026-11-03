@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The io_uring lane's own tables: each planted defect finds the one place it changes, the copies of
-the Cake image the lane builds are the ones the host declares, and every point of failure the
-io_uring sources carry is one the lane enables."""
+"""The io_uring lane's own tables: each planted defect finds its one place. The lane builds the Cake copies the host
+declares, and enables every failure point the sources carry."""
 from __future__ import annotations
 
 from pathlib import Path

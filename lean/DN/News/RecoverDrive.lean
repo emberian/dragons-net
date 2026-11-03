@@ -4,11 +4,9 @@ import DN.News.RecoverSpec
 /-!
 # DN.News.RecoverDrive
 
-Recovery's steps (`DN.News.RecoverSpec`), the host reading the directory `img`, find what `Recovery.recover`
-does, from any area whose phase is 0 (`drives_recover`), and nothing else (`drives_det`). Phase by phase: the first
-pass (`first_ok`, `first_err`), a new store (`fresh_drives`), the journal read (`scan_drives`), the rules and files
-(`files_drives`), the next number (`numbered_drives`), the torn tail (`tail_drives`), the second pass
-(`second_drives`), the end (`finish_drives`), all from the journal's records (`records_drives`).
+Recovery's steps, the host reading directory `img`, find what `Recovery.recover` does (`drives_recover`) and nothing
+else (`drives_det`). This holds from any area whose phase is 0. Each phase has its lemma: `first_ok`, `scan_drives`,
+`files_drives`, `tail_drives`, `second_drives` and the rest.
 -/
 
 namespace DN.News.RecoverSpec
@@ -286,8 +284,8 @@ theorem fresh_drives {r : RSt} {h : Host} (synced : Bool) (hc : r.commits = []) 
 
 /-! ## The journal read -/
 
-/-- **A step of the scanner** and reading the journal from where it stands: at the end, stopped, a record
-read, or octets wanted with nothing read. -/
+/-- **A step of the scanner**, reading the journal from where it stands. It is at the end, stopped, a record read, or
+octets wanted with nothing read. -/
 theorem step_cases (st : St) (F : Nat) :
     (stepSpec J st = .clean ∧
       scanFrom spec (F + 1) (J.drop st.pos) st.pos st.key st.acc = ⟨st.acc.reverse, .clean⟩) ∨
@@ -338,8 +336,8 @@ theorem key_snoc (l : List Record) (rec : Record) :
   rw [List.filterMap_append, List.head?_append]
   cases (l.filterMap Record.key).head? <;> cases hk : rec.key <;> simp [hk]
 
-/-- **The journal being read**: the scanner's state `st`, the records it read counted, its commits noted, the
-first group they carry that the configuration lacks, its key the first a record carries. -/
+/-- **The journal being read**: scanner state `st`, the records read counted, the commits noted. Also the first group
+they carry the configuration lacks, and the key, the first one a record carries. -/
 structure SC (cfg : Config) (J : Bytes) (ns : List Name) (st : St) (r : RSt) : Prop where
   phase : r.phase = 3
   scan : r.scan = st
@@ -361,7 +359,7 @@ structure EndSC (cfg : Config) (J : Bytes) (ns : List Name) (sc : Scan) (r : RSt
   key : r.scan.key = (sc.records.filterMap Record.key).head?
   phase : phase cfg J r = scanned r (cutOf sc.ending)
 
-/-- **Reading the journal**, the host giving the octets wanted: corruption found, or the end with what was read,
+/-- **Reading the journal**, the host giving the octets wanted: corruption found, or the end with what was read. That is
 as `scanFrom` reads it. -/
 theorem scan_drives (ns : List Name) {h : Host} {x : Except Fault (Store × List Action)} : ∀ (f : Nat) (st : St)
     (F : Nat) (r : RSt), SC cfg J ns st r → st.left J < f → J.length - st.pos < F →
@@ -490,14 +488,13 @@ structure Core where
   /-- the journal's key -/
   key : Option Bytes
 
-/-- What the phases after the journal read and keep of a state: the names' count and numbers, whether the store is
-new, the commits, the torn tail, where the journal ends, its key; a state with another phase or counter keeps it
-(by `rfl`). -/
+/-- What phases after the journal read keep of a state: the names' count and numbers, whether the store is new. Also the
+commits, the torn tail, the journal's end and its key. A state with another phase or counter keeps it, by `rfl`. -/
 def RSt.core (r : RSt) : Core :=
   ⟨r.names, r.maxSeq, r.tails, r.maxTail, r.fresh, r.commits, r.torn, r.cut, r.journalEnd, r.scan.key⟩
 
-/-- **Each commit's file**, asked about in the journal's order: the first missing or of another size refused,
-else the numbers next. -/
+/-- **Each commit's file**, asked about in journal order: the first missing or of another size is refused. Otherwise the
+numbers come next. -/
 theorem files_drives {cs : List Commit} {h : Host} {x : Except Fault (Store × List Action)} :
     ∀ (n i : Nat) (r : RSt), n + i = cs.length → r.phase = 5 → r.commits = cs → r.i = i → r.wait = false →
     (∀ f, fileFault? img (cs.drop i) = some f → Drives cfg img J r h (.error f)) ∧
@@ -583,8 +580,8 @@ theorem numbered_drives {r : RSt} {h : Host} {x : Except Fault (Store × List Ac
 def tailActs (cfg : Config) (J : Bytes) (r : RSt) : List Action :=
   if r.torn then [actOf cfg J (.keep r.next0 r.cut), .syncDir, .cut r.cut] else []
 
-/-- **A torn tail** kept under the next number, the directory synced, the journal cut; then the first name of the
-second pass asked for. -/
+/-- **A torn tail** kept under the next number, the directory synced, the journal cut. Then the first name of the second
+pass is asked for. -/
 theorem tail_drives {r : RSt} {h : Host} {x : Except Fault (Store × List Action)} (hph : r.phase = 7) (hi : r.i = 0)
     (k : ∀ r', r'.phase = 8 → r'.first = true → r'.core = r.core → r'.tidied = r.tidied →
       r'.next0 = r.next0 → r'.next = r.next →
@@ -771,8 +768,8 @@ theorem sameCore {r r' : RSt} (h : r'.core = r.core) : SameCore r r' :=
     congrArg Core.fresh h, congrArg Core.commits h, congrArg Core.torn h, congrArg Core.cut h,
     congrArg Core.journalEnd h, congrArg Core.key h⟩
 
-/-- **The second pass** over names that all parse: each tidied and set aside as `tidyName` and `asideOf` say,
-then recovery's end. -/
+/-- **The second pass** over names that all parse: each tidied and set aside as `tidyName` and `asideOf` say. Then
+recovery's end. -/
 theorem second_drives {cs : List Commit} {ns : List Name} {torn : Bool} {acts0 : List Action}
     {x : Except Fault (Store × List Action)} (hvalid : ∀ n ∈ ns, n.valid = true)
     (hrec : ∀ s, s < 2 ^ 64 → (cs.map (·.seq)).contains s = (cs.map (finalName ·.seq)).contains (finalName s))
@@ -826,8 +823,8 @@ theorem tailActs_eq {r7 : RSt} {cut : Option Nat} {n0 : Nat} (ht : r7.torn = cut
   | none => simp [tailActs, cutActs, ht]
   | some x => simp [tailActs, cutActs, ht, hcut x rfl, hn, actOf]
 
-/-- **From the journal's commits on**: the rules, the files, the next number, the torn tail and the names
-tidied, as `recoverRecords` says. -/
+/-- **From the journal's commits on**: the rules, the files, the next number, the torn tail and the names tidied. All as
+`recoverRecords` says. -/
 theorem records_drives {ns : List Name} {cs : List Commit} {k : Bytes} {cut : Option Nat} {r : RSt}
     (hall : img.mapM nameOf = .ok ns) (hns : ns = img.filterMap (parseName ·.1))
     (hvalid : ∀ n ∈ ns, n.valid = true) (hseq : ∀ c ∈ cs, c.seq < 2 ^ 64)
@@ -999,10 +996,9 @@ theorem end_records {ns : List Name} {e : End} {key : Bytes} {rest : List Record
     exact drives_go hp (records_drives hall hns hvalid hseq rfl hcs hu
       K.maxSeq K.tails K.maxTail K.fresh K.tidied rfl (fun _ h => by cases h; rfl) rfl hk)
 
-/-- **Recovery's steps find what `recover` does**: the host reading the directory `img` — its names in order,
-the journal's octets as wanted, whether each final file is there and its size, whether a name set aside is — the
-steps from any area whose phase is 0 come to the corruption that keeps the store from starting, or the store it starts
-with and what it does first, as `Recovery.recover` says; for the key of sixteen octets the program takes. -/
+/-- **Recovery's steps find what `recover` does.** The host reads directory `img`: names in order, journal octets as
+wanted, final files and sizes, names set aside. From phase 0 they reach `recover`'s corruption, or its store and first
+actions, for a key of 16 octets. -/
 theorem drives_recover (cfg : Config) (img : Image) (hkey : cfg.key.length = keyLength) {r0 : RSt}
     (h0 : r0.phase = 0) : Drives cfg img ((img.lookup journalName).getD []) r0 Host.start (recover cfg img) := by
   obtain ⟨J, hJ⟩ : ∃ J, J = (img.lookup journalName).getD [] := ⟨_, rfl⟩

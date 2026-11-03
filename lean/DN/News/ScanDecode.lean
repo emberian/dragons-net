@@ -5,10 +5,9 @@ import DN.News.ScanRecord
 /-!
 # DN.News.ScanDecode
 
-If it goes on, the scanner's reading of a commit, `ScanProg.decode`, gives `ScanRun.scanCommit`'s verdict and
-the commit's fields in the area, from the area and the window as `DecIn` says (`decode_frag`, `decOut_commit`).
-Offsets in the area stay literals (24 a group's slot, 13 a frame's header): `omega` needs `24 * g` linear and
-`rw` matches the constants the program lowers to; `nums` names them.
+If it goes on, `ScanProg.decode` gives `ScanRun.scanCommit`'s verdict and the commit's fields in the area
+(`decode_frag`, `decOut_commit`). Area offsets stay literals, 24 a group's slot and 13 a frame's header. `omega` needs
+`24 * g` linear and `rw` the lowered constants; `nums` names them.
 -/
 
 namespace DN.News.ScanRun
@@ -387,8 +386,8 @@ def okCOf (pl : Bytes) : Bool := decide (10 + mlOf pl ≤ pl.length ∧ gcOf pl 
 /-- …and once `g` groups are read. -/
 def gokOf (pl : Bytes) (g : Nat) : Bool := okCOf pl && (scanGroups pl g (10 + mlOf pl)).isSome
 
-/-- Group `h`'s slot: where its name lies in the window, its length and its number, the name the payload's
-octets from `s`. -/
+/-- Group `h`'s slot: where its name lies in the window, its length and its number. The name is the payload's octets
+from `s`. -/
 def SlotAt (A : Word) (o' : Nat) (pl : Bytes) (h : Nat) (gr : Group) (u : PancakeState σ) : Prop :=
   ∃ s, u.memory (at_ A (sGroups + 24 * h)) = BitVec.ofNat 64 (o' + 13 + s) ∧
     u.memory (at_ A (sGroups + 24 * h + 8)) = BitVec.ofNat 64 gr.name.length ∧
@@ -1652,8 +1651,8 @@ theorem scan_okH (pl : Bytes) : scanCommit pl = if okHOf pl = true then some (co
       simp [commitOf, hg, hsOf, fsOf, crcOf, hk]
     · rw [if_neg h5, if_neg (by simp [okHOf, hgg, hn, h5])]
 
-/-- The commit `c`'s fields in the area: its sequence number, where its Message-ID lies in the window and its
-length, its count of groups and their slots, the header's and the file's sizes and the CRC. -/
+/-- The commit `c`'s fields in the area: its sequence number, its Message-ID's place in the window and length. Also its
+group count and their slots, the header's and the file's sizes and the CRC. -/
 def CommitAt (A : Word) (o' : Nat) (pl : Bytes) (c : Commit) (u : PancakeState σ) : Prop :=
   u.memory (at_ A sSeq) = BitVec.ofNat 64 c.seq ∧ u.memory (at_ A sIdAt) = BitVec.ofNat 64 (o' + 13 + 9) ∧
     u.memory (at_ A sIdLen) = BitVec.ofNat 64 c.messageId.length ∧
@@ -1679,8 +1678,8 @@ def DAtR (A : Word) (s0 : PancakeState σ) (b : Bool) (u : PancakeState σ) : Pr
 theorem datR_of {b : Bool} {u : PancakeState σ} (h : DAt A s0 b u) : DAtR A s0 b u :=
   ⟨kept_widen h.1 (fun _ hx => List.mem_cons_of_mem _ hx) fun _ h => h, h.2⟩
 
-/-- What the reading of a commit leaves: the verdict, `jrec` as it was without a commit, and with one its type
-and the commit's fields. -/
+/-- What reading a commit leaves: the verdict, `jrec` as it was without a commit. With one, its type and the commit's
+fields. -/
 def DecOut (A : Word) (s0 : PancakeState σ) (o' : Nat) (pl : Bytes) (u : PancakeState σ) : Prop :=
   DAtR A s0 (okHOf pl) u ∧ (okHOf pl = false → u.locals "jrec" = s0.locals "jrec") ∧ (okHOf pl = true →
     u.locals "jrec" = some (BitVec.ofNat 64 commitType) ∧ CommitAt A o' pl (commitOf pl) u)
@@ -1796,8 +1795,8 @@ theorem decI_frag (o : Oracle σ) (h : DecIn A o' pl s0) :
     simp only [commitOf, hgs] at hg ⊢
     exact hsl g hg
 
-/-- **The scanner's reading of a commit is `scanCommit`**: if it goes on, `jok` is one when the payload holds a
-commit a correct store writes, and then `jrec` is the commit's type and the area holds its fields. -/
+/-- **The scanner's reading of a commit is `scanCommit`.** If it goes on, `jok` is one when the payload holds a commit a
+correct store writes. Then `jrec` is the commit's type and the area holds its fields. -/
 theorem decode_frag (o : Oracle σ) (h : DecIn A o' pl s0) {fail : List Syntax.PStmt} (hfl : LowKK fail)
     (hfd : declared fail = []) : Frag o (ScanProg.decode fail) (Like s0) (DecOut A s0 o' pl) :=
   frag_append (frag_append (frag_append (frag_append (frag_append (frag_append (frag_append (frag_append
@@ -1818,7 +1817,7 @@ theorem decOut_commit {u : PancakeState σ} (hu : DecOut A s0 o' pl u) :
     subst hc
     exact hu.2.2 hh
 
-/-- …and its Message-ID is the payload's octets after the sequence number and the count, in the window at the
+/-- …and its Message-ID is the payload's octets after the sequence number and the count. They lie in the window at the
 place `CommitAt` gives. -/
 theorem id_octets {c : Commit} (hc : decodeCommit pl = some c) :
     c.messageId = (pl.drop 9).take c.messageId.length ∧ 9 + c.messageId.length ≤ pl.length := by

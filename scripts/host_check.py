@@ -940,10 +940,9 @@ HELGRIND = ("valgrind", "--tool=helgrind", "--error-exitcode=9", "-q")
 
 
 def race_run(binary: Path, points: list[str] | None, failing_sync: bool) -> None:
-    """Eight files created at once, then eight jobs at once writing, syncing and closing them, under
-    Helgrind; with `failing_sync`, every data sync fails, so that eight workers leave the mark at once.
-    Under Valgrind the host waiting with io_uring says nothing, so it waits with poll here: the threads
-    whose races are looked for are the workers', and the io_uring code runs on the main thread alone."""
+    """Eight files created at once, then eight jobs writing, syncing and closing them, under Helgrind. With
+    `failing_sync` every data sync fails, so eight workers leave the mark together. The host waits with poll here, since
+    Valgrind cannot follow io_uring, which runs on the main thread alone."""
     with tempfile.TemporaryDirectory() as temp:
         store = Store(temp)
         with Jobs(binary, [*store.options(), "--io", "poll"], points, wrap=HELGRIND, wait=120) as h:

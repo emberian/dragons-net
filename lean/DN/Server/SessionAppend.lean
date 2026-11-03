@@ -6,11 +6,9 @@ import DN.News.DecimalRun
 /-!
 # DN.Server.SessionAppend
 
-The session's ways of putting octets in a connection's output, proven fragments: a copy (`copy_then`), a
-number's decimal digits (`digits_then`), and, inside `connText`, a text of the session's, the revision, the
-source's address, the Message-ID looked up last, a number and a space, a byte (`appendText_frag` and on). Each
-writes its octets after those written, `o` past them, and changes no word outside the connection's output but the
-session's return word (`TCtx`, `Wrote`). Where the layout's offsets lie is computed once, the table's start kept folded (`tOff`).
+The session's ways of putting octets in a connection's output, as proven fragments. A copy (`copy_then`), decimal digits
+(`digits_then`), and inside `connText` texts, numbers and bytes (`appendText_frag` on). Each writes after the octets
+written, `o` past them, changing no word outside the output but the return word.
 -/
 
 namespace DN.Server.SessionAppend
@@ -25,8 +23,8 @@ def copyBody (j : String) (dst src : PancakeExp) : AProg σ :=
   .seq (.storeByte (.op .add dst (.var j)) (.loadByte (.op .add src (.var j))))
     (.assign j (.op .add (.var j) (.const 1)))
 
-/-- What a copy asks: the octets `bs` at `S`, room for them at `D` apart from them, the counter `j`
-bound, the places and the length read from neither memory nor `j`. -/
+/-- What a copy asks: the octets `bs` at `S`, room at `D` apart from them, the counter `j` bound. The places and the
+length read neither memory nor `j`. -/
 structure CopyPre (j : String) (dst src len : PancakeExp) (D S : Word) (bs : List (BitVec 8))
     (s : PancakeState σ) : Prop where
   hj : ∃ v, s.locals j = some v
@@ -219,8 +217,8 @@ def wrBody (t q off : String) (dst : PancakeExp) : AProg σ :=
       (.op .add (.const 48) (.op .sub (.var t) (.mul (div10E (.var t)) (.const 10)))))
     (.assign t (div10E (.var t)))))
 
-/-- What the write loop keeps of the state `s1` it starts in: every local but `t` and `q`, the
-memory's domain, order, base, world and code. -/
+/-- What the write loop keeps of its start state `s1`: every local but `t` and `q`. Also the memory's domain, order,
+base, world and code. -/
 structure WrKept (t q : String) (s1 u : PancakeState σ) : Prop where
   locals : ∀ y, y ≠ t → y ≠ q → u.locals y = s1.locals y
   memaddrs : u.memaddrs = s1.memaddrs
@@ -232,8 +230,7 @@ structure WrKept (t q : String) (s1 u : PancakeState σ) : Prop where
 theorem wrKept_clock {t q : String} {s1 u : PancakeState σ} (h : WrKept t q s1 u) (k : Nat) :
     WrKept t q s1 { u with clock := k } := { h with }
 
-/-- The write loop after the places from `q` on: their digits at `D0`, every other octet and word
-as it was. -/
+/-- The write loop after the places from `q` on: their digits at `D0`, other octets and words as they were. -/
 def WrInv (t q : String) (x : Nat) (D0 : Word) (s1 u : PancakeState σ) : Prop :=
   WrKept t q s1 u ∧ ∃ k, k ≤ numDigits x ∧ u.locals q = some (BitVec.ofNat 64 k) ∧
     u.locals t = some (BitVec.ofNat 64 (x / 10 ^ (numDigits x - k))) ∧
@@ -467,9 +464,8 @@ theorem wr_vc {t q off : String} {dst : PancakeExp} {x : Nat} {D offv : Word} {s
     simp only [Nat.lt_irrefl, decide_false, Bool.false_eq_true, if_false, if_true]
     exact ⟨hkp, ⟨_, hq⟩, ⟨_, ht⟩, fun i hi => hw i (Nat.zero_le _) hi, ho, hwd⟩
 
-/-- What `digits` asks: `x`, below 2^32, from `X`, and `D` from `dst`, neither reading the counters,
-`dst` reading no memory; the offset `ov` in `off`, ten places of room before `room`, every digit's word
-addressable; the names apart. -/
+/-- What `digits` asks: `x` below 2^32 from `X`, `D` from `dst`, neither reading the counters, `dst` reading no memory.
+The offset `ov` in `off`, ten places of room before `room`, each digit's word addressable. The names are apart. -/
 structure DigPre (n t q off : String) (dst X : PancakeExp) (room x ov : Nat) (D : Word)
     (s : PancakeState σ) : Prop where
   nt : n ≠ t
@@ -489,8 +485,8 @@ structure DigPre (n t q off : String) (dst X : PancakeExp) (room x ov : Nat) (D 
   hdstA : ExpAvoids (fun y => y = n ∨ y = t ∨ y = q) dst
   hroom8 : ∀ i, i < numDigits x → s.memaddrs (byteAlign (D + BitVec.ofNat 64 ov + BitVec.ofNat 64 i)) = true
 
-/-- What it leaves: `x`'s digits at `D + ov`, `off` past them, every other octet, word and local but the
-counters as they were. -/
+/-- What it leaves: `x`'s digits at `D + ov`, `off` past them. Every other octet, word and local but the counters as
+they were. -/
 structure DigPost (n t q off : String) (x ov : Nat) (D : Word) (s u : PancakeState σ) : Prop where
   locals : ∀ y, y ≠ n → y ≠ t → y ≠ q → y ≠ off → u.locals y = s.locals y
   hoff : u.locals off = some (BitVec.ofNat 64 (ov + numDigits x))
@@ -528,8 +524,8 @@ theorem digPost_clock (n t q off : String) (x ov : Nat) (D : Word) (s : PancakeS
     Safe.ClockFree (DigPost n t q off x ov D s) :=
   fun _ _ h => { h with }
 
-/-- **The session's decimal digits, then whatever follows**: `x`'s digits written at `D + ov`, `off`
-moved past them, the counters declared for what follows and their ends left to it. -/
+/-- **The session's decimal digits, then whatever follows**: `x`'s digits written at `D + ov`, `off` moved past them.
+The counters are declared for what follows, their ends left to it. -/
 theorem digits_then (o : Oracle σ) {n t q off : String} {dst X : PancakeExp} {room : Nat} {k : PancakeProg}
     {P P' Q : PancakeState σ → Prop} {R : Ret}
     (hpre : ∀ s, P s → ∃ x ov D, DigPre n t q off dst X room x ov D s ∧
@@ -749,8 +745,8 @@ theorem below_table {b : Word} (hb : b.toNat % 8 = 0) {c x : Nat} (hc : c < conn
   rw [outAt_off, add_ofNat] at e
   exact words_apart hb (by omega) (by omega) (by omega) e
 
-/-- What `connText`'s statements keep from its entry `s0`: the locals it sets up, the memory's
-domain, order, base and code, and every word but connection `c`'s output's and the return word. -/
+/-- What `connText`'s statements keep from its entry `s0`: the locals it sets up, the memory's domain, order, base and
+code. Also every word but connection `c`'s output's and the return word. -/
 structure TCtx (b : Word) (c t rl sl : Nat) (s0 s : PancakeState σ) : Prop where
   hc : s.locals "c" = some (BitVec.ofNat 64 c)
   ht : s.locals "t" = some (BitVec.ofNat 64 t)
@@ -841,8 +837,8 @@ theorem TCtx.set {b : Word} {c t rl sl : Nat} {s0 s : PancakeState σ} (h : TCtx
         · exact ⟨_, rfl⟩
         · exact ⟨w, hw⟩) (fun _ _ _ => rfl) rfl rfl rfl rfl
 
-/-- **Octets `bs` put after those written**, every other octet and every word outside the output as
-they were, the context's locals kept: the output is `acc ++ bs`. -/
+/-- **Octets `bs` put after those written**: the output is `acc ++ bs`. Every other octet, every word outside the output
+and the context's locals are kept. -/
 theorem wrote_put {b : Word} {c t rl sl : Nat} {s0 s u : PancakeState σ}
     {acc bs : List (BitVec 8)} (hc : c < conns) (hroom : acc.length + bs.length ≤ data)
     (hx : TCtx b c t rl sl s0 s) (hw : Wrote b c acc s)
@@ -894,8 +890,8 @@ theorem copyAppend_lowerK {src len : Syntax.PExpr} {SRC LEN : PancakeExp} (hs : 
   rw [h1, Option.bind_some]
   exact copy_lowerK rfl hs hl _
 
-/-- The octets `bs` at offset `X` of the session's words, below the table or past the connections'
-records, copied after those written, `o` moved past them. -/
+/-- The octets `bs` at offset `X` of the session's words, below the table or past the connections' records. They are
+copied after those written, `o` moved past them. -/
 theorem appendFrom_frag (o : Oracle σ) {b : Word} (hb : b.toNat % 8 = 0) {c t rl sl : Nat}
     {s0 : PancakeState σ} {acc bs : List (BitVec 8)} {X : Nat} {src len : Syntax.PExpr} {SRC LEN : PancakeExp}
     {P : Assn σ} (hc : c < conns) (hcov : Analyzer.Covers SessionLayout.size s0.memaddrs b)
@@ -1213,7 +1209,7 @@ theorem wb_off (x : Nat) (hx : x < 2 ^ 63) : (wb + BitVec.ofNat 64 x - wb).toNat
 
 theorem wb_aligned : wb.toNat % 8 = 0 := by decide
 
-/-- A word at `Y` past the base keeps its value through bytes stored at `X` past it, a word or more away. -/
+/-- A word at `Y` past the base keeps its value through bytes stored at `X`, a word or more away. -/
 theorem putAll_far {b : Word} (hb : b.toNat % 8 = 0) {be : Bool} {X Y : Nat} {xs : List (BitVec 8)}
     (m : Word → Word) (hY : Y % 8 = 0) (hX : X + xs.length < 2 ^ 63) (hY' : Y < 2 ^ 63)
     (h : Y + 8 ≤ X ∨ X + xs.length ≤ Y) :

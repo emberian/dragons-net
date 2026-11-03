@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
- * io_uring without liburing (uring.h). The rings are shared with the kernel: an entry is written
- * before the tail that publishes it is stored with release, the kernel's tail is loaded with acquire
- * before the entries it covers are read, and a head is moved on with release once its entry is
- * copied out, as io_uring(7) has it. */
+ * io_uring without liburing (uring.h), its rings shared with the kernel. Entries are written before a release store of
+ * the tail; the kernel's tail is acquired before reading. A head moves on with release once its entry is copied out, as
+ * io_uring(7) has it. */
 #define _GNU_SOURCE
 #include "uring.h"
 #include "faults.h"
@@ -17,8 +16,8 @@
 #include <time.h>
 #include <unistd.h>
 
-/* What the kernel gives that this file relies on: one mapping for both queues, no completion ever dropped,
- * submissions read once, and a wait with a timeout. */
+/* What this file relies on from the kernel: one mapping for both queues, no completion dropped. Also submissions read
+ * once, and a wait with a timeout. */
 static const struct { unsigned bit; const char *name; } needed[] = {
     {IORING_FEAT_SINGLE_MMAP, "single mapping"}, {IORING_FEAT_NODROP, "no dropped completions"},
     {IORING_FEAT_SUBMIT_STABLE, "stable submissions"}, {IORING_FEAT_EXT_ARG, "waits with a timeout"}};
@@ -61,9 +60,8 @@ static int probed(int fd, const uint8_t *ops, size_t n, char *why, size_t why_le
     return 0;
 }
 
-/* Only the operations of `ops` from now on, and no registration but the one that enables the ring:
- * with restrictions in place the kernel refuses every flag not allowed, and recent kernels restrict
- * registration only once a rule names one. */
+/* Only the operations of `ops` from now on, no registration but the enabling one. The kernel then refuses any flag not
+ * allowed; recent kernels restrict registration only once a rule names one. */
 static int restricted(int fd, const uint8_t *ops, size_t n, char *why, size_t why_len) {
     struct io_uring_restriction rules[257];
     if (n > 256) return refused(why, why_len, "io_uring: %zu operations", n);
@@ -169,9 +167,8 @@ int dn_ring_enter(struct dn_ring *r, unsigned wait, int64_t timeout_ms) {
             arg.ts = (uint64_t)(uintptr_t)&ts;
             flags |= IORING_ENTER_EXT_ARG;
         }
-        /* The test build's `dn/uring-short` cuts a submission to one entry, which then waits for
-         * nothing, as a submission the kernel cuts short does not; its `dn/uring-enter` fails the call
-         * with the error number it was enabled with. */
+        /* The test build's `dn/uring-short` cuts a submission to one entry, waiting for nothing, unlike a kernel's
+         * short cut. Its `dn/uring-enter` fails the call with the enabled error number. */
         unsigned asked = submit > 1 && DN_FAULT("dn/uring-short") ? 1 : submit;
         long got = DN_FAULT("dn/uring-enter") ? -1
                    : syscall(__NR_io_uring_enter, r->fd, asked, asked < submit ? 0 : wait, flags,
@@ -181,9 +178,8 @@ int dn_ring_enter(struct dn_ring *r, unsigned wait, int64_t timeout_ms) {
             int code = errno;
             if (code == ETIME) return 0;
             if (code == EINTR) continue;
-            /* The completion queue is full, or the kernel is short of memory for a request: the
-             * caller reaps what is there and comes back, and what is not yet submitted waits; with
-             * nothing to reap it comes back at once, spinning through the shortage. */
+            /* The completion queue is full, or the kernel lacks memory for a request: the caller reaps and comes back.
+             * Unsubmitted entries wait; with nothing to reap it returns at once, spinning through the shortage. */
             if (code == EBUSY || code == EAGAIN) return 0;
             return -code;
         }

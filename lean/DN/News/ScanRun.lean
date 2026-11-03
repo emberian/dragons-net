@@ -8,9 +8,8 @@ import DN.Compiler.NatToDec
 /-!
 # DN.News.ScanRun
 
-What `DN.News.Journal.next` decides of a frame before it reads a record (`fault`, `next_fault`,
-`checks_fault`); what a fragment of the scanner leaves as it was (`Kept`) and the tests it makes (`e_ne`,
-`e_or2`); its statements that read octets as a number (`leS_frag`).
+What `DN.News.Journal.next` decides of a frame before reading a record (`fault`, `next_fault`, `checks_fault`). What a
+scanner fragment keeps (`Kept`), its tests (`e_ne`, `e_or2`), and its numeric reads (`leS_frag`).
 -/
 
 namespace DN.News.ScanRun
@@ -28,8 +27,8 @@ def payloadOf (bs : Bytes) : Bytes := (bs.drop headerLength).take (readLE (bs.ta
 /-- The frame's type. -/
 def typeOf (bs : Bytes) : Nat := (bs.getD 12 0).toNat
 
-/-- Why the frame at `offset`, the start of `bs`, does not check, as `next` finds it before it reads a
-record; none when it checks. -/
+/-- Why the frame at `offset`, the start of `bs`, does not check, as `next` finds it before reading a record. None when
+it checks. -/
 def fault (key : Option Bytes) (offset : Nat) (bs : Bytes) : Option Why :=
   if bs.length < headerLength then some .short
   else if maxPayload < readLE (bs.take 4) then some .tooLong

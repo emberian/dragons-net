@@ -5,9 +5,8 @@ import DN.News.RecoverFirst
 # DN.News.RecoverCommit
 
 A commit the journal's scanner read, noted by recovery's step (`RecoverProg.commitRead`) as `RecoverSpec.recordRead`
-notes it: counted, and while the index has room, in its slot — its numbers, its Message-ID and the Message-ID's tag
-under the configuration's key, each group's place in the configuration and article number — and the first group the
-configuration lacks.
+notes it. It is counted and, while the index has room, put in its slot. The slot holds its numbers, Message-ID and tag,
+each group's place and number; the first group lacking is noted.
 -/
 
 namespace DN.News.RecoverArea
@@ -889,8 +888,7 @@ theorem crBump_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r : R
 
 /-! ## A commit's groups in its slot -/
 
-/-- The words slot `S` holds once a commit read stores them: its number, its sizes, and its CRC with the
-Message-ID's length and the count of groups. -/
+/-- The words a commit read stores in slot `S`: number, sizes, CRC with the Message-ID's length and group count. -/
 def SlotWords (A : Word) (S : Nat) (c : Commit) (u : PancakeState σ) : Prop :=
   u.memory (at_ A (S + slotSeq)) = .ofNat 64 c.seq ∧
     u.memory (at_ A (S + slotSizes)) = (BitVec.ofNat 64 c.headerSize <<< 32) ||| .ofNat 64 c.fileSize ∧
@@ -973,8 +971,8 @@ theorem unkNoted_stW {A : Word} (hA : A.toNat % 8 = 0) {r : RSt} {unk : Option B
     exact ⟨by show (stW u A x v).memory _ = _; rw [stW_word hx64 (by omega) (by omega)]; exact e1, e2,
       bytesAt_stW hA e3 hx64 (by omega) (fun j hj => by omega) v⟩
 
-/-- **A group of a commit read**: its place in the configuration and article number into the slot, the first the
-configuration lacks noted. -/
+/-- **A group of a commit read**: its place in the configuration and article number into the slot. The first group the
+configuration lacks is noted. -/
 theorem groupNote_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r1 : RSt} {s0 : PancakeState σ} (h : PBase A s0) {ws : Nat → Word}
     {os : List (Nat × Word)} {l : List (String × Value)} (hgn : ws rGroupCount = .ofNat 64 cfg.groups.length)
@@ -1509,8 +1507,8 @@ theorem slotTag_frag (o : Oracle σ) {A : Word} {cfg : Config} {J : Bytes} {r1 :
         (fun j hj => by simp only [slotId, slotTag]; omega) _
     · show (stW u A (S + slotTag) _).memory _ = _; simp [stW, wTag]
 
-/-- **A commit read**, as `recordRead` notes it: counted, and while the index has room, in its slot, the first group
-the configuration lacks noted. -/
+/-- **A commit read**, as `recordRead` notes it: counted, and while the index has room, in its slot. The first group the
+configuration lacks is noted. -/
 theorem commitRead_frag (o : Oracle σ) {fail : List Syntax.PStmt} (hfl : LowKK fail) (hfd : declared fail = [])
     {A : Word} {cfg : Config} {J : Bytes} {r1 : RSt} {s0 : PancakeState σ} (h : PBase A s0) (hp1 : r1.phase = 3)
     {ws : Nat → Word} {os : List (Nat × Word)} {l : List (String × Value)}

@@ -4,9 +4,9 @@ import DN.News.AbnfLeaves
 /-!
 # DN.News.AbnfComment
 
-`ruleComment`, proven to do what it is named for: if it returns, its slot holds where each comment closes that opens
-at a position of another slot (`ruleComment_ok`), the ends of the matches of the grammar's `comment`
-(`commentAdd_iff`). Its scan is the model's (`AbnfMatch.step`), step by step.
+`ruleComment`, proven to do what it is named for (`ruleComment_ok`). If it returns, its slot holds where each comment
+opening at another slot's position closes. Those are the ends of the grammar's `comment` matches (`commentAdd_iff`); its
+scan is `AbnfMatch.step`'s.
 -/
 
 namespace DN.News.AbnfComment
@@ -59,8 +59,8 @@ theorem step_bounds {input : Array Nat} {y d s y' d' s' : Nat} (h : step input y
   all_goals have := lt_of_some hb
   all_goals first | (refine ⟨by omega, by omega, by split <;> omega, by omega⟩) | omega
 
-/-- What one step leaves in the scan's locals: those the model goes to with `go` 1, `go` cleared where it fails,
-`y` past the comment and `go` 2 where it closes. -/
+/-- What one step leaves in the scan's locals: the model's next ones with `go` 1. `go` is cleared where it fails; `y`
+past the comment and `go` 2 where it closes. -/
 def Out : Step → Nat → Nat → Nat → Nat → Prop
   | .go y' d' s', y, d, s, g => y = y' ∧ d = d' ∧ s = s' ∧ g = 1
   | .fail, _, _, _, g => g = 0
@@ -522,8 +522,8 @@ theorem scanStep_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState 
 
 /-! ## A comment's end -/
 
-/-- What the scan's locals tell of the comment that opens at `x`: going on, its ends those of the scan from them;
-cleared, it has none; 2, it closes at `y`. -/
+/-- What the scan's locals tell of the comment opening at `x`. Going on, its ends are the scan's from them; cleared, it
+has none; 2, it closes at `y`. -/
 def Inv (input : Array Nat) (x y d s g : Nat) : Prop :=
   (g = 1 ∧ 1 ≤ d ∧ d ≤ y ∧ s ≤ 3 ∧ y ≤ input.size ∧ ∀ e, Runs input (x + 1) 1 0 e ↔ Runs input y d s e) ∨
     (g = 0 ∧ ∀ e, ¬Runs input (x + 1) 1 0 e) ∨ (g = 2 ∧ Runs input (x + 1) 1 0 y)
@@ -738,8 +738,8 @@ theorem commentBody_frag (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeSta
         (fun u h => ev_var (vals_lookup h.1.vals rfl))) (fun u h => h.1.1)
         fun u h => runF_mono h (fun q hq => List.mem_append_right _ hq) fun _ e => e
 
-/-- **`ruleComment` adds where each comment closes that opens at a position of `S`** to slot `kd`, emptied first,
-every word outside it kept. -/
+/-- **`ruleComment` adds where each comment opening at a position of `S` closes** to slot `kd`, emptied first. Every
+word outside it is kept. -/
 theorem ruleComment_ok (o : Oracle σ) {ofs : Nat} {A : Word} {s1 : PancakeState σ} (hA : Area ofs A s1)
     {ks kd : Nat} (hks : ks < slots) (hkd : kd < slots) (hne : ks ≠ kd)
     (hs : s1.locals "s" = some (BitVec.ofNat 64 ks)) (hd : s1.locals "d" = some (BitVec.ofNat 64 kd))
@@ -803,27 +803,6 @@ theorem commentSet_iff {S : Nat → Bool} {bytes : List (BitVec 8)} (hlen : byte
       simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
       rw [setWords_eq]; rw [inputMax_eq] at hlen; omega
     · cases h
-
-/-- **A call of `ruleComment`.** -/
-theorem ruleComment_call (o : Oracle σ) {ofs : Nat} {A : Word} {s0 : PancakeState σ} (hA : Area ofs A s0)
-    {rt : String} {l : List (String × Value)} {F : (Word → Word) → Prop} (hrt : Fresh rt l = true)
-    {body : PancakeProg} (hb : Lower.lower (ruleComment .none ofs) = some body)
-    (hcode : s0.code "ruleComment" = some (["s", "d"], body)) {e1 e2 : Syntax.PExpr} {E1 E2 : PancakeExp}
-    (he1 : Lower.lowerExp e1 = some E1) (he2 : Lower.lowerExp e2 = some E2) {ks kd : Nat} (hks : ks < slots)
-    (hkd : kd < slots) (hne : ks ≠ kd) (hv1 : ∀ u, RunF s0 l F u → eval u E1 = some (BitVec.ofNat 64 ks))
-    (hv2 : ∀ u, RunF s0 l F u → eval u E2 = some (BitVec.ofNat 64 kd)) {S Sd : Nat → Bool}
-    {bytes : List (BitVec 8)} (hlen : bytes.length ≤ inputMax)
-    (hS : ∀ m, F m → SetAt m A ks S ∧ SetAt m A kd Sd ∧ m (at_ A aLen) = BitVec.ofNat 64 bytes.length ∧
-      Reads s0 A bytes m) :
-    Frag o [.call rt "ruleComment" [e1, e2]] (RunF s0 l F)
-      (fun u => ∃ v, RunF s0 ((rt, v) :: l)
-        (fun m' => ∃ m, F m ∧ LeafRet A kd (below (commentAdd S bytes) (64 * setWords)) m v m') u) :=
-  setCall_frag o hA (ps := ["s", "d"]) (args := [E1, E2]) (vs := [BitVec.ofNat 64 ks, BitVec.ofNat 64 kd])
-    (by decide) (by simp [Lower.lowerArgs, he1, he2]) hcode rfl (fun u h => by simp only [evalArgs, hv1 u h, hv2 u h])
-    (R := LeafRet A kd (below (commentAdd S bytes) (64 * setWords)))
-    (fun s1 hA1 _ hm hbe hloc hF => body_eq hb (ruleComment_ok o hA1 hks hkd hne ((hloc "s").trans rfl)
-      ((hloc "d").trans rfl) (hS _ hF).1 (hS _ hF).2.1 hlen (hS _ hF).2.2.1 (reads_of hm hbe (hS _ hF).2.2.2))) hrt
-    fun m m' v hF hr => ⟨m, hF, hr⟩
 
 /-! ## The premises can hold -/
 

@@ -4,9 +4,8 @@ import DN.News.RecoverArea
 /-!
 # DN.News.RecoverFirst
 
-Recovery's first phases as the program runs them (`RecoverProg.begin`, `firstPass`, `journalGiven`) are those of
-`DN.News.RecoverSpec`: from an area holding a state, each leaves it holding the state the phase gives, and what it
-asks or gives.
+Recovery's first phases as the program runs them (`begin`, `firstPass`, `journalGiven`) are `DN.News.RecoverSpec`'s.
+From an area holding a state, each leaves the state the phase gives and what it asks or gives.
 -/
 
 namespace DN.News.RecoverArea
@@ -22,8 +21,8 @@ variable {σ : Type}
 
 /-! ## A name -/
 
-/-- A name's kind, as `classify` gives it: 1 the journal, 2 to 5 a final, temporary, quarantine or tail name, 0 none
-the store gives. -/
+/-- A name's kind, as `classify` gives it: 1 the journal, 2 to 5 a final, temporary, quarantine or tail name. 0 is a
+name the store does not give. -/
 def kindOf : Option Name → Nat
   | some .journal => 1
   | some (.final _) => 2
@@ -78,8 +77,8 @@ theorem digitsFrom_snoc (acc : Nat) (ds : Bytes) (c : Byte) :
 theorem allDigits_snoc (ds : Bytes) (c : Byte) : allDigits (ds ++ [c]) = (allDigits ds && (digitValue c).isSome) := by
   simp [allDigits]
 
-/-- **What a name of seventeen octets is**: its kind from its first octet once the others are digits, and their value
-its number. -/
+/-- **What a name of seventeen octets is**: its kind from its first octet once the others are digits. Their value is its
+number. -/
 theorem parse_17 {c : Byte} {ds : Bytes} (hl : ds.length = 16) :
     kindOf (parseName (c :: ds)) = (if allDigits ds then letterKind c else 0) ∧
       ∀ n, parseName (c :: ds) = some n → numOf n = digitsFrom 0 ds := by

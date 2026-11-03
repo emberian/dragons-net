@@ -1,48 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The faults lane: the crash lane's server (scripts/crash_check.py) on a spool holding an article,
-and on that spool as a crash leaves it, its clients one after another, each on a connection of its
-own: an article posted, ARTICLE of the one held, another posted, STAT of the one held, then the
-capabilities and LIST ACTIVE, POST among the first and `y` in the second only while the store accepts.
-
-- Each operation failed once with ENOSPC at its first point (`dn/fail`): every reply as in a run
-  without the failure until it, then as decision 0005 has it for the point and the file: an
-  article's creation, write or rename refuses the post, 441, and the store goes on; its sync, close
-  or directory's sync refuses it, and the store stops accepting (201, 440), the mark of a failed
-  sync left in the spool and the run directory; the journal's write or sync closes the connection
-  unanswered and stops the store, its sync leaving the mark; an opening or a read of the article
-  answers 403 and the store goes on; a failure at the start ends it with status 4, recovery failed
-  of no space. Every point but `dn/read-dir`, which a listing reaches only past `dn/open-dir`, fails
-  in some run, and the stop's counters count the one failed file job, for want of space.
-- Each operation interrupted once (EINTR): where the host makes the call again, the run as without
-  it, no file job failed, and as a failure where it does not, counted as failing otherwise.
-- Every write cut to one octet: the run as without it; a write of no progress: the start refused, of
-  no space.
-- Each index's generations counted up to the last but one (`dn/generation`): every client opens at
-  the last generation of an index and the next at another, the run as without it.
-- SIGTERM as each operation begins (`dn/term`): the job running it run out before the server ends,
-  with status 0, the spool held as after a crash and served again.
-- Every index taken at once, a 65th connection waiting; slow reads of the large article, posts with
-  slowed syncs and HELP on the rest: all answered, the allocator holding no more once the server
-  serves, and at most `GROWTH` kB more resident than as it began to serve.
-- A wait that fails, poll's (`dn/poll`, `--io poll`) and io_uring's (`dn/uring-enter`), and io_uring
-  refused at the start (`dn/uring-setup`): the host ends with status 2, the last naming `--io poll`.
-- Every sync slowed by `SLOW` seconds: an article read and a STAT on other connections answered
-  before a post's 240, which comes after its three syncs.
-
-Each spool left recovers by scripts/recovery_ref.py, not corrupt, with the article held before and
-each one answered 240, as sent, none refused, and nothing else but what recovery sets aside and the
-file of a commit unanswered;
-started again, on a mark of another boot, the server does as the crash lane holds it to.
-
-An article's file, of one buffer read and of two, changed after the start as the table of
-corruptions `fn` keeps has it (`CHANGES`): ARTICLE, HEAD and BODY answered 403, or, a change past the
-first buffer, the start of the reply and the connection closed; STAT 223; a post taken; started
-again, refused where recovery_ref finds the spool corrupt, recovery failed where the file opens no
-more, and else the article still not sent whole.
-
-Each defect of `DEFECTS`, planted in the program or the host, has to be caught for the reason named.
-"""
+"""The faults lane: the crash lane's server on a spool holding an article, clients posting and reading in turn. Each
+file operation fails once (ENOSPC, EINTR, short writes), plus generations, SIGTERM, a full table, failed waits and
+slowed syncs. Replies follow decision 0005, spools recover, changed files are refused, and each planted defect in
+`DEFECTS` is caught."""
 from __future__ import annotations
 
 import argparse
@@ -431,10 +392,8 @@ SEND_BUFFER, RECEIVE_BUFFER = 4_096, 4_096
 
 
 def poll_fails(binary: Path, base: Image) -> None:
-    """A wait that fails but by a signal, with ENOMEM, the first as the start waits for its jobs:
-    poll's (`dn/poll`, the server run with `--io poll`) and io_uring's (`dn/uring-enter`). The host
-    ends with status 2, as a fault of what it runs on, naming the call, rather than wait on without its
-    timer."""
+    """A wait failing with ENOMEM, not by a signal, first as the start waits for its jobs: poll's and io_uring's. The
+    host ends with status 2, naming the call, rather than wait on without its timer."""
     for point, more, call in (("dn/poll", ("--io", "poll"), "poll"), ("dn/uring-enter", (), "io_uring_enter")):
         with tempfile.TemporaryDirectory() as temp:
             run = served(binary, base, Path(temp), f"enable name={point},failinfo={errno.ENOMEM}", more=more)

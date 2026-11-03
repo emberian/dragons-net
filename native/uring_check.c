@@ -1,9 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
- * The io_uring layer (uring.h) on the running kernel: what the ring refuses, a kernel that refuses
- * io_uring through a seccomp filter, a queue fuller than it holds, completions past the completion
- * queue, cancellation by token and by descriptor, a message between two rings of two threads, waits
- * that end, and a ring closed with an operation live. Prints the cases as JSON; a case that fails
- * ends the check with status 1. */
+ * The io_uring layer (uring.h) on the running kernel: refusals, seccomp, queue overflow, cancellation, cross-thread
+ * messages, waits, a live close. Prints the cases as JSON; a failing case ends the check with status 1. */
 #define _GNU_SOURCE
 #include "host.h"
 #include "uring.h"
@@ -55,8 +52,8 @@ static void wait_for(struct dn_ring *r, uint64_t token, unsigned *others, struct
     dn_violation("no completion of %llx", (unsigned long long)token);
 }
 
-/* Every completion there is reaped, each given to `seen`, within a bound: a cancellation that never
- * ends fails the check by name. */
+/* Reaps every completion there, each given to `seen`, within a bound. A cancellation that never ends fails the check by
+ * name. */
 static void drain(struct dn_ring *r, const char *what, void (*seen)(const struct io_uring_cqe *c)) {
     struct io_uring_cqe c;
     for (int rounds = 0; r->live && rounds < 100; ++rounds) {
@@ -97,8 +94,7 @@ static void refusals(void) {
     if (!dn_ring_open(&r, 8, unknown, sizeof unknown, why, sizeof why) || !strstr(why, "lacks operation 255"))
         dn_violation("an operation the kernel lacks was not refused: %s", why);
     cases += 2;
-    /* An operation the ring was not opened for, and an allowed one with a flag, are refused by the
-     * kernel itself. */
+    /* The kernel itself refuses an operation the ring was not opened for, and an allowed one with a flag. */
     open_ring(&r, 8);
     struct io_uring_sqe *s = get(&r, DN_TOKEN(K_DENIED, 0, 1));
     s->opcode = IORING_OP_OPENAT;
@@ -123,8 +119,8 @@ static void refusals(void) {
     cases += 3;
 }
 
-/* In a child whose seccomp filter answers io_uring_setup with `code`, the ring is refused with
- * `said`, as a container's filter or kernel.io_uring_disabled refuses it. */
+/* In a child whose seccomp filter answers io_uring_setup with `code`, the ring is refused with `said`. That is how a
+ * container's filter or kernel.io_uring_disabled refuses it. */
 static void refused_by_kernel(int code, const char *said) {
     pid_t child = fork();
     if (child < 0) dn_harness("fork: %s", strerror(errno));
@@ -152,8 +148,8 @@ static void refused_by_kernel(int code, const char *said) {
     cases += 1;
 }
 
-/* More submissions than the queue holds, and more completions than the completion queue holds:
- * none is lost and each is reaped once. */
+/* More submissions than the queue holds, and more completions than the completion queue holds: none is lost, each
+ * reaped once. */
 static void floods(void) {
     struct dn_ring r;
     open_ring(&r, 4);
@@ -192,8 +188,8 @@ static void floods(void) {
     cases += 1;
 }
 
-/* A receive that never completes, cancelled by its token and then by its descriptor: each posts its
- * own completion, -ECANCELED, besides the cancel's. Data sent arrives whole. */
+/* A receive that never completes, cancelled by token, then by descriptor: each posts its own -ECANCELED beside the
+ * cancel's. Data sent arrives whole. */
 static void cancels(void) {
     int pair[2];
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) dn_harness("socketpair: %s", strerror(errno));

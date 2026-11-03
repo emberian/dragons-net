@@ -222,8 +222,8 @@ theorem asideOf_temp (recorded : List Bytes) (names : List Name) (torn : Bool) (
 theorem asideOf_journal (recorded : List Bytes) (names : List Name) (torn : Bool) :
     asideOf recorded names torn .journal = none := rfl
 
-/-- What recovery does to a torn tail starting at `cut`: its octets kept under the next number `next0` with where
-it was cut, the directory synced, the journal cut. -/
+/-- What recovery does to a torn tail starting at `cut`. Its octets are kept under the next number `next0`, with where
+it was cut. Then the directory is synced and the journal cut. -/
 def cutActs (content : Bytes) (cut : Option Nat) (next0 : Nat) : List Action :=
   match cut with
   | some x => [.keep (tailName next0) (le 8 x ++ content.drop x), .syncDir, .cut x]
