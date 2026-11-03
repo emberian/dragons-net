@@ -5,15 +5,9 @@ import DN.News.SipProg
 /-!
 # DN.News.ScanProg
 
-A journal read back as `DN.News.Journal.scan` reads it, as the gate prints it: a step reads one
-frame from a window of the journal that the caller fills, and leaves in the scanner's area at `jsc`
-what it found — octets wanted (how many, from where the window ends), a record (its fields), or how
-the journal ends; the area is all it keeps between steps. A frame's tag is computed by
-`DN.News.SipProg.sipSrc`. Tested against `dn-compiler journal-model`, not proven.
-
-So that the analysis of decision 0004 sees every access lie in the area, the step keeps no address
-in it, only offsets into the window, and checks each word it reads back before it makes an address
-of it: one out of the range it keeps it in runs `fail`, which ends the step for good.
+The journal read back as `DN.News.Journal.scan` reads it, as the gate prints it. A step reads one frame from a
+caller-filled window, leaving octets wanted, a record, or the journal's end. Proven if it goes on: the step is
+`ScanSpec.stepSpec`, and its steps read the journal as `scan` does.
 -/
 
 namespace DN.News.ScanProg
@@ -130,30 +124,49 @@ def message : List PStmt :=
       inc "ji"],
    .assign "n" (eAdd (v "jpl") (n 9))]
 
-/-- Why the frame at journal offset `jq`, at `jf` in the window, `jr` octets of the journal from
-it, does not check, into `jwhy`, zero if it does; its payload's length into `jpl` and its type into
-`jt`. A length below zero cannot be read from four octets; it is refused with one too long, so that
-the analysis sees the bound. -/
+/-- The tag, once there is a key: SipHash-2-4 over the message, against the frame's. -/
+def tagPart : List PStmt :=
+  [.ite (eEq (v "jhk") (n 0)) [.assign "jwhy" (lit (whyCode .tag))]
+    (message ++ SipProg.sipSrc ++ leS "jtag" (atOff (v "jf") 4) 8 ++
+      [.ite (ne (v "r") (v "jtag")) [.assign "jwhy" (lit (whyCode .tag))] []])]
+
+/-- The type and the key, then the tag. -/
+def markPart (keyed : Bool) : List PStmt := [.assign "jt" (byte (atOff (v "jf") 12))] ++ keySel keyed ++ tagPart
+
+/-- The end mark, then the rest. -/
+def endPart (keyed : Bool) : List PStmt :=
+  [.ite (ne (byte (eAdd (v "jf") (eAdd (v "jpl") (n headerLength)))) (n 0xA5))
+    [.assign "jwhy" (lit (whyCode .unterminated))] (markPart keyed)]
+
+/-- The octets the length says, then the rest. -/
+def cutPart (keyed : Bool) : List PStmt :=
+  [.ite (eLt (v "jr") (eAdd (v "jpl") (n (headerLength + 1)))) [.assign "jwhy" (lit (whyCode .short))]
+    (endPart keyed)]
+
+/-- A length any payload may have, then the rest. A length below zero cannot come from four octets; refusing it as too
+long lets the analysis see the bound. -/
+def longPart (keyed : Bool) : List PStmt :=
+  [.ite (or2 (eLt (n maxPayload) (v "jpl")) (eLt (v "jpl") (n 0))) [.assign "jwhy" (lit (whyCode .tooLong))]
+    (cutPart keyed)]
+
+/-- Why the frame at journal offset `jq`, at `jf` in the window, `jr` octets left, does not check. The code goes into
+`jwhy`, zero if it does; its payload's length into `jpl`, its type into `jt`. -/
 def frameWhy (keyed : Bool) : List PStmt :=
   [.assign "jwhy" (lit 0),
    .ite (eLt (v "jr") (n headerLength)) [.assign "jwhy" (lit (whyCode .short))]
-     (leS "jpl" (v "jf") 4 ++
-      [.ite (or2 (eLt (n maxPayload) (v "jpl")) (eLt (v "jpl") (n 0)))
-        [.assign "jwhy" (lit (whyCode .tooLong))]
-        [.ite (eLt (v "jr") (eAdd (v "jpl") (n (headerLength + 1))))
-          [.assign "jwhy" (lit (whyCode .short))]
-          [.ite (ne (byte (eAdd (v "jf") (eAdd (v "jpl") (n headerLength)))) (n 0xA5))
-            [.assign "jwhy" (lit (whyCode .unterminated))]
-            ([.assign "jt" (byte (atOff (v "jf") 12))] ++ keySel keyed ++
-             [.ite (eEq (v "jhk") (n 0)) [.assign "jwhy" (lit (whyCode .tag))]
-               (message ++ SipProg.sipSrc ++ leS "jtag" (atOff (v "jf") 4) 8 ++
-                [.ite (ne (v "r") (v "jtag")) [.assign "jwhy" (lit (whyCode .tag))] []])])]]])]
+     (leS "jpl" (v "jf") 4 ++ longPart keyed)]
 
 /-- Group `g`'s slot in the area. -/
 def slot (g : String) : PExpr := eAdd (atOff sp sGroups) (eMul (v g) (n groupSlot))
 
 /-- Where octet `i` of the payload lies in the window. -/
 def inWindow (i : PExpr) : PExpr := eAdd (eAdd (v "jo") (n headerLength)) i
+
+/-- Octet `jx` of the two names, compared. -/
+def alikeOctet : List PStmt :=
+  [.ite (ne (byte (eAdd (eAdd (v "jw") (v "jna")) (v "jx"))) (byte (eAdd (eAdd (v "jw") (v "jnb")) (v "jx"))))
+     [.assign "jeq" (lit 0)] [],
+   inc "jx"]
 
 /-- Whether the names of groups `ja` and `jbb` are alike, into `jeq`. -/
 def namesAlike : List PStmt :=
@@ -163,61 +176,91 @@ def namesAlike : List PStmt :=
      [.assign "jna" (.loadw 1 (v "jga")), kept fail "jna" windowRoom,
       .assign "jnb" (.loadw 1 (v "jgb")), kept fail "jnb" windowRoom,
       .assign "jeq" (lit 1), .assign "jx" (lit 0),
-      .while (eLt (v "jx") (v "jla"))
-        [.ite (ne (byte (eAdd (eAdd (v "jw") (v "jna")) (v "jx")))
-            (byte (eAdd (eAdd (v "jw") (v "jnb")) (v "jx")))) [.assign "jeq" (lit 0)] [],
-         inc "jx"]] []]
+      .while (eLt (v "jx") (v "jla")) alikeOctet] []]
 
-/-- The commit the payload at `jpp`, `jpl` octets, holds, if it holds exactly one that a correct
-store writes: its fields into the area, and `jrec` set to the commit's type. -/
-def decode : List PStmt :=
+/-- The commit's sequence number, eight octets. -/
+def seqPart : List PStmt :=
   [.assign "jok" (lit 1), .assign "ji" (lit 8),
-   .ite (eLt (v "jpl") (n 8)) [.assign "jok" (lit 0)] (leS "jseq" (v "jpp") 8),
-   .ite (v "jok")
+   .ite (eLt (v "jpl") (n 8)) [.assign "jok" (lit 0)] (leS "jseq" (v "jpp") 8)]
+
+/-- Its Message-ID, a counted run: where it lies in the window and how long it is, into the area. -/
+def idPart : List PStmt :=
+  [.ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
        [.assign "jml" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
         .ite (eLt (v "jpl") (eAdd (v "ji") (v "jml"))) [.assign "jok" (lit 0)]
           [setw sIdAt (inWindow (v "ji")), setw sIdLen (v "jml"),
-           .assign "ji" (eAdd (v "ji") (v "jml"))]]] [],
-   .ite (v "jok")
+           .assign "ji" (eAdd (v "ji") (v "jml"))]]] []]
+
+/-- How many groups, sixteen at most. -/
+def countPart : List PStmt :=
+  [.ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
        [.assign "jgc" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
-        .ite (eLt (n groupsMax) (v "jgc")) [.assign "jok" (lit 0)] []]] [],
-   .assign "jgi" (lit 0),
-   .while (eAnd (v "jok") (eLt (v "jgi") (v "jgc")))
-     [kept fail "ji" maxPayload,
-      .ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
-       [.assign "jnl" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
-        .ite (eLt (v "jpl") (eAdd (v "ji") (v "jnl"))) [.assign "jok" (lit 0)]
-          ([.assign "jgp" (slot "jgi"), .store (v "jgp") (inWindow (v "ji")),
-            .store (atOff (v "jgp") 8) (v "jnl"), .assign "ji" (eAdd (v "ji") (v "jnl")),
-            .ite (eLt (v "jpl") (eAdd (v "ji") (n 4))) [.assign "jok" (lit 0)]
-              (leS "jnum" (eAdd (v "jpp") (v "ji")) 4 ++
-               [.store (atOff (v "jgp") 16) (v "jnum"), .assign "ji" (eAdd (v "ji") (n 4)),
-                .ite (or2 (or2 (eLt (v "jnl") (n 1)) (eLt (n 64) (v "jnl")))
-                    (or2 (eLt (v "jnum") (n 1)) (eLt (n (2 ^ 31 - 1)) (v "jnum"))))
-                  [.assign "jok" (lit 0)] []])])],
-      inc "jgi"],
-   kept fail "ji" maxPayload,
+        .ite (eLt (n groupsMax) (v "jgc")) [.assign "jok" (lit 0)] []]] []]
+
+/-- Group `jgi`: its name, a counted run, and its article number, into its slot, and checked. -/
+def groupBody : List PStmt :=
+  [kept fail "ji" maxPayload,
+   .ite (eLt (v "jpl") (eAdd (v "ji") (n 1))) [.assign "jok" (lit 0)]
+    [.assign "jnl" (byte (eAdd (v "jpp") (v "ji"))), inc "ji",
+     .ite (eLt (v "jpl") (eAdd (v "ji") (v "jnl"))) [.assign "jok" (lit 0)]
+       ([.assign "jgp" (slot "jgi"), .store (v "jgp") (inWindow (v "ji")),
+         .store (atOff (v "jgp") 8) (v "jnl"), .assign "ji" (eAdd (v "ji") (v "jnl")),
+         .ite (eLt (v "jpl") (eAdd (v "ji") (n 4))) [.assign "jok" (lit 0)]
+           (leS "jnum" (eAdd (v "jpp") (v "ji")) 4 ++
+            [.store (atOff (v "jgp") 16) (v "jnum"), .assign "ji" (eAdd (v "ji") (n 4)),
+             .ite (or2 (or2 (eLt (v "jnl") (n 1)) (eLt (n 64) (v "jnl")))
+                 (or2 (eLt (v "jnum") (n 1)) (eLt (n (2 ^ 31 - 1)) (v "jnum"))))
+               [.assign "jok" (lit 0)] []])])],
+   inc "jgi"]
+
+/-- The groups, each read, until one is not one or all are read. -/
+def groupsPart : List PStmt :=
+  [.assign "jgi" (lit 0), .while (eAnd (v "jok") (eLt (v "jgi") (v "jgc"))) (groupBody fail)]
+
+/-- The header's and the file's sizes and the file's CRC, four octets each. -/
+def tailPart : List PStmt :=
+  [kept fail "ji" maxPayload,
    .ite (v "jok")
      [.ite (eLt (v "jpl") (eAdd (v "ji") (n 12))) [.assign "jok" (lit 0)]
        (leS "jhs" (eAdd (v "jpp") (v "ji")) 4 ++
         leS "jfs" (eAdd (v "jpp") (eAdd (v "ji") (n 4))) 4 ++
         leS "jcrc" (eAdd (v "jpp") (eAdd (v "ji") (n 8))) 4 ++
-        [.assign "ji" (eAdd (v "ji") (n 12))])] [],
-   .ite (eAnd (v "jok") (ne (v "ji") (v "jpl"))) [.assign "jok" (lit 0)] [],
-   .ite (eAnd (v "jok") (or2 (or2 (eEq (v "jseq") (n 0)) (eLt (v "jml") (n 1)))
+        [.assign "ji" (eAdd (v "ji") (n 12))])] []]
+
+/-- No octet after the commit. -/
+def exactPart : List PStmt := [.ite (eAnd (v "jok") (ne (v "ji") (v "jpl"))) [.assign "jok" (lit 0)] []]
+
+/-- What a correct store writes: a sequence number, a Message-ID of 1 to 250 octets, a group. A header no larger than
+its file. -/
+def checkPart : List PStmt :=
+  [.ite (eAnd (v "jok") (or2 (or2 (eEq (v "jseq") (n 0)) (eLt (v "jml") (n 1)))
        (or2 (or2 (eLt (n 250) (v "jml")) (eLt (v "jgc") (n 1))) (eLt (v "jfs") (v "jhs")))))
-     [.assign "jok" (lit 0)] [],
-   .assign "ja" (lit 0),
-   .while (eAnd (v "jok") (eLt (v "ja") (v "jgc")))
-     [.assign "jbb" (eAdd (v "ja") (n 1)),
-      .while (eLt (v "jbb") (v "jgc"))
-        (namesAlike fail ++ [.ite (v "jeq") [.assign "jok" (lit 0)] [], inc "jbb"]),
-      inc "ja"],
-   .ite (v "jok")
+     [.assign "jok" (lit 0)] []]
+
+/-- Group `ja`'s name against group `jbb`'s. -/
+def pairBody : List PStmt := namesAlike fail ++ [.ite (v "jeq") [.assign "jok" (lit 0)] [], inc "jbb"]
+
+/-- Group `ja`'s name against those after it. -/
+def pairRow : List PStmt :=
+  [.assign "jbb" (eAdd (v "ja") (n 1)), .while (eLt (v "jbb") (v "jgc")) (pairBody fail), inc "ja"]
+
+/-- No two group names alike. -/
+def pairsPart : List PStmt :=
+  [.assign "ja" (lit 0), .while (eAnd (v "jok") (eLt (v "ja") (v "jgc"))) (pairRow fail)]
+
+/-- The commit's fields into the area, its type into `jrec`. -/
+def storePart : List PStmt :=
+  [.ite (v "jok")
      [.assign "jrec" (lit commitType), setw sSeq (v "jseq"), setw sGroupCount (v "jgc"),
       setw sHeader (v "jhs"), setw sFileSize (v "jfs"), setw sCrc (v "jcrc")] []]
+
+/-- The commit the payload at `jpp`, `jpl` octets, holds, if exactly one a correct store writes. Its fields go into the
+area, and `jrec` is set to its type. -/
+def decode : List PStmt :=
+  seqPart ++ idPart ++ countPart ++ groupsPart fail ++ tailPart fail ++ exactPart ++ checkPart ++
+    pairsPart fail ++ storePart
 
 /-- The record the checked frame at `jf` holds, its type into `jrec`; else `jwhy` says it holds
 none. -/
@@ -231,16 +274,25 @@ def recordOf : List PStmt :=
          [.assign "jrec" (lit startType)] []]],
    .ite (eEq (v "jrec") (n 0)) [.assign "jwhy" (lit (whyCode .notARecord))] []]
 
+/-- The record read when the frame checks. -/
+def recordPart : PStmt := .ite (eEq (v "jwhy") (n 0)) (recordOf fail) []
+
+/-- The key's `i`th octet, from a format record's payload at `jpp`. -/
+def keyStore (i : Nat) : PStmt := .storeb (atOff sp (sKey + i)) (byte (atOff (v "jpp") (magic.length + i)))
+
+/-- The key, from a format record's payload. -/
+def keyCopy : List PStmt := (List.range keyLength).map keyStore
+
+/-- A record taken: one more counted, its type, where the next frame starts, the status. -/
+def acceptTail : List PStmt :=
+  [setw sCount (eAdd (word sCount) (n 1)), setw sType (v "jrec"),
+   setw sPos (eAdd (v "jp") (eAdd (v "jpl") (n (headerLength + 1)))), setw sStatus (n record)]
+
 /-- The record read, unless it is a second format: the journal's key taken from the first. -/
 def accept : List PStmt :=
   [.ite (eAnd (eLt (n 0) (word sCount)) (eEq (v "jrec") (n formatType)))
     [setw sStatus (n corrupt), setw sWhy (n (whyCode .formatAgain))]
-    [.ite (eEq (v "jrec") (n formatType))
-       ((List.range keyLength).map (fun i => .storeb (atOff sp (sKey + i))
-          (byte (atOff (v "jpp") (magic.length + i)))) ++ [setw sKeyed (n 1)]) [],
-     setw sCount (eAdd (word sCount) (n 1)), setw sType (v "jrec"),
-     setw sPos (eAdd (v "jp") (eAdd (v "jpl") (n (headerLength + 1)))),
-     setw sStatus (n record)]]
+    (.ite (eEq (v "jrec") (n formatType)) (keyCopy ++ [setw sKeyed (n 1)]) [] :: acceptTail)]
 
 /-- The frame at journal offset `jq` found in the window: its offset there into `jo`, which the
 step keeps within the window, its address into `jf` and its payload's into `jpp`. -/
@@ -248,50 +300,82 @@ def frameAt : List PStmt :=
   [.assign "jo" (eSub (v "jq") (v "jb")), kept fail "jo" windowMax,
    .assign "jf" (eAdd (v "jw") (v "jo")), .assign "jpp" (atOff (v "jf") headerLength)]
 
+/-- A frame that checks ends the search. -/
+def tornNext : PStmt := .ite (eEq (v "jwhy") (n 0)) [.assign "jtorn" (lit 0)] []
+
+/-- Whether the search goes on: none found yet, and the journal not at its end. -/
+def tornGo : PExpr := eAnd (v "jtorn") (eLt (v "jq") (v "jsz"))
+
+/-- The frame at `jq`, checked under the journal's key: one that checks ends the search. -/
+def tornLoop : List PStmt :=
+  frameAt fail ++ [.assign "jr" (eSub (v "jsz") (v "jq"))] ++ frameWhy true ++
+    [tornNext, inc "jq"]
+
+/-- Whether a frame that checks starts after the first octet of the one at `jp`. -/
+def tornSearch : List PStmt :=
+  [.assign "jq" (eAdd (v "jp") (n 1)), .while tornGo (tornLoop fail)]
+
+/-- Whether what is left, `jrem`, fits the append that can have been cut, `jx`. With the key, also whether no checking
+frame starts in it after its first octet. -/
+def tornCheck : PStmt :=
+  .ite (eLe (v "jrem") (v "jx")) [.assign "jtorn" (lit 1), .ite (v "jky") (tornSearch fail) []] []
+
+/-- A frame a torn append can leave: whether what is left fits the append. With the key, also whether no checking frame
+starts in it after its first octet. -/
+def tornPart : List PStmt :=
+  [.assign "jx" (lit firstFrame), .ite (v "jky") [.assign "jx" (lit maxFrame)] [], tornCheck fail]
+
+/-- The status where reading stops: torn tail with `jtorn`, else corruption and why, `jmw`. -/
+def stopStatus : PStmt :=
+  .ite (v "jtorn") [setw sStatus (n torn)] [setw sStatus (n corrupt), setw sWhy (v "jmw")]
+
 /-- The frame at `jp` is no record, for `jwhy`: a torn tail if a torn append can leave it, what is
 left fits the append that can have been cut, and no frame that checks starts in it after its first
 octet; else corruption. -/
 def stopped : List PStmt :=
   [.assign "jmw" (v "jwhy"), .assign "jtorn" (lit 0),
-   .ite (eLt (v "jmw") (n (whyCode .notARecord)))
-     [.assign "jx" (lit firstFrame), .ite (v "jky") [.assign "jx" (lit maxFrame)] [],
-      .ite (eLe (v "jrem") (v "jx"))
-        [.assign "jtorn" (lit 1),
-         .ite (v "jky")
-           [.assign "jq" (eAdd (v "jp") (n 1)),
-            .while (eAnd (v "jtorn") (eLt (v "jq") (v "jsz")))
-              (frameAt fail ++ [.assign "jr" (eSub (v "jsz") (v "jq"))] ++ frameWhy true ++
-               [.ite (eEq (v "jwhy") (n 0)) [.assign "jtorn" (lit 0)] [], inc "jq"])] []] []] [],
-   .ite (v "jtorn") [setw sStatus (n torn)] [setw sStatus (n corrupt), setw sWhy (v "jmw")]]
+   .ite (eLt (v "jmw") (n (whyCode .notARecord))) (tornPart fail) [], stopStatus]
+
+/-- The window's octet `ji` from `jx` past its start. -/
+def copyByte : List PStmt :=
+  [.storeb (eAdd (v "jw") (v "ji")) (byte (eAdd (eAdd (v "jw") (v "jx")) (v "ji"))), inc "ji"]
+
+/-- The window's `jcnt` octets from `jx` on moved to its start, unless `jx` is zero. -/
+def windowCopy : PStmt := .ite (v "jx") [.while (eLt (v "ji") (v "jcnt")) copyByte] []
 
 /-- The window moved to start at `jp`, and the octets wanted after it: as many as one read adds,
 or as the journal has left. -/
 def want : List PStmt :=
   [.assign "jx" (eSub (v "jp") (v "jb")), kept fail "jx" windowMax,
    .assign "jcnt" (eSub (v "jwl") (v "jx")), .assign "ji" (lit 0),
-   .ite (v "jx")
-     [.while (eLt (v "ji") (v "jcnt"))
-       [.storeb (eAdd (v "jw") (v "ji")) (byte (eAdd (eAdd (v "jw") (v "jx")) (v "ji"))),
-        inc "ji"]] [],
+   windowCopy,
    .assign "jwl" (v "jcnt"), setw sBase (v "jp"), setw sLen (v "jwl"),
    .assign "jx" (eSub (v "jsz") (eAdd (v "jp") (v "jwl"))),
    .ite (eLt (n chunk) (v "jx")) [.assign "jx" (lit chunk)] [],
    setw sWant (v "jx"), setw sStatus (n wanted)]
 
-/-- **One step**: the end of the journal, octets wanted, or the frame at `jp` read. -/
-def stepWith : List PStmt :=
+/-- The step's head: the area's words it keeps, into locals. -/
+def stepHead : List PStmt :=
   [.assign "jsz" (word sSize), .assign "jb" (word sBase), .assign "jwl" (word sLen),
    kept fail "jwl" windowMax,
    .assign "jp" (word sPos), .assign "jky" (word sKeyed), .assign "jw" (atOff sp sWindow),
-   .assign "jrem" (eSub (v "jsz") (v "jp")),
-   .ite (eEq (v "jrem") (n 0)) [setw sStatus (n clean)]
+   .assign "jrem" (eSub (v "jsz") (v "jp"))]
+
+/-- The frame at `jp` found in the window and checked. -/
+def frameRead : List PStmt :=
+  [.assign "jq" (v "jp")] ++ frameAt fail ++ [.assign "jr" (v "jrem")] ++ frameWhy false
+
+/-- The frame at `jp` read: its record taken, or why reading stops. -/
+def readPart : List PStmt :=
+  frameRead fail ++ [recordPart fail, .ite (v "jwhy") (stopped fail) accept]
+
+/-- **One step**: the end of the journal, octets wanted, or the frame at `jp` read. -/
+def stepWith : List PStmt :=
+  stepHead fail ++
+  [.ite (eEq (v "jrem") (n 0)) [setw sStatus (n clean)]
      [.assign "jneed" (v "jrem"),
       .ite (eLt (n maxFrame) (v "jneed")) [.assign "jneed" (lit maxFrame)] [],
-      .ite (eLt (eAdd (v "jb") (v "jwl")) (eAdd (v "jp") (v "jneed"))) (want fail)
-        ([.assign "jq" (v "jp")] ++ frameAt fail ++ [.assign "jr" (v "jrem")] ++
-         frameWhy false ++
-         [.ite (eEq (v "jwhy") (n 0)) (recordOf fail) [],
-          .ite (v "jwhy") (stopped fail) accept])]]
+      .ite (eLt (eAdd (v "jb") (v "jwl")) (eAdd (v "jp") (v "jneed"))) (want fail) (readPart fail)]]
 
 end
 

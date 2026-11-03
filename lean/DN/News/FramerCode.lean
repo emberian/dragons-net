@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.FramerProg
 import DN.Compiler.Clock
+import DN.Compiler.WpBytes
 
 /-!
 # DN.News.FramerCode
@@ -64,6 +65,124 @@ theorem lineLoop_lower (lim : Nat) :
 
 /-- A flag as the program holds it. -/
 def bw (b : Bool) : Word := if b then 1 else 0
+
+/-! ## Flags and small numbers in expressions -/
+
+/-- `a ≤ b`. -/
+def leE (a b : PancakeExp) : PancakeExp := .cmp .notLess b a
+
+/-- Either of two flags. -/
+def or2E (a b : PancakeExp) : PancakeExp := .cmp .less (.const 0) (.op .add a b)
+
+theorem bw_and (a b : Bool) : bw a &&& bw b = bw (a && b) := by
+  cases a <;> cases b <;> rfl
+
+theorem bw_ne0 {p : Bool} (h : some (bw p) ≠ some 0) : p = true := by cases p <;> simp_all [bw]
+theorem bw_eq0 {p : Bool} (h : some (bw p) = some 0) : p = false := by cases p <;> simp_all [bw]
+
+/-- `a ≤ b`, of small numbers. -/
+theorem le_eval (a b : Nat) (ha : a < 2 ^ 63) (hb : b < 2 ^ 63) :
+    (if signedLt (BitVec.ofNat 64 b) (BitVec.ofNat 64 a) = true then (0 : Word) else 1) = bw (decide (a ≤ b)) := by
+  rw [WpBytes.signedLt_small (a := b) (b := a) hb ha]
+  by_cases h : b < a <;> simp [h, bw] <;> omega
+
+theorem eq_word {X Y : Word} {n c : Nat} (hX : X = BitVec.ofNat 64 n) (hY : Y = BitVec.ofNat 64 c)
+    (hn : n < 2 ^ 64) (hc : c < 2 ^ 64) : (if X = Y then (1 : Word) else 0) = bw (decide (n = c)) := by
+  subst hX hY
+  by_cases h : n = c
+  · simp [h, bw]
+  · rw [if_neg (fun e => h (NatToDec.ofNat64_inj hn hc e))]
+    simp [h, bw]
+
+section
+
+variable {t : PancakeState σ}
+
+theorem eval_lt {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .less a b) = some (bw (decide (x < y))) := by
+  simp only [eval, ha, hb, WpBytes.signedLt_small (a := x) (b := y) hx hy]
+  rfl
+
+theorem eval_le {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 63) (hy : y < 2 ^ 63)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (leE a b) = some (bw (decide (x ≤ y))) := by
+  simp only [leE, eval, ha, hb]
+  rw [le_eval x y hx hy]
+
+theorem eval_eq {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .equal a b) = some (bw (decide (x = y))) := by
+  simp only [eval, ha, hb]
+  rw [eq_word rfl rfl hx hy]
+
+theorem eval_and {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
+    eval t (.op .and_ a b) = some (bw (p && q)) := by
+  simp only [eval, ha, hb, bw_and]
+
+theorem eval_or2 {a b : PancakeExp} {p q : Bool} (ha : eval t a = some (bw p)) (hb : eval t b = some (bw q)) :
+    eval t (or2E a b) = some (bw (p || q)) := by
+  simp only [or2E, eval, ha, hb]
+  cases p <;> cases q <;> decide
+
+/-- A comparison of words evaluates to a verdict. -/
+theorem cmp_bw {u : PancakeState σ} {c : Cmp} {l r : PancakeExp} {a b : Word} (hl : eval u l = some a)
+    (hr : eval u r = some b) : ∃ p, eval u (.cmp c l r) = some (bw p) := by
+  cases c <;> simp only [eval, hl, hr]
+  · exact ⟨signedLt a b, by cases signedLt a b <;> rfl⟩
+  · exact ⟨decide (a = b), by by_cases e : a = b <;> simp [e, bw]⟩
+  · exact ⟨!signedLt a b, by cases signedLt a b <;> rfl⟩
+
+/-- A local's value. -/
+theorem ev_var {x : String} {v : Word} (h : t.locals x = some v) : eval t (.var x) = some v := h
+
+/-- Two words or-ed. -/
+theorem eval_or {a b : PancakeExp} {x y : Word} (ha : eval t a = some x)
+    (hb : eval t b = some y) : eval t (.op .or_ a b) = some (x ||| y) := by
+  simp only [eval, ha, hb]
+
+/-- A word shifted left by a constant. -/
+theorem eval_shl {a : PancakeExp} {w : Word} (ha : eval t a = some w) {k : Nat} (hk : k < 64) :
+    eval t (.shiftL a (.const (.ofNat 64 k))) = some (w <<< k) := by
+  have e : (BitVec.ofNat 64 k).toNat = k := by rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+  simp only [eval, ha, e]
+  rw [if_neg (by simp; omega)]
+
+/-- A number below `2 ^ 64` with its top bit flipped. -/
+theorem xor_top {x : Nat} (hx : x < 2 ^ 64) : x ^^^ 2 ^ 63 = if x < 2 ^ 63 then x + 2 ^ 63 else x - 2 ^ 63 := by
+  have h1 := Nat.div_add_mod (x ^^^ 2 ^ 63) (2 ^ 63)
+  rw [Nat.xor_div_two_pow, Nat.xor_mod_two_pow, Nat.div_self (by decide), Nat.mod_self, Nat.xor_zero] at h1
+  by_cases h : x < 2 ^ 63
+  · rw [if_pos h]
+    have h0 : x / 2 ^ 63 = 0 := Nat.div_eq_of_lt h
+    rw [h0, Nat.mod_eq_of_lt h] at h1
+    have : (0 : Nat) ^^^ 1 = 1 := by decide
+    rw [this] at h1; omega
+  · rw [if_neg h]
+    have h0 : x / 2 ^ 63 = 1 := by omega
+    rw [h0] at h1
+    have : (1 : Nat) ^^^ 1 = 0 := by decide
+    rw [this] at h1; omega
+
+/-- A word with its top bit flipped, read signed. -/
+theorem toInt_flip {z : Nat} (hz : z < 2 ^ 64) :
+    (BitVec.ofNat 64 z ^^^ BitVec.ofNat 64 (2 ^ 63)).toInt = (z : Int) - 2 ^ 63 := by
+  rw [BitVec.toInt_eq_toNat_cond, BitVec.toNat_xor, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt hz, Nat.mod_eq_of_lt (by decide : 2 ^ 63 < 2 ^ 64), xor_top hz]
+  split <;> split <;> omega
+
+/-- **The unsigned comparison**: both sides flipped at the top bit, then compared signed. -/
+theorem ult_eval {a b : PancakeExp} {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
+    (ha : eval t a = some (BitVec.ofNat 64 x)) (hb : eval t b = some (BitVec.ofNat 64 y)) :
+    eval t (.cmp .less (.op .xor a (.const (.ofNat 64 (2 ^ 63)))) (.op .xor b (.const (.ofNat 64 (2 ^ 63))))) =
+      some (bw (decide (x < y))) := by
+  have e : signedLt (BitVec.ofNat 64 x ^^^ BitVec.ofNat 64 (2 ^ 63)) (BitVec.ofNat 64 y ^^^ BitVec.ofNat 64 (2 ^ 63)) =
+      decide (x < y) := by
+    simp only [signedLt, BitVec.slt, toInt_flip hx, toInt_flip hy, decide_eq_decide]; omega
+  simp only [eval, ha, hb, e]
+  cases decide (x < y) <;> rfl
+
+end
 
 /-- The locals of the loop: the arguments, the framer's state `A`, and the verdict so far. -/
 structure LineLocals (s : PancakeState σ) (st p nw : Word) (i : Nat) (A : LineState)
@@ -759,10 +878,12 @@ structure LineMem (lim : Nat) (s s' : PancakeState σ) (st : Word) (A' : LineSta
   words : ∀ w, w ≠ st → w ≠ st + 8#64 → w ≠ st + 16#64 → w ≠ st + 24#64 → w ≠ st + 32#64 →
     (∀ j, j < lim → byteAlign (st + 40#64 + BitVec.ofNat 64 j) ≠ w) → s'.memory w = s.memory w
 
-/-- What the framer leaves: where it stopped (`i`), every local it does not write, and memory. -/
+/-- What the framer leaves: where it stopped (`i`), its verdict's code (`kind`), every local it
+does not write, and memory. -/
 structure LineAfter (lim : Nat) (s s' : PancakeState σ) (st : Word) (i : Nat) (A' : LineState)
     (out : Option Line) : Prop where
   i : s'.locals "i" = some (BitVec.ofNat 64 i)
+  kind : s'.locals "kind" = some (kindW out)
   locals : ∀ v, v ∉ lineWrites → s'.locals v = s.locals v
   mem : LineMem lim s s' st A' out
 
@@ -872,6 +993,7 @@ theorem lineFrag_run (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (hpos : 0
   have hfr := frameOnce_fresh lim A (q.drop i0)
   have hle := frameOnce_kept_le lim hpos A (q.drop i0)
   have hi6 := hloc6.i
+  have hkind6 := hloc6.kind
   have hn6 := hI.names
   have hw6 := hI.words
   have hby6 := hI.bytes
@@ -892,11 +1014,11 @@ theorem lineFrag_run (o : Oracle σ) (lim : Nat) (hlim : lim < 2 ^ 62) (hpos : 0
   have hwr : ∀ v, v ∉ lineWrites → v ≠ "len" ∧ v ≠ "cr" ∧ v ≠ "bad" ∧ v ≠ "kind" ∧ v ≠ "kept" := by
     intro v hv; simp only [lineWrites, List.mem_cons, List.not_mem_nil, or_false, not_or] at hv
     exact ⟨hv.1, hv.2.1, hv.2.2.1, hv.2.2.2.1, hv.2.2.2.2.1⟩
-  generalize hr : frameOnce lim A (q.drop i0) = r at hmem7 hk1 hfits hfr hle hi6 hmem7' ⊢
+  generalize hr : frameOnce lim A (q.drop i0) = r at hmem7 hk1 hfits hfr hle hi6 hkind6 hmem7' ⊢
   obtain ⟨K, A', out⟩ := r
-  simp only at hfits hk1 hmem7 hi6 hmem7' ⊢
+  simp only at hfits hk1 hmem7 hi6 hkind6 hmem7' ⊢
   have hlen : A'.buf.length ≤ lim := by have := hfits.1; have := hfits.2.1; omega
-  refine ⟨by rw [hloc7]; exact hi6, fun v hv => ?_,
+  refine ⟨by rw [hloc7]; exact hi6, by rw [hloc7]; exact hkind6, fun v hv => ?_,
       ⟨⟨?_, ?_, ?_, ?_⟩, ?_, hma7, hbe7, ?_, ?_, ?_, ?_⟩⟩
   · obtain ⟨a1, a2, a3, a4, a5⟩ := hwr v hv
     rw [hloc7, hn6 v (hnames v hv), l5 v a1 a2 a3 a4 a5]
@@ -2200,7 +2322,7 @@ theorem lineMem_witness : LineMem 4 demo demo 0 demoLine none :=
   ⟨holds_witness, rfl, rfl, rfl, rfl, rfl, fun _ _ => rfl, fun _ _ _ _ _ _ _ => rfl⟩
 
 theorem lineAfter_witness : LineAfter 4 demo demo 0 0 demoLine none :=
-  ⟨rfl, fun _ _ => rfl, lineMem_witness⟩
+  ⟨rfl, rfl, fun _ _ => rfl, lineMem_witness⟩
 
 /-- The chunk at 64 lies apart from the demo block's bytes. -/
 theorem apart_witness : ∀ j j', j < 4 → j' < [72#8].length →

@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONSAFEPATH=1
-lanes=(native baseline entry server framing grammar accept session nntp crash faults parser fuzz)
+lanes=(native baseline entry server framing grammar accept session nntp crash faults parser fuzz uring bench)
 # Lanes that mount FUSE, run only by name, where it may be mounted (CI's lazyfs job). FUSE's mount
 # helpers look up /etc/mtab, the mount table, which a trace cannot hold still: such a lane is not
 # run again on a tree it passed on.
@@ -28,6 +28,8 @@ script_of() {
     power) script=(scripts/power_check.py) ;;
     parser) script=(scripts/parser_contract.py) ;;
     fuzz) script=(scripts/native_fuzz.py) ;;
+    uring) script=(scripts/uring_check.py) ;;
+    bench) script=(scripts/bench.py check) ;;
     *)
       echo "native_lanes.sh: no lane named '$1'; the lanes are ${lanes[*]} ${fuse[*]}" >&2
       exit 2
@@ -45,7 +47,7 @@ mkdir -p build/evidence
 tools() {
   case $1 in
     grammar) python3 scripts/bootstrap_tool.py abnfgen ;;
-    crash | faults) python3 scripts/bootstrap_tool.py libfiu ;;
+    crash | faults | uring) python3 scripts/bootstrap_tool.py libfiu ;;
     power) python3 scripts/bootstrap_tool.py lazyfs && python3 scripts/bootstrap_tool.py libfiu ;;
   esac >/dev/null
 }

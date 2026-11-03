@@ -332,6 +332,48 @@ structure Frame (names : String → Prop) (written : Word → Prop) (s t : Panca
   outside : ∀ a, ¬ written a →
     memLoadByte t.memory s.memaddrs s.be a = memLoadByte s.memory s.memaddrs s.be a
 
+/-- Octets each in memory read as an array. -/
+theorem read_of_bytes {m : Word → Word} {dm : Word → Bool} {be : Bool} :
+    ∀ (bs : List (BitVec 8)) (a : Word),
+      (∀ i (h : i < bs.length), memLoadByte m dm be (a + BitVec.ofNat 64 i) = some bs[i]) →
+      readByteArray m dm be a bs.length = some bs
+  | [], _, _ => rfl
+  | b :: bs, a, h => by
+    have h0 : memLoadByte m dm be a = some b := by simpa using h 0 (by simp)
+    have hr := read_of_bytes bs (a + 1) fun i hi => by
+      have := h (i + 1) (by simp; omega)
+      rw [show a + BitVec.ofNat 64 (i + 1) = a + 1 + BitVec.ofNat 64 i by
+        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl] at this
+      simpa using this
+    simp only [readByteArray, h0, hr]
+
+/-- An octet of a run of octets in memory reads as itself. -/
+theorem memBytesAt_get {m : Word → Word} {dm : Word → Bool} {be : Bool} {a : Word} {bs : List (BitVec 8)}
+    (h : memBytesAt m dm be a bs) :
+    ∀ i (hi : i < bs.length), memLoadByte m dm be (a + BitVec.ofNat 64 i) = some bs[i] :=
+  fun i hi => by rw [h i hi]; simp [List.getElem!_eq_getElem?_getD, List.getElem?_eq_getElem hi]
+
+/-- Octets each in an addressable word can be read. -/
+theorem bytes_exist {u : PancakeState σ} {a : Word} : ∀ (k : Nat),
+    (∀ i, i < k → u.memaddrs (byteAlign (a + BitVec.ofNat 64 i)) = true) →
+    ∃ ys : List (BitVec 8), ys.length = k ∧ ∀ i (h : i < ys.length), memLoadByte u.memory u.memaddrs u.be
+      (a + BitVec.ofNat 64 i) = some ys[i]
+  | k, h => by
+    induction k with
+    | zero => exact ⟨[], rfl, fun i hi => by simp at hi⟩
+    | succ k ih =>
+      obtain ⟨ys, hl, hy⟩ := ih fun i hi => h i (by omega)
+      have hd := h k (by omega)
+      refine ⟨ys ++ [getByte (a + BitVec.ofNat 64 k) (u.memory (byteAlign (a + BitVec.ofNat 64 k))) u.be],
+        by simp [hl], fun i hi => ?_⟩
+      simp only [List.length_append, List.length_singleton] at hi
+      by_cases hik : i < ys.length
+      · rw [List.getElem_append_left hik]; exact hy i hik
+      · have : i = ys.length := by omega
+        subst this
+        rw [List.getElem_append_right (Nat.le_refl _)]
+        simp only [Nat.sub_self, List.getElem_singleton, memLoadByte, hd, if_true, hl]
+
 namespace Frame
 
 variable {names names' : String → Prop} {written written' : Word → Prop}
@@ -511,6 +553,95 @@ theorem memBytes_of_write (base len : Word) (bs : List UInt8) (s : PancakeState 
   rw [hcore]
   simp
 
+/-! ## 11. Words and octets from an aligned base; octets stored in turn -/
+
+theorem add_ofNat (a : Word) (x y : Nat) :
+    a + BitVec.ofNat 64 x + BitVec.ofNat 64 y = a + BitVec.ofNat 64 (x + y) := by
+  rw [BitVec.add_assoc, ← BitVec.ofNat_add]
+
+/-- From an aligned base, offsets in different words lie in different words. -/
+theorem words_apart {b : Word} (hb : b.toNat % 8 = 0) {x y : Nat} (hx : x < 2 ^ 64) (hy : y < 2 ^ 64)
+    (h : x / 8 ≠ y / 8) : byteAlign (b + BitVec.ofNat 64 x) ≠ byteAlign (b + BitVec.ofNat 64 y) := by
+  intro e
+  have := congrArg BitVec.toNat e
+  rw [Bytes.byteAlign_toNat, Bytes.byteAlign_toNat, BitVec.toNat_add, BitVec.toNat_add, BitVec.toNat_ofNat,
+    BitVec.toNat_ofNat] at this
+  have := b.isLt
+  omega
+
+theorem load_of_word {m m' : Word → Word} {dm : Word → Bool} {be : Bool} {a : Word}
+    (h : m' (byteAlign a) = m (byteAlign a)) : memLoadByte m' dm be a = memLoadByte m dm be a := by
+  simp only [memLoadByte, h]
+
+theorem byteAlign_of_aligned {b : Word} (hb : b.toNat % 8 = 0) {X : Nat} (hX : X % 8 = 0) :
+    byteAlign (b + BitVec.ofNat 64 X) = b + BitVec.ofNat 64 X := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Bytes.byteAlign_toNat, BitVec.toNat_add, BitVec.toNat_ofNat]
+  have := b.isLt
+  omega
+
+theorem memBytesAt_append {m : Word → Word} {dm : Word → Bool} {be : Bool} {A : Word} {xs ys : List (BitVec 8)}
+    (h1 : memBytesAt m dm be A xs) (h2 : memBytesAt m dm be (A + BitVec.ofNat 64 xs.length) ys) :
+    memBytesAt m dm be A (xs ++ ys) := by
+  intro i hi
+  simp only [List.length_append] at hi
+  by_cases h : i < xs.length
+  · rw [h1 i h]
+    simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_left h]
+  · have := h2 (i - xs.length) (by omega)
+    rw [add_ofNat, show xs.length + (i - xs.length) = i by omega] at this
+    rw [this]
+    simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_right (by omega : xs.length ≤ i)]
+
+theorem setWidth_ofNat_8 (n : Nat) : (BitVec.ofNat 64 n).setWidth 8 = BitVec.ofNat 8 n := by
+  apply BitVec.eq_of_toNat_eq
+  simp
+
+/-- `bs` stored byte by byte from `a`, after `i` octets. -/
+def putAll (m : Word → Word) (be : Bool) (a : Word) : Nat → List (BitVec 8) → Word → Word
+  | _, [] => m
+  | i, x :: xs => putAll (putByte m be (a + BitVec.ofNat 64 i) x) be a (i + 1) xs
+
+theorem putAll_bytes {dm : Word → Bool} {be : Bool} {a : Word} :
+    ∀ (xs pre : List (BitVec 8)) (m : Word → Word), memBytesAt m dm be a pre →
+    (∀ i, i < pre.length + xs.length → dm (byteAlign (a + BitVec.ofNat 64 i)) = true) →
+    pre.length + xs.length < 2 ^ 64 → memBytesAt (putAll m be a pre.length xs) dm be a (pre ++ xs)
+  | [], pre, m, h, _, _ => by simpa [putAll] using h
+  | x :: xs, pre, m, h, hd, hl => by
+    have h1 := memBytesAt_snoc (b := x) h (hd _ (by simp)) (by simp at hl; omega)
+    have h2 := putAll_bytes xs (pre ++ [x]) _ h1 (fun i hi => hd i (by simp at hi ⊢; omega))
+      (by simp at hl ⊢; omega)
+    simpa [putAll] using h2
+
+theorem putAll_load {dm : Word → Bool} {be : Bool} {a r : Word} :
+    ∀ (xs : List (BitVec 8)) (i : Nat) (m : Word → Word),
+    (∀ j, i ≤ j → j < i + xs.length → r ≠ a + BitVec.ofNat 64 j) →
+    memLoadByte (putAll m be a i xs) dm be r = memLoadByte m dm be r
+  | [], _, _, _ => rfl
+  | x :: xs, i, m, h => by
+    simp only [putAll]
+    rw [putAll_load xs (i + 1) _ (fun j h1 h2 => h j (by omega) (by simp; omega)),
+      load_putByte_diff _ _ _ _ _ _ (h i (Nat.le_refl _) (by simp))]
+
+theorem putAll_word {be : Bool} {a w : Word} : ∀ (xs : List (BitVec 8)) (i : Nat) (m : Word → Word),
+    (∀ j, i ≤ j → j < i + xs.length → byteAlign (a + BitVec.ofNat 64 j) ≠ w) → putAll m be a i xs w = m w
+  | [], _, _, _ => rfl
+  | x :: xs, i, m, h => by
+    simp only [putAll]
+    rw [putAll_word xs (i + 1) _ (fun j h1 h2 => h j (by omega) (by simp; omega))]
+    simp only [putByte]
+    rw [if_neg (Ne.symm (h i (Nat.le_refl _) (by simp)))]
+
+theorem memBytesAt_left {m : Word → Word} {dm : Word → Bool} {be : Bool} {A : Word} {xs ys : List (BitVec 8)}
+    (h : memBytesAt m dm be A (xs ++ ys)) : memBytesAt m dm be A xs := fun i hi => by
+  rw [h i (by simp; omega)]
+  simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_left hi]
+
+theorem memBytesAt_right {m : Word → Word} {dm : Word → Bool} {be : Bool} {A : Word} {xs ys : List (BitVec 8)}
+    (h : memBytesAt m dm be A (xs ++ ys)) : memBytesAt m dm be (A + BitVec.ofNat 64 xs.length) ys := fun i hi => by
+  rw [add_ofNat, h (xs.length + i) (by simp; omega)]
+  simp [List.getElem!_eq_getElem?_getD, List.getElem?_append_right (Nat.le_add_right _ _)]
+
 /-! ### Non-vacuity: the byte-region relation is satisfiable -/
 
 /-- A closed state whose first word holds the bytes `0..7` at address 0, with the
@@ -530,5 +661,39 @@ theorem memBytes_witness :
   have hi4 : i < 4 := by simpa using hi
   have : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 := by omega
   rcases this with rfl | rfl | rfl | rfl <;> rfl
+
+theorem byteAlign_base {b : Word} (hb : b.toNat % 8 = 0) (x : Nat) :
+    byteAlign (b + BitVec.ofNat 64 x) = b + BitVec.ofNat 64 (x / 8 * 8) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Bytes.byteAlign_toNat, BitVec.toNat_add, BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat]
+  have := b.isLt
+  omega
+
+/-- The word at `X` past an aligned base does not hold a place `x` at least eight past it. -/
+theorem own_far {b : Word} (hb : b.toNat % 8 = 0) {X x : Nat} (hX8 : X % 8 = 0) (hlt : X + 8 ≤ x)
+    (hx : x < 2 ^ 64) : byteAlign (b + BitVec.ofNat 64 x) ≠ b + BitVec.ofNat 64 X := by
+  rw [byteAlign_base hb]
+  exact region_addr_inj b _ _ (by omega) (by omega) (by omega)
+
+/-- A word stored: an octet in another word reads as it did. -/
+theorem load_word_ne {m : Word → Word} {dm : Word → Bool} {be : Bool} {a b : Word} {v : Word}
+    (h : byteAlign b ≠ a) : memLoadByte (fun k => if k = a then v else m k) dm be b = memLoadByte m dm be b := by
+  simp only [memLoadByte, if_neg h]
+
+/-- Octets read as they were where each loads as it did. -/
+theorem readByteArray_congr {m m' : Word → Word} {dm : Word → Bool} {be : Bool} :
+    ∀ (n : Nat) (a : Word), (∀ j, j < n → memLoadByte m' dm be (a + BitVec.ofNat 64 j) =
+      memLoadByte m dm be (a + BitVec.ofNat 64 j)) → readByteArray m' dm be a n = readByteArray m dm be a n
+  | 0, _, _ => rfl
+  | n + 1, a, h => by
+    have h0 := h 0 (Nat.zero_lt_succ _)
+    simp only [BitVec.add_zero] at h0
+    have ih := readByteArray_congr (m := m) (m' := m') (dm := dm) (be := be) n (a + 1) fun j hj => by
+      have e : a + BitVec.ofNat 64 (j + 1) = a + 1 + BitVec.ofNat 64 j := by
+        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl
+      have := h (j + 1) (by omega)
+      rw [e] at this
+      exact this
+    simp only [readByteArray, h0, ih]
 
 end DN.Compiler.Bytes

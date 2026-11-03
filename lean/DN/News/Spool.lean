@@ -546,9 +546,6 @@ theorem recoverRecords_next (cfg : Config) (img : Image) (names : List Name) (co
   rw [hnext]
   split <;> omega
 
-theorem commitsOf_append (a b : List Record) : commitsOf (a ++ b) = commitsOf a ++ commitsOf b := by
-  simp [commitsOf]
-
 theorem found_mono (k : Bytes) (rs : List Record) (P Q : Record → Prop) (d : Data)
     (h : Found k rs P d) (hpq : ∀ r, P r → Q r) : Found k rs Q d :=
   ⟨h.kept, h.high, h.reads, ⟨h.cut.key, h.cut.records, h.cut.kept, h.cut.high, h.cut.written,

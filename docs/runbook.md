@@ -28,6 +28,7 @@ Settings come as options or from a file given by `--config FILE`: a setting a li
 | `group` | A group carried, once a group, at most 64 of at most 64 octets | none |
 | `post-from` | A network that may post, as an address and a prefix length, at most 16 | 127.0.0.0/8 and ::1/128; none with `users` |
 | `send-buffer` | SO_SNDBUF of each connection, in octets | the kernel's |
+| `io` | How the server waits: `uring`, io_uring on Linux 6.6 or later, or `poll`, where io_uring is refused, as by a container's seccomp filter or `kernel.io_uring_disabled` | `uring` |
 | `tls-cert`, `tls-key` | PEM files of the certificate chain and its key: every connection speaks TLS (RFC 8143) | No TLS |
 | `users` | A file of accounts that log in by AUTHINFO USER and PASS (RFC 4643); needs `spool` and TLS | No logins |
 
@@ -126,6 +127,6 @@ After a sync failed, its mark refuses every start until the machine restarts, si
 
 ## What is supported
 
-One process on one spool, held by a lock, on Linux, on a local file system whose syncs are kept. Not supported: more than one server on a spool, a network file system, an exchange between servers.
+One process on one spool, held by a lock, on Linux, on a local file system whose syncs are kept. With io_uring refused, the start says so with status 2 and names `--io poll`; nothing falls back by itself. Not supported: more than one server on a spool, a network file system, an exchange between servers.
 
 What the lanes establish is in the [baseline](baseline.md): the server killed at each file operation ([crashes](baseline.md#crashes)), power lost at each, on LazyFS ([power loss](baseline.md#power-loss)), each operation failing ([faults](baseline.md#faults)).

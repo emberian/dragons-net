@@ -418,7 +418,8 @@ from them are done; what needs the program or the host comes with them, as marke
     that it then has nothing left to do is tested. A restart after a failed sync of the journal or
     the directory without a loss of power is not covered, as above.
 - Of the program: its SipHash-2-4 and CRC-32C table are the statements `DN.News.SipHashCode` and
-  `DN.News.CrcCode` prove of their kernels, through `DN.Compiler.Wp`; the CRC-32C it takes of a
+  `DN.News.CrcCode` prove of their kernels, through `DN.Compiler.Wp`; its `crcTable` and `idHash`
+  are those in its code (`DN.Server.SessionHash`). The CRC-32C it takes of a
   file as the file is written is tested, not proven. No run of it fails, by the analysis of
   [0004](0004-safety-analysis.md) with calls (`DN.Server.SessionSafe`).
 - Tested against references written apart from the specifications ([baseline](../baseline.md)):

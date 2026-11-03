@@ -1489,4 +1489,97 @@ theorem names_injective (n m : Name) (hn : n.valid = true) (hm : m.valid = true)
   rw [e, parseName_bytes m hm] at h
   exact (Option.some.inj h).symm
 
+/-- A digit's value read back writes the digit. -/
+theorem hexDigit_digitValue {b : Byte} {d : Nat} (h : digitValue b = some d) : hexDigit d = b := by
+  unfold digitValue at h
+  apply BitVec.eq_of_toNat_eq
+  have hb := b.isLt
+  split at h
+  · rename_i hr
+    have hd := Option.some.inj h; subst hd
+    simp only [hexDigit, BitVec.toNat_ofNat]
+    rw [if_pos (by omega)]; omega
+  · split at h
+    · rename_i _ hr
+      have hd := Option.some.inj h; subst hd
+      simp only [hexDigit, BitVec.toNat_ofNat]
+      rw [if_neg (by omega)]; omega
+    · cases h
+
+/-- Hexadecimal digits read as a number are that number's digits, past what was read before. -/
+theorem foldlM_hexStep_inv : ∀ (ds : Bytes) (acc v : Nat), ds.foldlM hexStep acc = some v →
+    ds = hexOf ds.length v ∧ v / 16 ^ ds.length = acc
+  | [], acc, v, h => by simp only [List.foldlM_nil, pure, Option.some.injEq] at h; subst h; simp [hexOf]
+  | d :: ds, acc, v, h => by
+    simp only [List.foldlM_cons] at h
+    cases hd : hexStep acc d with
+    | none => simp [hd] at h
+    | some a =>
+      simp only [hd, Option.bind_eq_bind, Option.bind_some] at h
+      obtain ⟨ih1, ih2⟩ := foldlM_hexStep_inv ds a v h
+      simp only [hexStep, Option.map_eq_some_iff] at hd
+      obtain ⟨dv, hdv, rfl⟩ := hd
+      have hlt := digitValue_lt d dv hdv
+      refine ⟨?_, ?_⟩
+      · rw [List.length_cons, hexOf, ← ih1, ← hexDigit_digitValue hdv, ih2]
+        congr 2; omega
+      · rw [List.length_cons, Nat.pow_succ, ← Nat.div_div_eq_div_mul, ih2]; omega
+
+/-- **The names the store gives are the only ones that read as theirs.** -/
+theorem parseName_inv {b : Bytes} {n : Name} (h : parseName b = some n) : b = n.bytes := by
+  have hx : ∀ ds v, hexValue ds = some v → ds = hex16 v := fun ds v hv => by
+    simp only [hexValue] at hv
+    split at hv
+    · rename_i hl
+      have := (foldlM_hexStep_inv ds 0 v hv).1
+      rw [hl] at this; exact this
+    · cases hv
+  unfold parseName at h
+  by_cases hj : (b == journalName) = true
+  · rw [if_pos hj] at h; cases h; simpa using hj
+  rw [if_neg hj] at h
+  cases b with
+  | nil => cases h
+  | cons k ds =>
+    dsimp only at h
+    by_cases ha : (k == (ascii "a").headD 0) = true
+    · rw [if_pos ha] at h; obtain ⟨v, hv, rfl⟩ := Option.map_eq_some_iff.mp h
+      simp only [beq_iff_eq] at ha; simp [Name.bytes, finalName, ascii, ha, hx _ _ hv]
+    rw [if_neg ha] at h
+    by_cases ht : (k == (ascii "t").headD 0) = true
+    · rw [if_pos ht] at h; obtain ⟨v, hv, rfl⟩ := Option.map_eq_some_iff.mp h
+      simp only [beq_iff_eq] at ht; simp [Name.bytes, tempName, ascii, ht, hx _ _ hv]
+    rw [if_neg ht] at h
+    by_cases hq : (k == (ascii "q").headD 0) = true
+    · rw [if_pos hq] at h; obtain ⟨v, hv, rfl⟩ := Option.map_eq_some_iff.mp h
+      simp only [beq_iff_eq] at hq; simp [Name.bytes, quarantineName, ascii, hq, hx _ _ hv]
+    rw [if_neg hq] at h
+    by_cases hl : (k == (ascii "j").headD 0) = true
+    · rw [if_pos hl] at h; obtain ⟨v, hv, rfl⟩ := Option.map_eq_some_iff.mp h
+      simp only [beq_iff_eq] at hl; simp [Name.bytes, tailName, ascii, hl, hx _ _ hv]
+    rw [if_neg hl] at h; cases h
+
+/-- A commit of the store's carries a number below 2 ^ 64. -/
+theorem Commit.ok_seq {c : Commit} (h : c.ok = true) : c.seq < 2 ^ 64 := by
+  simp only [Commit.ok, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.1.1.1.1.1.1.1.1.1.2
+
+/-- A commit decoded with its checks is one of the store's. -/
+theorem decodeCommit_ok {bs : Bytes} {e : Bool} {c : Commit} (h : decodeCommit bs e true = some c) :
+    c.ok = true := by
+  unfold decodeCommit at h
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, _, _, _, h⟩ := h
+  split at h
+  · simp only [Option.bind_some, Option.bind_eq_some_iff] at h
+    obtain ⟨_, _, _, _, _, _, _, _, h⟩ := h
+    split at h
+    · rename_i hc'
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.not_true, Bool.or_false, Bool.and_eq_true] at hc'
+      exact hc'.2
+    · cases h
+  · simp at h
+
 end DN.News.Journal

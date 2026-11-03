@@ -27,6 +27,7 @@ import random
 import re
 import resource
 import selectors
+import shlex
 import shutil
 import signal
 import socket
@@ -55,9 +56,10 @@ import store_ref
 OUT = ROOT / "build/nntp"
 HOST = NATIVE / "nntp_host.c"
 # The host's side of the store, linked with every build of the host.
-STORE = [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c", NATIVE / "accounts.c"]
+STORE = [NATIVE / "store.c", NATIVE / "jobs.c", NATIVE / "tls.c", NATIVE / "accounts.c", NATIVE / "uring.c"]
 HOSTS = [HOST, *STORE, NATIVE / "store.h", NATIVE / "jobs.h", NATIVE / "session_calls.h",
-         NATIVE / "call_checks.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", *lanes.RUNTIME]
+         NATIVE / "call_checks.h", NATIVE / "cake_header.c", NATIVE / "accept_policy.h", NATIVE / "uring.h",
+         *lanes.RUNTIME]
 REVISION, SOURCE = sessions.IDENTITY
 TEXTS = ref.texts(REVISION, SOURCE)
 GREETING = TEXTS["greeting"]
@@ -858,6 +860,8 @@ def reader_cuts(b: Build) -> str:
 
 
 def half_close(b: Build) -> str:
+    """A client that sends and ends its input gets replies to its whole lines, and the end is reported. So is the end of
+    one closing as it connects, before its greeting."""
     stream = b"HELP\r\nSTAT 1\r\nCAPAB"
     with serving(b) as server:
         s = server.client()
@@ -866,11 +870,17 @@ def half_close(b: Build) -> str:
         got = read_to_end(s)
         server.until(lambda: server.closed(s), "the close")
         kinds = server.kinds(s)
+        early = server.client()
+        early.close()
+        server.until(lambda: server.closed(early), "the close of a client gone before its greeting")
+        early_kinds = server.kinds(early)
     if got != expected(stream):
         raise LaneError(f"after the end of input the client got {got[-160:]!r}")
     if "end" not in kinds or "closed" in kinds or kinds[-1] != "graceful":
         raise LaneError(f"the end of input was reported as {kinds}")
-    return "the replies to the whole lines, then the end"
+    if "end" not in early_kinds:
+        raise LaneError(f"the end of a client gone before its greeting was reported as {early_kinds}")
+    return "the replies to the whole lines, then the end; the end of a client gone at once"
 
 
 def reset_mid_line(b: Build) -> str:
@@ -1143,10 +1153,21 @@ def lingering(b: Build) -> str:
     return f"held until the client's close, {LINGER_QUIET} ms of silence or {LINGER_TOTAL} ms in all"
 
 
+def in_kernel_for(pid: int, c: Client) -> bool:
+    """Whether a server socket for client `c` is still held, by a descriptor or a ring operation. /proc's tables give it
+    an inode until no one holds it."""
+    for table in ("tcp", "tcp6"):
+        for row in Path(f"/proc/{pid}/net/{table}").read_text().splitlines()[1:]:
+            fields = row.split()
+            if int(fields[2].split(":")[1], 16) == c.port and fields[9] != "0":
+                return True
+    return False
+
+
 def descriptors_kept(b: Build) -> str:
-    """A hundred clients reset one after another leave the server the descriptors it had. Seventy
-    that quit and keep their side open leave it sixty-four more, those of the last sixty-four: a
-    full list of lingering sockets gives up the one that has lingered longest."""
+    """A hundred clients reset in turn leave the server its descriptors. Seventy that quit but stay open leave
+    sixty-four more, the last sixty-four's. A full linger list drops the longest-lingering socket, and nothing of the
+    server holds it."""
     with serving(b, True) as server:
         pid = server.proc.pid
         base = descriptors(pid)
@@ -1167,6 +1188,8 @@ def descriptors_kept(b: Build) -> str:
         kept = [held(pid, c) for c in quitters]
         if kept != [False] * 6 + [True] * LINGERING:
             raise LaneError(f"the lingering sockets kept are not the last {LINGERING}: {kept}")
+        if any(in_kernel_for(pid, c) for c in quitters[:6]):
+            raise LaneError("a lingering socket given up is still held by the server")
         if descriptors(pid) != base + LINGERING:
             raise LaneError(f"with {LINGERING} lingering the server holds {descriptors(pid)} descriptors, not "
                             f"{base + LINGERING}")
@@ -1191,11 +1214,15 @@ def refuse_accepts(server: Server) -> tuple[int, Client]:
 
 
 def out_of_descriptors(b: Build) -> str:
-    """Out of descriptors, the server takes one turn on the refused accept and none more while it
-    pauses; it serves the client once the pause is over."""
+    """Out of descriptors, the server takes one turn on the refused accept and pauses, then serves the client. A client
+    reset while waiting is taken, its greeting fails, its descriptor goes. The server ends holding one more, the client
+    served."""
     with serving(b, True) as server:
+        base = descriptors(server.proc.pid)
         soft, late = refuse_accepts(server)
         refused = server.last.now
+        gone = server.client()
+        reset(gone)
         server.advance(refused + ACCEPT_PAUSE - 1)
         server.quiet(0.1, "while accepting paused")
         if not still_open(late) or late.conn is not None:
@@ -1205,6 +1232,10 @@ def out_of_descriptors(b: Build) -> str:
         server.advance(refused + ACCEPT_PAUSE)
         server.conn_of(late)
         read_expected(late, GREETING, "the greeting after the pause")
+        server.await_close(gone, "the client reset while it waited")
+        if descriptors(pid) != base + 1:
+            raise LaneError(f"with the reset client gone the server holds {descriptors(pid)} descriptors, "
+                            f"not {base + 1}")
     pauses = server.said().count("pausing")
     if pauses != 1:
         raise LaneError(f"the pause was logged {pauses} times")
@@ -2199,7 +2230,8 @@ def configuration(b: Build) -> str:
         done = subprocess.run([str(b.path), "--check-config", str(full)], capture_output=True, text=True,
                               timeout=b.timeout, check=False)
         want = {"address": "127.0.0.1", "port": 0, "revision": REVISION.decode(), "source": SOURCE.decode(),
-                "send_buffer": 8192, "tls_cert": None, "tls_key": None, "users": None, "spool": str(spool),
+                "send_buffer": 8192, "io": "uring", "tls_cert": None, "tls_key": None, "users": None,
+                "spool": str(spool),
                 "run_dir": str(run),
                 "path_identity": "dn.example", "groups": ["local.test", "local.other"], "post_from": ["127.0.0.0/8"]}
         try:
@@ -2216,6 +2248,11 @@ def configuration(b: Build) -> str:
             raise LaneError("the server of a file's store left no journal")
         named = str(where / "dragons-nntpd.conf")
         file = ("--config", named)
+        settings_file(where, "io poll\n")
+        done = subprocess.run([str(b.path), "--revision", REVISION.decode(), "--source", SOURCE.decode(),
+                               "--check-config", named], capture_output=True, text=True, timeout=b.timeout, check=False)
+        if done.returncode or '"io":"poll"' not in done.stdout:
+            raise LaneError(f"a file of io poll: --check-config wrote {done.stdout!r}: {done.stderr[-200:]!r}")
         cases = [
             ("colour blue\n", file, f"{named}:1: unknown setting --colour"),
             (f"spool {spool}\nrun-dir\n", file, f"{named}:2: run-dir needs a value"),
@@ -2226,6 +2263,8 @@ def configuration(b: Build) -> str:
             ("group local.test\n", file, "store options without --spool"),
             (f"spool {spool}\nspool {spool}\n", file, f"{named}:2: --spool given twice"),
             ("port many\n", file, f"{named}:1: --port: not a number from 0 to 65535: many"),
+            ("io kqueue\n", file, f"{named}:1: --io: uring or poll, not kqueue"),
+            ("io poll\nio uring\n", file, f"{named}:2: --io given twice"),
             ("post-from 10.0.0.0/33\n", file, f"{named}:1: --post-from: not a network: 10.0.0.0/33"),
             ("\npost-from nowhere\n", file, f"{named}:2: --post-from: not a network: nowhere"),
             (f"spool {full}\nrun-dir {run}\n", ("--check-config", named), "Not a directory"),
@@ -2435,19 +2474,17 @@ class Defect:
     sign: str
     program: bool = False
     file: Path = HOST
+    # Planted where the host waits with poll, and checked with the server run so (`--io poll`).
+    poll: bool = False
 
 
-# Not planted, since nothing outside could tell: a batch that does not rotate where it starts, and a
-# failed send not marked lost. The host gives out all one poll reported before it polls again, so a
-# connection one batch does not reach the next one does; and a socket whose send failed hangs up at
-# the next poll. Nor TCP_NODELAY left off: it only delays a reply until the one before is
-# acknowledged, which on loopback no check can time reliably, and no portable call reads another
-# process's socket option. Nor a connection in the clear reported over TLS: logins need TLS, and
-# only with logins does the program read whether a connection speaks it.
+# Not planted, as nothing outside could tell: an unrotated batch start, a failed send unmarked, TCP_NODELAY off. Nor a
+# clear connection reported as TLS, readiness past the wants, or an index reused with operations in flight. Each is
+# masked by the next poll or wait, untimeable on loopback, or unread by the program.
 DEFECTS = [
     Defect("octets libssl holds left unreported",
            [("                c->ready |= POLLIN;\n                held = 1;\n", "", 1)], "over TLS",
-           "over TLS a pipeline"),
+           "over TLS a pipeline", poll=True),
     Defect("a handshake's time never up",
            [("&& now_ms() < c->handshake_until) {", ") {", 1)], "over TLS",
            "kept past its handshake"),
@@ -2514,8 +2551,8 @@ DEFECTS = [
         "half close", "the end of input was reported"),
     Defect("input read when the program did not ask", [
         ("(c->reading ? POLLIN : 0)", "POLLIN", 1), ("if ((r & POLLIN) && c->reading)", "if (r & POLLIN)", 1)],
-        "slow reader", "stopped the run: code 4"),
-    Defect("the wake ignored", [("if (news || (wake && now_ms() >= wake)) return;", "if (news) return;", 1)],
+        "slow reader", "stopped the run: code 4", poll=True),
+    Defect("the wake ignored", [("return news || (wake && now_ms() >= wake);", "return news || (wake && 0);", 1)],
            "first command", "gave no turn"),
     Defect("woken a millisecond late", [("(wake && now_ms() >= wake)", "(wake && now_ms() > wake)", 1)],
            "first command", "gave no turn"),
@@ -2525,10 +2562,10 @@ DEFECTS = [
            "lines cut between reads", "the program stopped the run with code 6"),
     Defect("a lingering socket never closed", [(
         "if (now >= l->until || now >= l->quiet_until) {", "if (now == UINT64_MAX) {", 1)],
-        "lingering close", "still open after"),
+        "lingering close", "still open after", poll=True),
     Defect("silence counted from the close only", [(
         "            l->quiet_until = now_ms() + LINGER_QUIET_MS;", "            continue;", 1)],
-        "lingering close", "though its client kept sending"),
+        "lingering close", "though its client kept sending", poll=True),
     Defect("a graceful close made at once", [(
         "static void linger(int fd) {\n", "static void linger(int fd) {\n    close(fd);\n    return;\n", 1)],
         "lingering close", "closed at once instead of lingering"),
@@ -2537,17 +2574,18 @@ DEFECTS = [
         "lingering close", "the stream did not end"),
     Defect("a close now that lingers", [("                ++counted.abrupt;\n                close(fd);",
                                          "                ++counted.abrupt;\n                linger(fd);", 1)],
-           "first command", "closed gracefully, not at once"),
-    Defect("no poll for writing", [("(c->unsent ? POLLOUT : 0)", "0", 1)], "slow reader", "the stream did not end"),
+           "first command", "closed gracefully, not at once", poll=True),
+    Defect("no poll for writing", [("(c->unsent ? POLLOUT : 0)", "0", 1)], "slow reader", "the stream did not end",
+           poll=True),
     Defect("a send said taken whole", [(
         "taken = n > 0 ? (uint64_t)n : 0;", "taken = n >= 0 ? len : 0;", 1)],
-        "slow reader", "the kernel was not given"),
+        "slow reader", "the kernel was not given", poll=True),
     Defect("reading while a send waits for room", [(
         "cn->reading = !cn->lost && read && taken == len;", "cn->reading = !cn->lost && read;", 1)],
         "reading waits", "stopped the run: code 4"),
     Defect("listening with the table full", [(
         "int taking = listening && free_indexes() > 0 && !paused;", "int taking = listening && !paused;", 1)],
-        "sixty-five clients", "a turn with nothing to do"),
+        "sixty-five clients", "a turn with nothing to do", poll=True),
     Defect("no poll timeout on the real clock", [(
         "else left = at - now > INT_MAX ? INT_MAX : (int)(at - now);", "else return timeout;", 1)],
         "the real clock", "was held"),
@@ -2565,7 +2603,7 @@ DEFECTS = [
     Defect("writable reported with nothing untaken", [
         ("(c->unsent ? POLLOUT : 0)", "POLLOUT", 1),
         ("if ((r & (POLLOUT | c->tls_wants)) && c->unsent) {", "if (r & (POLLOUT | c->tls_wants)) {", 1)],
-        "pipeline", "with nothing untaken"),
+        "pipeline", "with nothing untaken", poll=True),
     Defect("a close reported and the index kept", [(
         "        event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n        free_index(c);\n        return;\n    }\n    if",
         "        event(a, DN_SESSION_CLOSED, i, c->gen, 0);\n        return;\n    }\n    if", 1)],
@@ -2575,27 +2613,27 @@ DEFECTS = [
         "while (!tls_cert && accept_ready && turn_events <= DN_SESSION_BATCH && free_indexes() > 0) {", 1)],
         "sixty-five clients", "stopped the run: code 1"),
     Defect("a lost connection reported late", [(
-        "                cn->lost = 1;\n                carrying = 1;\n", "                cn->lost = 1;\n", 1)],
+        "        cn->lost = 1;\n        carrying = 1;\n", "        cn->lost = 1;\n", 1)],
         "sixty-five clients", "the close of a client reset while it waited"),
     Defect("a closed connection's descriptor kept", [("    if (c->fd >= 0) close(c->fd);\n    c->fd = -1;",
                                                        "    c->fd = -1;", 1)],
-           "descriptors", "after 100 resets"),
+           "descriptors", "after 100 resets", poll=True),
     Defect("a lingering socket given up and not closed", [(
         "    if (lingering[at].fd >= 0) close(lingering[at].fd);\n", "", 1)],
-        "descriptors", "the lingering sockets kept are not the last"),
+        "descriptors", "the lingering sockets kept are not the last", poll=True),
     Defect("the newest lingering socket given up", [(
         "if (lingering[i].since < lingering[at].since) at = i;",
         "if (lingering[i].since > lingering[at].since) at = i;", 1)],
         "descriptors", "the lingering sockets kept are not the last"),
     Defect("a lingering socket kept when its client closes", [(
         "        if (n == 0 || (n < 0 && errno != EAGAIN", "        if ((n < 0 && errno != EAGAIN", 1)],
-        "lingering close", "with nothing to do"),
+        "lingering close", "with nothing to do", poll=True),
     Defect("no poll timeout for a lingering socket", [(
         "            timeout = until(end, timeout);\n", "            (void)end;\n", 1)],
-           "the real clock", "was held"),
+           "the real clock", "was held", poll=True),
     Defect("no poll timeout for the pause of accepting", [(
         "        if (paused) timeout = until(accept_paused_until, timeout);\n", "", 1)],
-        "out of descriptors on the real clock", "waiting for the connection"),
+        "out of descriptors on the real clock", "waiting for the connection", poll=True),
     Defect("an action carried out for a stale generation", [(
         "if (cn->fd < 0 || cn->gen != gen) {", "(void)gen;\n        if (cn->fd < 0) {", 1)],
         "actions for another generation", "reached the client"),
@@ -2612,6 +2650,61 @@ DEFECTS = [
     Defect("a store refused at start taken for a broken contract",
            [("    if (stop == DN_SESSION_STORE_REFUSED || stop == DN_SESSION_RECOVERY_FAILED)\n", "    if (0)\n", 1)],
            "a store recovered at start", "status 3"),
+    Defect("the accounts' descriptor not polled", [(
+        "fds[n++] = (struct pollfd){.fd = dn_accounts_fd(), .events = POLLIN};",
+        "fds[n++] = (struct pollfd){.fd = -1 + 0 * dn_accounts_fd(), .events = POLLIN};", 1)], "logins",
+        "nntplib logging in",
+        poll=True),
+    Defect("a failed send's descriptor kept, with poll", [(
+        "        if (io_poll) close(cn->fd), cn->fd = -1;", "        if (io_poll) cn->fd = -1;", 1)],
+        "out of descriptors", "with the reset client gone the server holds", poll=True),
+    # Planted where the host waits with io_uring, its default.
+    Defect("the rest of a send not waited for (io_uring)",
+           [("(c->unsent ? (short)POLLOUT : 0)", "0", 1)], "slow reader",
+           "the stream did not end"),
+    Defect("a batched send said taken whole", [(
+        "        sent(&conns[k], slot, res > 0 ? (uint64_t)res : 0,",
+        "        sent(&conns[k], slot, res >= 0 ? dn_word(slot + DN_SESSION_ACTION_LEN) : 0,", 1)], "slow reader",
+        "the kernel was not given"),
+    Defect("a lingering socket never closed (io_uring)", [(
+        "            uint64_t ends = l->until < l->quiet_until ? l->until : l->quiet_until;",
+        "            uint64_t ends = l->until < l->quiet_until ? UINT64_MAX : UINT64_MAX;", 1)], "lingering close",
+        "still open after"),
+    Defect("a lingering socket kept when its client closes (io_uring)", [(
+        "    else if (res != -EAGAIN || l->ending) drop_lingering(l);",
+        "    else if (l->ending) drop_lingering(l);", 1)],
+        "lingering close", "with nothing to do"),
+    Defect("no wait's timeout for a lingering socket", [("            timeout = until(ends, timeout);",
+                                                          "            (void)ends;", 1)], "the real clock", "was held"),
+    Defect("a closed connection's descriptor kept (io_uring)",
+           [("    else close(fd);\n}\n", "    else (void)fd;\n}\n", 1)],
+           "descriptors", "after 100 resets"),
+    Defect("octets libssl holds left unreported (io_uring)", [(
+        "((c->tls && !c->handshaking && dn_tls_pending(c->tls)) || (!c->tls && c->input))",
+        "((0 && dn_tls_pending(c->tls)) || (!c->tls && c->input))", 1)], "over TLS", "over TLS a pipeline"),
+    Defect("listening with the table full (io_uring)", [(
+        "free_indexes() > 0 && !paused ? POLLIN : 0", "!paused ? POLLIN : 0", 1)],
+        "sixty-five clients", "a turn with nothing to do"),
+    Defect("no wait's timeout for the pause of accepting", [(
+        "timeout = paused ? until(accept_paused_until, timeout) : timeout;",
+        "timeout = paused ? timeout : timeout;", 1)],
+        "out of descriptors on the real clock", "gave no turn"),
+    Defect("graceful closes left queued while nothing completes", [(
+        "    if (!io_poll) linger_queued();\n    dn_jobs_take(a);", "    dn_jobs_take(a);", 1)],
+        "pipeline", "the stream did not end"),
+    Defect("a failed send's descriptor kept (io_uring)",
+           [("        else retire(cn, 0);", "        else cn->fd = -1;", 1)],
+        "out of descriptors", "with the reset client gone the server holds"),
+    Defect("a lingering socket given up with its receive in flight", [(
+        "    while (l->fd >= 0 && l->receiving) reap(-1);\n", "", 1)], "descriptors",
+        "a lingering socket given up is still held"),
+    Defect("input taken with a hang-up dropped", [(
+        "    if (!io_poll && !c->tls && c->input && c->reading) r |= POLLIN;\n", "", 1)], "half close",
+        "the end of a client gone before its greeting"),
+    Defect("the stop leaving operations unreaped", [(
+        "    for (int rounds = 0; ring.live && rounds < 100; ++rounds) {",
+        "    for (int rounds = 0; 0 && rounds < 100; ++rounds) {", 1)], "first command",
+        "operations not reaped at the stop"),
     Defect("the start record written as a commit", [(r"(st8 @base \+ \d+ \+ 12), 3;", r"\1, 2;", 1)],
            "a store recovered at start", "a journal of", program=True),
     Defect("a final file set aside removed instead",
@@ -2683,6 +2776,16 @@ def planted(source: str, defect: Defect) -> str:
     return text
 
 
+def with_poll(build: Build) -> Build:
+    """The same server waiting with poll: each of its binaries run with `--io poll` first."""
+    def wrapped(binary: Path) -> Path:
+        script = binary.with_name(f"{binary.name}-poll")
+        script.write_text(f'#!/bin/sh\nexec {shlex.quote(str(binary))} --io poll "$@"\n')
+        script.chmod(0o755)
+        return script
+    return Build(wrapped(build.path), wrapped(build.stale), build.timeout)
+
+
 def hosted(index: int, defect: Defect, text: str, build: Build) -> Build:
     """The server with `defect` planted in its host, linked with the programs of `build`, waited for no
     longer than a defect needs."""
@@ -2699,7 +2802,8 @@ def hosted(index: int, defect: Defect, text: str, build: Build) -> Build:
 
     # Only the check of actions for another generation runs the program that acts for the one before.
     stale = linked(f"{name}-stale", "stale.S") if CHECKS[defect.check] is stale_generation else build.stale
-    return Build(linked(name, "nntp.S"), stale, DEFECT_TIMEOUT)
+    built = Build(linked(name, "nntp.S"), stale, DEFECT_TIMEOUT)
+    return with_poll(built) if defect.poll else built
 
 
 def caught(builds: list[Build]) -> dict[str, str]:
@@ -2731,9 +2835,14 @@ def check(cake: str) -> Report:
                      for name, text in (("nntp", source), ("stale", stale)))
         build = Build(base.result(), old.result())
     results = {}
-    for name, run in CHECKS.items():
+    # Every check runs on the server as built, waiting with io_uring. With poll, each check is held to its poll-wait
+    # defects, so it fails for the defect, not for poll.
+    polled = with_poll(build)
+    runs = [(name, run, build) for name, run in CHECKS.items()]
+    runs += [(f"{name} (poll)", CHECKS[name], polled) for name in sorted({d.check for d in DEFECTS if d.poll})]
+    for name, run, built in runs:
         try:
-            results[name] = run(build)
+            results[name] = run(built)
         except OSError as error:
             raise LaneError(f"{name}: {error!r}") from None
         except LaneError as error:

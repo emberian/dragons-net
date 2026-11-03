@@ -2086,4 +2086,9 @@ theorem four_params_refused :
     (Checked.emit fourFun).isOk = true ∧ (Abi.emitWord fourFun).isOk = false := by
   decide
 
+theorem eval_set_avoid {s : PancakeState σ} {x : String} {w : Value} {e : PancakeExp} (he : ExpAvoids (· = x) e)
+    {v : Value} (hv : eval s e = some v) : eval { s with locals := setLocal s.locals x w } e = some v :=
+  eval_agree' (s := s) (t := { s with locals := setLocal s.locals x w })
+    ⟨fun y hy => by simp [setLocal, hy], fun _ h => h, fun _ _ => rfl, rfl, rfl, rfl, rfl, rfl⟩ he hv
+
 end DN.Compiler.Preservation

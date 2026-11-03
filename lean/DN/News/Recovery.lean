@@ -115,6 +115,11 @@ def seqOf : Name → Option Nat
   | .journal => none
   | .final s | .temp s | .quarantine s | .tail s => some s
 
+/-- The number a tail's name carries. -/
+def tailOf : Name → Option Nat
+  | .tail s => some s
+  | _ => none
+
 /-- The commits among records. -/
 def commitsOf (rs : List Record) : List Commit :=
   rs.filterMap fun r => match r with
@@ -198,6 +203,32 @@ def asideOf (recorded : List Bytes) (names : List Name) (torn : Bool) : Name →
   | .quarantine s | .tail s => some s
   | _ => none
 
+/-- The number a final file no record has keeps among the files set aside. -/
+theorem asideOf_final (recorded : List Bytes) (names : List Name) (torn : Bool) (s : Nat) :
+    asideOf recorded names torn (.final s) =
+      if !recorded.contains (finalName s) && !names.contains (.quarantine s) && setsAside names torn s then some s
+      else none := rfl
+
+/-- A file set aside keeps its number among them, a kept tail too; a temporary file and the journal none. -/
+theorem asideOf_quarantine (recorded : List Bytes) (names : List Name) (torn : Bool) (s : Nat) :
+    asideOf recorded names torn (.quarantine s) = some s := rfl
+
+theorem asideOf_tail (recorded : List Bytes) (names : List Name) (torn : Bool) (s : Nat) :
+    asideOf recorded names torn (.tail s) = some s := rfl
+
+theorem asideOf_temp (recorded : List Bytes) (names : List Name) (torn : Bool) (s : Nat) :
+    asideOf recorded names torn (.temp s) = none := rfl
+
+theorem asideOf_journal (recorded : List Bytes) (names : List Name) (torn : Bool) :
+    asideOf recorded names torn .journal = none := rfl
+
+/-- What recovery does to a torn tail starting at `cut`. Its octets are kept under the next number `next0`, with where
+it was cut. Then the directory is synced and the journal cut. -/
+def cutActs (content : Bytes) (cut : Option Nat) (next0 : Nat) : List Action :=
+  match cut with
+  | some x => [.keep (tailName next0) (le 8 x ++ content.drop x), .syncDir, .cut x]
+  | none => []
+
 /-- Recovery once the journal's format and commits are read: the number of articles, the rules
 across records, the files the records name, and what is done to the directory, given where a torn
 tail starts, if any. -/
@@ -217,11 +248,7 @@ def recoverRecords (cfg : Config) (img : Image) (names : List Name) (content key
     else
       let recorded := cs.map (finalName ·.seq)
       let tidy := names.filterMap (tidyName recorded names cut.isSome)
-      let ops :=
-        (match cut with
-          | some x => [Action.keep (tailName next0) (le 8 x ++ content.drop x), .syncDir, .cut x]
-          | none => []) ++
-        tidy ++ (if tidy.isEmpty then [] else [.syncDir])
+      let ops := cutActs content cut next0 ++ tidy ++ (if tidy.isEmpty then [] else [.syncDir])
       let setAside := names.filterMap (asideOf recorded names cut.isSome) ++
         (if cut.isSome then [next0] else [])
       .ok (⟨key, cs, setAside, next, cut.getD content.length⟩, ops)
@@ -733,6 +760,48 @@ theorem foldl_max_le (m : Nat) : ∀ (l : List Nat) (acc : Nat), acc ≤ m → (
     exact foldl_max_le m l _ (by have := hl y (List.mem_cons_self ..); omega)
       fun x hx => hl x (List.mem_cons_of_mem _ hx)
 
+/-- The commits among records read one after another. -/
+theorem commitsOf_append (a b : List Record) : commitsOf (a ++ b) = commitsOf a ++ commitsOf b := by
+  simp [commitsOf]
+
+/-- The highest of a list, from a start: the start's maximum with the list's. -/
+theorem foldl_max_start : ∀ (l : List Nat) (a : Nat), l.foldl max a = max a (l.foldl max 0)
+  | [], a => by simp
+  | x :: l, a => by
+    simp only [List.foldl_cons]
+    rw [foldl_max_start l (max a x), foldl_max_start l (max 0 x)]
+    simp only [Nat.zero_max]
+    omega
+
+/-- The highest of numbers below a bound is below it. -/
+theorem foldl_max_lt {B : Nat} (l : List Nat) (h : ∀ x ∈ l, x < B) (hB : 0 < B) : l.foldl max 0 < B := by
+  have := foldl_max_le (B - 1) l 0 (by omega) fun x hx => by have := h x hx; omega
+  omega
+
+/-- Some number above `s`: the highest is. -/
+theorem any_lt_fold (s : Nat) (l : List Nat) : l.any (fun m => decide (s < m)) =
+    (!l.isEmpty && decide (s < l.foldl max 0)) := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [List.any_eq_true, decide_eq_true_eq, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true,
+    List.isEmpty_eq_false_iff]
+  constructor
+  · rintro ⟨m, hm, hs⟩
+    exact ⟨List.ne_nil_of_mem hm, Nat.lt_of_lt_of_le hs ((foldl_max_ge l 0).2 m hm)⟩
+  · rintro ⟨-, hs⟩
+    refine Classical.byContradiction fun hn => ?_
+    have := foldl_max_le s l 0 (Nat.zero_le _) fun m hm => Nat.le_of_not_lt fun h => hn ⟨m, hm, h⟩
+    omega
+
+/-- **What sets a final file aside**: a torn tail, or a tail kept numbered above it. -/
+theorem setsAside_eq (ns : List Name) (torn : Bool) (s : Nat) :
+    setsAside ns torn s =
+      (torn || (!(ns.filterMap tailOf).isEmpty && decide (s < (ns.filterMap tailOf).foldl max 0))) := by
+  rw [setsAside, ← any_lt_fold]
+  congr 1
+  induction ns with
+  | nil => rfl
+  | cons n ns ih => cases n <;> simp [tailOf, ih]
+
 theorem lt_nextSeq_name (cs : List Commit) (names : List Name) (n : Name) (hn : n ∈ names)
     (s : Nat) (hs : seqOf n = some s) : s < nextSeq cs names := by
   have := (foldl_max_ge (cs.map (·.seq) ++ names.filterMap seqOf) 0).2 s
@@ -831,9 +900,9 @@ theorem recoverRecords_planned (cfg : Config) (img : Image) (names : List Name)
       simp only [List.mem_append] at ha
       rcases ha with (ha | ha) | ha
       · cases hc : cut with
-        | none => simp [hc] at ha
+        | none => simp [hc, cutActs] at ha
         | some x =>
-          simp only [hc, List.mem_cons, List.not_mem_nil, or_false] at ha
+          simp only [hc, cutActs, List.mem_cons, List.not_mem_nil, or_false] at ha
           rcases ha with rfl | rfl | rfl
           · exact .keep x rfl
           · exact .syncDir

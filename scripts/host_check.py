@@ -71,7 +71,8 @@ class Builds:
 
 def build(name: str, host: Path = HOST, store: Path = STORE, jobs: Path = JOBS) -> Builds:
     fiu = lanes.pinned_tool("libfiu")
-    sources = [DRIVER, host, store, jobs, lanes.NATIVE / "tls.c", lanes.NATIVE / "accounts.c", *RUNTIME]
+    sources = [DRIVER, host, store, jobs, lanes.NATIVE / "tls.c", lanes.NATIVE / "accounts.c",
+               lanes.NATIVE / "uring.c", *RUNTIME]
     clean = (host, store, jobs) == (HOST, STORE, JOBS)
     return Builds(lanes.link(OUT / name, sources, includes=[OUT], check=clean),
                   lanes.link(OUT / f"{name}-fiu", sources, includes=[OUT, fiu], check=clean,
@@ -939,11 +940,12 @@ HELGRIND = ("valgrind", "--tool=helgrind", "--error-exitcode=9", "-q")
 
 
 def race_run(binary: Path, points: list[str] | None, failing_sync: bool) -> None:
-    """Eight files created at once, then eight jobs at once writing, syncing and closing them, under
-    Helgrind; with `failing_sync`, every data sync fails, so that eight workers leave the mark at once."""
+    """Eight files created at once, then eight jobs writing, syncing and closing them, under Helgrind. With
+    `failing_sync` every data sync fails, so eight workers leave the mark together. The host waits with poll here, since
+    Valgrind cannot follow io_uring, which runs on the main thread alone."""
     with tempfile.TemporaryDirectory() as temp:
         store = Store(temp)
-        with Jobs(binary, store.options(), points, wrap=HELGRIND, wait=120) as h:
+        with Jobs(binary, [*store.options(), "--io", "poll"], points, wrap=HELGRIND, wait=120) as h:
             jobs = h.w["JOBS"]
             h.hands([(slot, 1, [Op("create", name="final", number=slot)], {}) for slot in range(jobs)])
             places = [ok(h.wait(slot), 1, f"job {slot}")[:2] for slot in range(jobs)]
@@ -1097,7 +1099,8 @@ def check() -> Report:
                 break
         else:
             raise LaneError(f"the defect {name!r} was not caught")
-    return Report("checked", None, [HOST, STORE, lanes.NATIVE / "store.h", JOBS, lanes.NATIVE / "jobs.h", DRIVER, SHIM],
+    return Report("checked", None, [HOST, STORE, lanes.NATIVE / "store.h", JOBS, lanes.NATIVE / "jobs.h",
+                                    lanes.NATIVE / "uring.c", lanes.NATIVE / "uring.h", DRIVER, SHIM],
                   {"checks": results, "defects_caught": caught})
 
 

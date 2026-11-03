@@ -16,7 +16,8 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
-__attribute__((noreturn)) static inline void dn_end(int status, const char *format, va_list args) {
+__attribute__((noreturn, format(printf, 2, 0))) static inline void dn_end(int status, const char *format,
+                                                                         va_list args) {
     vfprintf(stderr, format, args);
     fputc('\n', stderr);
     exit(status);
@@ -36,22 +37,43 @@ __attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness(co
     dn_end(2, format, args);
 }
 
-/* The same from a thread other than the main one, which may hold a lock of stdio: the message is
-   written as it is and the process ends without flushing anything. */
-__attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness_now(const char *format, ...) {
-    char text[512];
-    va_list args;
-    va_start(args, format);
-    int n = vsnprintf(text, sizeof text - 1, format, args);
-    va_end(args);
-    size_t len = n < 0 ? 0 : (size_t)n < sizeof text - 1 ? (size_t)n : sizeof text - 2;
+/* The message `format` makes of `args`, a newline after it, in `text`: its length. */
+__attribute__((format(printf, 3, 0))) static inline size_t dn_said(char *text, size_t size, const char *format,
+                                                                   va_list args) {
+    int n = vsnprintf(text, size - 1, format, args);
+    size_t len = n < 0 ? 0 : (size_t)n < size - 1 ? (size_t)n : size - 2;
     text[len++] = '\n';
+    return len;
+}
+
+/* `len` octets of `text` written as they are, and the process ends with `status`. */
+__attribute__((noreturn)) static inline void dn_end_now(int status, const char *text, size_t len) {
     for (size_t done = 0; done < len;) {
         ssize_t w = write(STDERR_FILENO, text + done, len - done);
         if (w <= 0 && errno != EINTR) break;
         if (w > 0) done += (size_t)w;
     }
-    _exit(2);
+    _exit(status);
+}
+
+/* The same from a thread other than the main one, which may hold a stdio lock, or while others run. The message is
+ * written as is, and the process ends without flushing or freeing anything. */
+__attribute__((noreturn, format(printf, 1, 2))) static inline void dn_harness_now(const char *format, ...) {
+    char text[512];
+    va_list args;
+    va_start(args, format);
+    size_t len = dn_said(text, sizeof text, format, args);
+    va_end(args);
+    dn_end_now(2, text, len);
+}
+
+__attribute__((noreturn, format(printf, 1, 2))) static inline void dn_violation_now(const char *format, ...) {
+    char text[512];
+    va_list args;
+    va_start(args, format);
+    size_t len = dn_said(text, sizeof text, format, args);
+    va_end(args);
+    dn_end_now(1, text, len);
 }
 
 /* A call that faults is an outcome the host reports, not a crash to keep: without this, every

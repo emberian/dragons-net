@@ -6,14 +6,9 @@ import DN.Compiler.Analyzer
 /-!
 # DN.News.RecoverProg
 
-Recovery at start (`DN.News.Recovery.recover`) as the gate prints it. A step runs until it needs
-something of its caller — the next name of the directory, the journal's length, octets of the
-journal for its scanner (`DN.News.ScanProg`), whether an article's final file is there and its size,
-whether a name set aside is — or has something for it: an action, a number set aside, the store it
-starts with, or why it does not start. Commits go into the index, a slot each. The configuration's
-key is of sixteen octets, so `badKey` is never found. Tested against `dn-compiler recovery-model`,
-not proven. As the scanner does, it checks each word it reads back before it makes an address of
-it, and runs `fail` on one out of range.
+Recovery at start (`DN.News.Recovery.recover`) as the gate prints it; commits go into the index, a slot each. A step
+runs until it needs something of the host or has something for it. Shown to be `RecoverSpec.Steps` if it ends
+(`RecoverArea.step_frag`); tested against `dn-compiler recovery-model`.
 -/
 
 namespace DN.News.RecoverProg
@@ -194,14 +189,18 @@ def begin : List PStmt :=
    rset rTorn (n 0), rset rFresh (n 0), rset rTidied (n 0), rset rWait (n 0), rset rFirst (n 1),
    next 1] ++ stop asksName
 
+/-- The highest article numbers all zero. -/
+def zeroHigh : List PStmt :=
+  [.assign "rc" (lit 0),
+   .while (eLt (v "rc") (n groupsMax))
+     [.store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (n 0), inc "rc"]]
+
 /-- A new journal, and the directory synced when it held no file at all; no group has a number
 yet. -/
 def fresh (synced : Bool) : List PStmt :=
   [rset rFresh (n 1), rset rNext (n 1), rset rJournalEnd (n firstFrame), rset rI (n 0),
-   rset rWait (n (if synced then 1 else 0)), .assign "rc" (lit 0),
-   .while (eLt (v "rc") (n groupsMax))
-     [.store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (n 0), inc "rc"],
-   next 10]
+   rset rWait (n (if synced then 1 else 0))] ++ zeroHigh ++
+  [next 10]
 
 /-- Phase 1: a name of the first pass, or none left. -/
 def firstPass : List PStmt :=
@@ -223,8 +222,62 @@ def journalGiven : List PStmt :=
   [sset ScanProg.sSize (rw rJournalSize), sset ScanProg.sBase (n 0), sset ScanProg.sLen (n 0),
    sset ScanProg.sPos (n 0), sset ScanProg.sKeyed (n 0), sset ScanProg.sCount (n 0), next 3]
 
+/-- Programs by the phase in `rph`: the first of `l` whose number it is, else `e`. -/
+def dispatch : List (Nat × List PStmt) → List PStmt → List PStmt
+  | [], e => e
+  | (k, t) :: l, e => [.ite (eEq (v "rph") (n k)) t (dispatch l e)]
+
 section
 variable (fail : List PStmt)
+
+/-- A commit's number, sizes, CRC and lengths into its slot at `rsl`, its Message-ID after them. Then its tag's inputs:
+the key, the Message-ID in the window and its length. -/
+def slotHead : List PStmt :=
+  [.store (v "rsl") (sw ScanProg.sSeq),
+   .store (atOff (v "rsl") slotSizes)
+     (eOr (.shl (sw ScanProg.sHeader) (n 32)) (sw ScanProg.sFileSize)),
+   .assign "rgc" (sw ScanProg.sGroupCount), kept fail "rgc" ScanProg.groupsMax,
+   .assign "ril" (sw ScanProg.sIdLen), kept fail "ril" 250,
+   .assign "rio" (sw ScanProg.sIdAt), kept fail "rio" ScanProg.windowRoom,
+   .assign "rwp" (atOff (v "jsc") ScanProg.sWindow),
+   .store (atOff (v "rsl") slotMisc) (eOr (eOr (.shl (sw ScanProg.sCrc) (n 16))
+     (.shl (v "ril") (n 8))) (v "rgc")),
+   .assign "rj" (lit 0),
+   .while (eLt (v "rj") (v "ril"))
+     [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
+        (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
+   .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
+   .assign "n" (v "ril")]
+
+/-- Group `rg` of the commit: its place in the configuration found, the first group lacking noted. Its place and article
+number go into the slot. -/
+def groupNote : List PStmt :=
+  [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
+     (eMul (v "rg") (n ScanProg.groupSlot))),
+   .assign "rga" (.loadw 1 (v "rgs")), kept fail "rga" ScanProg.windowRoom,
+   .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)), kept fail "rgl" groupNameMax,
+   .assign "rx" (lit groupsMax), .assign "rc" (lit 0), .assign "rgn" (rw rGroupCount),
+   .ite (eLt (n groupsMax) (v "rgn")) [.assign "rgn" (lit groupsMax)] [],
+   .while (eLt (v "rc") (v "rgn"))
+     [.assign "rcp" (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))),
+      .ite (eEq (.loadw 1 (v "rcp")) (v "rgl"))
+        [.assign "rok" (lit 1), .assign "rj" (lit 0),
+         .while (eLt (v "rj") (v "rgl"))
+           [.ite (ne (.loadb (eAdd (atOff (v "rcp") 8) (v "rj")))
+               (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))))
+             [.assign "rok" (lit 0)] [],
+            inc "rj"],
+         .ite (v "rok") [.assign "rx" (v "rc")] []] [],
+      inc "rc"],
+   .ite (eEq (v "rx") (n groupsMax))
+     [.ite (rw rUnknown) []
+       [rset rUnknown (n 1), rset rUnknownLen (v "rgl"), .assign "rj" (lit 0),
+        .while (eLt (v "rj") (v "rgl"))
+          [.storeb (eAdd (atOff rp rUnknownName) (v "rj"))
+             (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))), inc "rj"]]] [],
+   .store (eAdd (atOff (v "rsl") slotGroups) (eMul (v "rg") (n 8)))
+     (eOr (.shl (v "rx") (n 32)) (.loadw 1 (atOff (v "rgs") 16))),
+   inc "rg"]
 
 /-- A commit read: into its slot while there is one, its Message-ID's tag under the key, so that
 two are compared by a word, its groups by their index in the configuration, and the first group
@@ -232,49 +285,9 @@ the configuration lacks noted. -/
 def commitRead : List PStmt :=
   [.assign "rcm" (eAdd (rw rCommits) (n 1)), rset rCommits (v "rcm"),
    .ite (eAnd (eLt (n 0) (v "rcm")) (eLe (v "rcm") (n Recovery.capacity)))
-     ([slotOf (eSub (v "rcm") (n 1)), .store (v "rsl") (sw ScanProg.sSeq),
-       .store (atOff (v "rsl") slotSizes)
-         (eOr (.shl (sw ScanProg.sHeader) (n 32)) (sw ScanProg.sFileSize)),
-       .assign "rgc" (sw ScanProg.sGroupCount), kept fail "rgc" ScanProg.groupsMax,
-       .assign "ril" (sw ScanProg.sIdLen), kept fail "ril" 250,
-       .assign "rio" (sw ScanProg.sIdAt), kept fail "rio" ScanProg.windowRoom,
-       .assign "rwp" (atOff (v "jsc") ScanProg.sWindow),
-       .store (atOff (v "rsl") slotMisc) (eOr (eOr (.shl (sw ScanProg.sCrc) (n 16))
-         (.shl (v "ril") (n 8))) (v "rgc")),
-       .assign "rj" (lit 0),
-       .while (eLt (v "rj") (v "ril"))
-         [.storeb (eAdd (atOff (v "rsl") slotId) (v "rj"))
-            (.loadb (eAdd (eAdd (v "rwp") (v "rio")) (v "rj"))), inc "rj"],
-       .assign "k" (atOff rp rKey), .assign "p" (eAdd (v "rwp") (v "rio")),
-       .assign "n" (v "ril")] ++ SipProg.sipSrc ++
+     ([slotOf (eSub (v "rcm") (n 1))] ++ slotHead fail ++ SipProg.sipSrc ++
       [.store (atOff (v "rsl") slotTag) (v "r"), .assign "rg" (lit 0),
-       .while (eLt (v "rg") (v "rgc"))
-         [.assign "rgs" (eAdd (atOff (v "jsc") ScanProg.sGroups)
-            (eMul (v "rg") (n ScanProg.groupSlot))),
-          .assign "rga" (.loadw 1 (v "rgs")), kept fail "rga" ScanProg.windowRoom,
-          .assign "rgl" (.loadw 1 (atOff (v "rgs") 8)), kept fail "rgl" groupNameMax,
-          .assign "rx" (lit groupsMax), .assign "rc" (lit 0), .assign "rgn" (rw rGroupCount),
-          .ite (eLt (n groupsMax) (v "rgn")) [.assign "rgn" (lit groupsMax)] [],
-          .while (eLt (v "rc") (v "rgn"))
-            [.assign "rcp" (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))),
-             .ite (eEq (.loadw 1 (v "rcp")) (v "rgl"))
-               [.assign "rok" (lit 1), .assign "rj" (lit 0),
-                .while (eLt (v "rj") (v "rgl"))
-                  [.ite (ne (.loadb (eAdd (atOff (v "rcp") 8) (v "rj")))
-                      (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))))
-                    [.assign "rok" (lit 0)] [],
-                   inc "rj"],
-                .ite (v "rok") [.assign "rx" (v "rc")] []] [],
-             inc "rc"],
-          .ite (eEq (v "rx") (n groupsMax))
-            [.ite (rw rUnknown) []
-              [rset rUnknown (n 1), rset rUnknownLen (v "rgl"), .assign "rj" (lit 0),
-               .while (eLt (v "rj") (v "rgl"))
-                 [.storeb (eAdd (atOff rp rUnknownName) (v "rj"))
-                    (.loadb (eAdd (eAdd (v "rwp") (v "rga")) (v "rj"))), inc "rj"]]] [],
-          .store (eAdd (atOff (v "rsl") slotGroups) (eMul (v "rg") (n 8)))
-            (eOr (.shl (v "rx") (n 32)) (.loadw 1 (atOff (v "rgs") 16))),
-          inc "rg"]]) []]
+       .while (eLt (v "rg") (v "rgc")) (groupNote fail)]) []]
 
 /-- Phase 3: the scanner run until it wants octets or the journal ends. -/
 def scanning : List PStmt :=
@@ -295,71 +308,103 @@ def scanning : List PStmt :=
                rset rJournalEnd (sw ScanProg.sPos)] [],
             next 4]]]]]
 
+/-- The commits from `rj` on checked for the number in `rv`: `rdup` 1 if one has it. -/
+def seqInner : List PStmt :=
+  [.while (eLt (v "rj") (v "rcm"))
+     [slotOf (v "rj"), .ite (eEq (slotW slotSeq) (v "rv")) [.assign "rdup" (lit 1)] [], inc "rj"]]
+
+/-- The first `rl` octets of the Message-IDs at `rsl` and `rcp` compared: `rok` 1 if alike. -/
+def idCmp : List PStmt :=
+  [.assign "rok" (lit 1), .assign "rm" (lit 0),
+   .while (eAnd (v "rok") (eLt (v "rm") (v "rl")))
+     [.ite (ne (.loadb (eAdd (atOff (v "rsl") slotId) (v "rm"))) (.loadb (eAdd (atOff (v "rcp") slotId) (v "rm"))))
+       [.assign "rok" (lit 0)] [inc "rm"]]]
+
+/-- The first commit a later one repeats the number of: `rdup` 1 and the number in `rv`, if any. -/
+def seqDups : List PStmt :=
+  [.assign "rdup" (lit 0), .assign "ri" (lit 0),
+   .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "ri") (v "rcm")))
+     ([slotOf (v "ri"), .assign "rv" (slotW slotSeq), .assign "rj" (eAdd (v "ri") (n 1))] ++ seqInner ++
+      [.ite (v "rdup") [] [inc "ri"]])]
+
+/-- The later commits checked for slot `rsl`'s Message-ID, of length `rl` and tag `rv`: `rdup` 2 if one has it. -/
+def idMid : List PStmt :=
+  [.while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "rj") (v "rcm")))
+     [.assign "rcp" (eAdd (atOff rp rSlots) (eMul (v "rj") (n slotSize))),
+      .ite (eAnd (eEq (.loadw 1 (atOff (v "rcp") slotTag)) (v "rv"))
+          (eEq (eAnd (.shr (.loadw 1 (atOff (v "rcp") slotMisc)) (n 8)) (n 255)) (v "rl")))
+        (idCmp ++ [.ite (v "rok") [.assign "rdup" (lit 2)] []]) [],
+      inc "rj"]]
+
+/-- The first commit a later one repeats the Message-ID of: `rdup` 2, the commit in `ri`, its length in `rl`. -/
+def idDups : List PStmt :=
+  [.assign "ri" (lit 0),
+   .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "ri") (v "rcm")))
+     ([slotOf (v "ri"), .assign "rl" (eAnd (.shr (slotW slotMisc) (n 8)) (n 255)),
+       kept fail "rl" 250, .assign "rv" (slotW slotTag), .assign "rj" (eAdd (v "ri") (n 1))] ++ idMid ++
+      [.ite (v "rdup") [] [inc "ri"]])]
+
+/-- Slot `rsl`'s groups from `rg` on checked against the highest numbers. `rbad` is 1 at the first not above, its number
+in `rv`, its place in `rc`. -/
+def groupsCheck : List PStmt :=
+  [.while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "rg") (v "rgc")))
+     [.assign "rx" (groupW "rg"),
+      .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
+      kept fail "rc" (groupsMax - 1),
+      .assign "rv" (eAnd (v "rx") (n (2 ^ 32 - 1))),
+      .ite (eLe (v "rv") (.loadw 1 (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8)))))
+        [.assign "rbad" (lit 1)] [inc "rg"]]]
+
+/-- Slot `rsl`'s groups' numbers stored at their places, and the next commit. -/
+def groupsStore : List PStmt :=
+  [.assign "rg" (lit 0),
+   .while (eLt (v "rg") (v "rgc"))
+     [.assign "rx" (groupW "rg"),
+      .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
+      kept fail "rc" (groupsMax - 1),
+      .store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (eAnd (v "rx") (n (2 ^ 32 - 1))), inc "rg"],
+   inc "ri"]
+
+/-- Commit `ri`'s groups checked against the highest numbers before it, then stored there. -/
+def highsBody : List PStmt :=
+  [slotOf (v "ri"), .assign "rgc" (eAnd (slotW slotMisc) (n 255)),
+   kept fail "rgc" ScanProg.groupsMax,
+   .assign "rg" (lit 0)] ++ groupsCheck fail ++ [.ite (v "rbad") [] (groupsStore fail)]
+
+/-- The commits' numbers checked to rise: `rbad` 1 at the first group's number not above. -/
+def highs : List PStmt :=
+  [.assign "rbad" (lit 0), .assign "ri" (lit 0),
+   .while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "ri") (v "rcm"))) (highsBody fail)]
+
+/-- The numbers checked to rise, after the highest are zeroed: the first group not above refused, else phase 5. -/
+def rising : List PStmt :=
+  zeroHigh ++ highs fail ++
+  [.ite (v "rbad")
+     (refuse (.numberNotAbove [] 0) [rset rFaultA (v "rv"),
+       rset rFaultAt (eAdd (n (rGroups + 8)) (eMul (v "rc") (n rGroupSlot))),
+       rset rFaultLen (.loadw 1 (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))))])
+     [rset rI (n 0), rset rWait (n 0), next 5]]
+
+/-- The rules once the index holds the commits: a number twice, a Message-ID twice, a group lacking, numbers not rising.
+-/
+def ruleChecks : List PStmt :=
+  seqDups ++
+  [.ite (v "rdup") [] (idDups fail),
+   .ite (v "rdup")
+     [.ite (eEq (v "rdup") (n 1)) (refuse (.seqTwice 0) [rset rFaultA (v "rv")])
+       (refuse (.idTwice [])
+         [rset rFaultAt (eAdd (n (rSlots + slotId)) (eMul (v "ri") (n slotSize))),
+          rset rFaultLen (v "rl")])]
+     [.ite (eEq (rw rUnknown) (n 1))
+       (refuse (.unknownGroup []) [rset rFaultAt (n rUnknownName), rset rFaultLen (rw rUnknownLen)])
+       (rising fail)]]
+
 /-- Phase 4: the rules across records, in the specification's order. -/
 def rules : List PStmt :=
   [.assign "rcm" (rw rCommits),
    .ite (eLe (n (Recovery.capacity + 1)) (v "rcm"))
      (refuse (.tooMany 0) [rset rFaultA (v "rcm")])
-     (held "rcm" ++ [.assign "rdup" (lit 0), .assign "ri" (lit 0),
-      .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "ri") (v "rcm")))
-        [slotOf (v "ri"), .assign "rv" (slotW slotSeq), .assign "rj" (eAdd (v "ri") (n 1)),
-         .while (eLt (v "rj") (v "rcm"))
-           [slotOf (v "rj"), .ite (eEq (slotW slotSeq) (v "rv")) [.assign "rdup" (lit 1)] [],
-            inc "rj"],
-         .ite (v "rdup") [] [inc "ri"]],
-      .ite (v "rdup") [] [.assign "ri" (lit 0),
-        .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "ri") (v "rcm")))
-          [slotOf (v "ri"), .assign "rl" (eAnd (.shr (slotW slotMisc) (n 8)) (n 255)),
-           kept fail "rl" 250, .assign "rv" (slotW slotTag), .assign "rj" (eAdd (v "ri") (n 1)),
-           .while (eAnd (eEq (v "rdup") (n 0)) (eLt (v "rj") (v "rcm")))
-             [.assign "rcp" (eAdd (atOff rp rSlots) (eMul (v "rj") (n slotSize))),
-              .ite (eAnd (eEq (.loadw 1 (atOff (v "rcp") slotTag)) (v "rv"))
-                  (eEq (eAnd (.shr (.loadw 1 (atOff (v "rcp") slotMisc)) (n 8)) (n 255)) (v "rl")))
-                [.assign "rok" (lit 1), .assign "rm" (lit 0),
-                 .while (eAnd (v "rok") (eLt (v "rm") (v "rl")))
-                   [.ite (ne (.loadb (eAdd (atOff (v "rsl") slotId) (v "rm")))
-                       (.loadb (eAdd (atOff (v "rcp") slotId) (v "rm"))))
-                     [.assign "rok" (lit 0)] [inc "rm"]],
-                 .ite (v "rok") [.assign "rdup" (lit 2)] []] [],
-              inc "rj"],
-           .ite (v "rdup") [] [inc "ri"]]],
-      .ite (v "rdup")
-        [.ite (eEq (v "rdup") (n 1)) (refuse (.seqTwice 0) [rset rFaultA (v "rv")])
-          (refuse (.idTwice [])
-            [rset rFaultAt (eAdd (n (rSlots + slotId)) (eMul (v "ri") (n slotSize))),
-             rset rFaultLen (v "rl")])]
-        [.ite (eEq (rw rUnknown) (n 1))
-          (refuse (.unknownGroup []) [rset rFaultAt (n rUnknownName),
-            rset rFaultLen (rw rUnknownLen)])
-          [.assign "rc" (lit 0),
-           .while (eLt (v "rc") (n groupsMax))
-             [.store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8))) (n 0), inc "rc"],
-           .assign "rbad" (lit 0), .assign "ri" (lit 0),
-           .while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "ri") (v "rcm")))
-             [slotOf (v "ri"), .assign "rgc" (eAnd (slotW slotMisc) (n 255)),
-              kept fail "rgc" ScanProg.groupsMax,
-              .assign "rg" (lit 0),
-              .while (eAnd (eEq (v "rbad") (n 0)) (eLt (v "rg") (v "rgc")))
-                [.assign "rx" (groupW "rg"),
-                 .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
-                 kept fail "rc" (groupsMax - 1),
-                 .assign "rv" (eAnd (v "rx") (n (2 ^ 32 - 1))),
-                 .ite (eLe (v "rv") (.loadw 1 (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8)))))
-                   [.assign "rbad" (lit 1)] [inc "rg"]],
-              .ite (v "rbad") []
-                [.assign "rg" (lit 0),
-                 .while (eLt (v "rg") (v "rgc"))
-                   [.assign "rx" (groupW "rg"),
-                    .assign "rc" (eAdd (v "jz") (.shr (v "rx") (n 32))),
-                 kept fail "rc" (groupsMax - 1),
-                    .store (eAdd (atOff rp rHigh) (eMul (v "rc") (n 8)))
-                      (eAnd (v "rx") (n (2 ^ 32 - 1))), inc "rg"],
-                 inc "ri"]],
-           .ite (v "rbad")
-             (refuse (.numberNotAbove [] 0) [rset rFaultA (v "rv"),
-               rset rFaultAt (eAdd (n (rGroups + 8)) (eMul (v "rc") (n rGroupSlot))),
-               rset rFaultLen (.loadw 1 (eAdd (atOff rp rGroups) (eMul (v "rc") (n rGroupSlot))))])
-             [rset rI (n 0), rset rWait (n 0), next 5]]]])]
+     (held "rcm" ++ ruleChecks fail)]
 
 /-- Phase 5: each commit's final file, there and of its size, in the journal's order. -/
 def files : List PStmt :=
@@ -448,25 +493,18 @@ def created : List PStmt :=
    .ite (eEq (v "ri") (n 0)) (act actCreate [])
      [.ite (eAnd (eEq (v "ri") (n 1)) (rw rWait)) (act actSyncDir []) (stop done)]]
 
+/-- The phases by number, each with its program; any other number is `askNext`'s. -/
+def phaseTable : List (Nat × List PStmt) :=
+  [(0, begin), (1, firstPass), (2, journalGiven), (3, scanning fail), (4, rules fail), (5, files fail),
+   (6, numbered), (7, tail), (8, secondPass), (9, asideGiven), (10, created), (11, finish), (12, renamed)]
+
+/-- One phase, the one the area's phase word names. -/
+def phases : List PStmt := [.assign "rph" (rw rPhase)] ++ dispatch (phaseTable fail) askNext
+
 /-- **One step**: the phases until one asks or gives. A name asked for arrives in phase 1 or 8,
 the step that asked having left the phase there. -/
 def stepWith : List PStmt :=
-  [.assign "jsc" (atOff rp rScan), .assign "rgo" (lit 1),
-   .while (v "rgo")
-     [.assign "rph" (rw rPhase),
-      .ite (eEq (v "rph") (n 0)) begin
-       [.ite (eEq (v "rph") (n 1)) firstPass
-        [.ite (eEq (v "rph") (n 2)) journalGiven
-         [.ite (eEq (v "rph") (n 3)) (scanning fail)
-          [.ite (eEq (v "rph") (n 4)) (rules fail)
-           [.ite (eEq (v "rph") (n 5)) (files fail)
-            [.ite (eEq (v "rph") (n 6)) numbered
-             [.ite (eEq (v "rph") (n 7)) tail
-              [.ite (eEq (v "rph") (n 8)) secondPass
-               [.ite (eEq (v "rph") (n 9)) asideGiven
-                [.ite (eEq (v "rph") (n 10)) created
-                 [.ite (eEq (v "rph") (n 11)) finish
-                  [.ite (eEq (v "rph") (n 12)) renamed askNext]]]]]]]]]]]]]]
+  [.assign "jsc" (atOff rp rScan), .assign "rgo" (lit 1), .while (v "rgo") (phases fail)]
 
 end
 

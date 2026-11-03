@@ -36,7 +36,7 @@ Acceptance: a real loopback connection; input split at arbitrary byte boundaries
 
 ### 3. Deliver the smallest useful NNTP slice
 
-Follow [the NNTP plan](nntp.md). The first slice is built: greeting, capability discovery, HELP, QUIT, HEAD and STAT, and error handling, run in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)) behind a reference `poll` host ([decision 0003](decisions/0003-nntp-slice.md), [details](baseline.md#nntp-server)).
+Follow [the NNTP plan](nntp.md). The first slice is built: greeting, capability discovery, HELP, QUIT, HEAD and STAT, and error handling, run in the generated program's `main` ([decision 0002](decisions/0002-entry-and-memory.md)) behind a host that waits with io_uring or `poll` ([decision 0003](decisions/0003-nntp-slice.md), [details](baseline.md#nntp-server)).
 
 The durable store (#17, [decision 0005](decisions/0005-article-store.md)) is recovered at start, takes POST from the networks `--post-from` names, loopback by default, and serves ARTICLE, HEAD, BODY and STAT by message-id and by number. With it the server has RFC 3977's reader commands and listings (#18). Advertise a capability only once its behaviour is implemented and tested: READER, LIST and POST are.
 
@@ -44,7 +44,7 @@ Acceptance: transcript tests against an independent client, command/article fram
 
 ### 4. Measure and expand
 
-Benchmark the same workload through a simple reference host and the optimized adapter. Record compiler, CPU, OS, input distribution, connection count, queue bounds, latency distribution, throughput, allocations, and CPU usage. Do not promote the native digest benchmark into a server performance claim.
+[Measurements](bench.md) put one open-loop load through the poll and io_uring hosts of the echo and of the NNTP server, and INN's reader, recording the machine, the load, latencies, throughput, CPU, allocations and system calls. They name the bottlenecks; the optimizations are next. Do not promote the native digest benchmark into a server performance claim.
 
 Add peering, authenticated access, offline bundles, and a human UI after the storage/session contracts stabilize. The initial scope is documented without advertising unfinished features.
 

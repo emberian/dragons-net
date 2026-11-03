@@ -6,23 +6,9 @@ import DN.Compiler.Analyzer
 /-!
 # DN.News.AbnfProg
 
-The grammar of `DN.News.AbnfRules` as Pancake functions, which say of a rule what
-`DN.News.Abnf.matches?` says: whether it matches all of an input. A function takes a set of
-positions to the set of positions a match of its rule from one of them can end at, as `endsFrom`
-does, a set at a time. A set is bits over the positions of the input with the window of words that
-holds them, in a slot of the area; a function's own sets lie in a frame of slots of its own.
-
-A term that matches one byte of a class, or one string, is a leaf: `leafClass` and `leafText` read
-it from a table. The grammar's one cycle, a comment within a comment (RFC 5322 §3.2.2), is read by
-`ruleComment`, a scan with a count of depth: a comment's end is the first `)` its depth closes. So
-no function calls itself or one that calls it, the functions come in an order in which each calls
-only those before it, and each frame lies past the frames of every function that calls it, so no
-two functions running at once share a slot. Tested against `dn-compiler abnf-model`, not proven.
-
-So that the analysis of decision 0004 sees every access lie in the area, a set holds no address,
-and a function checks each slot it is given and each word it reads back before it makes an address
-of it: one out of range sets the area's flag of a failed check and returns 1, and the program
-answers 2.
+The grammar of `DN.News.AbnfRules` as Pancake functions answering what `Abnf.matches?` does. A function maps positions
+to the ends of its rule's matches from them, as bit sets in area slots. Proven: the set operations, leaves, rules'
+functions and a round of `main`; not yet `tables`, the `dn_next` loop and termination.
 -/
 
 namespace DN.News.AbnfProg
@@ -113,30 +99,32 @@ def termOf (i : Nat) : Term := grammar[i]?.getD (.alt [])
 /-- Whether rule `i` has a function: the comment's, or one that is no leaf. -/
 def hasFun (i : Nat) : Bool := i == commentRule || (leafOf (termOf i)).isNone
 
-/-- The rules with functions a term calls, in order. -/
+/-- The rules with functions a term calls, in order, its parts' by `g`, `l` its leaf if it is one. The leaf is
+an argument here and below so that no recursive definition works `leafOf` out on its own. -/
+def callsAt (g : Term → List Nat) : Option Leaf → Term → List Nat
+  | some _, _ => []
+  | none, .ref i => [i]
+  | none, .seq ts | none, .alt ts => ts.flatMap g
+  | none, .rep _ _ u => g u
+  | none, _ => []
+
 def callsOf : Nat → Term → List Nat
   | 0, _ => []
-  | f + 1, t =>
-    if (leafOf t).isSome then [] else
-    match t with
-    | .ref i => [i]
-    | .seq ts | .alt ts => ts.flatMap (callsOf f)
-    | .rep _ _ u => callsOf f u
-    | _ => []
+  | f + 1, t => callsAt (callsOf f) (leafOf t) t
 
 def callees (i : Nat) : List Nat :=
   if i == commentRule then [] else (callsOf steps (termOf i)).eraseDups
 
 /-- The leaves a term reads, in order. -/
+def leavesAt (g : Term → List Leaf) : Option Leaf → Term → List Leaf
+  | some l, _ => [l]
+  | none, .seq ts | none, .alt ts => ts.flatMap g
+  | none, .rep _ _ u => g u
+  | none, _ => []
+
 def leavesOf : Nat → Term → List Leaf
   | 0, _ => []
-  | f + 1, t =>
-    match leafOf t with
-    | some l => [l]
-    | none => match t with
-      | .seq ts | .alt ts => ts.flatMap (leavesOf f)
-      | .rep _ _ u => leavesOf f u
-      | _ => []
+  | f + 1, t => leavesAt (leavesOf f) (leafOf t) t
 
 /-- Rules `i` reaches, each after every rule it calls, after `done`. -/
 def visit : Nat → Nat → List Nat → List Nat
@@ -155,17 +143,17 @@ def ordered : Bool :=
   (order.zipIdx).all fun (i, k) => (callees i).all fun j => (order.take k).contains j
 
 /-- How many slots of its own a term's statements use. -/
+def needAt (g : Term → Nat) : Option Leaf → Term → Nat
+  | some _, _ => 0
+  | none, .seq [u] | none, .alt [u] => g u
+  | none, .seq (u :: us) => 2 + ((u :: us).map g).foldl max 0
+  | none, .alt (u :: us) => 1 + ((u :: us).map g).foldl max 0
+  | none, .rep lo hi u => if lo == 0 && hi == some 1 then g u else 2 + g u
+  | none, _ => 0
+
 def needOf : Nat → Term → Nat
   | 0, _ => 0
-  | f + 1, t =>
-    if (leafOf t).isSome then 0 else
-    match t with
-    | .seq [u] | .alt [u] => needOf f u
-    | .seq (u :: us) => 2 + ((u :: us).map (needOf f)).foldl max 0
-    | .alt (u :: us) => 1 + ((u :: us).map (needOf f)).foldl max 0
-    | .rep 0 (some 1) u => needOf f u
-    | .rep _ _ u => 2 + needOf f u
-    | _ => 0
+  | f + 1, t => needAt (needOf f) (leafOf t) t
 
 def need (i : Nat) : Nat := if i == commentRule then 0 else needOf steps (termOf i)
 
@@ -216,10 +204,9 @@ def sHi : Nat := 8
 def sBits : Nat := 16
 def setSize : Nat := sBits + 8 * setWords
 
-/-! The area: the rule asked, the input's length and the answer; the flag of a failed check; the
-positions the matches start from, as many as the word before them says; the powers of two below
-2^64 and the masks of a word's bytes; each class, four words; each string's place among the
-strings' bytes, its length and whether it is caseless; the strings' bytes; the input; the slots. -/
+/-! The area: the rule asked, input length, answer, failed-check flag, the starts and the input. The host writes these
+per case (`aIO`), nothing past them. Above lie powers of two, byte masks, classes, the strings' table and bytes, then
+the slots. -/
 
 def aRule : Nat := 0
 def aLen : Nat := 8
@@ -228,7 +215,13 @@ def aBroken : Nat := 24
 def startsMax : Nat := 16
 def aStarts : Nat := 32
 def aStartList : Nat := aStarts + 8
-def aPow : Nat := aStartList + 8 * startsMax
+def aInput : Nat := aStartList + 8 * startsMax
+/-- Every position a set can hold and a string past it. No read passes the input's length, but the analysis, blind to
+it, sees each read in the area. -/
+def inputRoom : Nat := 64 * (setWords + 1)
+/-- The end of what the host writes for a case. -/
+def aIO : Nat := aInput + inputRoom
+def aPow : Nat := aIO
 /-- The masks of a word's eight bytes. -/
 def aMask : Nat := aPow + 8 * 64
 def aClass : Nat := aMask + 8 * 8
@@ -236,11 +229,7 @@ def aTexts : Nat := aClass + 32 * classes.length
 def textBytes : Nat := (texts.map (·.1.length)).sum
 def aTextBytes : Nat := aTexts + 24 * texts.length
 /-- Past the strings' bytes, room for a comparison from any place `leafText` accepts. -/
-def aInput : Nat := aTextBytes + (textBytes + textMax + 1 + 7) / 8 * 8
-/-- Every position a set can hold and a string past it: no read passes the input's length, but the
-analysis, which does not relate a position to it, sees each read in the area. -/
-def inputRoom : Nat := 64 * (setWords + 1)
-def aSets : Nat := aInput + inputRoom
+def aSets : Nat := aTextBytes + (textBytes + textMax + 1 + 7) / 8 * 8
 def size : Nat := aSets + slots * setSize
 
 /-! ## Statements -/
@@ -269,11 +258,24 @@ def bitWord (p : String) (w : PExpr) : PExpr := eAdd (atOff (v p) sBits) (eMul w
 /-- The power of two `j`. -/
 def pow (j : PExpr) : PExpr := .loadw 1 (eAdd (atOff (v "a") aPow) (eMul j (n 8)))
 
-/-- The set at `q` given position `y` too, its window's ends so far in `dl` and `dh`, `df` set
-while it is empty: the positions may come in any order. -/
-def addBit (m : Mutant) (y : PExpr) : List PStmt :=
-  [.dec "yw" (.shr y (n 6)), kept "yw" (setWords - 1), .dec "yj" (eAnd y (n 63)),
-   .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj")))] ++
+/-- The window of the set at `p` read into `lo` and `hi`, each checked. -/
+def readWin (p lo hi : String) : List PStmt :=
+  [.dec lo (word (v p) sLo), kept lo (setWords - 1), .dec hi (word (v p) sHi), kept hi (setWords - 1)]
+
+/-- From word `w` to `hi`, the word at `q` becomes `f` of it and the word at `p`. -/
+def wordLoop (w hi : String) (f : PExpr → PExpr → PExpr) : PStmt :=
+  .while (eLe (v w) (v hi))
+    [.store (bitWord "q" (v w)) (f (.loadw 1 (bitWord "q" (v w))) (.loadw 1 (bitWord "p" (v w)))), inc w]
+
+/-- Position `y`'s word into `yw`, checked, and its bit into `yj`. -/
+def posParts (y : PExpr) : List PStmt :=
+  [.dec "yw" (.shr y (n 6)), kept "yw" (setWords - 1), .dec "yj" (eAnd y (n 63))]
+
+/-- The bit `yj` of word `yw` of the set at `q` set. -/
+def setBit : PStmt := .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj")))
+
+/-- The window's ends so far, in `dl` and `dh`, taking word `yw`: the first word, `df` set, gives both. -/
+def addWin (m : Mutant) : List PStmt :=
   if m == .windowOrder then
     [.ite (v "df") [.assign "dl" (v "yw"), .assign "df" (n 0)] [], .assign "dh" (v "yw")]
   else
@@ -281,28 +283,38 @@ def addBit (m : Mutant) (y : PExpr) : List PStmt :=
       [.ite (eLt (v "yw") (v "dl")) [.assign "dl" (v "yw")] [],
        .ite (eLt (v "dh") (v "yw")) [.assign "dh" (v "yw")] []]]
 
+/-- The set at `q` given position `y` too. Its window's ends so far are in `dl` and `dh`, `df` set while none is. -/
+def addBit (m : Mutant) (y : PExpr) : List PStmt := posParts y ++ [setBit] ++ addWin m
+
+/-- The window's ends, none yet: a set built from nothing. -/
+def startWin : List PStmt := [.dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)]
+
+/-- The mask of byte `b` of a word. -/
+def mask (b : PExpr) : PExpr := .loadw 1 (eAdd (atOff (v "a") aMask) (eMul b (n 8)))
+
+/-- Position `x`, bit `j` of word `w`, to `body` when below the input's length. -/
+def posAt (body : List PStmt) : List PStmt :=
+  [.dec "x" (eAdd (eMul (v "w") (n 64)) (v "j")), .ite (eLt (v "x") (v "nn")) body []]
+
+/-- The bits `j` of byte `m` of the word in `wd`, each set one a position. -/
+def bitsLoop (body : List PStmt) : PStmt :=
+  .while (eLt (v "j") (eAdd (eMul (v "m") (n 8)) (n 8)))
+    [.ite (ne (eAnd (v "wd") (pow (v "j"))) (n 0)) (posAt body) [], inc "j"]
+
+/-- The bytes `m` of the word in `wd`, those holding a bit read bit by bit. -/
+def bytesLoop (body : List PStmt) : PStmt :=
+  .while (eLt (v "m") (n 8))
+    [.ite (ne (eAnd (v "wd") (mask (v "m"))) (n 0)) [.dec "j" (eMul (v "m") (n 8)), bitsLoop body] [], inc "m"]
+
+/-- The words `w` of the set at `p` up to `hi`, those holding a bit read byte by byte. -/
+def wordsLoop (body : List PStmt) : PStmt :=
+  .while (eLe (v "w") (v "hi"))
+    [.dec "wd" (.loadw 1 (bitWord "p" (v "w"))), .ite (ne (v "wd") (n 0)) [.dec "m" (n 0), bytesLoop body] [], inc "w"]
+
 /-- For each position `x` of the set at `p` below `nn`, `body`, from the lowest: a leaf matches at
 least one byte (`regression_959`) and a comment starts with one. A word's bits are tried only in
 its bytes that hold one. -/
-def eachPos (body : List PStmt) : List PStmt :=
-  [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-   .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-   .dec "w" (v "lo"),
-   .while (eLe (v "w") (v "hi"))
-     [.dec "wd" (.loadw 1 (bitWord "p" (v "w"))),
-      .ite (ne (v "wd") (n 0))
-        [.dec "m" (n 0),
-         .while (eLt (v "m") (n 8))
-           [.ite (ne (eAnd (v "wd") (.loadw 1 (eAdd (atOff (v "a") aMask) (eMul (v "m") (n 8)))))
-                (n 0))
-              [.dec "j" (eMul (v "m") (n 8)),
-               .while (eLt (v "j") (eAdd (eMul (v "m") (n 8)) (n 8)))
-                 [.ite (ne (eAnd (v "wd") (pow (v "j"))) (n 0))
-                    [.dec "x" (eAdd (eMul (v "w") (n 64)) (v "j")),
-                     .ite (eLt (v "x") (v "nn")) body []] [],
-                  inc "j"]] [],
-            inc "m"]] [],
-      inc "w"]]
+def eachPos (body : List PStmt) : List PStmt := readWin "p" "lo" "hi" ++ [.dec "w" (v "lo"), wordsLoop body]
 
 /-- The start of a function given the slots `ps`: the area, each slot checked and made an address,
 and with `len` the input's length checked. -/
@@ -318,11 +330,97 @@ def epilogue : List PStmt :=
 
 /-- The set at `q` emptied: the words of its window cleared. -/
 def clearQ : List PStmt :=
-  [.dec "cl" (word (v "q") sLo), kept "cl" (setWords - 1),
-   .dec "ch" (word (v "q") sHi), kept "ch" (setWords - 1),
-   .dec "cw" (v "cl"),
-   .while (eLe (v "cw") (v "ch")) [.store (bitWord "q" (v "cw")) (n 0), inc "cw"],
+  readWin "q" "cl" "ch" ++
+  [.dec "cw" (v "cl"), wordLoop "cw" "ch" (fun _ _ => n 0),
    .store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
+
+/-- The window of the set at `q`, read into `dl` and `dh`, widened to take `[lo, hi]`. An empty one, `dh < dl`, becomes
+it; another takes the lower start, per `cLo`, and the higher end. -/
+def widen (lo hi : String) (cLo : PExpr) : PStmt :=
+  .ite (eLt (v "dh") (v "dl"))
+    [.store (atOff (v "q") sLo) (v lo), .store (atOff (v "q") sHi) (v hi)]
+    [.ite cLo [.store (atOff (v "q") sLo) (v lo)] [],
+     .ite (eLt (v "dh") (v hi)) [.store (atOff (v "q") sHi) (v hi)] []]
+
+/-- Position `y` checked, its word into `yw` and its bit into `yj`. -/
+def posOf : List PStmt := kept "y" inputMax :: posParts (v "y")
+
+/-- The window's start moved past the words that hold nothing. -/
+def trimLo : PStmt :=
+  .while (v "go")
+    [.ite (eLe (v "lo") (v "hi"))
+      [.ite (eEq (.loadw 1 (bitWord "q" (v "lo"))) (n 0)) [inc "lo"] [.assign "go" (n 0)]]
+      [.assign "go" (n 0)]]
+
+/-- The window's end moved back past the words that hold nothing. -/
+def trimHi : PStmt :=
+  .while (v "go")
+    [.ite (eLe (v "lo") (v "hi"))
+      [.ite (eEq (.loadw 1 (bitWord "q" (v "hi"))) (n 0)) [.assign "hi" (eSub (v "hi") (n 1))] [.assign "go" (n 0)]]
+      [.assign "go" (n 0)]]
+
+/-- The window cut to `[lo, hi]` stored, an empty one when nothing is left. -/
+def cutWin : PStmt :=
+  .ite (eLt (v "hi") (v "lo"))
+    [.store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
+    [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
+
+/-- `setAdd`'s middle: the bit set, the window read into `dl` and `dh` and widened to the bit's word. -/
+def addPos : List PStmt :=
+  [setBit, .dec "dl" (word (v "q") sLo), .dec "dh" (word (v "q") sHi), widen "yw" "yw" (eLt (v "yw") (v "dl"))]
+
+/-- `setUnion`'s middle: when the set at `p` holds a word, its words or-ed in and the window widened. -/
+def unionBits (m : Mutant) : PStmt :=
+  .ite (eLe (v "lo") (v "hi"))
+    [.dec "w" (v "lo"), wordLoop "w" "hi" eOr,
+     widen "lo" "hi" (eAnd (eLt (v "lo") (v "dl")) (n (if m == .unionWindow then 0 else 1)))] []
+
+/-- `setCopy`'s middle: the words of the set at `p` copied, and its window. -/
+def copyBits : List PStmt :=
+  [.dec "w" (v "lo"), wordLoop "w" "hi" (fun _ p => p),
+   .store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
+
+/-- `setMinus`'s middle: the bits of the set at `p` taken out of the words of the window. -/
+def minusBits : List PStmt := [.dec "w" (v "lo"), wordLoop "w" "hi" (fun q p => eAnd q (eXor p (n all1)))]
+
+/-- `setMinus`'s end: the window cut to the words still holding one. -/
+def trimWin : List PStmt := [.dec "go" (n 1), trimLo, .assign "go" (n 1), trimHi, cutWin]
+
+/-- Class `k`'s words, checked, their address in `t`. -/
+def classHead : List PStmt :=
+  [kept "k" (classes.length - 1), .dec "t" (eAdd (atOff (v "a") aClass) (eMul (v "k") (n 32)))]
+
+/-- Position `x + 1` added when the byte at `x` is in the class at `t`: bit `b % 64` of its word `b / 64`. -/
+def classBody (m : Mutant) : List PStmt :=
+  [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "x"))),
+   .dec "bw" (eAdd (eAdd (eLe (n 64) (v "b")) (eLe (n 128) (v "b"))) (eLe (n 192) (v "b"))),
+   .ite (ne (eAnd (.loadw 1 (eAdd (v "t") (eMul (v "bw") (n 8)))) (pow (eAnd (v "b") (n 63)))) (n 0))
+     (addBit m (eAdd (v "x") (n 1))) []]
+
+/-- String `k`'s place among the strings' bytes, length and case into `off`, `len` and `cf`, each checked. -/
+def textHead : List PStmt :=
+  [kept "k" (texts.length - 1),
+   .dec "t" (eAdd (atOff (v "a") aTexts) (eMul (v "k") (n 24))),
+   .dec "off" (word (v "t") 0), kept "off" textBytes,
+   .dec "len" (word (v "t") 8), kept "len" textMax,
+   .dec "cf" (word (v "t") 16), kept "cf" 1]
+
+/-- Whether the string lies at `x`: `ok` cleared at a differing byte. With `cf`, an upper case letter is made lower case
+first. -/
+def textCmp (m : Mutant) : PStmt :=
+  .while (eLt (v "i") (v "len"))
+    [.dec "b" (byte (eAdd (eAdd (atOff (v "a") aInput) (v "x")) (v "i"))),
+     .dec "lb" (eAdd (v "b") (eMul (n 32)
+       (eAnd (n (if m == .caseful then 0 else 1))
+         (eAnd (v "cf") (eAnd (eLe (n 65) (v "b")) (eLe (v "b") (n 90))))))),
+     .ite (ne (v "lb") (byte (eAdd (eAdd (atOff (v "a") aTextBytes) (v "off")) (v "i"))))
+       [.assign "ok" (n 0)] [],
+     inc "i"]
+
+/-- Position `x + len` added when the string lies at `x`, within the input. -/
+def textBody (m : Mutant) : List PStmt :=
+  [.ite (eLe (eAdd (v "x") (v "len")) (v "nn"))
+    [.dec "ok" (n 1), .dec "i" (n 0), textCmp m, .ite (v "ok") (addBit m (eAdd (v "x") (v "len"))) []] []]
 
 /-! ## The operations on sets -/
 
@@ -336,46 +434,18 @@ def setClear : PFun :=
 /-- The set `d` given position `y` too. -/
 def setAdd : PFun :=
   { name := "setAdd", params := [(1, "d"), (1, "y")], body :=
-    prologue m ofs [("d", "q")] ++
-    [kept "y" inputMax, .dec "yw" (.shr (v "y") (n 6)), kept "yw" (setWords - 1),
-     .dec "yj" (eAnd (v "y") (n 63)),
-     .store (bitWord "q" (v "yw")) (eOr (.loadw 1 (bitWord "q" (v "yw"))) (pow (v "yj"))),
-     .dec "dl" (word (v "q") sLo), .dec "dh" (word (v "q") sHi),
-     .ite (eLt (v "dh") (v "dl"))
-       [.store (atOff (v "q") sLo) (v "yw"), .store (atOff (v "q") sHi) (v "yw")]
-       [.ite (eLt (v "yw") (v "dl")) [.store (atOff (v "q") sLo) (v "yw")] [],
-        .ite (eLt (v "dh") (v "yw")) [.store (atOff (v "q") sHi) (v "yw")] []],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q")] ++ posOf ++ addPos ++ [.ret (n 0)] }
 
 /-- The set `d` given the positions of `s` too. -/
 def setUnion : PFun :=
   { name := "setUnion", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++
-    [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-     .dec "dl" (word (v "q") sLo), kept "dl" (setWords - 1),
-     .dec "dh" (word (v "q") sHi), kept "dh" (setWords - 1),
-     .ite (eLe (v "lo") (v "hi"))
-       [.dec "w" (v "lo"),
-        .while (eLe (v "w") (v "hi"))
-          [.store (bitWord "q" (v "w"))
-             (eOr (.loadw 1 (bitWord "q" (v "w"))) (.loadw 1 (bitWord "p" (v "w")))), inc "w"],
-        .ite (eLt (v "dh") (v "dl"))
-          [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")]
-          [.ite (eAnd (eLt (v "lo") (v "dl")) (n (if m == .unionWindow then 0 else 1)))
-             [.store (atOff (v "q") sLo) (v "lo")] [],
-           .ite (eLt (v "dh") (v "hi")) [.store (atOff (v "q") sHi) (v "hi")] []]] [],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ readWin "p" "lo" "hi" ++ readWin "q" "dl" "dh" ++
+    [unionBits m] ++ [.ret (n 0)] }
 
 /-- The set `s` copied into `d`, another slot. -/
 def setCopy : PFun :=
   { name := "setCopy", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++ clearQ ++
-    [.dec "lo" (word (v "p") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "p") sHi), kept "hi" (setWords - 1),
-     .dec "w" (v "lo"),
-     .while (eLe (v "w") (v "hi")) [.store (bitWord "q" (v "w")) (.loadw 1 (bitWord "p" (v "w"))), inc "w"],
-     .store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi"), .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ clearQ ++ readWin "p" "lo" "hi" ++ copyBits ++ [.ret (n 0)] }
 
 /-- 1, and `d` emptied, when the set `s` is empty; 0 when it is not. -/
 def setVoid : PFun :=
@@ -386,29 +456,7 @@ def setVoid : PFun :=
 /-- The set `d` without the positions of `s`, its window cut to the words still holding one. -/
 def setMinus : PFun :=
   { name := "setMinus", params := [(1, "d"), (1, "s")], body :=
-    prologue m ofs [("d", "q"), ("s", "p")] ++
-    [.dec "lo" (word (v "q") sLo), kept "lo" (setWords - 1),
-     .dec "hi" (word (v "q") sHi), kept "hi" (setWords - 1),
-     .dec "w" (v "lo"),
-     .while (eLe (v "w") (v "hi"))
-       [.store (bitWord "q" (v "w"))
-          (eAnd (.loadw 1 (bitWord "q" (v "w"))) (eXor (.loadw 1 (bitWord "p" (v "w"))) (n all1))),
-        inc "w"],
-     .dec "go" (n 1),
-     .while (v "go")
-       [.ite (eLe (v "lo") (v "hi"))
-          [.ite (eEq (.loadw 1 (bitWord "q" (v "lo"))) (n 0)) [inc "lo"] [.assign "go" (n 0)]]
-          [.assign "go" (n 0)]],
-     .assign "go" (n 1),
-     .while (v "go")
-       [.ite (eLe (v "lo") (v "hi"))
-          [.ite (eEq (.loadw 1 (bitWord "q" (v "hi"))) (n 0))
-             [.assign "hi" (eSub (v "hi") (n 1))] [.assign "go" (n 0)]]
-          [.assign "go" (n 0)]],
-     .ite (eLt (v "hi") (v "lo"))
-       [.store (atOff (v "q") sLo) (n 1), .store (atOff (v "q") sHi) (n 0)]
-       [.store (atOff (v "q") sLo) (v "lo"), .store (atOff (v "q") sHi) (v "hi")],
-     .ret (n 0)] }
+    prologue m ofs [("d", "q"), ("s", "p")] ++ readWin "q" "lo" "hi" ++ minusBits ++ trimWin ++ [.ret (n 0)] }
 
 /-- The set `x` without the positions of `d`, and `d` given them: one round's new positions. -/
 def setGrow : PFun :=
@@ -425,48 +473,19 @@ def setEmpty : PFun :=
 /-- Whether the set `s` holds position `y`: 1 if it does. -/
 def setHas : PFun :=
   { name := "setHas", params := [(1, "s"), (1, "y")], body :=
-    prologue m ofs [("s", "p")] ++
-    [kept "y" inputMax, .dec "yw" (.shr (v "y") (n 6)), kept "yw" (setWords - 1),
-     .dec "yj" (eAnd (v "y") (n 63)),
-     .ret (ne (eAnd (.loadw 1 (bitWord "p" (v "yw"))) (pow (v "yj"))) (n 0))] }
+    prologue m ofs [("s", "p")] ++ posOf ++
+    [.ret (ne (eAnd (.loadw 1 (bitWord "p" (v "yw"))) (pow (v "yj"))) (n 0))] }
 
 /-- The positions one past those of `s` whose byte is in class `k`, into `d`. -/
 def leafClass : PFun :=
   { name := "leafClass", params := [(1, "s"), (1, "d"), (1, "k")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [kept "k" (classes.length - 1),
-     .dec "t" (eAdd (atOff (v "a") aClass) (eMul (v "k") (n 32))),
-     .dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "x"))),
-       .dec "bw" (eAdd (eAdd (eLe (n 64) (v "b")) (eLe (n 128) (v "b"))) (eLe (n 192) (v "b"))),
-       .ite (ne (eAnd (.loadw 1 (eAdd (v "t") (eMul (v "bw") (n 8)))) (pow (eAnd (v "b") (n 63))))
-           (n 0))
-         (addBit m (eAdd (v "x") (n 1))) []] ++
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ classHead ++ startWin ++ eachPos (classBody m) ++
     epilogue }
 
 /-- The positions past string `k` from those of `s` where it lies, into `d`. -/
 def leafText : PFun :=
   { name := "leafText", params := [(1, "s"), (1, "d"), (1, "k")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [kept "k" (texts.length - 1),
-     .dec "t" (eAdd (atOff (v "a") aTexts) (eMul (v "k") (n 24))),
-     .dec "off" (word (v "t") 0), kept "off" textBytes,
-     .dec "len" (word (v "t") 8), kept "len" textMax,
-     .dec "cf" (word (v "t") 16), kept "cf" 1,
-     .dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.ite (eLe (eAdd (v "x") (v "len")) (v "nn"))
-        [.dec "ok" (n 1), .dec "i" (n 0),
-         .while (eLt (v "i") (v "len"))
-           [.dec "b" (byte (eAdd (eAdd (atOff (v "a") aInput) (v "x")) (v "i"))),
-            .dec "lb" (eAdd (v "b") (eMul (n 32)
-              (eAnd (n (if m == .caseful then 0 else 1))
-                (eAnd (v "cf") (eAnd (eLe (n 65) (v "b")) (eLe (v "b") (n 90))))))),
-            .ite (ne (v "lb") (byte (eAdd (eAdd (atOff (v "a") aTextBytes) (v "off")) (v "i"))))
-              [.assign "ok" (n 0)] [],
-            inc "i"],
-         .ite (v "ok") (addBit m (eAdd (v "x") (v "len"))) []] []] ++
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ textHead ++ startWin ++ eachPos (textBody m) ++
     epilogue }
 
 /-- Whether the byte in the local `b` is in the class of rule `r`, which is one. -/
@@ -475,56 +494,68 @@ def inClass (r : String) (b : PExpr) : PExpr :=
   | some rs => (rs.map fun (lo, hi) => eAnd (eLe (n lo) b) (eLe b (n hi))).foldl eOr (n 0)
   | none => n 0
 
+/-- Whether the byte in `b` is white space. -/
+def wspAt : PExpr := inClass "wsp" (v "b")
+/-- The byte after `y`. -/
+def nextByte : PExpr := byte (eAdd (eAdd (atOff (v "a") aInput) (v "y")) (n 1))
+/-- Whether a byte follows `y` in the input. -/
+def nextIn : PExpr := eLt (eAdd (v "y") (n 1)) (v "nn")
+
+/-- The comment's scan at the byte in `b`, in state `sm` with `dep` comments open. `go` is cleared where no comment can
+go on, 2 where the first closes. -/
+def scanByte (m : Mutant) : PStmt :=
+  .ite (eEq (v "sm") (n 2))
+    [.ite wspAt [.assign "sm" (n 3), inc "y"] [.assign "go" (n 0)]]
+    [.ite wspAt [.ite (eEq (v "sm") (n 0)) [.assign "sm" (n 1)] [], inc "y"]
+      [.ite (eEq (v "b") (n 13))
+        [.ite (eAnd (eEq (v "sm") (n 3)) (n (if m == .commentFold then 0 else 1)))
+          [.assign "go" (n 0)]
+          [.ite (eAnd nextIn (eEq nextByte (n 10)))
+            [.assign "sm" (n 2), .assign "y" (eAdd (v "y") (n 2))]
+            [.assign "go" (n 0)]]]
+        [.ite (or2 (inClass "ctext" (v "b"))
+            (eAnd (eEq (v "b") (n 92)) (n (if m == .commentEscape then 1 else 0))))
+          [.assign "sm" (n 0), inc "y"]
+          [.ite (eEq (v "b") (n 92))
+            [.ite (eAnd nextIn (or2 (inClass "vchar" nextByte) (inClass "wsp" nextByte)))
+              [.assign "sm" (n 0), .assign "y" (eAdd (v "y") (n 2))]
+              [.assign "go" (n 0)]]
+            [.ite (eEq (v "b") (n 40))
+              [inc "dep", .assign "sm" (n 0), inc "y"]
+              [.ite (eEq (v "b") (n 41))
+                [.assign "dep" (eSub (v "dep") (n 1)), .assign "sm" (n 0), inc "y",
+                 .ite (eEq (v "dep") (n 0)) [.assign "go" (n 2)] []]
+                [.assign "go" (n 0)]]]]]]]
+
+/-- One step of the comment's scan: the byte at `y`, or the input's end. -/
+def scanStep (m : Mutant) : List PStmt :=
+  [.ite (eLt (v "y") (v "nn")) [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "y"))), scanByte m]
+    [.assign "go" (n 0)]]
+
+/-- Where the comment that opens at `x` ends, added. -/
+def commentBody (m : Mutant) : List PStmt :=
+  [.ite (eEq (byte (eAdd (atOff (v "a") aInput) (v "x"))) (n 40))
+    [.dec "y" (eAdd (v "x") (n 1)), .dec "dep" (n 1), .dec "sm" (n 0), .dec "go" (n 1),
+     .while (eEq (v "go") (n 1)) (scanStep m),
+     .ite (eEq (v "go") (n 2)) (addBit m (v "y")) []] []]
+
 /-- Where each comment of the positions of `s` ends, into `d`: `(`, then text, quoted pairs,
 comments and white space that folds at most once between two of them, to the `)` that closes it.
 The state: 0 after `(` or a part, 1 in white space, 2 just after its CRLF, 3 in white space after
 it. -/
 def ruleComment : PFun :=
-  let wsp := inClass "wsp" (v "b")
-  let at1 := byte (eAdd (eAdd (atOff (v "a") aInput) (v "y")) (n 1))
-  let more := eLt (eAdd (v "y") (n 1)) (v "nn")
   { name := "ruleComment", params := [(1, "s"), (1, "d")], body :=
-    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++
-    [.dec "dl" (n 1), .dec "dh" (n 0), .dec "df" (n 1)] ++
-    eachPos
-      [.ite (eEq (byte (eAdd (atOff (v "a") aInput) (v "x"))) (n 40))
-        [.dec "y" (eAdd (v "x") (n 1)), .dec "dep" (n 1), .dec "sm" (n 0), .dec "go" (n 1),
-         .while (eEq (v "go") (n 1))
-           [.ite (eLt (v "y") (v "nn"))
-             [.dec "b" (byte (eAdd (atOff (v "a") aInput) (v "y"))),
-              .ite (eEq (v "sm") (n 2))
-                [.ite wsp [.assign "sm" (n 3), inc "y"] [.assign "go" (n 0)]]
-                [.ite wsp [.ite (eEq (v "sm") (n 0)) [.assign "sm" (n 1)] [], inc "y"]
-                  [.ite (eEq (v "b") (n 13))
-                    [.ite (eAnd (eEq (v "sm") (n 3)) (n (if m == .commentFold then 0 else 1)))
-                      [.assign "go" (n 0)]
-                      [.ite (eAnd more (eEq at1 (n 10)))
-                        [.assign "sm" (n 2), .assign "y" (eAdd (v "y") (n 2))]
-                        [.assign "go" (n 0)]]]
-                    [.ite (or2 (inClass "ctext" (v "b"))
-                        (eAnd (eEq (v "b") (n 92)) (n (if m == .commentEscape then 1 else 0))))
-                      [.assign "sm" (n 0), inc "y"]
-                      [.ite (eEq (v "b") (n 92))
-                        [.ite (eAnd more (or2 (inClass "vchar" at1) (inClass "wsp" at1)))
-                          [.assign "sm" (n 0), .assign "y" (eAdd (v "y") (n 2))]
-                          [.assign "go" (n 0)]]
-                        [.ite (eEq (v "b") (n 40))
-                          [inc "dep", .assign "sm" (n 0), inc "y"]
-                          [.ite (eEq (v "b") (n 41))
-                            [.assign "dep" (eSub (v "dep") (n 1)), .assign "sm" (n 0), inc "y",
-                             .ite (eEq (v "dep") (n 0)) [.assign "go" (n 2)] []]
-                            [.assign "go" (n 0)]]]]]]]]
-             [.assign "go" (n 0)]],
-         .ite (eEq (v "go") (n 2)) (addBit m (v "y")) []] []] ++
-    epilogue }
+    prologue m ofs [("s", "p"), ("d", "q")] true ++ clearQ ++ startWin ++ eachPos (commentBody m) ++ epilogue }
 
 end
 
 /-! ## The rules' functions -/
 
+/-- Rule `i`'s function: its place, then its name, so that no two share a name. -/
 def funName (i : Nat) : String :=
   if i == commentRule then "ruleComment"
-  else "rule_" ++ String.ofList ((names[i]?.getD "").toList.map fun c => if c == '-' then '_' else c)
+  else "rule" ++ toString i ++ "_" ++
+    String.ofList ((names[i]?.getD "").toList.map fun c => if c == '-' then '_' else c)
 
 def classIndex (b : List Nat) : Nat := (classes.findIdx? (· == b)).getD 0
 def textIndex (t : List Nat × Bool) : Nat := (texts.findIdx? (· == t)).getD 0
@@ -538,81 +569,106 @@ def leafCall (c : String) (l : Leaf) (s d : PExpr) : PStmt :=
 section
 variable (m : Mutant)
 
+/-- What `gen` does to a term's parts. `g t s d free k` puts into slot `d` the ends of `t`'s matches from slot `s`'s
+positions. The slots from `free` on hold its own sets; `k` numbers its locals. -/
+abbrev Gen := Term → PExpr → PExpr → Nat → Nat → List PStmt × Nat
+
+/-- A sequence's terms from the `i`th: each result but the last goes into one of two slots in turn. An empty one ends
+the sequence with none. -/
+def seqFrom (g : Gen) (s d : PExpr) (free : Nat) : Nat → List Term → Nat → List PStmt × Nat
+  | _, [], k => ([], k)
+  | i, [t], k =>
+    let (b, k) := g t (if i == 0 then s else n (free + (i + 1) % 2)) d (free + 2) k
+    (b, k + 1)
+  | i, t :: ts, k =>
+    let (rest, k) := seqFrom g s d free (i + 1) ts k
+    let dst := n (free + i % 2)
+    let (b, k) := g t (if i == 0 then s else n (free + (i + 1) % 2)) dst (free + 2) k
+    (b ++ [.call s!"e{k}" "setVoid" [dst, d], .ite (v s!"e{k}") [] rest], k + 1)
+
+def genSeq (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([.call s!"c{k}" "setCopy" [d, s]], k + 1)
+  | [u], k => g u s d free k
+  | u :: v :: vs, k => seqFrom g s d free 0 (u :: v :: vs) k
+
+/-- The alternatives after the first, each into slot `free`, then added to slot `d`. -/
+def altRest (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([], k)
+  | u :: us, k =>
+    let (b, k) := g u s (n free) (free + 1) k
+    let (rest, k') := altRest g s d free us (k + 1)
+    (b ++ [.call s!"c{k}" "setUnion" [d, n free]] ++ rest, k')
+
+def genAlt (g : Gen) (s d : PExpr) (free : Nat) : List Term → Nat → List PStmt × Nat
+  | [], k => ([.call s!"c{k}" "setClear" [d]], k + 1)
+  | [u], k => g u s d free k
+  | u :: v :: vs, k =>
+    let us := if m == .altLast then (v :: vs).dropLast else v :: vs
+    let (first, k) := g u s d (free + 1) k
+    let (rest, k) := altRest g s d free us k
+    (first ++ rest, k)
+
+/-- A repetition's check of its bound at a turn's start: once it has run `hi` rounds it stops. -/
+def repStop (k : Nat) : Option Nat → List PStmt
+  | some h => if m == .repPastBound then [] else [.ite (eLe (n h) (v s!"n{k}")) [.assign s!"g{k}" (n 0)] []]
+  | none => []
+
+/-- A round after its body: the count and whether it reached anything. If so, what it adds, then the slots swapped. -/
+def repTail (k free lo : Nat) (d : PExpr) : List PStmt :=
+  [inc s!"n{k}", .call s!"e{k}" "setEmpty" [v s!"x{k}"],
+   .ite (v s!"e{k}") [.assign s!"g{k}" (n 0)]
+     [.ite (eLt (v s!"n{k}") (n lo)) [] [.call s!"{s!"c{k}"}d" "setGrow" [v s!"x{k}", d]],
+      .assign s!"f{k}" (v s!"x{k}"),
+      .ite (eEq (v s!"x{k}") (n free)) [.assign s!"x{k}" (n (free + 1))] [.assign s!"x{k}" (n free)]]]
+
+/-- As `endsFrom`: from the frontier, a round more while the bound allows and a round reaches anything new. From round
+`lo` on, what a round reaches counts. Rounds write `f{k}`, the frontier's slot, and `x{k}`, the next round's, in turn;
+`body` is a round's term. -/
+def repStmts (s d : PExpr) (free lo : Nat) (hi : Option Nat) (k : Nat) (body : List PStmt) : List PStmt :=
+  [if lo == 0 then .call s!"{s!"c{k}"}b" "setCopy" [d, s] else .call s!"{s!"c{k}"}b" "setClear" [d],
+   .dec s!"f{k}" s, .dec s!"x{k}" (n free), .dec s!"n{k}" (n 0), .dec s!"g{k}" (n 1), .dec s!"i{k}" (n 0),
+   .while (eAnd (v s!"g{k}") (eLt (v s!"i{k}") (eAdd (v "nn") (n (lo + 1)))))
+     (inc s!"i{k}" :: repStop m k hi ++ [.ite (v s!"g{k}") (body ++ repTail k free lo d) []])]
+
+/-- A repetition, its round's term `u` into the next round's slot. -/
+def genRep (g : Gen) (s d : PExpr) (free lo : Nat) (hi : Option Nat) (u : Term) (k : Nat) : List PStmt × Nat :=
+  let (body, k') := g u (v s!"f{k}") (v s!"x{k}") (free + 2) (k + 1)
+  (repStmts m s d free lo hi k body, k')
+
+/-- A term that is no leaf. -/
+def genTerm (g : Gen) (t : Term) (s d : PExpr) (free k : Nat) : List PStmt × Nat :=
+  match t with
+  | .ref i => ([.call s!"c{k}" (funName i) [s, d]], k + 1)
+  | .seq ts => genSeq g s d free ts k
+  | .alt ts => genAlt m g s d free ts k
+  | .rep lo hi u =>
+    if lo == 0 && hi == some 1 then
+      let (b, k) := g u s d free k
+      (b ++ [.call s!"c{k}" "setUnion" [d, s]], k + 1)
+    else genRep m g s d free lo hi u k
+  | _ => ([.call s!"c{k}" "setClear" [d]], k + 1)
+
+/-- A leaf's call, or the statements of a term that is none. -/
+def genLeaf (g : Gen) : Option Leaf → Gen
+  | some l, _, s, d, _, k => ([leafCall s!"c{k}" l s d], k + 1)
+  | none, t, s, d, free, k => genTerm m g t s d free k
+
 /-- Statements that put into slot `d` the ends of the matches of `t` from the positions in slot
 `s`, with the slots from `free` on for their own sets; `k` numbers their locals. -/
-def gen : Nat → Term → PExpr → PExpr → Nat → Nat → List PStmt × Nat
+def gen : Nat → Gen
   | 0, _, _, _, _, k => ([], k)
-  | f + 1, t, s, d, free, k =>
-    let c := s!"c{k}"
-    match leafOf t with
-    | some l => ([leafCall c l s d], k + 1)
-    | none =>
-      match t with
-      | .ref i => ([.call c (funName i) [s, d]], k + 1)
-      | .seq [] => ([.call c "setCopy" [d, s]], k + 1)
-      | .seq [u] => gen f u s d free k
-      | .seq (u :: us) =>
-        -- Each result but the last into one of two slots in turn; an empty one ends the sequence
-        -- with none.
-        let last := us.length
-        let (out, _, k) := ((u :: us).zipIdx).foldr (fun (t, i) (rest, _, k) =>
-          let src := if i == 0 then s else n (free + (i + 1) % 2)
-          let dst := if i == last then d else n (free + i % 2)
-          let (b, k) := gen f t src dst (free + 2) k
-          let tail := if i == last then [] else
-            [.call s!"e{k}" "setVoid" [dst, d], .ite (v s!"e{k}") [] rest]
-          (b ++ tail, src, k + 1)) (([] : List PStmt), s, k)
-        (out, k)
-      | .alt [] => ([.call c "setClear" [d]], k + 1)
-      | .alt [u] => gen f u s d free k
-      | .alt (u :: us) =>
-        let us := if m == .altLast then us.dropLast else us
-        let (first, k) := gen f u s d (free + 1) k
-        us.foldl (fun (acc, k) u =>
-          let (b, k) := gen f u s (n free) (free + 1) k
-          (acc ++ b ++ [.call s!"c{k}" "setUnion" [d, n free]], k + 1)) (first, k)
-      | .rep 0 (some 1) u =>
-        let (b, k) := gen f u s d free k
-        (b ++ [.call s!"c{k}" "setUnion" [d, s]], k + 1)
-      | .rep lo hi u =>
-        -- As `endsFrom`: from the frontier, the positions the last round reached that were not
-        -- reached before, a round more, while the bound allows and a round reaches any; from
-        -- round `lo` on, what a round reaches counts. The rounds write two slots in turn, `fr`
-        -- naming the frontier's and `nx` the next round's.
-        let fr := s!"f{k}"
-        let nx := s!"x{k}"
-        let cnt := s!"n{k}"
-        let go := s!"g{k}"
-        let i := s!"i{k}"
-        let e := s!"e{k}"
-        let (body, k') := gen f u (v fr) (v nx) (free + 2) (k + 1)
-        let stop : List PStmt := match hi with
-          | some h => if m == .repPastBound then [] else
-            [.ite (eLe (n h) (v cnt)) [.assign go (n 0)] []]
-          | none => []
-        ([if lo == 0 then .call s!"{c}b" "setCopy" [d, s] else .call s!"{c}b" "setClear" [d],
-          .dec fr s, .dec nx (n free), .dec cnt (n 0), .dec go (n 1), .dec i (n 0),
-          .while (eAnd (v go) (eLt (v i) (eAdd (v "nn") (n (lo + 1)))))
-            (inc i :: stop ++
-             [.ite (v go)
-               (body ++ [inc cnt, .call e "setEmpty" [v nx],
-                 .ite (v e) [.assign go (n 0)]
-                   [.ite (eLt (v cnt) (n lo)) [] [.call s!"{c}d" "setGrow" [v nx, d]],
-                    .assign fr (v nx),
-                    .ite (eEq (v nx) (n free)) [.assign nx (n (free + 1))] [.assign nx (n free)]]])
-               []])], k')
-      | _ => ([.call c "setClear" [d]], k + 1)
+  | f + 1, t, s, d, free, k => genLeaf m (gen f) (leafOf t) t s d free k
 
 /-- Whether a term's statements read the input's length, which bounds a repetition. -/
+def repeatsAt (g : Term → Bool) : Option Leaf → Term → Bool
+  | some _, _ => false
+  | none, .seq ts | none, .alt ts => ts.any g
+  | none, .rep lo hi u => if lo == 0 && hi == some 1 then g u else true
+  | none, _ => false
+
 def repeats : Nat → Term → Bool
   | 0, _ => false
-  | f + 1, t =>
-    if (leafOf t).isSome then false else
-    match t with
-    | .seq ts | .alt ts => ts.any (repeats f)
-    | .rep 0 (some 1) u => repeats f u
-    | .rep _ _ _ => true
-    | _ => false
+  | f + 1, t => repeatsAt (repeats f) (leafOf t) t
 
 /-- Rule `i`'s function, its frame at `frameOf i`. -/
 def ruleFun (ofs : Nat) (i : Nat) : PFun :=
@@ -663,26 +719,36 @@ def functions (ofs : Nat) : List PFun :=
    setGrow, setEmpty m ofs, setHas m ofs, leafClass m ofs, leafText m ofs, tables ofs] ++
   order.map (ruleFun m ofs)
 
+/-- The loop that adds a case's starts to slot 0. -/
+def startsLoop : PStmt :=
+  .while (eAnd (eLt (v "k") (v "ks")) (eLt (v "k") (n startsMax)))
+    [.call "u" "setAdd" [n 0, .loadw 1 (eAdd (atOff (v "a") aStartList) (eMul (v "k") (n 8)))], inc "k"]
+
+/-- The branch that calls rule `i` from slot 0 into slot 1. -/
+def pick (i : Nat) : PStmt := .ite (eEq (v "r") (n i)) [rootCall i] []
+
+/-- Whether a case is out of range: the input's length or the rule's place among `N`. -/
+def caseTest (N : Nat) : PExpr :=
+  or2 (or2 (eLt (v "nn") (n 0)) (eLt (n inputMax) (v "nn"))) (or2 (eLt (v "r") (n 0)) (eLt (n (N - 1)) (v "r")))
+
+/-- A case's statements: the starts into slot 0, the rule asked into slot 1, whether the input's end is there. -/
+def caseBody (N : Nat) : List PStmt :=
+  [.call "z" "setClear" [n 0], .dec "k" (n 0), .dec "ks" (word (v "a") aStarts), startsLoop] ++
+    (List.range N).map pick ++
+    [.call "h" "setHas" [n 1, v "nn"], .assign "ans" (v "h"), .ite (word (v "a") aBroken) [.assign "ans" (n 2)] []]
+
+/-- What `main` does with a case its host handed it, of `N` rules: the answer stored. -/
+def round (N : Nat) : List PStmt :=
+  [.store (atOff (v "a") aBroken) (n 0), .dec "r" (word (v "a") aRule), .dec "nn" (word (v "a") aLen),
+   .dec "ans" (n 2), .ite (caseTest N) [] (caseBody N), .store (atOff (v "a") aAnswer) (v "ans")]
+
 /-- A program that answers, for each case its host hands it, whether a match of the rule asked from
 one of the positions given ends at the input's end: 1 if one does, 0 if not, 2 if the case is out of
 range or a check failed. -/
 def main (ofs : Nat) : PFun :=
   { name := "main", body :=
     [areaAt ofs, .call "t" "tables" [],
-     .while (n 1)
-       [.ffi "dn_next" [v "a", n 8, v "a", n size],
-        .store (atOff (v "a") aBroken) (n 0),
-        .dec "r" (word (v "a") aRule), .dec "nn" (word (v "a") aLen), .dec "ans" (n 2),
-        .ite (or2 (or2 (eLt (v "nn") (n 0)) (eLt (n inputMax) (v "nn")))
-            (or2 (eLt (v "r") (n 0)) (eLt (n (grammar.size - 1)) (v "r")))) []
-          ([.call "z" "setClear" [n 0], .dec "k" (n 0), .dec "ks" (word (v "a") aStarts),
-            .while (eAnd (eLt (v "k") (v "ks")) (eLt (v "k") (n startsMax)))
-              [.call "u" "setAdd" [n 0, .loadw 1 (eAdd (atOff (v "a") aStartList) (eMul (v "k") (n 8)))],
-               inc "k"]] ++
-           (List.range grammar.size).map (fun i => .ite (eEq (v "r") (n i)) [rootCall i] []) ++
-           [.call "h" "setHas" [n 1, v "nn"], .assign "ans" (v "h"),
-            .ite (word (v "a") aBroken) [.assign "ans" (n 2)] []]),
-        .store (atOff (v "a") aAnswer) (v "ans")],
+     .while (n 1) (.ffi "dn_next" [v "a", n 8, v "a", n aIO] :: round grammar.size),
      .ret (n 0)] }
 
 end
@@ -699,7 +765,7 @@ def program (m : Mutant := .none) : List PFun × PFun := (functions m areaOffset
 /-- The area as a C header for the lane's host. -/
 def header : String :=
   let defs : List (String × Nat) :=
-    [("AT", areaOffset), ("RULE", aRule), ("LEN", aLen), ("ANSWER", aAnswer), ("INPUT", aInput),
+    [("AT", areaOffset), ("RULE", aRule), ("LEN", aLen), ("ANSWER", aAnswer), ("INPUT", aInput), ("IO", aIO),
      ("INPUT_MAX", inputMax), ("STARTS", aStarts), ("START_LIST", aStartList),
      ("STARTS_MAX", startsMax), ("AREA", size), ("RULES", grammar.size)]
   "/* Generated by dn-compiler emit-grammar-layout from DN.News.AbnfProg. */\n" ++

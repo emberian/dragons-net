@@ -409,4 +409,22 @@ theorem vc_witness :
   · simp only [wp, eval, hw]
     exact ⟨w - 1, by simp [setLocal]⟩
 
+theorem restore_restore (t : PancakeState σ) (x : String) (a : Option Value) :
+    restore (restore t x a) x (t.locals x) = t := by
+  have : resVar (resVar t.locals x a) x (t.locals x) = t.locals := by
+    funext k; simp only [resVar]; by_cases h : k = x <;> simp [h]
+  simp only [restore, this]
+
+theorem restore_same (t : PancakeState σ) (x : String) (a c : Option Value) :
+    restore (restore t x a) x c = restore t x c := by
+  have : resVar (resVar t.locals x a) x c = resVar t.locals x c := by
+    funext k; simp only [resVar]; by_cases h : k = x <;> simp [h]
+  simp only [restore, this]
+
+theorem restore_comm (t : PancakeState σ) {x y : String} (h : x ≠ y) (a c : Option Value) :
+    restore (restore t x a) y c = restore (restore t y c) x a := by
+  have : resVar (resVar t.locals x a) y c = resVar (resVar t.locals y c) x a := by
+    funext k; simp only [resVar]; by_cases hx : k = x <;> by_cases hy : k = y <;> simp_all
+  simp only [restore, this]
+
 end DN.Compiler.Wp
