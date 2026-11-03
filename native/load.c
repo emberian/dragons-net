@@ -92,7 +92,7 @@ struct worker {
     int index, conns, slow, heap_n, draining;
     struct conn **heap;
     struct histogram latency, late;
-    uint64_t completed, served, answered, sent, wrong, lost, owed, slow_octets, slow_paced;
+    uint64_t completed, served, answered, sent, wrong, lost, owed, slow_octets, slow_paced, into_ns, past_ns;
     char why[160];
 };
 
@@ -243,6 +243,11 @@ static void finished(struct worker *w, struct conn *c, int ep, uint64_t t) {
         record(&w->latency, t > c->due ? t - c->due : 0);
         w->completed++;
     }
+    /* The greatest delay of a reply carried into the window from the warm-up, and of one past its end. */
+    uint64_t *edge = c->due < measure_from && in_window(t) ? &w->into_ns
+                     : in_window(c->due) && t >= measure_to ? &w->past_ns
+                                                           : NULL;
+    if (edge && t - c->due > *edge) *edge = t - c->due;
     c->due += c->period;
     if (c->due >= measure_to) return;
     if (c->due <= t) begin(w, c, ep, t);
@@ -537,7 +542,7 @@ int main(int argc, char **argv) {
     fputs("end\n", stderr);
     fflush(stderr);
     uint64_t completed = 0, served = 0, answered = 0, sent = 0, wrong = 0, lost = 0, owed = 0, slow_octets = 0,
-             slow_paced = 0;
+             slow_paced = 0, into_ns = 0, past_ns = 0;
     const char *why = "";
     for (int i = 0; i < threads_total; i++) {
         pthread_join(ws[i].thread, NULL);
@@ -546,6 +551,8 @@ int main(int argc, char **argv) {
         completed += ws[i].completed, served += ws[i].served, answered += ws[i].answered, sent += ws[i].sent;
         wrong += ws[i].wrong, lost += ws[i].lost, owed += ws[i].owed, slow_octets += ws[i].slow_octets;
         slow_paced += ws[i].slow_paced;
+        if (ws[i].into_ns > into_ns) into_ns = ws[i].into_ns;
+        if (ws[i].past_ns > past_ns) past_ns = ws[i].past_ns;
         if (!*why) why = ws[i].why;
     }
     printf("{\n  \"conns\": %d, \"slow\": %d, \"threads\": %d, \"rate\": %.0f, \"seconds\": %ld, \"warmup\": %ld,\n",
@@ -555,6 +562,7 @@ int main(int argc, char **argv) {
            request_count, sent, answered, served, completed, (double)served / (double)seconds);
     printf("  \"slow_octets\": %" PRIu64 ", \"slow_paced\": %" PRIu64 ", \"wrong\": %" PRIu64 ", \"lost\": %" PRIu64
            ", \"owed\": %" PRIu64 ",\n", slow_octets, slow_paced, wrong, lost, owed);
+    printf("  \"into_window_ns\": %" PRIu64 ", \"past_window_ns\": %" PRIu64 ",\n", into_ns, past_ns);
     printf("  \"why\": \"%s\", \"cpu_user_us\": %ld, \"cpu_system_us\": %ld,\n", why,
            micros(to.ru_utime) - micros(from.ru_utime), micros(to.ru_stime) - micros(from.ru_stime));
     print_histogram("latency_ns", latency, ",");

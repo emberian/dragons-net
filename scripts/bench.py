@@ -621,13 +621,18 @@ def held_to_faults(binary: Path) -> dict[str, Any]:
                 got = run_load(server, binary, requests, None, faulty=True, conns=1, rate=rate, seconds=seconds,
                                warmup=warmup, slow=1, threads=1, slow_ms=slow_ms)
             said = {k: got[k] for k in ("served", "completed", "sent", "owed", "wrong", "lost", "slow_octets",
-                                        "slow_paced")}
+                                        "slow_paced", "into_window_ns", "past_window_ns")}
             found[fault] = said
             if (got["status"], got["wrong"], got["lost"]) != (status, wrong, lost):
                 raise LaneError(f"the load against a server that does {fault}: status {got['status']}, {said}, "
                                 f"{got['why']!r}")
             whole = (got["sent"], got["completed"], got["owed"]) == (rate * (warmup + seconds), due, 0)
-            if fault in ("none", "stall", "fork") and not (whole and due - 1 <= got["served"] <= due + 1):
+            # Replies come in order, so the first of k crossing an edge of the window is more than k - 1 periods
+            # late. The greatest delay of a crossing reply bounds the replies moved in and out.
+            period = 1_000_000_000 // rate
+            moved_in, moved_out = (-(-got[k] // period) for k in ("into_window_ns", "past_window_ns"))
+            served = due - moved_out <= got["served"] <= due + moved_in
+            if fault in ("none", "stall", "fork") and not (whole and served):
                 raise LaneError(f"against a server that answers {fault}, not {due} sent and served once: {said}")
             if fault == "none" and not (paced // 2 <= got["slow_paced"] <= paced + 16
                                         and got["slow_octets"] >= 1 << 20):
