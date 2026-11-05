@@ -34,4 +34,13 @@ theorem cal_doe (doe : Nat) (h : doe < 146097) :
       subst h2 <;> omega
   omega
 
+/-- A word's low `k` bits, as a mask of `k` ones takes them. -/
+theorem and_mask (x k : Nat) (hx : x < 2 ^ 64) (hk : k < 64) :
+    BitVec.ofNat 64 x &&& BitVec.ofNat 64 (2 ^ k - 1) = BitVec.ofNat 64 (x % 2 ^ k) := by
+  apply BitVec.eq_of_toNat_eq
+  have h1 : 2 ^ k - 1 < 2 ^ 64 := by have := Nat.pow_lt_pow_right (a := 2) (by decide) hk; omega
+  have h2 : x % 2 ^ k < 2 ^ 64 := Nat.lt_of_le_of_lt (Nat.mod_le _ _) hx
+  rw [BitVec.toNat_and, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hx,
+    Nat.mod_eq_of_lt h1, Nat.mod_eq_of_lt h2, Nat.and_two_pow_sub_one_eq_mod]
+
 end DN.News.Calendar

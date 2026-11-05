@@ -1300,17 +1300,17 @@ theorem lowerB_nat (b : BitVec 8) : (ArticleSpec.lowerB b).toNat = lowN b.toNat 
   · rename_i h; rw [BitVec.toNat_add]; simp; omega
   · rfl
 
-theorem lowerE_eval {u : PancakeState σ} {x : String} {B : Nat} (hB : B < 256)
-    (hx : u.locals x = some (BitVec.ofNat 64 B)) :
-    eval u (.op .add (.var x) (.mul (.const (BitVec.ofNat 64 32)) (.op .and_
-      (.cmp .notLess (.var x) (.const (BitVec.ofNat 64 65))) (.cmp .notLess (.const (BitVec.ofNat 64 90)) (.var x))))) =
+theorem lowerEx_eval {u : PancakeState σ} {E : PancakeExp} {B : Nat} (hB : B < 256)
+    (hE : eval u E = some (BitVec.ofNat 64 B)) :
+    eval u (.op .add E (.mul (.const (BitVec.ofNat 64 32)) (.op .and_
+      (.cmp .notLess E (.const (BitVec.ofNat 64 65))) (.cmp .notLess (.const (BitVec.ofNat 64 90)) E)))) =
       some (BitVec.ofNat 64 (lowN B)) := by
-  have h1 := FramerCode.eval_le (t := u) (a := .const (BitVec.ofNat 64 65)) (b := .var x) (x := 65) (y := B)
-    (by decide) (by omega) rfl (ev_var hx)
-  have h2 := FramerCode.eval_le (t := u) (a := .var x) (b := .const (BitVec.ofNat 64 90)) (x := B) (y := 90)
-    (by omega) (by decide) (ev_var hx) rfl
+  have h1 := FramerCode.eval_le (t := u) (a := .const (BitVec.ofNat 64 65)) (b := E) (x := 65) (y := B)
+    (by decide) (by omega) rfl hE
+  have h2 := FramerCode.eval_le (t := u) (a := E) (b := .const (BitVec.ofNat 64 90)) (x := B) (y := 90)
+    (by omega) (by decide) hE rfl
   simp only [FramerCode.leE] at h1 h2
-  rw [ev_add (ev_var hx) (DN.News.AbnfLeaves.ev_mul rfl (FramerCode.eval_and h1 h2))]
+  rw [DN.News.AbnfLeaves.ev_add hE (DN.News.AbnfLeaves.ev_mul rfl (FramerCode.eval_and h1 h2))]
   unfold lowN
   by_cases h : 65 ≤ B ∧ B ≤ 90
   · rw [if_pos h, decide_eq_true h.1, decide_eq_true h.2]
@@ -1322,6 +1322,12 @@ theorem lowerE_eval {u : PancakeState σ} {x : String} {B : Nat} (hB : B < 256)
       · simp [h3]
     rw [this]
     apply congrArg some; apply BitVec.eq_of_toNat_eq; simp [bw]
+
+theorem lowerE_eval {u : PancakeState σ} {x : String} {B : Nat} (hB : B < 256)
+    (hx : u.locals x = some (BitVec.ofNat 64 B)) :
+    eval u (.op .add (.var x) (.mul (.const (BitVec.ofNat 64 32)) (.op .and_
+      (.cmp .notLess (.var x) (.const (BitVec.ofNat 64 65))) (.cmp .notLess (.const (BitVec.ofNat 64 90)) (.var x))))) =
+      some (BitVec.ofNat 64 (lowN B)) := lowerEx_eval hB (ev_var hx)
 
 theorem atOff_eq {p : Syntax.PExpr} {x : Nat} (hx : (x == 0) = false) : Syntax.atOff p x = Syntax.eAdd p (Syntax.n
     x) := by

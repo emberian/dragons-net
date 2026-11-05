@@ -223,6 +223,19 @@ theorem lowKK_decsC (ds : List (String × Nat)) : LowKK (ds.map fun p => .dec p.
   | nil => exact fun k => ⟨k, rfl⟩
   | cons d ds ih => exact lowKK_append (xs := [_]) (lowKK_dec rfl) ih
 
+/-- A tail of a block that lowers lowers too. -/
+theorem lowKK_tail {x : Syntax.PStmt} {rest : List Syntax.PStmt} (h : LowKK (x :: rest)) : LowKK rest := fun k => by
+  obtain ⟨c, hc⟩ := h k
+  cases hr : Block.lowerK rest k with
+  | some r => exact ⟨r, rfl⟩
+  | none => exfalso; cases x <;> simp [Block.lowerK, hr] at hc
+
+/-- Every suffix of a block that lowers lowers too. -/
+theorem lowKK_drop : ∀ (k : Nat) {xs : List Syntax.PStmt}, LowKK xs → LowKK (xs.drop k)
+  | 0, _, h => h
+  | _ + 1, [], _ => fun k => ⟨k, rfl⟩
+  | k + 1, _ :: _, h => lowKK_drop k (lowKK_tail h)
+
 /-- A block whose top declares and calls nothing, lowered with `k` after it, runs as its lowering, then `k`. -/
 theorem lowerK_fold (o : Oracle σ) : ∀ (xs : List Syntax.PStmt), xs ≠ [] → (∀ x ∈ xs, x.isDec = false) →
     ∀ {a : PancakeProg}, Lower.lowerStmtsFold xs = some a → ∀ k, ∃ c, Block.lowerK xs k = some c ∧
