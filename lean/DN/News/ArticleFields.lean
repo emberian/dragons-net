@@ -607,17 +607,23 @@ theorem chkM_hi {s1 : PancakeState σ} {A : Word} (hA8 : A.toNat % 8 = 0) {m0 : 
       have := DN.News.ScanRun.at_inj (by omega) (by omega) e; omega]
     exact h.first k (by rw [esP_length]; exact hk')
 
-/-- **The grammar called**: the loop's memory kept, given what the leaves read and the sets after. -/
-theorem chkM_gram {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {gd : List (List (Nat × Nat))}
-    {M M' : Word → Word} (h : ChkM s1 A m0 a gd M) (hR : Reads s1 A a M') (hall : AllSets A M')
-    (hfr : ∀ x, (∀ k, k < slots → ¬InSlot A k x) → x ≠ at_ A aLen → M' x = M x) : ChkM s1 A m0 a gd M' := by
+/-- The first fields' table kept where only the slots and the input's length change. -/
+theorem first_gram {A : Word} {a : Bytes} {gd : List (List (Nat × Nat))} {M M' : Word → Word}
+    (h : ∀ k, k ≤ esP.length → M (at_ A (ArticleProg.xFirst + 8 * k)) = optW (firstK a gd k))
+    (hfr : ∀ x, (∀ k, k < slots → ¬InSlot A k x) → x ≠ at_ A aLen → M' x = M x) :
+    ∀ k, k ≤ esP.length → M' (at_ A (ArticleProg.xFirst + 8 * k)) = optW (firstK a gd k) := fun k hk => by
   have hX := X_val; have hF := xFirst_eq
-  refine ⟨hR, hall, fun x hx => (hfr x (fun k hk hin => hx (.inr (.inr (.inl ⟨k, hk, hin⟩)))) fun e =>
-    hx (.inr (.inl e))).trans (h.frame x hx), fun k hk => ?_⟩
   have hk' := hk; rw [esP_length] at hk'
   rw [hfr _ (fun j hj => notInSlot_high hj (by omega) (by omega)) (DN.News.ScanRun.at_ne (by omega) (by decide)
     (by have : aLen = 8 := rfl; omega))]
-  exact h.first k hk
+  exact h k hk
+
+/-- **The grammar called**: the loop's memory kept, given what the leaves read and the sets after. -/
+theorem chkM_gram {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {gd : List (List (Nat × Nat))}
+    {M M' : Word → Word} (h : ChkM s1 A m0 a gd M) (hR : Reads s1 A a M') (hall : AllSets A M')
+    (hfr : ∀ x, (∀ k, k < slots → ¬InSlot A k x) → x ≠ at_ A aLen → M' x = M x) : ChkM s1 A m0 a gd M' :=
+  ⟨hR, hall, fun x hx => (hfr x (fun k hk hin => hx (.inr (.inr (.inl ⟨k, hk, hin⟩)))) fun e =>
+    hx (.inr (.inl e))).trans (h.frame x hx), first_gram h.first hfr⟩
 
 theorem firstK_snoc (a : Bytes) (gd : List (List (Nat × Nat))) (g : List (Nat × Nat)) (k : Nat) :
     firstK a (gd ++ [g]) k = (firstK a gd k).or (if classG a g = k then some (placeOf g) else none) := by
@@ -736,14 +742,17 @@ theorem chk_hi {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes
   have hl := (DN.News.ArticleTables.lay esP).1
   exact h.frame _ (not_chk (.inr (hl ▸ hy)) hy2 (by have := xFirst_eq; have : aLen = 8 := rfl; omega))
 
+/-- Where the area's scalar words lie. -/
+theorem w_eq (j : Nat) : ArticleProg.w j = 497936 + 8 * j := by simp only [ArticleProg.w, X_val]
+
 /-- An article's scalar word the loop does not write. -/
 theorem not_chk_w {A : Word} {i : Nat} (hi : i < 32) (h15 : i ≠ 15) (h17 : i ≠ 17) (h18 : i ≠ 18) (h19 : i ≠ 19)
     (h20 : i ≠ 20) (h23 : i ≠ 23) (h24 : i ≠ 24) (h25 : i ≠ 25) : ¬ChkScr A (at_ A (ArticleProg.w i)) := by
   have hX := X_val; have hF := xFirst_eq; have hT := DN.News.ArticleScan.xTok_eq
-  have hwi : ArticleProg.w i = 497936 + 8 * i := by simp only [ArticleProg.w, hX]
+  have hwi := w_eq i
   have hw : ∀ y, y < 2 ^ 40 → at_ A (ArticleProg.w i) = at_ A y → 497936 + 8 * i = y := fun y hy e => by
     rw [← hwi]; exact DN.News.ScanRun.at_inj (by omega) (by omega) e
-  have hs : ∀ j, ArticleProg.w j = 497936 + 8 * j := fun j => by simp only [ArticleProg.w, hX]
+  have hs := w_eq
   rintro (h | h | ⟨k, hk, hin⟩ | ⟨k, hk, e⟩)
   · rcases h with e | e | (e | e | e | e | e) | e | e
     · have := hw _ (by rw [ArticleProg.xNl, hs]; omega) e; rw [ArticleProg.xNl, hs] at this; omega
@@ -2115,17 +2124,21 @@ theorem class_entry {nm : String} (hn : nm ∈ allNames) (name : Bytes) :
       rw [DN.News.ArticleTables.class_none hk' hn] at hnm; nomatch hnm
 
 /-- **The table read by name**: where the first field of a name the rules read starts. -/
-theorem chkM_firstW {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {L : List (Nat × Nat)}
-    {M : Word → Word} (h : ChkM s1 A m0 a (groups a L) M) {nm : String} (hn : nm ∈ allNames) :
-    DN.News.ArticleAdded.FirstW A M a L nm := by
+theorem firstW_of {A : Word} {a : Bytes} {L : List (Nat × Nat)} {M : Word → Word}
+    (h : ∀ k, k ≤ esP.length → M (at_ A (ArticleProg.xFirst + 8 * k)) = optW (firstK a (groups a L) k)) {nm : String}
+    (hn : nm ∈ allNames) : DN.News.ArticleAdded.FirstW A M a L nm := by
   unfold DN.News.ArticleAdded.FirstW DN.News.ArticleAdded.firstP DN.News.ArticleAdded.firstG
-  rw [h.first _ (DN.News.ArticleAdded.entry_le esP nm)]
+  rw [h _ (DN.News.ArticleAdded.entry_le esP nm)]
   unfold firstK
   have hc : ∀ g ∈ groups a L, (classG a g == ArticleProg.entryOf esP nm) =
       ArticleSpec.named (DN.News.ArticleLines.nameAt a (g.headD (0, 0))) nm :=
     fun g _ => Bool.eq_iff_iff.2 (beq_iff_eq.trans (class_entry hn (fieldOf a g).name))
   rw [find?_congr' hc]
   rfl
+
+theorem chkM_firstW {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {L : List (Nat × Nat)}
+    {M : Word → Word} (h : ChkM s1 A m0 a (groups a L) M) {nm : String} (hn : nm ∈ allNames) :
+    DN.News.ArticleAdded.FirstW A M a L nm := firstW_of h.first hn
 
 /-! ## Witnesses -/
 
