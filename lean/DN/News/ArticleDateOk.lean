@@ -17,7 +17,7 @@ open DN.News.ScanRun (at_ at_add vals_lookup without Fresh)
 open DN.News.FramerCode (bw ev_var bw_ne0 bw_eq0)
 open DN.News.AbnfComment (ev_inc)
 open DN.News.ArticleProg (artMax guardL guardS ifs readIn wd tokIn isGap isDig lowerE setW)
-open DN.News.ArticleLines (seg seg_succ seg_length)
+open DN.News.ArticleLines (seg seg_succ seg_length seg_app)
 open DN.News.ArticleSpec (Bytes tokens number? indexOf monthNames dayNames)
 open Syntax (v n eEq eLt eLe eAnd eAdd eSub eMul)
 
@@ -127,10 +127,6 @@ theorem lookups_cons {l l' : List (String × Value)} {x : String} {w : Value} (h
 theorem runF_of {s0 u : PancakeState σ} {l l' : List (String × Value)} {F : (Word → Word) → Prop}
     (h : RunF s0 l F u) (hl : ∀ q ∈ l', l.lookup q.1 = some q.2) : RunF s0 l' F u :=
   ⟨⟨fun q hq => vals_lookup h.1.vals (hl q hq), h.1.memaddrs, h.1.base, h.1.code, h.1.be⟩, h.2⟩
-
-theorem seg_app (a : Bytes) {S cp C : Nat} (h1 : S ≤ cp) (h2 : cp ≤ C) : seg a S C = seg a S cp ++ seg a cp C := by
-  unfold seg
-  rw [show C - S = (cp - S) + (C - cp) by omega, List.take_add, List.drop_drop, show S + (cp - S) = cp by omega]
 
 theorem paren_le (a : Bytes) {S E : Nat} (hSE : S ≤ E) (hE : E ≤ a.length) : parenAt a S E ≤ E := by
   unfold parenAt; have := tw_le (p := notParen) (seg a S E); rw [seg_length a hSE hE] at this; omega

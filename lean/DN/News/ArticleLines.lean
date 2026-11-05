@@ -204,7 +204,7 @@ theorem header_spans (a : Bytes) : header a = (segs a (spans a 0).1, (spans a 0)
   have := headerFrom_spans a _ 0 [] rfl (Nat.zero_le _)
   simpa [header] using this
 
-/-- **A line's end is the first CRLF**: a CRLF at `e` with none from `q` before it ends the line from `q`. -/
+/-- **The first CRLF ends the line**: one at `e`, none before it from `q`. -/
 theorem eolGo_eq (a : Bytes) (lim : Nat) {e : Nat} (hc : crlfAt a e = true) (he : e + 1 < lim) :
     ∀ n q, q ≤ e → e < q + n → (∀ i, q ≤ i → i < e → crlfAt a i = false) → eolGo a lim n q = e
   | 0, _, h1, h2, _ => by omega
@@ -386,6 +386,10 @@ theorem seg_head (a : Bytes) {x e : Nat} (h1 : x < e) : (seg a x e).head? = a[x]
 
 theorem seg_take (a : Bytes) {x e : Nat} (k : Nat) (hk : k ≤ e - x) : (seg a x e).take k = seg a x (x + k) := by
   simp only [seg, List.take_take]; congr 1; omega
+
+theorem seg_app (a : Bytes) {S cp C : Nat} (h1 : S ≤ cp) (h2 : cp ≤ C) : seg a S C = seg a S cp ++ seg a cp C := by
+  unfold seg
+  rw [show C - S = (cp - S) + (C - cp) by omega, List.take_add, List.drop_drop, show S + (cp - S) = cp by omega]
 
 /-- **`fieldsFrom` by places**, the lines in order with their places. -/
 theorem fields_groupL (a : Bytes) :
@@ -732,7 +736,7 @@ theorem blankL_stop {a : Bytes} {q sep : Nat} {L : List (Nat × Nat)} (h : Lines
 
 /-! ## The section's shape -/
 
-/-- The codes of `checkWith`'s first refusals: 1 no header, 2 no empty line, 3 too long, 4 a line too long. 5 is
+/-- `checkWith`'s first refusals: 1 no header, 2 no empty line, 3 too long, 4 a line too long. 5 is
 malformed, 0 none. -/
 def shapeOf (r : Rules) (a : Bytes) : Nat :=
   if (spans a 0).1 = [] then 1

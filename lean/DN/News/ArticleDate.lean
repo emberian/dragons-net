@@ -158,6 +158,12 @@ theorem tInv_colon {t : TZ} {D : List Bytes} {acc : Bytes} (h : TInv t D acc) :
   rw [if_pos ⟨h.1, .inr rfl⟩, if_pos rfl]
   exact this
 
+/-- `splitOn`'s worker, a step at a time. -/
+theorem spp_nil (p : BitVec 8 → Bool) (acc : Bytes) : List.splitOnPPrepend p [] acc = [acc.reverse] := rfl
+
+theorem spp_cons (p : BitVec 8 → Bool) (b : BitVec 8) (l acc : Bytes) : List.splitOnPPrepend p (b :: l) acc =
+    if p b then acc.reverse :: List.splitOnPPrepend p l [] else List.splitOnPPrepend p l (b :: acc) := rfl
+
 /-- A byte of the time: a digit or a colon. -/
 def timeByte (b : BitVec 8) : Bool := isDigit b || b == COLON
 
@@ -170,7 +176,7 @@ theorem timeByte_iff (b : BitVec 8) : timeByte b = true ↔ dig b.toNat ∨ b.to
 theorem time_fold : ∀ (T : Bytes) (t : TZ) (D : List Bytes) (acc : Bytes), T.all timeByte = true →
     TInv t D acc → ∃ D' acc', TInv (T.foldl (fun t b => tzStep t b.toNat) t) D' acc' ∧
       D' ++ [acc'.reverse] = D ++ List.splitOnPPrepend (· == COLON) T acc
-  | [], t, D, acc, _, h => ⟨D, acc, h, by simp [List.splitOnPPrepend]⟩
+  | [], t, D, acc, _, h => ⟨D, acc, h, by simp⟩
   | b :: T, t, D, acc, hT, h => by
     simp only [List.all_cons, Bool.and_eq_true] at hT
     have hb := (timeByte_iff b).1 hT.1
@@ -178,11 +184,11 @@ theorem time_fold : ∀ (T : Bytes) (t : TZ) (D : List Bytes) (acc : Bytes), T.a
     · have hb' : (b == COLON) = true := by rw [ArticleScan.beq_byte]; simp [hc, COLON]
       obtain ⟨D', acc', h', e⟩ := time_fold T _ _ [] hT.2 (hc ▸ tInv_colon h)
       refine ⟨D', acc', by simpa only [List.foldl_cons, hc] using h', ?_⟩
-      rw [e]; simp [List.splitOnPPrepend, hb']
+      rw [e]; simp [spp_cons, hb']
     · have hb' : (b == COLON) = false := by rw [ArticleScan.beq_byte]; simp [hc, COLON]
       obtain ⟨D', acc', h', e⟩ := time_fold T _ _ _ hT.2 (tInv_digit h (hb.resolve_right hc) hc)
       refine ⟨D', acc', by simpa only [List.foldl_cons] using h', ?_⟩
-      rw [e]; simp [List.splitOnPPrepend, hb']
+      rw [e]; simp [spp_cons, hb']
 
 /-- The time `dateValue` reads from its parts: hours and minutes, seconds if given. -/
 def timeOf (parts : List Bytes) : Option (Nat × Nat × Nat) :=
@@ -512,29 +518,29 @@ theorem dv_one {v : Bytes} (h : (v.takeWhile (· != LPAREN)).splitOn ArticleSpec
 
 theorem sp_free {p : BitVec 8 → Bool} : ∀ (l acc : Bytes), (∀ b ∈ l, p b = false) →
     List.splitOnPPrepend p l acc = [acc.reverse ++ l]
-  | [], acc, _ => by simp [List.splitOnPPrepend]
+  | [], acc, _ => by simp
   | b :: l, acc, h => by
     have hb := h b List.mem_cons_self
-    simp only [List.splitOnPPrepend, hb, Bool.false_eq_true, if_false]
+    simp only [spp_cons, hb, Bool.false_eq_true, if_false]
     rw [sp_free l (b :: acc) fun x hx => h x (List.mem_cons_of_mem _ hx)]
     simp
 
 theorem sp_sep {p : BitVec 8 → Bool} : ∀ (l1 : Bytes) (b : BitVec 8) (l2 acc : Bytes), (∀ x ∈ l1, p x = false) →
     p b = true → List.splitOnPPrepend p (l1 ++ b :: l2) acc = (acc.reverse ++ l1) :: List.splitOnPPrepend p l2 []
-  | [], b, l2, acc, _, hb => by simp [List.splitOnPPrepend, hb]
+  | [], b, l2, acc, _, hb => by simp [spp_cons, hb]
   | x :: l1, b, l2, acc, h, hb => by
     have hx := h x List.mem_cons_self
-    simp only [List.cons_append, List.splitOnPPrepend, hx, Bool.false_eq_true, if_false]
+    simp only [List.cons_append, spp_cons, hx, Bool.false_eq_true, if_false]
     rw [sp_sep l1 b l2 (x :: acc) (fun y hy => h y (List.mem_cons_of_mem _ hy)) hb]
     simp
 
 theorem sp_length {p : BitVec 8 → Bool} : ∀ (l acc : Bytes),
     (List.splitOnPPrepend p l acc).length = (l.filter p).length + 1
-  | [], _ => by simp [List.splitOnPPrepend]
+  | [], _ => by simp
   | b :: l, acc => by
     cases hb : p b
-    · simp only [List.splitOnPPrepend, hb, Bool.false_eq_true, if_false, List.filter_cons]; exact sp_length l _
-    · simp only [List.splitOnPPrepend, hb, if_true, List.filter_cons, List.length_cons]; rw [sp_length l []]
+    · simp only [spp_cons, hb, Bool.false_eq_true, if_false, List.filter_cons]; exact sp_length l _
+    · simp only [spp_cons, hb, if_true, List.filter_cons, List.length_cons]; rw [sp_length l []]
 
 theorem dv_two_name {v w r name : Bytes}
     (h : (v.takeWhile (· != LPAREN)).splitOn ArticleSpec.COMMA = [w, r]) (hn : tokens w = [name]) :
@@ -668,16 +674,16 @@ theorem dvC_some {wd : Option Bytes} {d m y rest : Bytes} {day mo year h mi s : 
 
 theorem parts_digits : ∀ (T acc : Bytes), T.all timeByte = true → acc.all isDigit = true →
     ∀ p ∈ List.splitOnPPrepend (· == COLON) T acc, p.all isDigit = true
-  | [], acc, _, ha => by simpa [List.splitOnPPrepend] using ha
+  | [], acc, _, ha => by simpa [spp_nil] using ha
   | b :: T, acc, hT, ha => by
     simp only [List.all_cons, Bool.and_eq_true] at hT
     cases hb : b == COLON
-    · simp only [List.splitOnPPrepend, hb, Bool.false_eq_true, if_false]
+    · simp only [spp_cons, hb, Bool.false_eq_true, if_false]
       refine parts_digits T (b :: acc) hT.2 ?_
       have : isDigit b = true := by
         have := hT.1; unfold timeByte at this; simpa [hb] using this
       simp [this, ha]
-    · simp only [List.splitOnPPrepend, hb, if_true, List.mem_cons]
+    · simp only [spp_cons, hb, if_true, List.mem_cons]
       rintro p (rfl | hp)
       · simpa using ha
       · exact parts_digits T [] hT.2 rfl p hp

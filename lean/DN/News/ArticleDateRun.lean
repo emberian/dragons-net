@@ -344,44 +344,65 @@ theorem comma_loop (o : Oracle σ) {A : Word} {s1 : PancakeState σ} {a : Bytes}
 
 /-! ## A word among names -/
 
-/-- One letter's test of `spells`. -/
-def spellG (o : Nat) : Syntax.PExpr → Nat × Nat → Syntax.PExpr :=
-  fun acc (c, i) => eAnd acc (eEq (lowerE (byte (Syntax.atOff (v "a") (o + i)))) (n c))
+/-- One byte's test, the byte read through `wrap`. -/
+def testG (wrap : Syntax.PExpr → Syntax.PExpr) (o : Nat) : Syntax.PExpr → Nat × Nat → Syntax.PExpr :=
+  fun acc (c, i) => eAnd acc (eEq (wrap (byte (Syntax.atOff (v "a") (o + i)))) (n c))
 
-/-- **The letters' tests**, the bytes from `o` known: true when each, read in lower case, is the letter. -/
-theorem spells_fold {P : PancakeState σ → Prop} {A : Word} (hA : ∀ u, P u → u.locals "a" = some A) {o : Nat}
-    (ho : 0 < o) (tb : Nat → BitVec 8)
-    (hb : ∀ i u, i < 8 → P u → memLoadByte u.memory u.memaddrs u.be (at_ A (o + i)) = some (tb i)) :
+/-- **The bytes' tests**, the first `K` bytes from `o` known. Each is read through `wrap`, as `f` maps it. True when
+each is the code. -/
+theorem tests_fold {P : PancakeState σ → Prop} {A : Word} (hA : ∀ u, P u → u.locals "a" = some A) {o : Nat}
+    (ho : 0 < o) (tb : Nat → BitVec 8) {K : Nat}
+    (hb : ∀ i u, i < K → P u → memLoadByte u.memory u.memaddrs u.be (at_ A (o + i)) = some (tb i))
+    {wrap : Syntax.PExpr → Syntax.PExpr} {W : PancakeExp → PancakeExp} {f : Nat → Nat}
+    (hw : ∀ e E, Lower.lowerExp e = some E → Lower.lowerExp (wrap e) = some (W E))
+    (hwv : ∀ (u : PancakeState σ) E B, B < 256 → eval u E = some (BitVec.ofNat 64 B) →
+      eval u (W E) = some (BitVec.ofNat 64 (f B)))
+    (hf : ∀ B, B < 256 → f B < 2 ^ 64) :
     ∀ (cs : List Nat) (k0 : Nat) (acc : Syntax.PExpr) (Eacc : PancakeExp) (b0 : Bool),
       Lower.lowerExp acc = some Eacc → (∀ u, P u → eval u Eacc = some (bw b0)) → (∀ c ∈ cs, c < 2 ^ 64) →
-      k0 + cs.length ≤ 8 → ∃ E, Lower.lowerExp ((cs.zipIdx k0).foldl (spellG o) acc) = some E ∧ ∀ u, P u →
-        eval u E = some (bw (b0 && (cs.zipIdx k0).all fun ci => decide (lowN (tb ci.2).toNat = ci.1)))
+      k0 + cs.length ≤ K → ∃ E, Lower.lowerExp ((cs.zipIdx k0).foldl (testG wrap o) acc) = some E ∧ ∀ u, P u →
+        eval u E = some (bw (b0 && (cs.zipIdx k0).all fun ci => decide (f (tb ci.2).toNat = ci.1)))
   | [], _, _, Eacc, b0, hl, hv, _, _ => ⟨Eacc, hl, fun u h => by simp [hv u h]⟩
-  | c :: cs, k0, acc, Eacc, b0, hl, hv, hc, h8 => by
-    simp only [List.length_cons] at h8
+  | c :: cs, k0, acc, Eacc, b0, hl, hv, hc, hK => by
+    simp only [List.length_cons] at hK
     have hc0 := hc c List.mem_cons_self
     have hx : (o + k0 == 0) = false := by simp; omega
-    obtain ⟨E, hE, hEv⟩ := spells_fold hA ho tb hb cs (k0 + 1) (spellG o acc (c, k0))
-      (.op .and_ Eacc (.cmp .equal (.op .add (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0)))))
-        (.mul (.const (BitVec.ofNat 64 32)) (.op .and_
-          (.cmp .notLess (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0)))))
-            (.const (BitVec.ofNat 64 65)))
-          (.cmp .notLess (.const (BitVec.ofNat 64 90))
-            (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0))))))))) (.const (BitVec.ofNat 64 c))))
-      (b0 && decide (lowN (tb k0).toNat = c))
+    have hbl : Lower.lowerExp (byte (Syntax.atOff (v "a") (o + k0))) =
+        some (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0))))) := by
+      rw [atOff_eq hx]; rfl
+    obtain ⟨E, hE, hEv⟩ := tests_fold hA ho tb hb hw hwv hf cs (k0 + 1) (testG wrap o acc (c, k0))
+      (.op .and_ Eacc (.cmp .equal (W (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0))))))
+        (.const (BitVec.ofNat 64 c))))
+      (b0 && decide (f (tb k0).toNat = c))
       (by
-        show Lower.lowerExp (eAnd acc (eEq (lowerE (byte (Syntax.atOff (v "a") (o + k0)))) (n c))) = _
-        rw [atOff_eq hx]; simp [Lower.lowerExp, hl, lowerE, byte, eAnd, eEq, eAdd, eMul, eLe, n, v])
+        show Lower.lowerExp (eAnd acc (eEq (wrap (byte (Syntax.atOff (v "a") (o + k0)))) (n c))) = _
+        simp [Lower.lowerExp, hl, hw _ _ hbl, eAnd, eEq, n])
       (fun u h => by
         have hbyte : eval u (.loadByte (.op .add (.var "a") (.const (BitVec.ofNat 64 (o + k0))))) =
             some (BitVec.ofNat 64 (tb k0).toNat) := loadByte_eval (atA_eval (hA u h)) (hb k0 u (by omega) h)
-        have hlw : lowN (tb k0).toNat < 2 ^ 64 := by
-          have := (tb k0).isLt; unfold lowN; split <;> omega
-        rw [FramerCode.eval_and (hv u h) (FramerCode.eval_eq hlw hc0 (lowerEx_eval (tb k0).isLt hbyte) rfl)])
+        rw [FramerCode.eval_and (hv u h) (FramerCode.eval_eq (hf _ (tb k0).isLt) hc0
+          (hwv u _ _ (tb k0).isLt hbyte) rfl)])
       (fun c' hc' => hc c' (List.mem_cons_of_mem _ hc')) (by omega)
     refine ⟨E, by simpa [List.zipIdx_cons] using hE, fun u h => ?_⟩
     rw [hEv u h]
     simp [List.zipIdx_cons, Bool.and_assoc]
+
+/-- One letter's test of `spells`. -/
+def spellG (o : Nat) : Syntax.PExpr → Nat × Nat → Syntax.PExpr := testG lowerE o
+
+/-- **The letters' tests**, the bytes from `o` known: true when each, read in lower case, is the letter. -/
+theorem spells_fold {P : PancakeState σ → Prop} {A : Word} (hA : ∀ u, P u → u.locals "a" = some A) {o : Nat}
+    (ho : 0 < o) (tb : Nat → BitVec 8)
+    (hb : ∀ i u, i < 8 → P u → memLoadByte u.memory u.memaddrs u.be (at_ A (o + i)) = some (tb i))
+    (cs : List Nat) (k0 : Nat) (acc : Syntax.PExpr) (Eacc : PancakeExp) (b0 : Bool)
+    (hl : Lower.lowerExp acc = some Eacc) (hv : ∀ u, P u → eval u Eacc = some (bw b0)) (hc : ∀ c ∈ cs, c < 2 ^ 64)
+    (h8 : k0 + cs.length ≤ 8) : ∃ E, Lower.lowerExp ((cs.zipIdx k0).foldl (spellG o) acc) = some E ∧ ∀ u, P u →
+      eval u E = some (bw (b0 && (cs.zipIdx k0).all fun ci => decide (lowN (tb ci.2).toNat = ci.1))) :=
+  tests_fold hA ho tb hb (wrap := lowerE) (f := lowN)
+    (W := fun E => .op .add E (.mul (.const (BitVec.ofNat 64 32)) (.op .and_
+      (.cmp .notLess E (.const (BitVec.ofNat 64 65))) (.cmp .notLess (.const (BitVec.ofNat 64 90)) E))))
+    (fun e E he => by simp [Lower.lowerExp, lowerE, he, eAdd, eMul, eAnd, eLe, n])
+    (fun _ _ _ hB hE => lowerEx_eval hB hE) (fun B hB => by unfold lowN; split <;> omega) cs k0 acc Eacc b0 hl hv hc h8
 
 /-- Whether the bytes `tb` spell `s` in lower case. -/
 def spellsOK (tb : Nat → BitVec 8) (s : String) : Bool :=
@@ -524,6 +545,26 @@ theorem named_iff {w : Bytes} {s : String} : ArticleSpec.named w s = true ↔
     rw [lowerB_nat, lowerB_nat]
     exact h i (by simpa using h1) (by simpa using h2)
 
+/-- **`spells` with the length's test is `named`**, for a name whose letters in lower case are its bytes'. -/
+theorem spells_named {s : String}
+    (hcs : ArticleProg.codes (ArticleProg.lowerS s) = (DN.News.CommandSpec.ascii s).map (fun b => lowN b.toNat))
+    {L : Nat} (hL : (DN.News.CommandSpec.ascii s).length = L) (w : Bytes) (tb : Nat → BitVec 8)
+    (htb : ∀ i, i < L → i < w.length → tb i = w[i]!) :
+    (decide (w.length = L) && spellsOK tb s) = ArticleSpec.named w s := by
+  apply Bool.eq_iff_iff.2
+  rw [Bool.and_eq_true, decide_eq_true_eq, named_iff, spellsOK_iff, hcs]
+  constructor
+  · intro ⟨hl, h⟩
+    refine ⟨by omega, fun i h1 h2 => ?_⟩
+    have := h i (by simpa using h2)
+    rw [List.getElem_map, htb i (by omega) h1, getElem!_pos w i h1] at this
+    exact this
+  · intro ⟨hl, h⟩
+    refine ⟨by omega, fun i hi => ?_⟩
+    have hi' : i < (DN.News.CommandSpec.ascii s).length := by simpa using hi
+    rw [List.getElem_map, htb i (by omega) (by omega), getElem!_pos w i (by omega)]
+    exact h i (by omega) hi'
+
 /-- **`tokIn` gives the word's place among the days' or the months' names**, counted from one, or 0. -/
 theorem tokSum_names {names : List String}
     (hnames : names = ArticleSpec.dayNames ∨ names = ArticleSpec.monthNames) (tok : Bytes) (tb : Nat → BitVec 8)
@@ -539,22 +580,8 @@ theorem tokSum_names {names : List String}
     hne (spellsOK_same h1 h2 (by rw [(hc _ hs).1, (hc _ hs').1]; simp [(hc _ hs).2, (hc _ hs').2])))]
   refine firstK_congr names 0 fun s hs => ?_
   obtain ⟨hcs, h3⟩ := hc s hs
-  have hsl : s.length = 3 := by
-    have : (DN.News.CommandSpec.ascii s).length = s.length := by simp [DN.News.CommandSpec.ascii]
-    omega
-  apply Bool.eq_iff_iff.2
-  rw [Bool.and_eq_true, decide_eq_true_eq, named_iff, spellsOK_iff, hcs]
-  constructor
-  · intro ⟨hl, h⟩
-    refine ⟨by omega, fun i h1 h2 => ?_⟩
-    have := h i (by simpa using h2)
-    rw [List.getElem_map, htb i (by omega) h1, getElem!_pos tok i h1] at this
-    exact this
-  · intro ⟨hl, h⟩
-    refine ⟨by omega, fun i hi => ?_⟩
-    have hi' : i < (DN.News.CommandSpec.ascii s).length := by simpa using hi
-    rw [List.getElem_map, htb i (by omega) (by omega), getElem!_pos tok i (by omega)]
-    exact h i (by omega) hi'
+  have hsa : (DN.News.CommandSpec.ascii s).length = s.length := by simp [DN.News.CommandSpec.ascii]
+  exact spells_named hcs hsa tok tb fun i hi => htb i (by omega)
 
 /-! ## The time and the zone in the program -/
 
@@ -626,7 +653,7 @@ theorem cond_set (o : Oracle σ) {s1 : PancakeState σ} {F : (Word → Word) →
 section tzplain
 variable {s1 : PancakeState σ} {F : (Word → Word) → Prop} {P : List (String × Value)} {J : Nat}
 
-/-- **One of the loop's locals set**, the locals `H` before them and `P` after kept: they read off as those of `t'`. -/
+/-- **One of the loop's locals set**, the locals `H` before them and `P` after kept. They read off as `t'`'s. -/
 theorem tz_set {H : List (String × Value)} (hH : ∀ q ∈ H, q.1 ∉ tzNames0) (hfr0 : ∀ q ∈ P, q.1 ∉ tzNames0)
     {x : String} (hx : x ∈ tzNames0) {vx : Value} {t t' : TZ} {u : PancakeState σ}
     (h : RunF s1 ((x, vx) :: without x (H ++ (tzL t J ++ P))) F u)
