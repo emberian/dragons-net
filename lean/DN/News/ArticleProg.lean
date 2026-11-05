@@ -103,7 +103,8 @@ accepted article gets; the words the functions hand each other; the groups, the 
 random value, the name of a refusal, the message identifier, scratch; the header section made;
 the entries' tables. -/
 
-def X : Nat := AbnfProg.size
+/-- The grammar's area, `AbnfProg.size` (`ArticleRun.X_eq`), written out so that the kernel need not work it out. -/
+def X : Nat := 497936
 def w (i : Nat) : Nat := X + 8 * i
 def xMode := w 0
 def xLen := w 1
@@ -984,11 +985,11 @@ def accepted (m : Mutant) : Bool :=
 /-- The analysis accepts the program, and refuses it when a copy does not check where it reads. -/
 def regression_964 (_ : Unit) : Bool := accepted .none && !accepted .unkept
 
-/-- The area fits the heap the hosts give a program, the input the grammar's, and the names the
-tables: `artClass` reads at most 64 octets of a name. The input takes the header section the session
-checks, at most two octets past the bound (`PostSpec.frameOctet_adds`). -/
+/-- The area follows the grammar's and fits the hosts' heap; the input fits the grammar's. The tables fit the names:
+`artClass` reads at most 64 octets of one. The input takes the header section the session checks, at most two
+octets past the bound (`PostSpec.frameOctet_adds`). -/
 def regression_965 : Bool :=
-  heapSize spec ≤ 1024 * 1024 && artMax ≤ AbnfProg.inputRoom && X % 8 == 0 &&
+  X == AbnfProg.size && heapSize spec ≤ 1024 * 1024 && artMax ≤ AbnfProg.inputRoom && X % 8 == 0 &&
     spec.headerMax + 2 ≤ artMax &&
     (entries spec).all (·.length ≤ 64) && refusals.length == 23
 
