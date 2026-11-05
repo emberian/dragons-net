@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.News.ArticleOut
+import DN.News.ArticleTables
 
 /-!
 # DN.News.ArticleAdded
@@ -20,6 +21,8 @@ open DN.News.ScanRun (at_ at_add vals_lookup without Fresh)
 open DN.News.FramerCode (bw ev_var bw_ne0 bw_eq0)
 open DN.News.ArticleProg (artMax guardL guardS ifs wd setW codes)
 open Syntax (v n eEq eLt eLe eAnd eAdd eSub eMul)
+
+open DN.News.ArticleTables (esP esL es_eq)
 
 variable {σ : Type}
 
@@ -121,21 +124,6 @@ theorem class_k {l : List String} {k : Nat} (hk : k < l.length)
       rw [hm', beq_eq_false_iff_ne]
       exact fun e => hpre j hj e.symm) hm
     simp [this]
-
-/-- The entries of the rules, as the program takes them. -/
-abbrev esP : List String := ArticleProg.entries ArticleSpec.spec
-
-/-- The entries written out, so that the kernel works them out once. -/
-def esL : List String := ["Injection-Info", "Xref", "NNTP-Posting-Host", "NNTP-Posting-Date", "X-Trace",
-  "X-Complaints-To", "Date-Received", "Posting-Version", "Relay-Version", "Also-Control", "Article-Names",
-  "Article-Updates", "See-Also", "Disposition-Notification-To", "Control", "Supersedes", "Approved", "Date", "From",
-  "Message-ID", "Newsgroups", "Path", "Subject", "Archive", "Distribution", "Expires", "Followup-To",
-  "Injection-Date", "Lines", "Organization", "Summary", "User-Agent", "Keywords", "Sender", "Reply-To", "To", "Cc",
-  "Bcc", "In-Reply-To", "References", "Cancel-Lock", "Cancel-Key", "MIME-Version", "Content-Type",
-  "Content-Transfer-Encoding", "Comments", "Resent-Date", "Resent-From", "Resent-Sender", "Resent-To", "Resent-Cc",
-  "Resent-Bcc", "Return-Path", "Received", "Resent-Message-ID"]
-
-theorem es_eq : esP = esL := by decide +kernel
 
 theorem path_entry : ArticleProg.entryOf esP "Path" = 21 := by rw [es_eq]; decide +kernel
 theorem path_lt : 21 < esL.length := by decide
