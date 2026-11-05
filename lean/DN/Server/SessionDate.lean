@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Server.SessionText
+import DN.News.Calendar
 
 /-!
 # DN.Server.SessionDate
@@ -18,6 +19,7 @@ variable {σ : Type}
 
 open SessionLayout
 open DN.Server.Session (ownW)
+open DN.News.Calendar (civilWord cal_doe)
 
 /-! ### `dateText` -/
 
@@ -29,11 +31,6 @@ def DivOk (o : Oracle σ) (b : Word) (code : String → Option (List String × P
     PowIn b s1.memory → Analyzer.Covers SessionLayout.size s1.memaddrs b → s1.code = code → x < 2 ^ 62 → 1 ≤ d →
     d ≤ 2 ^ 62 →
     SafeR o (fun s => s = s1) body (fun v m => v = BitVec.ofNat 64 (x / d) ∧ m = s1.memory) (fun _ => False)
-
-/-- A day of the Gregorian calendar as `artCivilOf` gives it back: its year, month and day in one word. -/
-def civilWord (z : Nat) : Nat :=
-  (News.ArticleSpec.civilFromDays z).1 * 512 + (News.ArticleSpec.civilFromDays z).2.1 * 32 +
-    (News.ArticleSpec.civilFromDays z).2.2
 
 /-- `artCivilOf` as the code holds it: of a day since 1970, if it returns, it gives back `civilWord`. It changes no
 word. -/
@@ -601,26 +598,6 @@ theorem ccall_frag (o : Oracle σ) {s1 : PancakeState σ} {xs : List (String × 
           rcases List.mem_cons.mp hp with rfl | hp
           · simp [setLocal]
           · exact localsAre_set h.2.2.2.2.2 hrt _ p hp⟩
-
-/-- The day of the year never falls below the year's start: no step of `artCivilOf` goes below zero. -/
-theorem cal_doe (doe : Nat) (h : doe < 146097) :
-    365 * ((doe - doe / 1460 + doe / 36524 - doe / 146096) / 365) +
-      (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 / 4 -
-      (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 / 100 ≤ doe := by
-  generalize ha1 : doe / 1460 = a1
-  generalize ha2 : doe / 36524 = a2
-  generalize ha3 : doe / 146096 = a3
-  have e1 : 1460 * a1 ≤ doe ∧ doe < 1460 * a1 + 1460 := by omega
-  have e2 : 36524 * a2 ≤ doe ∧ doe < 36524 * a2 + 36524 := by omega
-  have e3 : 146096 * a3 ≤ doe ∧ doe < 146096 * a3 + 146096 := by omega
-  have h21 : a2 ≤ a1 := by omega
-  generalize hy : (doe - a1 + a2 - a3) / 365 = y
-  have ey : 365 * y ≤ doe - a1 + a2 - a3 ∧ doe - a1 + a2 - a3 < 365 * y + 365 := by omega
-  have i1 : y / 4 ≤ a1 := by omega
-  have i2 : a2 - a3 ≤ y / 100 := by
-    rcases (show a2 = 0 ∨ a2 = 1 ∨ a2 = 2 ∨ a2 = 3 ∨ a2 = 4 by omega) with h2 | h2 | h2 | h2 | h2 <;>
-      subst h2 <;> omega
-  omega
 
 /-- **`artCivilOf`**: of a day since 1970 below 2^30, if it returns, the calendar day in one word. It changes no word;
 `artDiv` is as its contract says. -/
