@@ -750,16 +750,17 @@ The other words are kept. -/
 theorem num10Call_frag (o : Oracle σ) {R : Ret} {A : Word} {s0 : PancakeState σ} (hA : Area ArticleProg.ofs A s0)
     (hD : ArtDom A s0.memaddrs) (hcode : ArtCode s0.code) {rt : String} (hra : rt ≠ "a") {l : List (String × Value)}
     (hla : l.lookup "a" = some A) (hrt : Fresh rt l = true) {m0 : Word → Word} (hb : m0 (at_ A aBroken) = 0)
-    {OUT : Bytes} (hO : BytesAt A s0.memaddrs s0.be ArticleProg.xOut ArticleProg.outMax OUT m0) {ox xx : String}
+    {OUT : Bytes} (hO : BytesAt A s0.memaddrs s0.be ArticleProg.xOut ArticleProg.outMax OUT m0) {ox : String}
     {X : Nat} (hX : X < 2 ^ 64) (hfit : OUT.length + (ArticleSpec.decimal X).length ≤ ArticleProg.outMax)
-    (ho : l.lookup ox = some (BitVec.ofNat 64 OUT.length)) (hx : l.lookup xx = some (BitVec.ofNat 64 X)) :
-    FragR o R (guardS (.call rt "artNum10" [v ox, v xx])) (RunF s0 l (· = m0))
+    (ho : l.lookup ox = some (BitVec.ofNat 64 OUT.length)) {e2 : Syntax.PExpr} {E2 : PancakeExp}
+    (he2 : Lower.lowerExp e2 = some E2) (hv2 : ∀ u, RunF s0 l (· = m0) u → eval u E2 = some (BitVec.ofNat 64 X)) :
+    FragR o R (guardS (.call rt "artNum10" [v ox, e2])) (RunF s0 l (· = m0))
       (fun u => ∃ m, RunF s0 ((rt, BitVec.ofNat 64 (OUT.length + (ArticleSpec.decimal X).length)) :: l)
         (· = m) u ∧ (∀ x, ¬OutScr A x → m x = m0 x) ∧
         BytesAt A s0.memaddrs s0.be ArticleProg.xOut ArticleProg.outMax (OUT ++ ArticleSpec.decimal X) m) := by
   refine fragR_conseq (gcall_frag o hA hcode hra (f := ArticleProg.artNum10) mem_artNum10 (by decide)
-    (args := [.var ox, .var xx]) rfl hla (vs := [BitVec.ofNat 64 OUT.length, BitVec.ofNat 64 X]) rfl
-    (fun u h => by simp only [evalArgs, ev_var (vals_lookup h.1.vals ho), ev_var (vals_lookup h.1.vals hx)])
+    (DN.News.AbnfGen.lowerArgs_two (a := v ox) rfl he2) hla (vs := [BitVec.ofNat 64 OUT.length, BitVec.ofNat 64 X])
+    rfl (fun u h => by simp only [evalArgs, ev_var (vals_lookup h.1.vals ho), hv2 u h])
     (Rf := Num10Ret A s0.memaddrs s0.be OUT X)
     (fun s1 hA1 _ hm hbe hloc hF => by
       have := artNum10_ok o hA1 (by rw [hm]; exact hD) (by rw [hF, hm, hbe]; exact hO) hX hfit
@@ -1288,7 +1289,7 @@ theorem fmt_num (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} (hA 
         (P ++ ArticleSpec.decimal (ArticleSpec.civilFromDays (wall / 86400)).1)) :=
   out_lift o (lowK_any _ (k := .skip) rfl) fun M hO hfr => fragR_conseq
     (num10Call_frag o hA hD hcode (rt := "o1") (by decide) rfl rfl (by rw [hfr _ broken_out]; exact hb) hO hY hfit
-      rfl rfl)
+      rfl (e2 := v "yr") rfl fun u h => ev_var (vals_lookup h.1.vals rfl))
     (fun _ h => h) fun u ⟨m, h, hfr2, hO2⟩ => ⟨m, h, hO2, fun x hx => (hfr2 x hx).trans (hfr x hx)⟩
 
 theorem fmt_o (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} {m0 : Word → Word} {wall : Nat} {P D : Bytes} :
