@@ -144,7 +144,7 @@ static void answer_check(const unsigned char *a, uint64_t verdict) {
 void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     long took = micros();
     dn_header_checked("dn_next");
-    if (c != area() || clen != 8 || a != area() || alen != DN_ARTICLE_AREA)
+    if (c != area() || clen != 8 || a != area() || alen != DN_ARTICLE_REQUEST)
         dn_violation("dn_next: the arrays are not the area");
     fill_checked();
     if (pending >= 0) {
