@@ -917,30 +917,32 @@ def functions : List PFun :=
    artNameAt, artElem, artKnown, artGroups, artDistAll, artPosted, artFormat, artAdded r es m,
    artCheck r es, artContext, artTables r es]
 
-/-- A program that answers each request its host hands it: 3, the context, 1 if it fits; 0, the
-article's verdict; 1, the date of the wall clock; 2, the seconds a date says, 0 if it says some
-and 1 if none. It answers 255 to a request out of range or on a failed check. The host writes below the entries'
+/-- What `main` does with a request: the answer in `xVerdict`, 255 out of range or on a failed check. A context's
+answer is kept in `xCtxOk`. -/
+def round : List PStmt :=
+  [.store (atOff (v "a") aBroken) (n 0),
+   .dec "md" (wd xMode), .dec "ans" (n 255), .dec "wl" (wd xWall), .dec "ln" (wd xLen),
+   .dec "inw" (eAnd (eLe (n 0) (v "wl")) (eLt (v "wl") (n wallMax))),
+   .dec "inl" (eAnd (eLe (n 0) (v "ln")) (eLe (v "ln") (n artMax))),
+   ifs (eEq (v "md") (n 3)) [.call "c" "artContext" [], .assign "ans" (v "c")],
+   ifs (eAnd (eEq (v "md") (n 0)) (eAnd (eEq (wd xCtxOk) (n 1)) (eAnd (v "inw") (v "inl"))))
+     [.call "vd" "artCheck" [], .assign "ans" (v "vd")],
+   ifs (eAnd (eEq (v "md") (n 1)) (v "inw"))
+     [.call "f" "artFormat" [n 0], setW xOutLen (v "f"), .assign "ans" (n 0)],
+   ifs (eAnd (eEq (v "md") (n 2)) (v "inl"))
+     [.call "d" "artDate" [n 0, v "ln"],
+      .ite (eEq (v "d") (n 1)) [.assign "ans" (n 0)] [ifs (eEq (v "d") (n 0)) [.assign "ans" (n 1)]]],
+   ifs (word (v "a") aBroken) [.assign "ans" (n 255)],
+   ifs (eEq (v "md") (n 3)) [setW xCtxOk (v "ans")],
+   setW xVerdict (v "ans")]
+
+/-- A program that answers its host's requests by mode: 3, whether the context fits; 0, the article's verdict. Mode 1
+gives the wall clock's date, 2 a date's seconds (0 if some, 1 if none); else 255. The host writes below the entries'
 tables. -/
 def main : PFun :=
   { name := "main", body :=
     [area, .call "t" "tables" [], .call "u" "artTables" [], setW xCtxOk (n 0),
-     .while (n 1)
-       [.ffi "dn_next" [v "a", n 8, v "a", n xFirst],
-        .store (atOff (v "a") aBroken) (n 0),
-        .dec "md" (wd xMode), .dec "ans" (n 255), .dec "wl" (wd xWall), .dec "ln" (wd xLen),
-        .dec "inw" (eAnd (eLe (n 0) (v "wl")) (eLt (v "wl") (n wallMax))),
-        .dec "inl" (eAnd (eLe (n 0) (v "ln")) (eLe (v "ln") (n artMax))),
-        ifs (eEq (v "md") (n 3)) [.call "c" "artContext" [], .assign "ans" (v "c")],
-        ifs (eAnd (eEq (v "md") (n 0)) (eAnd (eEq (wd xCtxOk) (n 1)) (eAnd (v "inw") (v "inl"))))
-          [.call "vd" "artCheck" [], .assign "ans" (v "vd")],
-        ifs (eAnd (eEq (v "md") (n 1)) (v "inw"))
-          [.call "f" "artFormat" [n 0], setW xOutLen (v "f"), .assign "ans" (n 0)],
-        ifs (eAnd (eEq (v "md") (n 2)) (v "inl"))
-          [.call "d" "artDate" [n 0, v "ln"],
-           .ite (eEq (v "d") (n 1)) [.assign "ans" (n 0)] [ifs (eEq (v "d") (n 0)) [.assign "ans" (n 1)]]],
-        ifs (word (v "a") aBroken) [.assign "ans" (n 255)],
-        ifs (eEq (v "md") (n 3)) [setW xCtxOk (v "ans")],
-        setW xVerdict (v "ans")],
+     .while (n 1) (.ffi "dn_next" [v "a", n 8, v "a", n xFirst] :: round),
      .ret (n 0)] }
 
 end
