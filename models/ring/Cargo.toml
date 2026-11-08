@@ -12,7 +12,7 @@ publish = false
 proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
 
 [target.'cfg(loom)'.dependencies]
-loom = { version = "0.7", features = ["futures"] }
+loom = "0.7"
 
 [lints]
 workspace = true

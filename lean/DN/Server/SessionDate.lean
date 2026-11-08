@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 import DN.Server.SessionText
+import DN.News.Calendar
 
 /-!
 # DN.Server.SessionDate
@@ -18,6 +19,7 @@ variable {σ : Type}
 
 open SessionLayout
 open DN.Server.Session (ownW)
+open DN.News.Calendar (civilWord cal_doe and_mask civilFrom_range shift_word)
 
 /-! ### `dateText` -/
 
@@ -29,11 +31,6 @@ def DivOk (o : Oracle σ) (b : Word) (code : String → Option (List String × P
     PowIn b s1.memory → Analyzer.Covers SessionLayout.size s1.memaddrs b → s1.code = code → x < 2 ^ 62 → 1 ≤ d →
     d ≤ 2 ^ 62 →
     SafeR o (fun s => s = s1) body (fun v m => v = BitVec.ofNat 64 (x / d) ∧ m = s1.memory) (fun _ => False)
-
-/-- A day of the Gregorian calendar as `artCivilOf` gives it back: its year, month and day in one word. -/
-def civilWord (z : Nat) : Nat :=
-  (News.ArticleSpec.civilFromDays z).1 * 512 + (News.ArticleSpec.civilFromDays z).2.1 * 32 +
-    (News.ArticleSpec.civilFromDays z).2.2
 
 /-- `artCivilOf` as the code holds it: of a day since 1970, if it returns, it gives back `civilWord`. It changes no
 word. -/
@@ -202,28 +199,6 @@ theorem pure_call (o : Oracle σ) {b : Word} {c ofs : Nat} {s1 : PancakeState σ
 
 /-! ### The date's arithmetic -/
 
-/-- A calendar day from a day since 1970 below 2^30. The year is past 1600 and below 2^22, the month and day in range.
--/
-theorem civil_range (z : Nat) (hz : z < 2 ^ 30) :
-    1600 ≤ (News.ArticleSpec.civilFromDays z).1 ∧ (News.ArticleSpec.civilFromDays z).1 < 2 ^ 22 ∧
-      1 ≤ (News.ArticleSpec.civilFromDays z).2.1 ∧ (News.ArticleSpec.civilFromDays z).2.1 ≤ 12 ∧
-      1 ≤ (News.ArticleSpec.civilFromDays z).2.2 ∧ (News.ArticleSpec.civilFromDays z).2.2 ≤ 31 := by
-  simp only [News.ArticleSpec.civilFromDays]
-  split <;> split <;> omega
-
-theorem and_mask (x k : Nat) (hx : x < 2 ^ 64) (hk : k < 64) :
-    BitVec.ofNat 64 x &&& BitVec.ofNat 64 (2 ^ k - 1) = BitVec.ofNat 64 (x % 2 ^ k) := by
-  apply BitVec.eq_of_toNat_eq
-  have h1 : 2 ^ k - 1 < 2 ^ 64 := by have := Nat.pow_lt_pow_right (a := 2) (by decide) hk; omega
-  have h2 : x % 2 ^ k < 2 ^ 64 := Nat.lt_of_le_of_lt (Nat.mod_le _ _) hx
-  rw [BitVec.toNat_and, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hx,
-    Nat.mod_eq_of_lt h1, Nat.mod_eq_of_lt h2, Nat.and_two_pow_sub_one_eq_mod]
-
-theorem shift_word (x k : Nat) (hx : x < 2 ^ 64) : BitVec.ofNat 64 x >>> k = BitVec.ofNat 64 (x / 2 ^ k) := by
-  apply BitVec.eq_of_toNat_eq
-  rw [BitVec.toNat_ushiftRight, BitVec.toNat_ofNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hx,
-    Nat.shiftRight_eq_div_pow, Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.div_le_self _ _) hx)]
-
 /-- A number below a hundred in two digits is its two places. -/
 theorem padded_two {v : Nat} (hv : v < 100) : News.SessionSpec.padded 2 v = twoDigits v := by
   simp only [News.SessionSpec.padded, twoDigits]
@@ -250,7 +225,7 @@ theorem dateBytes_eq (secs : Nat) (hs : secs < 2 ^ 40) :
       twoDigits (News.ArticleSpec.civilFromDays (secs / 86400)).2.1 ++
       twoDigits (News.ArticleSpec.civilFromDays (secs / 86400)).2.2 ++ twoDigits (secs % 86400 / 3600) ++
       twoDigits (secs % 86400 % 3600 / 60) ++ twoDigits (secs % 86400 % 60) := by
-  obtain ⟨h1, -, -, h3, -, h5⟩ := civil_range (secs / 86400) (by omega)
+  obtain ⟨h1, -, -, h3, -, h5⟩ := civilFrom_range (secs / 86400) (by omega)
   simp only [dateBytes, News.SessionSpec.dateDigits, Nat.mul_div_cancel _ (by decide : 0 < 1000)]
   rw [padded_four (by omega), padded_two (by omega), padded_two (by omega), padded_two (by omega),
     padded_two (by omega), padded_two (by omega)]
@@ -303,7 +278,7 @@ theorem dateHead_frag (o : Oracle σ) {b : Word} {c ofs secs : Nat} {s1 : Pancak
   obtain ⟨dbody, hdcode, hdsafe⟩ := hdiv
   obtain ⟨cbody, hccode, hcsafe⟩ := hciv
   have hz : secs / 86400 < 2 ^ 30 := by omega
-  obtain ⟨y1, y2, m1, m2, d1, d2⟩ := civil_range _ hz
+  obtain ⟨y1, y2, m1, m2, d1, d2⟩ := civilFrom_range _ hz
   generalize hcf : News.ArticleSpec.civilFromDays (secs / 86400) = cf at y1 y2 m1 m2 d1 d2 ⊢
   obtain ⟨y, m, dd⟩ := cf
   simp only at y1 y2 m1 m2 d1 d2 ⊢
@@ -482,7 +457,7 @@ theorem dateText_run (o : Oracle σ) {b : Word} {c ofs secs : Nat} {s1 : Pancake
   obtain ⟨T, hT, h8, hend, hown⟩ := lay
   obtain ⟨-, -, -, hd, hn, h64⟩ := nums
   have hz : secs / 86400 < 2 ^ 30 := by omega
-  obtain ⟨y1, y2, m1, m2, d1, d2⟩ := civil_range _ hz
+  obtain ⟨y1, y2, m1, m2, d1, d2⟩ := civilFrom_range _ hz
   have hF1 := dateHead_frag o he hofs hsecs hdiv hciv
   rw [dateBytes_eq secs hsecs]
   generalize hcf : News.ArticleSpec.civilFromDays (secs / 86400) = cf at y1 y2 m1 m2 d1 d2 hF1 ⊢
@@ -601,26 +576,6 @@ theorem ccall_frag (o : Oracle σ) {s1 : PancakeState σ} {xs : List (String × 
           rcases List.mem_cons.mp hp with rfl | hp
           · simp [setLocal]
           · exact localsAre_set h.2.2.2.2.2 hrt _ p hp⟩
-
-/-- The day of the year never falls below the year's start: no step of `artCivilOf` goes below zero. -/
-theorem cal_doe (doe : Nat) (h : doe < 146097) :
-    365 * ((doe - doe / 1460 + doe / 36524 - doe / 146096) / 365) +
-      (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 / 4 -
-      (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 / 100 ≤ doe := by
-  generalize ha1 : doe / 1460 = a1
-  generalize ha2 : doe / 36524 = a2
-  generalize ha3 : doe / 146096 = a3
-  have e1 : 1460 * a1 ≤ doe ∧ doe < 1460 * a1 + 1460 := by omega
-  have e2 : 36524 * a2 ≤ doe ∧ doe < 36524 * a2 + 36524 := by omega
-  have e3 : 146096 * a3 ≤ doe ∧ doe < 146096 * a3 + 146096 := by omega
-  have h21 : a2 ≤ a1 := by omega
-  generalize hy : (doe - a1 + a2 - a3) / 365 = y
-  have ey : 365 * y ≤ doe - a1 + a2 - a3 ∧ doe - a1 + a2 - a3 < 365 * y + 365 := by omega
-  have i1 : y / 4 ≤ a1 := by omega
-  have i2 : a2 - a3 ≤ y / 100 := by
-    rcases (show a2 = 0 ∨ a2 = 1 ∨ a2 = 2 ∨ a2 = 3 ∨ a2 = 4 by omega) with h2 | h2 | h2 | h2 | h2 <;>
-      subst h2 <;> omega
-  omega
 
 /-- **`artCivilOf`**: of a day since 1970 below 2^30, if it returns, the calendar day in one word. It changes no word;
 `artDiv` is as its contract says. -/
@@ -877,7 +832,7 @@ theorem dateOk_of (o : Oracle σ) {b : Word} {code : String → Option (List Str
 
 /-- DATE's digits fit its reply: the year has at most ten. -/
 theorem dateBytes_length (secs : Nat) (hs : secs < 2 ^ 40) : (dateBytes secs).length ≤ 60 := by
-  obtain ⟨-, h2, -⟩ := civil_range (secs / 86400) (by omega)
+  obtain ⟨-, h2, -⟩ := civilFrom_range (secs / 86400) (by omega)
   have := numDigits_le_ten _ (Nat.lt_trans h2 (by decide))
   rw [dateBytes_eq secs hs]
   simp only [List.length_append, twoDigits, List.length_cons, List.length_nil, decimal_length]

@@ -696,4 +696,18 @@ theorem readByteArray_congr {m m' : Word → Word} {dm : Word → Bool} {be : Bo
       exact this
     simp only [readByteArray, h0, ih]
 
+/-- **Octets each in an addressable word can be read**, as many as asked. -/
+theorem readByteArray_some {m : Word → Word} {dm : Word → Bool} {be : Bool} :
+    ∀ (p : Word) (n : Nat), (∀ j, j < n → dm (byteAlign (p + BitVec.ofNat 64 j)) = true) →
+      ∃ bs, readByteArray m dm be p n = some bs ∧ bs.length = n
+  | _, 0, _ => ⟨[], rfl, rfl⟩
+  | p, n + 1, h => by
+    have h0 : dm (byteAlign p) = true := by simpa using h 0 (by omega)
+    obtain ⟨bs, hbs, hl⟩ := readByteArray_some (m := m) (be := be) (p + 1) n fun j hj => by
+      have := h (j + 1) (by omega)
+      rwa [addr_succ] at this
+    refine ⟨getByte p (m (byteAlign p)) be :: bs, ?_, by simp [hl]⟩
+    simp only [readByteArray, memLoadByte, h0, if_true]
+    erw [hbs]
+
 end DN.Compiler.Bytes
