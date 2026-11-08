@@ -30,7 +30,7 @@ The diagram describes the intended path. Today the region-digest, byte-copy, dec
 | Reactor models | `lean/DN/Dataplane` | Abstract invariants, not a verified connection to kernel completions |
 | Preserved native implementation | `migration/dataplane` | Source for porting; old product integration remains visible |
 | NNTP session | `lean/DN/News`, `DN.Server.Session` | The framing, the reply to each command line and the session specified in Lean, the framers proven; the session's program held against its model and proven in the model not to fail ([0004](decisions/0004-safety-analysis.md)) |
-| Article store | `lean/DN/News` (`ArticleSpec`, `Journal`, `FsModel`, `Recovery`, `StoreOps`, `StoreRun`) | Specified as [0005](decisions/0005-article-store.md) fixes it and proven in the model, a crash at any point of the store's runs included; held against independent references; no program or host yet |
+| Article store | `lean/DN/News` (`ArticleSpec`, `Journal`, `FsModel`, `Recovery`, `StoreOps`, `StoreRun`) | Specified as [0005](decisions/0005-article-store.md) fixes it and proven in the model, a crash at any point of the store's runs included; held against independent references; run by the session's store program and its host's jobs, tested against the model |
 
 ## Host contract to develop
 

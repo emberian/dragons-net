@@ -33,9 +33,6 @@ def authCode : Auth → Nat
   | .none => authNone | .named _ => authNamed | .verify .. => authVerify | .checking => authChecking
   | .done => authDone
 
-/-- The largest article number the program takes. -/
-def numMax : Nat := 2147483647
-
 /-- A place kept as one more, none as zero. -/
 def placeCode : Option Nat → Nat
   | none => 0
@@ -62,7 +59,7 @@ def GroupIn (p : Posting) (w : Word) : Option (List Byte) → Prop
 def WantIn (p : Posting) (wc wci wno : Word) : Option (Cmd × Nat × List Byte) → Prop
   | none => wc = 0
   | some (k, no, id) => wc = BitVec.ofNat 64 (wantCode k) ∧ 0 < wantCode k ∧ wno = BitVec.ofNat 64 no ∧
-    no ≤ numMax ∧ ∃ j cm, wci = BitVec.ofNat 64 j ∧ p.held[j]? = some cm ∧ cm.messageId = id
+    no ≤ News.CommandSpec.numberMax ∧ ∃ j cm, wci = BitVec.ofNat 64 j ∧ p.held[j]? = some cm ∧ cm.messageId = id
 
 /-- The group's articles after number `n` up to `upto`, by number, each with its commit. -/
 def restOf (held : List News.Journal.Commit) (g : List Byte) (n upto : Nat) : List (Nat × News.Journal.Commit) :=
@@ -96,7 +93,7 @@ def ViewIn (p : Posting) (b : Word) (ci : Nat) (s : PancakeState σ) (want : Opt
         | some f => k = .hdr ∧ BytesW b ci cFieldLen cField fieldMax f s) ∧
       ∃ gi lo upto, s.memory (recW b ci cViewGi) = BitVec.ofNat 64 gi ∧
         s.memory (recW b ci cViewLo) = BitVec.ofNat 64 lo ∧ s.memory (recW b ci cViewUpto) = BitVec.ofNat 64 upto ∧
-        upto ≤ numMax ∧ lo ≤ n ∧ (v.byId = true → groupsMax ≤ gi) ∧
+        upto ≤ News.CommandSpec.numberMax ∧ lo ≤ n ∧ (v.byId = true → groupsMax ≤ gi) ∧
         v.rest = if gi < groupsMax then restOf p.held (p.groups.getD gi []) n upto else []
 
 /-- **Connection `ci`'s record holds `c`**, the store's places read through `p`. -/
@@ -127,7 +124,7 @@ structure ConnAt (b : Word) (p : Posting) (ci : Nat) (c : Conn) (s : PancakeStat
   read : s.memory (recW b ci cRead) = BitVec.ofNat 64 (placeCode c.read) ∧ ∀ k, c.read = some k → k < reads
   view : ViewIn p b ci s c.want c.view
   group : GroupIn p (s.memory (recW b ci cGroup)) c.group
-  current : NumW s (recW b ci cCurrent) c.current ∧ c.current ≤ numMax
+  current : NumW s (recW b ci cCurrent) c.current ∧ c.current ≤ News.CommandSpec.numberMax
   listing : ListIn p (s.memory (recW b ci cList)) (s.memory (recW b ci cListA)) (s.memory (recW b ci cListB))
     (s.memory (recW b ci cListC)) (s.memory (recW b ci cListD)) c.listing
 
@@ -160,7 +157,7 @@ theorem recW_add (b : Word) (ci k j : Nat) : recW b ci k + BitVec.ofNat 64 j = r
 theorem byte_rec {b : Word} (hb : b.toNat % 8 = 0) (ci k : Nat) : byteAlign (recW b ci k) = recW b ci (k / 8 * 8) :=
   DN.Compiler.Bytes.byteAlign_base (rec_al hb ci) k
 
-/-- The words of a record `ConnAt` does not read: the framer's verdict, and whether it acted in the turn. -/
+/-- Three words of a record `ConnAt` does not read: the framer's verdict, and whether it acted in the turn. -/
 def Unread (k : Nat) : Prop := k = cFramer + 24 ∨ k = cFramer + 32 ∨ k = cActed
 
 /-- Two states alike on record `ci`'s words but those it does not read. -/

@@ -1231,7 +1231,6 @@ theorem tokMem_frame {A : Word} (hA8 : A.toNat % 8 = 0) (be : Bool) (a : Bytes) 
   exact dframe_trans (dframe_trans (dframe_upd (A := A) (m0 := m0) (.inl rfl) _) h1)
     (dframe_upd (.inr (.inl rfl)) _)
 
-theorem broken_low : aBroken < aSets := Nat.lt_trans (by rw [aInput_eq]; decide) DN.News.AbnfMain.input_sets
 
 theorem mem_artTok : gd ArticleProg.artTok ∈
     ArticleProg.functions ArticleSpec.spec (ArticleProg.entries ArticleSpec.spec) .none :=
@@ -1257,7 +1256,8 @@ theorem tokCall_frag (o : Oracle σ) {R : Ret} {A : Word} {s0 : PancakeState σ}
       rw [hbe] at this; exact this) hrt
     (G := fun v m => m = tokMem A s0.be a P E m0 ∧ v = BitVec.ofNat 64 (wordEnd a (wordStart a P E) E))
     (fun m m' v hm ⟨e1, e2⟩ => ⟨by rw [e2, hm]; rfl, e1⟩)
-    fun v m h => by rw [h.1, dframe_low (tokMem_frame hA.hA _ _ _ _ _) broken_low]; exact hb) (fun u h => h)
+    fun v m h => by
+      rw [h.1, dframe_low (tokMem_frame hA.hA _ _ _ _ _) DN.News.ArticleGrammar.broken_low]; exact hb) (fun u h => h)
     fun u ⟨v, h⟩ => ?_
   obtain ⟨hm, hv⟩ := h.2
   subst hv; exact ⟨h.1, hm⟩

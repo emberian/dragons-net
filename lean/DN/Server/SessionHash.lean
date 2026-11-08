@@ -335,8 +335,8 @@ theorem covers_reads {s : PancakeState σ} (h : Covers SessionLayout.size s.mema
     ∃ msg, readByteArray s.memory s.memaddrs s.be (idAt s.baseAddr) len = some msg ∧
       msg.length = len := by
   obtain ⟨-, -, -, -, -, -, h1, h2, h3, h4⟩ := layout
-  refine ⟨SessionRun.readByteArray_some _ 16 fun j hj => ?_,
-    SessionRun.readByteArray_some _ len fun j hj => ?_⟩
+  refine ⟨DN.Compiler.Bytes.readByteArray_some _ 16 fun j hj => ?_,
+    DN.Compiler.Bytes.readByteArray_some _ len fun j hj => ?_⟩
   · have := h.1 (ownOff + ownIndexKey + j) (Nat.le_trans h1 (Nat.le_add_right _ _))
       (Nat.lt_of_lt_of_le (Nat.add_lt_add_left hj _) h2)
     simpa [keyAt, BitVec.ofNat_add, BitVec.add_assoc] using this

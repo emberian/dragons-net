@@ -1394,26 +1394,6 @@ theorem cells_locals {s : PancakeState σ} {cs : List (String × Int × AVal)} {
     rw [hsame y hy] at hp
     exact h y k v hv p hp
 
-theorem readByteArray_some (m : Word → Word) (dm : Word → Bool) (be : Bool) :
-    ∀ (n : Nat) (a : Word), (∀ i, i < n → dm (byteAlign (a + BitVec.ofNat 64 i)) = true) →
-      ∃ bs, readByteArray m dm be a n = some bs
-  | 0, _, _ => ⟨[], rfl⟩
-  | n + 1, a, h => by
-    have h0 := h 0 (by omega)
-    simp only [BitVec.add_zero] at h0
-    obtain ⟨bs, hbs⟩ := readByteArray_some m dm be n (a + 1) fun i hi => by
-      have := h (i + 1) (by omega)
-      rw [show a + 1 + BitVec.ofNat 64 i = a + BitVec.ofNat 64 (i + 1) by
-        rw [BitVec.add_assoc]
-        congr 1
-        apply BitVec.eq_of_toNat_eq
-        have one : (1 : Word).toNat = 1 := rfl
-        simp only [BitVec.toNat_add, BitVec.toNat_ofNat, one]
-        omega]
-      exact this
-    refine ⟨getByte a (m (byteAlign a)) be :: bs, ?_⟩
-    simp only [readByteArray, memLoadByte, h0, if_true, hbs]
-
 theorem array_readable {size : Nat} {dm : Word → Bool} {b wp wl : Word} {p l : AVal}
     (m : Word → Word) (be : Bool) (hc : Covers size dm b) (hp : p.holds b wp) (hl : l.holds b wl)
     (ok : arrayOk size p l = true) : ∃ bs, readByteArray m dm be wp wl.toNat = some bs := by
@@ -1423,7 +1403,7 @@ theorem array_readable {size : Nat} {dm : Word → Bool} {b wp wl : Word} {p l :
   simp only [AVal.holds, lp, Bool.false_eq_true, if_false] at hl
   obtain ⟨x, xl, xu, e, _⟩ := hp
   have tl := toInt_of_nonneg (w := wl) (by omega)
-  apply readByteArray_some
+  refine (fun ⟨bs, hb, _⟩ => ⟨bs, hb⟩) (Bytes.readByteArray_some (m := m) (be := be) wp wl.toNat ?_)
   intro i hi
   rw [e, ofInt_of_nonneg (by omega), BitVec.add_assoc]
   rw [show BitVec.ofNat 64 x.toNat + BitVec.ofNat 64 i = BitVec.ofNat 64 (x.toNat + i) by

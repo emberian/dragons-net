@@ -159,7 +159,7 @@ def ReadIn (b : Word) (k : Nat) (held : List Commit) (s : PancakeState σ) : Opt
     OwnerIn (s.memory (readW b k rOwner)) (s.memory (readW b k rOwnIdx)) (s.memory (readW b k rOwnGen)) r.owner ∧
     s.memory (readW b k rCmd) = BitVec.ofNat 64 (wantCode r.cmd) ∧ 0 < wantCode r.cmd ∧
     (∃ j, s.memory (readW b k rCi) = BitVec.ofNat 64 j ∧ held[j]? = some r.commit) ∧
-    NumW s (readW b k rNumber) r.number ∧ r.number ≤ numMax ∧
+    NumW s (readW b k rNumber) r.number ∧ r.number ≤ News.CommandSpec.numberMax ∧
     ReadFileIn (s.memory (readW b k rFile)) (s.memory (readW b k rPlace)) (s.memory (readW b k rPGen)) r.file ∧
     NumW s (readW b k rHead) r.commit.headerSize ∧ NumW s (readW b k rSize) r.commit.fileSize ∧
     NumW s (readW b k rCrcWant) r.commit.fileCrc ∧
@@ -203,7 +203,8 @@ def IndexAt (b : Word) (held : List Commit) (s : PancakeState σ) : Prop :=
         BitVec.ofNat 64 (j + 1) ∧
       ∀ e, e < d → s.memory (cellW b (((SessionHash.cellOf key held[j].messageId).toNat + e) % indexCells)) ≠ 0
 
-/-- The configuration's context in the article's area, as `artCheck` and `artAdded` read it. -/
+/-- The configuration's part of the article's context in its area: the identity, the random value, the run and the
+groups. The sequence number, wall clock and connection are each request's. -/
 def ContextAt (b : Word) (cfg : News.PostSpec.Config) (s : PancakeState σ) : Prop :=
   NumW s (artW b News.ArticleProg.xIdLen) cfg.identity.length ∧ cfg.identity.length ≤ identityMax ∧
     Chunk s (artW b News.ArticleProg.xId) cfg.identity ∧
@@ -283,15 +284,6 @@ theorem serverAt_witness : ServerAt 0 0 { gens := List.replicate SessionLayout.c
   broken := rfl
   dom := fun _ _ _ => rfl
   store := rfl
-
-/-- A store with no group and no article. -/
-def emptyStore : Store :=
-  { cfg := ⟨[], [], [], 0⟩, key := [], articles := [], setAside := [], next := 0, journalEnd := 0, journal := (0, 0),
-    jobGen := 0, slots := [] }
-
-theorem storeOk_witness : StoreOk emptyStore :=
-  ⟨fun _ h => absurd h (by simp [emptyStore]), fun _ _ h => by simp [emptyStore] at h, List.nodup_nil, List.nodup_nil,
-    fun _ _ _ _ _ _ h => by simp [emptyStore] at h, fun _ _ _ h => by simp [emptyStore] at h⟩
 
 /-! ## A store can hold -/
 
@@ -412,5 +404,12 @@ theorem storeAt_witness : StoreAt 0 wStore wState := by
       if_pos (by rw [e, BitVec.toNat_ofNat]; omega)]
     simp only [News.CrcCode.tableMem, e, BitVec.toNat_ofNat]
     congr 3; omega
+
+theorem wStore_slot (k : Nat) : wStore.slots.getD k none = none := by
+  simp only [wStore, List.getD, List.getElem?_replicate]; split <;> rfl
+
+theorem storeOk_witness : StoreOk wStore :=
+  ⟨fun _ h => absurd h (by simp [wStore]), fun _ _ h => by simp [wStore] at h, List.nodup_nil, List.nodup_nil,
+    fun k1 _ _ _ _ _ h => (by rw [wStore_slot] at h; cases h), fun k _ _ h => (by rw [wStore_slot] at h; cases h)⟩
 
 end DN.Server.SessionStoreAt

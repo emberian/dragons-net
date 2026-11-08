@@ -293,17 +293,6 @@ theorem chkT_firstW {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : 
     {M : Word → Word} (h : ChkT s1 A m0 a (groups a L) M) {nm : String} (hn : nm ∈ allNames) :
     DN.News.ArticleAdded.FirstW A M a L nm := DN.News.ArticleFields.firstW_of h.first hn
 
-/-- Where a named field starts lies inside the article. -/
-theorem firstP_lt {a : Bytes} {SEP : Nat} {L : List (Nat × Nat)} (hL : Lines a 0 L SEP)
-    (hok : L.any (DN.News.ArticleLines.malLine a) = false) {nm : String} :
-    ∀ x, DN.News.ArticleAdded.firstP a L nm = some x → x < a.length := fun x h => by
-  unfold DN.News.ArticleAdded.firstP at h
-  cases hg : DN.News.ArticleAdded.firstG a L nm with
-  | none => rw [hg] at h; nomatch h
-  | some g =>
-    rw [hg] at h; cases h
-    exact DN.News.ArticleFields.groups_place hL hok g (List.mem_of_find?_eq_some hg)
-
 /-- The table's word of a named field, as `artCheck` reads it. -/
 theorem firstE_eval {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {L : List (Nat × Nat)}
     {SEP : Nat} (hB : ChkBase s1 A m0 SEP esP) {l : List (String × Value)} (hla : l.lookup "a" = some A)
@@ -416,7 +405,7 @@ theorem missing_step (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ}
   refine fragR_if o (DN.News.ArticleAdded.lt0_lower esP nm) hlow (lowK_any _ (k := .skip) rfl)
     (fun u k h => ⟨runF_clock _ _ _ u k h.1, h.2⟩) (fun _ _ _ _ hy => by rw [cRet_declared] at hy; nomatch hy)
     (fun _ _ _ _ hy => nomatch hy) (b := (DN.News.ArticleAdded.firstP a L nm).isNone)
-    (fun u h => DN.News.ArticleAdded.lt0_eval (fun x hx => by have := firstP_lt hL hok x hx; omega)
+    (fun u h => DN.News.ArticleAdded.lt0_eval (fun x hx => by have := DN.News.ArticleAdded.firstP_lt hL hok x hx; omega)
       (firstE_eval hB hla h hn)) (fun hs => ?_) fun hs => ?_
   · exact runF_pin o hlow fun M hM => const_ret o hA hD hla hnl fun m hm =>
       hR (by simpa using hs) M m hM hm.1 hm.2.1 hm.2.2
@@ -619,7 +608,8 @@ theorem elem_step (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} (h
     (lowK_any _ (k := .skip) rfl) (fun u k h => ⟨runF_clock _ _ _ u k h.1, h.2⟩)
     (fun u y w h hy => ⟨runF_restore h.1 (hfr y (by simpa [fieldG, declared, guardS, guardL, ifs] using hy)) w, h.2⟩)
     (fun _ _ _ _ hy => nomatch hy) (b := (DN.News.ArticleAdded.firstP a L nm).isSome)
-    (fun u h => DN.News.ArticleAdded.flag_eval (fun x hx => by have := firstP_lt hL hok x hx; omega)
+    (fun u h => DN.News.ArticleAdded.flag_eval
+      (fun x hx => by have := DN.News.ArticleAdded.firstP_lt hL hok x hx; omega)
       (firstE_eval hB hla h hn)) (fun hs => ?_) fun hs => ?_
   · obtain ⟨P, hP⟩ := Option.isSome_iff_exists.1 hs
     obtain ⟨e, more, hf, hfind, hval, hSE, hE⟩ := first_field hL hok hP
@@ -731,7 +721,7 @@ theorem sender_step (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} 
   unfold tSender
   rw [DN.News.ArticleAdded.guardS_ifs]
   have h63 : ∀ nm, ∀ x, DN.News.ArticleAdded.firstP a L nm = some x → x < 2 ^ 63 := fun nm x hx => by
-    have := firstP_lt hL hok x hx; omega
+    have := DN.News.ArticleAdded.firstP_lt hL hok x hx; omega
   refine fragR_if o sender_lower senderB_low (lowK_any _ (k := .skip) rfl)
     (fun u k h => ⟨runF_clock _ _ _ u k h.1, h.2⟩) (fun u y w h hy => ⟨runF_restore h.1 (hfr y (by
       simpa [fieldG, declared, guardS, guardL, ifs] using hy)) w, h.2⟩)
@@ -940,7 +930,7 @@ theorem window_step (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} 
   have hlow := lowKK_append (fieldG_low nm pp pf pn ps pe) (lowKK_append (lowK_any (k := .skip)
     (guardS (.call pv "artDate" [Syntax.v ps, Syntax.v pe])) rfl) (winTail_low pv pt nm))
   have h63 : ∀ x, DN.News.ArticleAdded.firstP a L nm = some x → x < 2 ^ 63 := fun x hx => by
-    have := firstP_lt hL hok x hx; omega
+    have := DN.News.ArticleAdded.firstP_lt hL hok x hx; omega
   refine fragR_if o (DN.News.ArticleAdded.flag_lower esP nm) hlow (lowK_any _ (k := .skip) rfl) hQ
     (fun u y w h hy => hQr y (by
       simp only [fieldG, guardS, ifs, List.cons_append, List.nil_append, declared, winTail_declared, List.mem_cons,
@@ -1265,7 +1255,7 @@ theorem groups_step (o : Oracle σ) {R : Ret} {A : Word} {s1 : PancakeState σ} 
     · exact (upd_ne _ h27).trans (upd_eq _ _ _)
   rw [DN.News.ArticleAdded.guardS_ifs]
   have h63 : ∀ x, DN.News.ArticleAdded.firstP a L "Newsgroups" = some x → x < 2 ^ 63 := fun x hx => by
-    have := firstP_lt hL hok x hx; omega
+    have := DN.News.ArticleAdded.firstP_lt hL hok x hx; omega
   refine fragR_if o (DN.News.ArticleAdded.flag_lower esP "Newsgroups") groupsB_low (lowK_any _ (k := .skip) rfl)
     (runF_clock _ _ _) (fun u y w h hy => runF_restore h (hfr y (by
       simpa [fieldG, declared, guardS, guardL, ifs] using hy)) w) (fun _ _ _ _ hy => nomatch hy)

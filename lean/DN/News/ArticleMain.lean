@@ -39,17 +39,6 @@ theorem write_keep (dm : Word → Bool) (be : Bool) {x : Word} :
     · rfl
     · simp only [if_true]; rw [if_neg (Ne.symm h0)]; exact ih
 
-theorem read_some {m : Word → Word} {dm : Word → Bool} {be : Bool} :
-    ∀ (p : Word) (n : Nat), (∀ j, j < n → dm (byteAlign (p + BitVec.ofNat 64 j)) = true) →
-      ∃ bs, readByteArray m dm be p n = some bs
-  | _, 0, _ => ⟨[], rfl⟩
-  | p, n + 1, h => by
-    have h0 : dm (byteAlign p) = true := by simpa using h 0 (by omega)
-    obtain ⟨bs, hbs⟩ := read_some (m := m) (be := be) (p + 1) n fun j hj => by
-      have := h (j + 1) (by omega)
-      rwa [DN.Compiler.Bytes.addr_succ] at this
-    exact ⟨getByte p (m (byteAlign p)) be :: bs, by simp only [readByteArray, memLoadByte, h0, if_true]; erw [hbs]⟩
-
 /-- The bytes below `xFirst` lie in addressable words. -/
 theorem low_dom {A : Word} {s0 : PancakeState σ} (hA : Area ArticleProg.ofs A s0) (hD : ArtDom A s0.memaddrs)
     {j : Nat} (hj : j < ArticleProg.xFirst) : s0.memaddrs (byteAlign (A + BitVec.ofNat 64 j)) = true := by
@@ -69,9 +58,11 @@ theorem next_frag (o : Oracle σ) {A : Word} {s0 : PancakeState σ} (hA : Area A
     (.const (BitVec.ofNat 64 ArticleProg.xFirst))) rfl rfl rfl
     (fun _ _ ⟨M', h, hk⟩ => ⟨M', runF_clock _ _ _ _ _ h, hk⟩) (Safe.extCall fun s hs => ?_)
   have ha : eval s (.var "a") = some A := vals_lookup hs.1.vals hla
-  obtain ⟨conf, hc⟩ := read_some (m := s.memory) (dm := s.memaddrs) (be := s.be) A 8 fun j hj => by
+  obtain ⟨conf, hc, -⟩ := DN.Compiler.Bytes.readByteArray_some (m := s.memory) (dm := s.memaddrs) (be := s.be) A 8
+    fun j hj => by
     rw [hs.1.memaddrs]; exact low_dom hA hD (by have := xFirst_eq; omega)
-  obtain ⟨arr, harr⟩ := read_some (m := s.memory) (dm := s.memaddrs) (be := s.be) A ArticleProg.xFirst fun j hj => by
+  obtain ⟨arr, harr, -⟩ := DN.Compiler.Bytes.readByteArray_some (m := s.memory) (dm := s.memaddrs) (be := s.be) A
+    ArticleProg.xFirst fun j hj => by
     rw [hs.1.memaddrs]; exact low_dom hA hD hj
   refine ⟨A, _, A, _, conf, arr, ha, rfl, ha, rfl, hc, by rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hF]; exact harr,
     fun ffi' bytes hl => ⟨_, ⟨⟨hs.1.vals, hs.1.memaddrs, hs.1.base, hs.1.code, hs.1.be⟩, rfl⟩, fun y hy hy2 => ?_⟩⟩
@@ -533,8 +524,8 @@ theorem skip3 {o : Oracle σ} {s0 : PancakeState σ} {l : List (String × Value)
     fun u hu => by rw [c3_eval hu, decide_eq_false h]
 
 theorem skip0 {o : Oracle σ} {A : Word} {s0 : PancakeState σ} (hD : ArtDom A s0.memaddrs)
-    {l : List (String × Value)} (hla : l.lookup "a" = some A) (hfr : ∀ y ∈ ["md", "ans", "wl", "ln", "inw", "inl", "c",
-      "vd", "f", "d"], Fresh y l = true) {MD WL LN ans : Word} {m : Word → Word}
+    {l : List (String × Value)} (hla : l.lookup "a" = some A) (hfr : ∀ y ∈ roundNames, Fresh y l = true)
+    {MD WL LN ans : Word} {m : Word → Word}
     (h : ¬(MD = 0 ∧ m (at_ A ArticleProg.xCtxOk) = 1 ∧ WL.toNat < ArticleProg.wallMax ∧ LN.toNat ≤ artMax)) :
     Frag o [if0] (RunF s0 (Ld l MD WL LN ans) (· = m)) (RunF s0 (Ld l MD WL LN ans) (· = m)) :=
   skip_if if0_lower (lowK_any _ (k := .skip) rfl)
@@ -561,8 +552,7 @@ theorem skip2 {o : Oracle σ} {s0 : PancakeState σ} {l : List (String × Value)
 Each call's premises are asked only where its request is made. -/
 theorem round_ok (o : Oracle σ) {A : Word} {s0 : PancakeState σ} (hA : Area ArticleProg.ofs A s0)
     (hD : ArtDom A s0.memaddrs) (hT : TabDom A s0.memaddrs esP) (hcode : ArtCode s0.code)
-    {l : List (String × Value)} (hla : l.lookup "a" = some A) (hfr : ∀ y ∈ ["md", "ans", "wl", "ln", "inw", "inl", "c",
-      "vd", "f", "d"], Fresh y l = true)
+    {l : List (String × Value)} (hla : l.lookup "a" = some A) (hfr : ∀ y ∈ roundNames, Fresh y l = true)
     {M M0 : Word → Word} (hM0 : M0 = upd M (at_ A aBroken) 0) {ctx : ArticleSpec.Context} {a : Bytes}
     (h3 : M0 (at_ A ArticleProg.xMode) = 3 → (∃ B, Reads s0 A B M0) ∧ AllSets A M0 ∧
       DN.News.ArticleContext.CtxIn A s0.memaddrs s0.be ctx M0 ∧
@@ -594,8 +584,8 @@ theorem round_ok (o : Oracle σ) {A : Word} {s0 : PancakeState σ} (hA : Area Ar
       InputAt M0 s0.memaddrs s0.be A a) :
     Frag o ArticleProg.round (RunF s0 l (· = M)) (RunF s0 l (RoundRet A s0.memaddrs s0.be ctx a M0)) := by
   have hb0 : M0 (at_ A aBroken) = 0 := by rw [hM0]; exact upd_eq _ _ _
-  have hbS := DN.News.ArticleDateRun.broken_low
-  have hans := hfr "ans" (by simp)
+  have hbS := DN.News.ArticleGrammar.broken_low
+  have hans := hfr "ans" (by simp [roundNames])
   have hld : ∀ (L : List (String × Value)) (F : (Word → Word) → Prop) u, RunF s0 L F u → L.lookup "a" = some A →
       ∀ i, i < 32 → eval u (.loadWord (.op .add (.var "a") (.const (BitVec.ofNat 64 (ArticleProg.w i))))) =
         some (u.memory (at_ A (ArticleProg.w i))) := fun _ _ u h hl i hi =>
@@ -605,22 +595,24 @@ theorem round_ok (o : Oracle σ) {A : Word} {s0 : PancakeState σ} (hA : Area Ar
     (e := Syntax.n 0) rfl rfl (y := aBroken) (by omega) (by decide)
     (fun w h => by simp only [eval, vals_lookup h.1.vals hla]; rfl) (val := fun _ => 0) (fun _ _ => rfl)
     (G := (· = M0)) fun m hm => by rw [hM0, hm]) ?_
-  refine frag_append (xs := [_]) (runF_dec o (wd_lower 0) (hfr "md" (by simp)) (v := M0 (at_ A ArticleProg.xMode))
+  refine frag_append (xs := [_]) (runF_dec o (wd_lower 0) (hfr "md" (by simp [roundNames]))
+    (v := M0 (at_ A ArticleProg.xMode))
     fun u h => by rw [hld _ _ u h hla 0 (by decide), h.2]; rfl) ?_
   refine frag_append (xs := [_]) (runF_dec o rfl (fresh_cons (by decide) hans) (v := BitVec.ofNat 64 255)
     fun _ _ => rfl) ?_
   refine frag_append (xs := [_]) (runF_dec o (wd_lower 2)
-    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "wl" (by simp)))) (v := M0 (at_ A ArticleProg.xWall))
+    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "wl" (by simp [roundNames]))))
+    (v := M0 (at_ A ArticleProg.xWall))
     fun u h => by rw [hld _ _ u h hla 2 (by decide), h.2]; rfl) ?_
   refine frag_append (xs := [_]) (runF_dec o (wd_lower 1)
-    (fresh_cons (by decide) (fresh_cons (by decide) (fresh_cons (by decide) (hfr "ln" (by simp)))))
+    (fresh_cons (by decide) (fresh_cons (by decide) (fresh_cons (by decide) (hfr "ln" (by simp [roundNames])))))
     (v := M0 (at_ A ArticleProg.xLen)) fun u h => by rw [hld _ _ u h hla 1 (by decide), h.2]; rfl) ?_
   refine frag_append (xs := [_]) (runF_dec o rfl (fresh_cons (by decide) (fresh_cons (by decide)
-    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "inw" (by simp))))))
+    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "inw" (by simp [roundNames]))))))
     (v := bw (decide ((M0 (at_ A ArticleProg.xWall)).toNat < ArticleProg.wallMax)))
     fun u h => range_lt (vals_lookup h.1.vals rfl) (by decide)) ?_
   refine frag_append (xs := [_]) (runF_dec o rfl (fresh_cons (by decide) (fresh_cons (by decide) (fresh_cons (by decide)
-    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "inl" (by simp)))))))
+    (fresh_cons (by decide) (fresh_cons (by decide) (hfr "inl" (by simp [roundNames])))))))
     (v := bw (decide ((M0 (at_ A ArticleProg.xLen)).toNat ≤ artMax)))
     fun u h => range_le (vals_lookup h.1.vals rfl) (by decide)) ?_
   refine frag_conseq (P0 := RunF s0 (Ld l (M0 (at_ A ArticleProg.xMode)) (M0 (at_ A ArticleProg.xWall))

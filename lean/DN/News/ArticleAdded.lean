@@ -210,7 +210,7 @@ theorem copyCall_frag (o : Oracle σ) {R : Ret} {A : Word} {s0 : PancakeState σ
 
 /-- The failed flag is none of the message identifier's words. -/
 theorem broken_msg {A : Word} : ¬MsgScr A (at_ A aBroken) := fun h => by
-  have := broken_low; have := sets_le_X; have := X_val; have := xMsg_eq
+  have := DN.News.ArticleGrammar.broken_low; have := sets_le_X; have := X_val; have := xMsg_eq
   rcases h with e | ⟨z, h1, h2, e⟩
   · exact broken_ne_w (i := 13) (by decide) A e
   · have := DN.News.ScanRun.at_inj (by omega) (by simp only [ArticleProg.msgCap] at h2; omega) e; omega
@@ -546,9 +546,9 @@ theorem not_addScr_w {A : Word} {i : Nat} (hi : i < 32)
   · exact w_ne hi (by decide) hne.1 A h
 
 theorem broken_add {A : Word} : ¬AddScr A (at_ A aBroken) :=
-  not_addScr (.inl (by have := broken_low; have := sets_le_X; omega))
-    (by have := broken_low; have := sets_le_X; have := X_val; rw [xMsg_eq]; omega)
-    (by have := broken_low; have := sets_le_X; have := X_val; rw [xDec_eq]; omega)
+  not_addScr (.inl (by have := DN.News.ArticleGrammar.broken_low; have := sets_le_X; omega))
+    (by have := DN.News.ArticleGrammar.broken_low; have := sets_le_X; have := X_val; rw [xMsg_eq]; omega)
+    (by have := DN.News.ArticleGrammar.broken_low; have := sets_le_X; have := X_val; rw [xDec_eq]; omega)
 
 /-- **A copy written out**, `o` past it. -/
 theorem add_copy (o : Oracle σ) {R : Ret} {A : Word} {S : Word → Prop} (hS : Scr A S) {s1 : PancakeState σ}

@@ -399,8 +399,6 @@ theorem X_val : ArticleProg.X = 497936 := rfl
 theorem xName_eq : ArticleProg.xName = 505392 := rfl
 theorem xFirst_eq : ArticleProg.xFirst = 576408 := rfl
 
-theorem X_mod : ArticleProg.X % 8 = 0 := by decide
-
 theorem sets_le_X : aSets ≤ ArticleProg.X := X_eq ▸ Nat.le_add_right _ _
 
 /-- The article's words up to the tables, each addressable. -/
@@ -1219,7 +1217,8 @@ theorem artNameAt_ok (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Are
     refine frag_append (xs := [_]) (kept_frag o (by decide) (runF_clock _ _ _) fun u h =>
       ⟨P + i, vals_lookup h.1.vals rfl, by omega⟩) ?_
     refine frag_append (xs := [_]) (runF_dec o rfl rfl (v := BitVec.ofNat 64 (a[P + i]!).toNat) fun u h =>
-      inByte_eval (input_run (hMi i (by omega)).1 h) (vals_lookup h.1.vals rfl) (by omega) (vals_lookup h.1.vals rfl)) ?_
+      inByte_eval (input_run (hMi i (by omega)).1 h) (vals_lookup h.1.vals rfl) (by omega)
+        (vals_lookup h.1.vals rfl)) ?_
     let LB : List (String × Value) := ("b", BitVec.ofNat 64 (a[P + i]!).toNat) :: ("f", BitVec.ofNat 64 (P + i)) ::
       ("i", BitVec.ofNat 64 i) :: B
     refine frag_append (xs := [_]) (storeb_frag o hstl rfl (runF_clock _ _ _) (P' := RunF s1 LB (· = Mi (i + 1)))

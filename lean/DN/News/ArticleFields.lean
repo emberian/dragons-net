@@ -2136,10 +2136,6 @@ theorem firstW_of {A : Word} {a : Bytes} {L : List (Nat × Nat)} {M : Word → W
   rw [find?_congr' hc]
   rfl
 
-theorem chkM_firstW {s1 : PancakeState σ} {A : Word} {m0 : Word → Word} {a : Bytes} {L : List (Nat × Nat)}
-    {M : Word → Word} (h : ChkM s1 A m0 a (groups a L) M) {nm : String} (hn : nm ∈ allNames) :
-    DN.News.ArticleAdded.FirstW A M a L nm := firstW_of h.first hn
-
 /-! ## Witnesses -/
 
 theorem hiScr_witness : HiScr 0 (at_ 0 ArticleProg.xNl) := .inl rfl

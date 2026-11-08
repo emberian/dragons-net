@@ -301,7 +301,7 @@ theorem numCall_frag (o : Oracle σ) {R : Ret} {A : Word} {s0 : PancakeState σ}
       subst hm
       unfold NumRet at hr
       cases hn : number? (seg a S E) <;> rw [hn] at hr <;> exact ⟨hr.2, hr.1⟩)
-    fun v m h => by rw [h.1, dframe_low (numM_frame _ _ _) broken_low]; exact hb) (fun u h => h)
+    fun v m h => by rw [h.1, dframe_low (numM_frame _ _ _) DN.News.ArticleGrammar.broken_low]; exact hb) (fun u h => h)
     fun u ⟨v, h⟩ => ?_
   obtain ⟨hm, hv⟩ := h.2
   subst hv; exact ⟨h.1, hm⟩
@@ -491,7 +491,8 @@ theorem front_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   have hM2L : tokMem A s1.be a we1 cp M1 (at_ A ArticleProg.xTokLen) = BitVec.ofNat 64 (we2 - ws2) := by
     rw [tokMem_len, hws2, hwe2]
   refine fragR_append (xs := [_, _]) (tokCall_frag o hA hD hcode hlen (rt := "t2") (by decide) rfl rfl
-    (dframe_input hA8 hlen hin hf1) (by rw [dframe_low hf1 broken_low]; exact hb) h1b hcpa hws2 hwe2 rfl rfl) ?_
+    (dframe_input hA8 hlen hin hf1) (by rw [dframe_low hf1 DN.News.ArticleGrammar.broken_low]; exact hb) h1b hcpa
+      hws2 hwe2 rfl rfl) ?_
   refine fragR_append (xs := [_]) (ret0_frag o rfl (runF_clock _ _ _) (b := decide (we2 - ws2 ≠ 0))
     (fun u h => by
       rw [DN.News.AbnfLeaves.ne_eval (tokLen_eval hD h rfl) rfl, hM2L, ofNat_ne_iff (by omega) (by decide)])
@@ -584,7 +585,8 @@ theorem words_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   have hM1L : tokMem A s1.be a f.ts C f.m (at_ A ArticleProg.xTokLen) = BitVec.ofNat 64 (p1 - ws1) := by
     rw [tokMem_len, hws1, hp1]
   refine fragR_append (xs := [_, _]) (tokCall_frag o hA hD hcode hlen (rt := "p1") (by decide) rfl rfl
-    (dframe_input hA8 hlen hin hf) (by rw [dframe_low hf broken_low]; exact hb) hTC hCa hws1 hp1 rfl rfl) ?_
+    (dframe_input hA8 hlen hin hf) (by rw [dframe_low hf DN.News.ArticleGrammar.broken_low]; exact hb) hTC hCa
+      hws1 hp1 rfl rfl) ?_
   generalize tokMem A s1.be a f.ts C f.m = M1 at hf1 hM1S hM1L ⊢
   have hf1' := dframe_trans hf hf1
   refine fragR_append (xs := [_]) (ret0_frag o rfl (runF_clock _ _ _) (b := decide (p1 - ws1 = 0))
@@ -605,7 +607,8 @@ theorem words_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   have hM2L : tokMem A s1.be a p1 C M1 (at_ A ArticleProg.xTokLen) = BitVec.ofNat 64 (p2 - ws2) := by
     rw [tokMem_len, hws2, hp2]
   refine fragR_append (xs := [_, _]) (tokCall_frag o hA hD hcode hlen (rt := "p2") (by decide) rfl rfl
-    (dframe_input hA8 hlen hin hf1') (by rw [dframe_low hf1' broken_low]; exact hb) h1b hCa hws2 hp2 rfl rfl) ?_
+    (dframe_input hA8 hlen hin hf1') (by rw [dframe_low hf1' DN.News.ArticleGrammar.broken_low]; exact hb) h1b hCa
+      hws2 hp2 rfl rfl) ?_
   have hf2' := dframe_trans hf1' hf2
   refine fragR_append (xs := [_]) (ret0_frag o rfl (runF_clock _ _ _) (b := decide (p2 - ws2 = 0))
     (fun u h => FramerCode.eval_eq (by omega) (by decide) (by rw [tokLen_eval hD h rfl, hM2L]) rfl)
@@ -633,7 +636,8 @@ theorem words_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   have hM3L : tokMem A s1.be a p2 C M2 (at_ A ArticleProg.xTokLen) = BitVec.ofNat 64 (p3 - ws3) := by
     rw [tokMem_len, hws3, hp3]
   refine fragR_append (xs := [_, _]) (tokCall_frag o hA hD hcode hlen (rt := "p3") (by decide) rfl rfl
-    (dframe_input hA8 hlen hin hf2') (by rw [dframe_low hf2' broken_low]; exact hb) h2b hCa hws3 hp3 rfl rfl) ?_
+    (dframe_input hA8 hlen hin hf2') (by rw [dframe_low hf2' DN.News.ArticleGrammar.broken_low]; exact hb) h2b hCa
+      hws3 hp3 rfl rfl) ?_
   generalize tokMem A s1.be a p2 C M2 = M3 at hf3 hM3S hM3L ⊢
   have hf3' := dframe_trans hf2' hf3
   refine fragR_append (xs := [_]) (ret0_frag o rfl (runF_clock _ _ _) (b := decide (p3 - ws3 = 0))
@@ -664,7 +668,7 @@ theorem words_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   have hmo12 : mo ≤ 12 := by rcases hmo' with ⟨h, -⟩ | ⟨-, h, -⟩ <;> omega
   -- the day's number
   have hin3 := dframe_input hA8 hlen hin hf3'
-  have hb3 : M3 (at_ A aBroken) = 0 := by rw [dframe_low hf3' broken_low]; exact hb
+  have hb3 : M3 (at_ A aBroken) = 0 := by rw [dframe_low hf3' DN.News.ArticleGrammar.broken_low]; exact hb
   refine fragR_append (xs := [_, _]) (numCall_frag o hA hD hcode hlen (rt := "dy") (by decide) rfl rfl hin3 hb3 rfl rfl
     (S := ws1) (E := p1) (by omega) (by omega) (fun u h => ev_var (vals_lookup h.1.vals rfl))
     fun u h => ev_var (vals_lookup h.1.vals rfl)) ?_
@@ -699,7 +703,7 @@ theorem words_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   -- the year's number
   have hf4 := dframe_trans hf3' (numM_frame A M3 (some day))
   refine fragR_append (xs := [_, _]) (numCall_frag o hA hD hcode hlen (rt := "yr") (by decide) rfl rfl
-    (dframe_input hA8 hlen hin hf4) (by rw [dframe_low hf4 broken_low]; exact hb) rfl rfl
+    (dframe_input hA8 hlen hin hf4) (by rw [dframe_low hf4 DN.News.ArticleGrammar.broken_low]; exact hb) rfl rfl
     (S := ws3) (E := p3) (by omega) (by omega) (fun u h => ev_var (vals_lookup h.1.vals rfl))
     fun u h => ev_var (vals_lookup h.1.vals rfl)) ?_
   rcases hd3 : number? (seg a ws3 p3) with _ | year
@@ -881,7 +885,7 @@ theorem tz_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area Art
   have hz064 : T.z0 < 2 ^ 64 := Nat.lt_trans z0b (by decide)
   have hPg : Pows g.m A := fun j hj => by
     rw [dframe_low hg (by have := DN.News.AbnfLayout.pow_lt; omega)]; exact hP j hj
-  have hbg : g.m (at_ A aBroken) = 0 := by rw [dframe_low hg broken_low]; exact hb
+  have hbg : g.m (at_ A aBroken) = 0 := by rw [dframe_low hg DN.News.ArticleGrammar.broken_low]; exact hb
   refine fragR_if o rfl lowKK_nil (lowK_any _ (k := .skip) rfl) tzPost_clock (noDecl _ rfl)
     (fun u y w ⟨q, h, hq⟩ hy => ⟨q, runF_restore h (by
       change y ∈ ["zh", "zm"] at hy
@@ -1160,7 +1164,7 @@ theorem check_frag (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area 
   -- the days since 1970
   have hPg : Pows g.m A := fun j hj => by
     rw [dframe_low hg (by have := DN.News.AbnfLayout.pow_lt; omega)]; exact hP j hj
-  have hbg : g.m (at_ A aBroken) = 0 := by rw [dframe_low hg broken_low]; exact hb
+  have hbg : g.m (at_ A aBroken) = 0 := by rw [dframe_low hg DN.News.ArticleGrammar.broken_low]; exact hb
   refine fragR_append (xs := [_, _]) (civilCall_frag o hA hcode (rt := "days") (by decide) rfl rfl hPg hbg
     (Y := Ye) (M := g.mo) (Dd := min ArticleProg.yearBig g.day) (Nat.le_trans (by decide) hYe.1)
     (Nat.lt_trans hYe.2 (by decide)) hmo12 (by rw [hdday]; exact hcnd.2.1) (Nat.lt_of_le_of_lt hdy (by decide))

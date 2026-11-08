@@ -7,13 +7,19 @@
  * goes up to the end of its first empty line, as the session gathers a header section. With
  * `--time` each answer is followed by the microseconds the program took. Before the run the heap
  * outside the area is filled; on every call it has to be as filled, the header the compiler theorem
- * requires intact, and the arrays the area. */
+ * requires intact, and the arrays the area's words below the entries' tables. */
 #define _GNU_SOURCE
 #include "call_checks.h"
 #include "dn_article_layout.h"
 #include <time.h>
 
 _Static_assert(DN_ARTICLE_AT + DN_ARTICLE_AREA <= DN_RUNTIME_SEGMENT_BYTES, "the area does not fit the heap");
+/* What the host writes lies in the request `dn_next` hands back, below the entries' tables. */
+_Static_assert(DN_ARTICLE_INPUT + DN_ARTICLE_INPUT_MAX <= DN_ARTICLE_REQUEST, "the input past the request");
+_Static_assert(DN_ARTICLE_ID + DN_ARTICLE_ID_CAP <= DN_ARTICLE_REQUEST, "the identity past the request");
+_Static_assert(DN_ARTICLE_RAND + DN_ARTICLE_RAND_CAP <= DN_ARTICLE_REQUEST, "the random value past the request");
+_Static_assert(DN_ARTICLE_GROUPS + DN_ARTICLE_GROUP_SIZE * DN_ARTICLE_GROUPS_CAP <= DN_ARTICLE_REQUEST,
+               "the groups past the request");
 
 #define FILL UINT64_C(0x5A5A5A5A5A5A5A5A)
 
@@ -145,7 +151,7 @@ void ffidn_next(unsigned char *c, long clen, unsigned char *a, long alen) {
     long took = micros();
     dn_header_checked("dn_next");
     if (c != area() || clen != 8 || a != area() || alen != DN_ARTICLE_REQUEST)
-        dn_violation("dn_next: the arrays are not the area");
+        dn_violation("dn_next: the arrays are not the area's request");
     fill_checked();
     if (pending >= 0) {
         uint64_t verdict = dn_word(a + DN_ARTICLE_VERDICT);

@@ -741,7 +741,7 @@ theorem mem_artNum10 : gd ArticleProg.artNum10 ∈
   List.mem_append_right _ (List.mem_map.2 ⟨ArticleProg.artNum10, by simp, rfl⟩)
 
 theorem broken_out {A : Word} : ¬OutScr A (at_ A aBroken) := fun ⟨z, h1, h2, e⟩ => by
-  have := broken_low; have := sets_le_X; have := X_val
+  have := DN.News.ArticleGrammar.broken_low; have := sets_le_X; have := X_val
   have := DN.News.ScanRun.at_inj (by omega) (by rw [xFirst_eq] at h2; omega) e
   rw [xDec_eq] at h1; omega
 

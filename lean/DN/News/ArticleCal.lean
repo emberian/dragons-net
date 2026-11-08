@@ -626,8 +626,10 @@ theorem artCivil_ok (o : Oracle σ) {A : Word} {s1 : PancakeState σ} (hA : Area
     (by omega) (by decide) (by decide) fun u h => ev_var (vals_lookup h.1.vals rfl)) ?_
   refine fragR_ret o rfl fun u h => ⟨BitVec.ofNat 64 (era * 146097 + yoe * 365 + (yoe / 4 + (q5 + Dd - 1) - yoe / 100))
     - BitVec.ofNat 64 719468, ?_, ?_, h.2⟩
-  · exact ev_subC (WpBytes.eval_add (WpBytes.eval_add (ev_mulc (vals_lookup h.1.vals rfl)) (ev_mulc (vals_lookup h.1.vals rfl)))
-      (ev_subE (WpBytes.eval_add (ev_var (vals_lookup h.1.vals rfl)) (ev_subE (WpBytes.eval_add (ev_var (vals_lookup h.1.vals rfl))
+  · exact ev_subC (WpBytes.eval_add (WpBytes.eval_add (ev_mulc (vals_lookup h.1.vals rfl))
+        (ev_mulc (vals_lookup h.1.vals rfl)))
+      (ev_subE (WpBytes.eval_add (ev_var (vals_lookup h.1.vals rfl))
+        (ev_subE (WpBytes.eval_add (ev_var (vals_lookup h.1.vals rfl))
         (ev_var (vals_lookup h.1.vals rfl))) rfl (show 1 ≤ q5 + Dd by omega) (by omega)))
         (ev_var (vals_lookup h.1.vals rfl)) (show yoe / 100 ≤ yoe / 4 + (q5 + Dd - 1) by omega) (by omega)))
   · have hN : era * 146097 + yoe * 365 + (yoe / 4 + (q5 + Dd - 1) - yoe / 100) =

@@ -90,21 +90,6 @@ theorem in_code {g : Syntax.PFun} (hg : g ∈ Session.functions) {s : PancakeSta
   obtain ⟨rfl, rfl, rfl⟩ := he
   exact hcode _ _ _ k hm
 
-/-- Octets each in an addressable word can be read. -/
-theorem readByteArray_some {m : Word → Word} {dm : Word → Bool} {be : Bool} :
-    ∀ (p : Word) (n : Nat), (∀ j, j < n → dm (byteAlign (p + BitVec.ofNat 64 j)) = true) →
-      ∃ bs, readByteArray m dm be p n = some bs ∧ bs.length = n
-  | _, 0, _ => ⟨[], rfl, rfl⟩
-  | p, n + 1, h => by
-    have h0 : dm (byteAlign p) = true := by simpa using h 0 (by omega)
-    obtain ⟨bs, hbs, hl⟩ := readByteArray_some (m := m) (be := be) (p + 1) n fun j hj => by
-      have := h (j + 1) (by omega)
-      rwa [show p + BitVec.ofNat 64 (j + 1) = p + 1 + BitVec.ofNat 64 j by
-        rw [BitVec.add_assoc, BitVec.ofNat_add, BitVec.add_comm 1]; rfl] at this
-    refine ⟨getByte p (m (byteAlign p)) be :: bs, ?_, by simp [hl]⟩
-    simp only [readByteArray, memLoadByte, h0, if_true]
-    erw [hbs]
-
 /-- The test can pass: zero lies in `[0, 0]`. -/
 theorem keptC_witness : eval (σ := Unit) (bareState ()) (keptC (.const 0) 0) = some 0 :=
   keptC_zero (by decide) (Nat.le_refl 0) rfl
