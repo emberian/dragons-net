@@ -9,15 +9,42 @@
 //! Loom explores every thread interleaving (up to its preemption bound, when
 //! one is set below) and every C11-permitted read of each atomic. A lost
 //! wakeup manifests as a detected deadlock — a future returns `Pending` with
-//! no wake in flight and `loom::future::block_on` has nothing to run — so
+//! no wake in flight and `block_on` has nothing to run — so
 //! the properties here are checked *by termination* as much as by the final
 //! assertions.
 
 #![cfg(loom)]
 
 use dn_ring_model::{PushError, channel};
-use loom::future::block_on;
+use loom::sync::Notify;
 use loom::thread;
+use std::future::Future;
+use std::pin::pin;
+use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
+
+/// Drives `fut` to its end on this thread, waiting on a loom `Notify` between polls, as
+/// `loom::future::block_on` does. That one needs loom's `futures` feature, which pulls in the
+/// unmaintained `pin-utils`.
+fn block_on<F: Future>(fut: F) -> F::Output {
+    struct Wakeup(Notify);
+    impl Wake for Wakeup {
+        fn wake(self: Arc<Self>) {
+            self.0.notify();
+        }
+    }
+
+    let mut fut = pin!(fut);
+    let wakeup = Arc::new(Wakeup(Notify::new()));
+    let waker = Waker::from(Arc::clone(&wakeup));
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match fut.as_mut().poll(&mut cx) {
+            Poll::Ready(v) => return v,
+            Poll::Pending => wakeup.0.wait(),
+        }
+    }
+}
 
 /// Bounded model for the multi-item streams: the async send/recv paths run
 /// several waker registrations and `SeqCst` fences per item, and unbounded
