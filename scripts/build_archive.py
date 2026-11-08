@@ -26,6 +26,12 @@ def allowed(member: tarfile.TarInfo) -> bool:
     return member.isdir() and any(prefix[: len(rest)] == rest for prefix in CONTENT)
 
 
+def pack(archive: Path, root: Path) -> None:
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "w") as tar:
+        tar.add(root / BUILD, arcname=BUILD)
+
+
 def unpack(archive: Path, root: Path) -> None:
     with tarfile.open(archive) as tar:
         members = tar.getmembers()
@@ -41,8 +47,7 @@ def main() -> None:
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     if args.action == "pack":
-        with tarfile.open(args.archive, "w") as tar:
-            tar.add(ROOT / BUILD, arcname=BUILD)
+        pack(args.archive, ROOT)
     else:
         unpack(args.archive, ROOT)
 

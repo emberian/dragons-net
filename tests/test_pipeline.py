@@ -72,9 +72,9 @@ class CheckScript(unittest.TestCase):
             (root / "src/.lake/build/lib/lean/DN").mkdir(parents=True)
             (root / "src/.lake/build/lib/lean/DN/M.olean").write_text("olean")
             (root / "evil").write_text("x")
-            good = root / "good.tar"
-            with tarfile.open(good, "w") as tar:
-                tar.add(root / "src/.lake/build", arcname=".lake/build")
+            # The directory of the archive need not exist: a build that ran writes nothing else there.
+            good = root / "build/good.tar"
+            build_archive.pack(good, root / "src")
             build_archive.unpack(good, root / "out")
             self.assertEqual((root / "out/.lake/build/lib/lean/DN/M.olean").read_text(), "olean")
             outside = {"escape": "../evil", "elsewhere": "scripts/check.sh", "absolute": "/tmp/evil",
