@@ -710,4 +710,19 @@ theorem readByteArray_some {m : Word → Word} {dm : Word → Bool} {be : Bool} 
     simp only [readByteArray, memLoadByte, h0, if_true]
     erw [hbs]
 
+/-- **A word no written octet lies in** is kept by `writeByteArray`. -/
+theorem writeByteArray_keep (dm : Word → Bool) (be : Bool) {x : Word} :
+    ∀ (bs : List (BitVec 8)) (p : Word) (m : Word → Word),
+      (∀ j, j < bs.length → byteAlign (p + BitVec.ofNat 64 j) ≠ x) → writeByteArray dm be p bs m x = m x
+  | [], _, _, _ => rfl
+  | _ :: bs, p, m, h => by
+    have h0 : byteAlign p ≠ x := by simpa using h 0 (by simp)
+    have ih := writeByteArray_keep dm be bs (p + 1) m fun j hj => by
+      have := h (j + 1) (by simp; omega)
+      rwa [addr_succ] at this
+    unfold writeByteArray memStoreByte
+    cases hd : dm (byteAlign p)
+    · rfl
+    · simp only [if_true]; rw [if_neg (Ne.symm h0)]; exact ih
+
 end DN.Compiler.Bytes
