@@ -24,21 +24,6 @@ variable {σ : Type}
 
 /-! ## `dn_next` -/
 
-/-- **A word no written byte lies in** is kept by `writeByteArray`. -/
-theorem write_keep (dm : Word → Bool) (be : Bool) {x : Word} :
-    ∀ (bs : List (BitVec 8)) (p : Word) (m : Word → Word),
-      (∀ j, j < bs.length → byteAlign (p + BitVec.ofNat 64 j) ≠ x) → writeByteArray dm be p bs m x = m x
-  | [], _, _, _ => rfl
-  | _ :: bs, p, m, h => by
-    have h0 : byteAlign p ≠ x := by simpa using h 0 (by simp)
-    have ih := write_keep dm be bs (p + 1) m fun j hj => by
-      have := h (j + 1) (by simp; omega)
-      rwa [DN.Compiler.Bytes.addr_succ] at this
-    unfold writeByteArray memStoreByte
-    cases hd : dm (byteAlign p)
-    · rfl
-    · simp only [if_true]; rw [if_neg (Ne.symm h0)]; exact ih
-
 /-- The bytes below `xFirst` lie in addressable words. -/
 theorem low_dom {A : Word} {s0 : PancakeState σ} (hA : Area ArticleProg.ofs A s0) (hD : ArtDom A s0.memaddrs)
     {j : Nat} (hj : j < ArticleProg.xFirst) : s0.memaddrs (byteAlign (A + BitVec.ofNat 64 j)) = true := by
@@ -68,7 +53,7 @@ theorem next_frag (o : Oracle σ) {A : Word} {s0 : PancakeState σ} (hA : Area A
     fun ffi' bytes hl => ⟨_, ⟨⟨hs.1.vals, hs.1.memaddrs, hs.1.base, hs.1.code, hs.1.be⟩, rfl⟩, fun y hy hy2 => ?_⟩⟩
   have hal := DN.Compiler.WpBytes.readByteArray_length harr
   show writeByteArray s.memaddrs s.be A bytes s.memory (at_ A y) = M (at_ A y)
-  rw [write_keep _ _ bytes A s.memory fun j hj => ?_, hs.2]
+  rw [DN.Compiler.Bytes.writeByteArray_keep _ _ bytes A s.memory fun j hj => ?_, hs.2]
   rw [hl, hal] at hj
   rw [show A + BitVec.ofNat 64 j = at_ A j from rfl, DN.News.ScanRun.align_at hA.hA]
   exact DN.News.ScanRun.at_ne (by omega) hy2 (by omega)
